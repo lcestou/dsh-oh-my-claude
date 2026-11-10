@@ -28,6 +28,7 @@ import {
   accountIdentity,
   forgetIdentity,
   readHints,
+  type PickerRow,
   readPickerSettings,
   settingsEnvAt,
 } from "../sessions.js";
@@ -265,6 +266,7 @@ import {
   resolveModelInfo,
   windowKey,
   hintHiddenModels,
+  hintRouterWindows,
   withCustomModels,
   withoutHiddenModels,
 } from "./catalog.js";
@@ -803,7 +805,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** The settings files' `env` for this mount, or for a session in `cwd`, with the scope that
    *  set each variable (`settingsEnvAt`). Nothing for an ssh box. */
-  private async settingsEnv(cwd?: string) {
+  private async settingsEnv(cwd?: string): ReturnType<typeof settingsEnvAt> {
     if (this.config.sshHost) return { env: {}, from: {} };
     return settingsEnvAt(join(this.claudeHome, "settings.json"), cwd ?? null);
   }
@@ -924,6 +926,31 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return direct.some((m) => m.id === model) ? undefined : row.name;
   }
 
+  /**
+   * The window a session on `model` in `cwd` has to be started with, or undefined when the CLI's
+   * own figure stands: every model of Claude's, and every row whose entry states no size. Set
+   * for a router's alias (the size kept in Settings, or the default) and for an added model with
+   * a stated size. A window someone chose themselves outranks it and leaves this undefined:
+   * `autoCompactWindow` in a settings file, or either of the CLI's two variables already in the
+   * environment or a settings `env`; the CLI lets the variable beat the settings key, so setting
+   * it here would overrule that choice.
+   */
+  private async sizedWindow(model: string | undefined, cwd: string): Promise<number | undefined> {
+    if (!model) return undefined;
+    const settings = await this.settingsEnv(cwd);
+    const env = { ...process.env, ...settings.env };
+    if (
+      settings.autoCompactWindow !== undefined ||
+      env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined ||
+      env.CLAUDE_CODE_MAX_CONTEXT_TOKENS !== undefined
+    )
+      return undefined;
+    const picker = await this.pickerSettings();
+    const rows = picker && { ...picker, availableModels: undefined, replaceBuiltInOptions: false };
+    const row = (await getCatalog(undefined, this.cliModels, rows)).find((m) => m.id === model);
+    return row?.sized ? row.contextWindow : undefined;
+  }
+
   /** What a listing is filtered by: the state, and this mount's "also list Claude's own models"
    *  switch (`routedClaude:<provider>` in the hints store). */
   private async routeFilter(): Promise<RouteFilter> {
@@ -972,6 +999,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             ...(fromFile ?? { options: [], replaceBuiltInOptions: false }),
             aliasNames,
             aliasModels,
+            // The sizes set in Settings for the aliases the router took over.
+            routerWindows: hintRouterWindows(
+              await readHints(join(STATE_DIR, "hints.json")),
+              this.providerId,
+            ),
           };
     return withCustomModels(named, [
       ...this.config.customModels,
@@ -1054,7 +1086,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     Array<{
       provider: string;
       host: string | null;
-      models: Array<{ id: string; name: string; hidden: boolean; locked: boolean; off: boolean }>;
+      models: PickerRow[];
       custom: CustomModel[];
       route: Route;
     }>
@@ -1093,9 +1125,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * Anthropic, or one of Claude's own while a router has renamed the aliases. Default is left
    * out, since it is never hidden.
    */
-  async pickerModels(): Promise<
-    Array<{ id: string; name: string; hidden: boolean; locked: boolean; off: boolean }>
-  > {
+  async pickerModels(): Promise<PickerRow[]> {
     await this.cliSeed;
     const picker = await this.pickerSettings();
     const models = await getCatalog(undefined, this.cliModels, picker);
@@ -1112,13 +1142,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     );
     return models
       .filter((m) => m.id !== "default")
-      .map((m) => ({
-        id: m.id,
-        name: m.name,
-        hidden: !shown.has(m.id),
-        locked: !unlocked.has(m.id),
-        off: !routed.has(m.id),
-      }));
+      .map((m) => {
+        const row: PickerRow = {
+          id: m.id,
+          name: m.name,
+          hidden: !shown.has(m.id),
+          locked: !unlocked.has(m.id),
+          off: !routed.has(m.id),
+          window: m.contextWindow,
+        };
+        if (m.routers !== undefined) row.routers = m.routers;
+        return row;
+      });
   }
 
   /** After a `result` frame: remember a login failure for the card, and name the box's providers
@@ -1591,6 +1626,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       !remoteWorkspaceFor(cwd)
     )
       spec.route = inForce;
+    // And for a window the plugin or the user has to state: see `ClaudeProcessSpec.window`.
+    const sized = here === undefined ? undefined : await this.sizedWindow(model, here);
+    if (sized !== undefined) spec.window = sized;
     // Keeper or child joins the spec the same way: a flip of the Settings switch replaces each
     // running process on its session's next turn, never during one. The switch lives in the
     // default instance's hints file, which the Settings route writes, so a second instance (an SSH
@@ -3641,7 +3679,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * this box's panel login as CLAUDE_CODE_OAUTH_TOKEN for the default instance. A second instance
    * keeps its own login, which is what a second instance is for.
    */
-  localEnvOverride(firstParty = this.proxyFirstParty): Record<string, string> | undefined {
+  localEnvOverride(
+    firstParty = this.proxyFirstParty,
+    window?: number,
+  ): Record<string, string> | undefined {
     const over: Record<string, string> = {};
     if (this.config.configDir || this.config.ownTranscripts)
       over.CLAUDE_CONFIG_DIR = this.claudeHome;
@@ -3655,12 +3696,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // field alone could be flipped by another session's `prepare()` between the two reads, and a
     // process whose spec says one thing and whose env says the other never gets replaced.
     if (firstParty) over[FIRST_PARTY_FLAG] = "1";
+    // A window the spec carries (`ClaudeProcessSpec.window`) is told to the CLI both ways it
+    // listens: the first sets the size of a model it has never heard of, the second caps one it
+    // knows. Measured on 2.1.322 with `get_context_usage`: `sonnet` behind a router reads
+    // 1,000,000 with neither, and the number given with the second; an unknown id reads 200,000
+    // with neither and the number given with the first.
+    if (window !== undefined) {
+      over.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(window);
+      over.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(window);
+    }
     return Object.keys(over).length === 0 ? undefined : over;
   }
 
   /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
-  keeperEnv(firstParty?: boolean) {
-    return childEnv(process.env, this.localEnvOverride(firstParty));
+  keeperEnv(firstParty?: boolean, window?: number) {
+    return childEnv(process.env, this.localEnvOverride(firstParty, window));
   }
 
   /** Spawner for one session: keeper mode needs the session to place and name the keeper. A spec
@@ -3668,7 +3718,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  `prepare` made for this process. */
   spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner {
     const firstParty = spec.firstParty === true;
-    if (spec.child || !sessionId) return this.spawner(firstParty, spec.child);
+    if (spec.child || !sessionId) return this.spawner(firstParty, spec.child, spec.window);
     const boxHost = this.config.sshHost;
     if (boxHost)
       return (command, args, cwd) =>
@@ -3693,7 +3743,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             command,
             args,
             cwd,
-            env: this.keeperEnv(firstParty),
+            env: this.keeperEnv(firstParty, spec.window),
             sessionId,
             procSpec: spec,
             owner: this.keeperOwner,
@@ -4034,6 +4084,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   spawner(
     firstParty = this.proxyFirstParty,
     child: "node" | "dsh" = this.config.spawn === "dsh" ? "dsh" : "node",
+    window?: number,
   ) {
     // A remote instance drives the far `claude` over SSH; no keeper, no seam, its own remote login.
     // A remote-workspace cwd is a local placeholder here; redirect it to the box's real path.
@@ -4051,7 +4102,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // Read per spawn, not once: a login made in the panel applies to the next session started.
     const local: Spawner = (command, args, cwd) =>
-      base(command, args, cwd, this.localEnvOverride(firstParty));
+      base(command, args, cwd, this.localEnvOverride(firstParty, window));
     // A remote-workspace cwd runs the far `claude` over SSH on its box, even when this provider is
     // local: otherwise the session sits in the empty local placeholder dir.
     return (command: string, args: string[], cwd: string) => {

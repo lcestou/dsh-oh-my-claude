@@ -453,7 +453,8 @@ export const en = {
     "Claude Code on this box is pointed at {host}, which is not answering, so its turns will fail. Start the router there, or switch its routing off.",
   "main.settingsUi.routeClaudeToo": "Also list Claude's own models",
   "main.settingsUi.routeClaudeTooDesc": "A turn on one goes wherever the router sends it.",
-  "main.settingsUi.customAdded": "Models you added",
+  "main.settingsUi.modelSizeNamed": "Context size of {name}",
+  "main.settingsUi.modelSizeTokensNamed": "Context size of {name} in tokens",
   "main.settingsUi.customAddTitle": "Add a model",
   "main.settingsUi.customDescBefore":
     "For a model the list above does not have, served by your gateway or local router, such as a name set up in ",
@@ -469,7 +470,6 @@ export const en = {
   "main.settingsUi.customRemove": "Remove",
   "main.settingsUi.customRemoveNamed": "Remove {name}",
   "main.settingsUi.customDidAdd": "Added {name}.",
-  "main.settingsUi.customDidRemove": "Removed {name}.",
   "main.settingsUi.claudeSkillsTitle": "Claude Code skills on every model",
   "main.settingsUi.claudeSkillsDesc":
     "A skill or custom command only Claude Code has, typed in a session on another model, goes to that model with its instructions instead of being refused. Skills dsh serves itself run either way.",
@@ -1032,7 +1032,8 @@ export const zh = {
     "这台主机上的 Claude Code 指向 {host}，但那里没有响应，对话会失败。请启动那里的路由，或关闭它的路由功能。",
   "main.settingsUi.routeClaudeToo": "同时列出 Claude 自带的模型",
   "main.settingsUi.routeClaudeTooDesc": "在这些模型上的对话会被发往路由指定的去处。",
-  "main.settingsUi.customAdded": "你添加的模型",
+  "main.settingsUi.modelSizeNamed": "{name} 的上下文大小",
+  "main.settingsUi.modelSizeTokensNamed": "{name} 的上下文大小（token 数）",
   "main.settingsUi.customAddTitle": "添加模型",
   "main.settingsUi.customDescBefore": "用于上面列表里没有、由你的网关或本地路由提供的模型，例如在 ",
   "main.settingsUi.customDescAfter":
@@ -1047,7 +1048,6 @@ export const zh = {
   "main.settingsUi.customRemove": "移除",
   "main.settingsUi.customRemoveNamed": "移除 {name}",
   "main.settingsUi.customDidAdd": "已添加 {name}。",
-  "main.settingsUi.customDidRemove": "已移除 {name}。",
   "main.settingsUi.claudeSkillsTitle": "在所有模型上使用 Claude Code 技能",
   "main.settingsUi.claudeSkillsDesc":
     "在其他模型的会话中输入只有 Claude Code 才有的技能或自定义命令时，会连同其指令一起交给该模型，而不是被拒绝。dsh 自己提供的技能无论如何都能运行。",

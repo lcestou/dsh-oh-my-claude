@@ -1,6 +1,6 @@
-// Dev-only check: the Models block's "Add a model" form. Adds a model, expects it among the added
-// models and in the block's own rows with a switch, expects a refused id to keep the draft and say
-// why, then removes the model again unless told to keep it. Also checks that the row follows the
+// Dev-only check: the Models block's "Add a model" form. Adds a model, expects it once among the
+// block's rows with a switch, its size and a Remove, expects a refused id to keep the draft and
+// say why, changes the size on the row, then removes the model again unless told to keep it. Also checks that the row follows the
 // box's route: on a box that talks to Anthropic an added model is marked as waiting for a router
 // and the block says so; on a routed box, or one whose route cannot be told, it is listed. Point PLAYWRIGHT_ROOT at any project
 // with Playwright installed and DSH_ORIGIN at the dsh to drive; arg 1 is the dsh launch token,
@@ -92,14 +92,15 @@ expect(
 );
 await add.click();
 await p.waitForTimeout(1500);
+const row = p.locator(`[data-omc-model-row="${MODEL}"]`);
+expect("the model shows once, as a row", (await row.count()) === 1);
+expect("with a switch", (await row.locator('[role="switch"]').count()) === 1);
 expect(
-  "the model is among the added models",
-  (await p.locator(`[data-omc-custom-model="${MODEL}"]`).count()) === 1,
+  "with a Remove on the row",
+  (await row.locator("[data-omc-custom-model-remove]").count()) === 1,
 );
-expect(
-  "the block lists it as a row with a switch",
-  (await p.locator(`[data-omc-model-row="${MODEL}"] [role="switch"]`).count()) === 1,
-);
+const rowSize = row.locator("[data-omc-model-size-pick]");
+expect("and with the size it was added with", (await rowSize.inputValue()) === "128000");
 expect(
   "the form is cleared after an add",
   (await editor.locator("[data-omc-custom-model-id]").inputValue()) === "",
@@ -108,12 +109,15 @@ expect(
 interface BoxRead {
   provider: string;
   route?: { state: string };
-  models: { id: string; off?: boolean }[];
+  models: { id: string; off?: boolean; window?: number }[];
 }
-const boxes = await p.evaluate(async (): Promise<BoxRead[]> => {
-  const r = await fetch("/dsh-oh-my-claude/models?all=1");
-  return (await r.json()).models;
-});
+/** Every box's rows as the Settings card reads them. */
+const readBoxes = () =>
+  p.evaluate(async (): Promise<BoxRead[]> => {
+    const r = await fetch("/dsh-oh-my-claude/models?all=1");
+    return (await r.json()).models;
+  });
+const boxes = await readBoxes();
 const provider = (await editor.getAttribute("data-omc-custom-models")) ?? "";
 const read = boxes.find((box) => box.provider === provider);
 const served = read?.models.find((m) => m.id === MODEL);
@@ -137,10 +141,28 @@ expect(
 if (state === "direct")
   expect("and the block explains the waiting rows", (await line.innerText()).trim() !== "");
 console.log(`route: ${provider} is ${state}`);
+// The size is changed on the row itself, and the server's rows follow: a named size, then an
+// exact one typed under Other, which must come back as typed and not rounded to a neighbour.
+/** The window the server's row for the model reports right now; undefined when it has no row. */
+const windowNow = async () =>
+  (await readBoxes()).find((box) => box.provider === provider)?.models.find((m) => m.id === MODEL)
+    ?.window;
+await rowSize.selectOption("256000");
+await p.waitForTimeout(1500);
+expect("a size picked on the row is stored", (await windowNow()) === 256_000);
+await rowSize.selectOption("other");
+await p.waitForTimeout(300);
+const exact = row.locator("[data-omc-model-size-tokens]");
+await exact.fill("262144");
+await p.keyboard.press("Enter");
+await p.waitForTimeout(1500);
+expect("an exact size typed under Other is stored as typed", (await windowNow()) === 262_144);
+expect("and the row still shows it as Other", (await rowSize.inputValue()) === "other");
+await p.screenshot({ path: `${out}/custom-models-sized.png` });
 await p.screenshot({ path: `${out}/custom-models-added.png` });
 
 if (keep !== "keep") {
-  await p.locator(`[data-omc-custom-model="${MODEL}"] [data-omc-custom-model-remove]`).click();
+  await row.locator("[data-omc-custom-model-remove]").click();
   // The block re-reads every box after a save, and a box whose CLI lineup is not cached yet can
   // take a few seconds to answer, so the row is waited for rather than given a fixed pause.
   for (let i = 0; i < 20; i++) {
@@ -148,11 +170,7 @@ if (keep !== "keep") {
     if ((await p.locator(`[data-omc-model-row="${MODEL}"]`).count()) === 0) break;
   }
   expect(
-    "Remove takes it out of the added models",
-    (await p.locator(`[data-omc-custom-model="${MODEL}"]`).count()) === 0,
-  );
-  expect(
-    "and out of the block's rows",
+    "Remove takes it out of the block's rows",
     (await p.locator(`[data-omc-model-row="${MODEL}"]`).count()) === 0,
   );
 }

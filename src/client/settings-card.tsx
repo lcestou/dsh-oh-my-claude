@@ -33,7 +33,8 @@ import { ConfirmButton } from "./tune.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { COMPACT_AT, COMPACT_AT_CHOICES, compactThreshold } from "./nudge.js";
 import { BOXES_EVENT } from "./picker.js";
-import { CustomModelsEditor, type CustomModelEntry } from "./custom-models.js";
+import { CustomModelsEditor, type CustomModelEntry, putCustomModels } from "./custom-models.js";
+import { SizeSelect } from "./model-size.js";
 import { type BoxRoute, RouteLine, routeNote } from "./route-line.js";
 import { Switch } from "./switch.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
@@ -1360,8 +1361,17 @@ export function RecallSwitch() {
 }
 
 /** `off` is the picker leaving the row out because of where the box's traffic goes, whatever its
- *  switch says. */
-type PickerModel = { id: string; name: string; hidden: boolean; locked: boolean; off?: boolean };
+ *  switch says. `window` is the context window the row reports and `routers` the alias a router
+ *  took over, set only on such a row; all three are absent from an older server. */
+type PickerModel = {
+  id: string;
+  name: string;
+  hidden: boolean;
+  locked: boolean;
+  off?: boolean;
+  window?: number;
+  routers?: string;
+};
 /** `custom` and `route` are absent from a server older than this client: the client hot-reloads,
  *  the server waits for a restart. */
 type PickerBox = {
@@ -1377,20 +1387,65 @@ type PickerBox = {
  *  saying why, since a switch here cannot undo a config entry. A row the picker leaves out because
  *  of the box's route (`model.off`) is dimmed with a note saying when it comes back; its switch
  *  still works, since it is the row's own setting for when it does. Reports its live state up so
- *  the summary can count. */
+ *  the summary can count.
+ *
+ *  Two kinds of row also carry their context size, because nobody but the person at the box
+ *  knows it: a router's alias, whose size is kept as a hint under the alias
+ *  (`routerWindow:<provider>:<alias>`), and a model added in Settings, whose size is part of its
+ *  entry. That entry is also where Remove lives, so an added model shows once. `saved` is the
+ *  box's list of added models and `onSaved` re-reads the block after a change to it. */
 function ModelRow({
   box,
   model,
   onState,
+  onSaved,
 }: {
   box: PickerBox;
   model: PickerModel;
   onState: (key: string, hidden: boolean) => void;
+  onSaved: () => void;
 }) {
   const key = `hideModel:${box.provider}:${model.id}`;
   const [off, setOff] = useHintFlag(key);
   const hidden = model.locked || off;
   useEffect(() => onState(key, hidden), [key, hidden, onState]);
+  // Read for every row, used only on a router's: hooks cannot be conditional, and a key no row
+  // writes costs one shared read of the hints store.
+  const [routerSize, setRouterSize] = useHintValue(
+    `routerWindow:${box.provider}:${model.routers ?? ""}`,
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const saved = box.custom ?? [];
+  const entry = saved.find((m) => m.model === model.id);
+  /** Store the box's added models as `next`, then re-read the block; a refusal shows on the row. */
+  const store = (next: CustomModelEntry[]) => {
+    setBusy(true);
+    setError("");
+    void putCustomModels(box.provider, next)
+      .then(onSaved)
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+  const size =
+    model.routers !== undefined ? (
+      <SizeSelect
+        name={model.name}
+        value={Number.isInteger(routerSize) ? Number(routerSize) : undefined}
+        onChange={(next) => setRouterSize(next ?? null)}
+      />
+    ) : entry ? (
+      <SizeSelect
+        name={model.name}
+        value={entry.contextWindow}
+        disabled={busy}
+        onChange={(next) => {
+          const { contextWindow: _old, ...rest } = entry;
+          const changed = next === undefined ? rest : { ...rest, contextWindow: next };
+          store(saved.map((m) => (m.model === entry.model ? changed : m)));
+        }}
+      />
+    ) : null;
   return (
     <div
       data-omc-model-row={model.id}
@@ -1403,13 +1458,33 @@ function ModelRow({
           {model.locked ? ` · ${t("main.settingsUi.modelsLocked")}` : ""}
           {model.off && <span data-omc-model-off="">{` · ${routeNote(box.route)}`}</span>}
         </div>
+        {error && (
+          <div role="alert" data-omc-model-row-error="" style={{ fontSize: 12 }}>
+            {error}
+          </div>
+        )}
       </div>
-      <Switch
-        on={!hidden}
-        disabled={model.locked}
-        onChange={(on) => setOff(!on)}
-        label={model.name}
-      />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flex: "none" }}>
+        {size}
+        {entry && (
+          <button
+            type="button"
+            data-omc-custom-model-remove=""
+            style={{ ...btn, fontSize: 12 }}
+            disabled={busy}
+            aria-label={t("main.settingsUi.customRemoveNamed", { name: model.name })}
+            onClick={() => store(saved.filter((m) => m.model !== entry.model))}
+          >
+            {t("main.settingsUi.customRemove")}
+          </button>
+        )}
+        <Switch
+          on={!hidden}
+          disabled={model.locked}
+          onChange={(on) => setOff(!on)}
+          label={model.name}
+        />
+      </div>
     </div>
   );
 }
@@ -1515,7 +1590,7 @@ export function ModelsBlock() {
                   {box.host ?? t("main.sessions.thisBox")}
                 </legend>
                 {box.models.map((m) => (
-                  <ModelRow key={m.id} box={box} model={m} onState={onState} />
+                  <ModelRow key={m.id} box={box} model={m} onState={onState} onSaved={reread} />
                 ))}
               </fieldset>
             );

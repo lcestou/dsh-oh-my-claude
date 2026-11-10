@@ -1419,6 +1419,12 @@ export interface ClaudeProcessSpec {
    *  switched on or off under a running session changes the key and the session's next turn
    *  replaces the process; without that it would go on talking to wherever it was started for. */
   route?: string;
+  /** The context window the CLI was told to run this model with (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`
+   *  and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` at spawn), for a row whose window is the plugin's or
+   *  the user's to say: a router's alias, an added model with a stated size. Absent otherwise, so
+   *  every other spec keys as before; a size changed in Settings changes the key and the
+   *  session's next turn starts a process that knows it. */
+  window?: number;
   /** Started as dsh's child rather than under a keeper: the Settings switch off, or `spawn: node` or
    *  `dsh` in the config. Absent for a keeper, so a keeper's saved spec keys the same as it did
    *  before the field existed; a flip changes the key and the session's next turn respawns, never

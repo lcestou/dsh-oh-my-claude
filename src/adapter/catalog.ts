@@ -62,6 +62,14 @@ interface CatalogModel {
   createdAt?: number;
   /** Effort levels the Models API reports for this model that the plugin does not know yet. */
   unknownEfforts?: string[];
+  /** Set on one of the CLI's aliases that a router took over (`mergeCatalog`), to the alias
+   *  (`sonnet`, `opus`, `haiku`): the model behind it is the router's, so its window is not
+   *  Claude's and can be set in Settings, where the alias is the key it is kept under. */
+  routers?: string;
+  /** The window on this row is one the plugin decided or was told, not one the CLI knows for the
+   *  model: a router's alias, or a row whose entry states a size. A session on such a row is
+   *  started with that window, since the CLI would otherwise manage it against its own guess. */
+  sized?: true;
 }
 
 /** Build one KNOWN_MODELS row: the provider is always claude-code, so callers pass only the id, label, context window and efforts, filling description when given. */
@@ -410,6 +418,19 @@ export const hintHiddenModels = (
     .filter(([k, v]) => k.startsWith(prefix) && v === true)
     .map(([k]) => k.slice(prefix.length));
 };
+/** The hints key a router alias's window is kept under, for one mount. */
+export const routerWindowHint = (provider: string, alias: string): string =>
+  `routerWindow:${provider}:${alias}`;
+/** The windows Settings holds for one mount's router aliases, by alias, read off the hints
+ *  store: whole numbers within the bounds a custom model's window is held to. */
+export const hintRouterWindows = (hints: Record<string, boolean | number>, provider: string) => {
+  const prefix = routerWindowHint(provider, "");
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(hints))
+    if (k.startsWith(prefix) && Number.isInteger(v) && Number(v) >= 1000 && Number(v) <= 10_000_000)
+      out[k.slice(prefix.length)] = Number(v);
+  return out;
+};
 /**
  * settings.json's picker with the plugin config's `customModels` added as option rows, after the
  * file's own: `mergeCatalog` keeps the last row written for an id, so a model named in both takes
@@ -441,8 +462,9 @@ export function withCustomModels(
   return { ...base, options: [...base.options, ...rows] };
 }
 
-/** The window a router's alias row reports: the CLI's own assumption for a base URL that is not
- *  Anthropic's, since the model behind the alias is not one this catalog can look up. */
+/** The window a router's alias row gets until someone states the real one: what the CLI assumes
+ *  for a model it has never heard of, since the model behind the alias is not one this catalog
+ *  can look up. */
 export const ROUTED_WINDOW = 200_000;
 
 /** One row on its way through `mergeCatalog`: the row, the id the allowlist reads it by, and what
@@ -502,19 +524,24 @@ export function mergeCatalog(
         : `${name}${c.resolvedModel.endsWith("[1m]") ? " (1M context)" : ""}`;
     const row: MergedRow = {
       // A row the router took over reaches some other model, whose window nobody here knows.
-      // Claude's figure for the alias (1M for Sonnet 5) promised room a local model may not
-      // have. 200,000 is what the CLI itself assumes, and compacts at, behind an endpoint that
-      // is not Anthropic; a `customModels` entry for the same id can state the real size.
+      // Claude's figure for the alias (1M for Sonnet 5) promises room a local model may not
+      // have, and the CLI believes that figure too (measured on 2.1.322: 1,000,000 for `sonnet`
+      // behind a router). The row takes a modest default instead and is marked `sized`, so the
+      // session is started with it; an entry for the same id can state the real size.
       row: M(
         stable ?? c.value,
         label,
-        named || remapped ? ROUTED_WINDOW : window,
+        named || remapped ? (picker?.routerWindows?.[c.value] ?? ROUTED_WINDOW) : window,
         c.efforts,
         c.description,
       ),
       match: c.resolvedModel,
       routers: named || remapped,
     };
+    if (row.routers) {
+      row.row.routers = c.value;
+      row.row.sized = true;
+    }
     return row;
   });
   // A known model follows unless a CLI row already carries its exact id. A `[1m]` variant or the
@@ -554,13 +581,16 @@ export function mergeCatalog(
     const extra = picker.options.map((o): MergedRow => {
       const known = base.find((b) => allows(o.model, b.id) || allows(b.id, o.model));
       const label = o.label ?? known?.name ?? o.model;
+      const row = M(
+        o.model,
+        label,
+        o.contextWindow ?? known?.contextWindow ?? 200_000,
+        o.efforts ?? known?.efforts ?? [],
+      );
+      // A size someone stated for a model the plugin added is the only thing that knows it.
+      if (o.added === true && o.contextWindow !== undefined) row.sized = true;
       return {
-        row: M(
-          o.model,
-          label,
-          o.contextWindow ?? known?.contextWindow ?? 200_000,
-          o.efforts ?? known?.efforts ?? [],
-        ),
+        row,
         match: o.model,
         // A row someone wrote out is theirs whatever the router names, so it stays while routed.
         routers: true,

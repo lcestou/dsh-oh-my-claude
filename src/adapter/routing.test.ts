@@ -6,7 +6,13 @@ import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { KNOWN_MODELS, mergeCatalog, resolveModelInfo, withCustomModels } from "./catalog.js";
+import {
+  hintRouterWindows,
+  KNOWN_MODELS,
+  mergeCatalog,
+  resolveModelInfo,
+  withCustomModels,
+} from "./catalog.js";
 import { settingsEnvAt } from "../sessions.js";
 import { finishReason } from "./turn.js";
 import {
@@ -165,6 +171,43 @@ assert.equal(
   1_000_000,
   "Claude's own Sonnet keeps its window",
 );
+// The real size of what the router sends an alias to is set in Settings and kept by alias. The
+// row reports it and is marked as one whose window has to be told to the CLI; a row of Claude's
+// own and an added model with no stated size are not.
+{
+  const sizes = hintRouterWindows(
+    {
+      "routerWindow:claude-code:sonnet": 262_144,
+      "routerWindow:claude-code:opus": 12, // below the floor: not a window
+      "routerWindow:claude-code-other:sonnet": 64_000, // another mount's
+      "hideModel:claude-code:sonnet": true,
+    },
+    "claude-code",
+  );
+  assert.deepEqual(sizes, { sonnet: 262_144 });
+  const sized = mergeCatalog(cli, KNOWN_MODELS, picker && { ...picker, routerWindows: sizes });
+  const at = (id: string) => sized.find((m) => m.id === id);
+  assert.deepEqual(
+    [
+      at("claude-sonnet-5")?.contextWindow,
+      at("claude-sonnet-5")?.routers,
+      at("claude-sonnet-5")?.sized,
+    ],
+    [262_144, "sonnet", true],
+  );
+  assert.deepEqual(
+    [at("claude-haiku-4-5")?.contextWindow, at("claude-haiku-4-5")?.sized],
+    [200_000, true],
+    "an alias with no size set runs on the default, and says so to the CLI too",
+  );
+  assert.equal(at("claude-fable-5-1")?.sized, undefined, "Claude's own row: the CLI knows it");
+  assert.deepEqual(
+    [at("lutechi-llm")?.contextWindow, at("lutechi-llm")?.sized],
+    [256_000, true],
+    "an added model with a stated size",
+  );
+  assert.equal(at("claude-opus-4-5")?.sized, undefined, "an added model with none stated");
+}
 assert.equal(named("claude-haiku-4-5"), "Local Qwen small");
 assert.ok(routed.includes("lutechi-llm") && routed.includes("by-hand"));
 assert.ok(routed.includes("claude-opus-4-5"), "an added row stays whatever it names");

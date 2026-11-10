@@ -35,6 +35,14 @@ interface CatalogModel {
     createdAt?: number;
     /** Effort levels the Models API reports for this model that the plugin does not know yet. */
     unknownEfforts?: string[];
+    /** Set on one of the CLI's aliases that a router took over (`mergeCatalog`), to the alias
+     *  (`sonnet`, `opus`, `haiku`): the model behind it is the router's, so its window is not
+     *  Claude's and can be set in Settings, where the alias is the key it is kept under. */
+    routers?: string;
+    /** The window on this row is one the plugin decided or was told, not one the CLI knows for the
+     *  model: a router's alias, or a row whose entry states a size. A session on such a row is
+     *  started with that window, since the CLI would otherwise manage it against its own guess. */
+    sized?: true;
 }
 /** Build one KNOWN_MODELS row: the provider is always claude-code, so callers pass only the id, label, context window and efforts, filling description when given. */
 declare const M: (id: string, label: string, contextWindow: number, efforts: readonly string[], description?: string) => CatalogModel;
@@ -128,6 +136,11 @@ export declare const hideModelHint: (provider: string, id: string) => string;
  * nothing.
  */
 export declare const hintHiddenModels: (hints: Record<string, boolean | number>, provider: string) => string[];
+/** The hints key a router alias's window is kept under, for one mount. */
+export declare const routerWindowHint: (provider: string, alias: string) => string;
+/** The windows Settings holds for one mount's router aliases, by alias, read off the hints
+ *  store: whole numbers within the bounds a custom model's window is held to. */
+export declare const hintRouterWindows: (hints: Record<string, boolean | number>, provider: string) => Record<string, number>;
 /**
  * settings.json's picker with the plugin config's `customModels` added as option rows, after the
  * file's own: `mergeCatalog` keeps the last row written for an id, so a model named in both takes
@@ -138,8 +151,9 @@ export declare const hintHiddenModels: (hints: Record<string, boolean | number>,
  * `availableModels` in settings.json still applies to these rows, as it does to the file's own.
  */
 export declare function withCustomModels(picker: PickerSettings | undefined, custom: readonly CustomModel[]): PickerSettings | undefined;
-/** The window a router's alias row reports: the CLI's own assumption for a base URL that is not
- *  Anthropic's, since the model behind the alias is not one this catalog can look up. */
+/** The window a router's alias row gets until someone states the real one: what the CLI assumes
+ *  for a model it has never heard of, since the model behind the alias is not one this catalog
+ *  can look up. */
 export declare const ROUTED_WINDOW = 200000;
 /** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's

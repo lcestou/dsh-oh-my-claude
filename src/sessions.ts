@@ -1132,6 +1132,20 @@ type EffortLevel = (typeof EFFORTS_ALL)[number];
 const isEffortLevel = (v: unknown): v is EffortLevel =>
   typeof v === "string" && EFFORTS_ALL.some((level) => level === v);
 
+/** One model as the Settings card's Models block gets it. `hidden` is the row's switch, `locked`
+ *  a hide the plugin config holds, `off` the picker leaving it out for the box's route.
+ *  `window` is the context window the row reports, and `routers` the alias a router took over,
+ *  present only on such a row: the key its window is kept under in the hints store. */
+export interface PickerRow {
+  id: string;
+  name: string;
+  hidden: boolean;
+  locked: boolean;
+  off: boolean;
+  window: number;
+  routers?: string;
+}
+
 /** The two settings.json keys that shape Claude Code's own `/model` picker. */
 export interface PickerSettings {
   /** Allowlist entries: a family alias, a version prefix or a full id. Absent means no allowlist. */
@@ -1151,6 +1165,9 @@ export interface PickerSettings {
   /** The model ids the same `env` points the aliases at (`ANTHROPIC_DEFAULT_<ALIAS>_MODEL`), by
    *  alias. A router that names nothing still says here which aliases it took over. */
   aliasModels?: AliasNames;
+  /** The context window someone set in Settings for a router's alias, by alias: the size of the
+   *  model the router really sends it to, which no file of the router's states. */
+  routerWindows?: Record<string, number>;
 }
 
 /** A name per CLI alias (`sonnet`, `opus`, `haiku`, `fable`), as someone set them. */
@@ -1187,14 +1204,22 @@ export function aliasNamesIn(
 export async function settingsEnvAt(
   userPath: string,
   cwd: string | null,
-): Promise<{ env: Record<string, string>; from: Record<string, string> }> {
+): Promise<{
+  env: Record<string, string>;
+  from: Record<string, string>;
+  /** The `autoCompactWindow` key of the highest file that sets one: a window someone chose. */
+  autoCompactWindow?: number;
+}> {
   const env: Record<string, string> = {};
   const from: Record<string, string> = {};
+  let autoCompactWindow: number | undefined;
   const texts = await settingsTexts({}, userPath, cwd).catch(() => []);
   // `settingsTexts` answers highest precedence first; assigning lowest first lets each scope
   // overwrite the ones it outranks.
   for (const { scope, text } of texts.toReversed()) {
-    const block = parseSettingsText(text).value?.env;
+    const value = parseSettingsText(text).value;
+    if (typeof value?.autoCompactWindow === "number") autoCompactWindow = value.autoCompactWindow;
+    const block = value?.env;
     if (!isJsonObject(block)) continue;
     for (const [k, v] of Object.entries(block))
       if (typeof v === "string") {
@@ -1202,7 +1227,7 @@ export async function settingsEnvAt(
         from[k] = scope;
       }
   }
-  return { env, from };
+  return autoCompactWindow === undefined ? { env, from } : { env, from, autoCompactWindow };
 }
 
 /**
@@ -2144,7 +2169,7 @@ export interface SessionRouteOptions {
     Array<{
       provider: string;
       host: string | null;
-      models: Array<{ id: string; name: string; hidden: boolean; locked: boolean; off: boolean }>;
+      models: PickerRow[];
       custom: CustomModel[];
       route: Route;
     }>

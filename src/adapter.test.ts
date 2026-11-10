@@ -6743,6 +6743,65 @@ console.log("interrupt-on-abort ok");
     const turn = { messages: messageList([{ role: "user", content: "hi" }]) } as never;
     assert.equal((await routed.prepare(turn)).spec.route, routerUrl);
 
+    // A session on one of the router's rows is started with that row's window, since the CLI
+    // would run it against Claude's (measured: 1,000,000 for `sonnet` behind a router). The
+    // default until a size is set in Settings, then that size; a row of Claude's own is left to
+    // the CLI. Both variables are set: one sizes a model the CLI has never heard of, the other
+    // caps one it knows.
+    const on = (model: string) =>
+      ({ messages: messageList([{ role: "user", content: "hi" }]), model }) as never;
+    const routedId =
+      (await routed.listModels("claude-code-route-routed")).find((m) => m.name === "Local Qwen")
+        ?.id ?? "";
+    assert.equal((await routed.prepare(on(routedId))).spec.window, 200_000);
+    const hintsFile = joinPath(stateDir("claude-code"), "hints.json");
+    await writeFile(
+      hintsFile,
+      JSON.stringify({ "routerWindow:claude-code-route-routed:sonnet": 262_144 }),
+    );
+    const sizedSpec = (await routed.prepare(on(routedId))).spec;
+    assert.equal(sizedSpec.window, 262_144, "the size set in Settings");
+    assert.equal(
+      (await routed.resolveModel("claude-code-route-routed", routedId)).context?.contextWindow,
+      262_144,
+      "and dsh's ring is told the same number",
+    );
+    assert.deepEqual(
+      [
+        routed.localEnvOverride(false, sizedSpec.window)?.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
+        routed.localEnvOverride(false, sizedSpec.window)?.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+      ],
+      ["262144", "262144"],
+    );
+    assert.equal(
+      routed.localEnvOverride(false)?.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+      undefined,
+      "no window in the spec, nothing set",
+    );
+    assert.equal((await routed.prepare(on("claude-opus-5-5"))).spec.window, undefined);
+    assert.equal(
+      (await routed.prepare(on("router-only"))).spec.window,
+      undefined,
+      "no size stated",
+    );
+    // A window someone chose in a settings file outranks the row's: the CLI lets the variable
+    // beat that key, so setting it would overrule them.
+    await writeFile(
+      settings,
+      JSON.stringify({
+        autoCompactWindow: 150_000,
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    assert.equal((await routed.prepare(on(routedId))).spec.window, undefined);
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    await rm(hintsFile, { force: true });
+
     // The key a routed turn sends is the router's, set in a settings file, not the Claude login.
     // The turn knows it, and a 401 on it leaves the box logged in: flagged logged out, the box
     // lost its model menu and its owner was told to log in again, which could not help.

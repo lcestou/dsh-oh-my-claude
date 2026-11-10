@@ -115,6 +115,7 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
             (k) =>
               k.startsWith("hideModel:") ||
               k.startsWith("routedClaude:") ||
+              k.startsWith("routerWindow:") ||
               k === "proxyFirstParty" ||
               k === "proxyFirstPartyOff",
           )

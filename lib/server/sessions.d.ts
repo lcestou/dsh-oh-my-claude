@@ -362,6 +362,19 @@ export interface PickerOption {
     added?: true;
 }
 type EffortLevel = (typeof EFFORTS_ALL)[number];
+/** One model as the Settings card's Models block gets it. `hidden` is the row's switch, `locked`
+ *  a hide the plugin config holds, `off` the picker leaving it out for the box's route.
+ *  `window` is the context window the row reports, and `routers` the alias a router took over,
+ *  present only on such a row: the key its window is kept under in the hints store. */
+export interface PickerRow {
+    id: string;
+    name: string;
+    hidden: boolean;
+    locked: boolean;
+    off: boolean;
+    window: number;
+    routers?: string;
+}
 /** The two settings.json keys that shape Claude Code's own `/model` picker. */
 export interface PickerSettings {
     /** Allowlist entries: a family alias, a version prefix or a full id. Absent means no allowlist. */
@@ -381,6 +394,9 @@ export interface PickerSettings {
     /** The model ids the same `env` points the aliases at (`ANTHROPIC_DEFAULT_<ALIAS>_MODEL`), by
      *  alias. A router that names nothing still says here which aliases it took over. */
     aliasModels?: AliasNames;
+    /** The context window someone set in Settings for a router's alias, by alias: the size of the
+     *  model the router really sends it to, which no file of the router's states. */
+    routerWindows?: Record<string, number>;
 }
 /** A name per CLI alias (`sonnet`, `opus`, `haiku`, `fable`), as someone set them. */
 export type AliasNames = Record<string, string>;
@@ -402,6 +418,8 @@ export declare function aliasNamesIn(env: Record<string, string | undefined>, su
 export declare function settingsEnvAt(userPath: string, cwd: string | null): Promise<{
     env: Record<string, string>;
     from: Record<string, string>;
+    /** The `autoCompactWindow` key of the highest file that sets one: a window someone chose. */
+    autoCompactWindow?: number;
 }>;
 /**
  * Read what settings.json says about the picker. Anything the CLI would ignore is dropped here,
@@ -965,13 +983,7 @@ export interface SessionRouteOptions {
     pickerModels?: () => Promise<Array<{
         provider: string;
         host: string | null;
-        models: Array<{
-            id: string;
-            name: string;
-            hidden: boolean;
-            locked: boolean;
-            off: boolean;
-        }>;
+        models: PickerRow[];
         custom: CustomModel[];
         route: Route;
     }>>;

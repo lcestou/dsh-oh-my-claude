@@ -1,10 +1,11 @@
-// The Models block's "Add a model" part: the models a person added for one box, each with a
-// Remove, and the form that adds one. The list lives on the box (a file under the plugin's state,
-// through `PUT /custom-models`), so every browser sees it; this file keeps no copy of its own
-// beyond the form's draft.
+// The Models block's "Add a model" form, and the one request that stores a box's added models.
+// The list lives on the box (a file under the plugin's state, through `PUT /custom-models`), so
+// every browser sees it. An added model shows once, as a row of the block with its size and a
+// Remove on it (`ModelRow` in settings-card.tsx); this file keeps no copy beyond the form's draft.
 import { useRef, useState } from "react";
 import { t, useLocale } from "./i18n.js";
-import { ACCENT, btn, btnPrimary, inputStyle, readJson, ROUTE, select, T } from "./shared.js";
+import { OTHER, WINDOWS, windowLabel } from "./model-size.js";
+import { ACCENT, btnPrimary, inputStyle, readJson, ROUTE, select, T } from "./shared.js";
 
 /** One model added in Settings, as the server stores it and `GET /models?all=1` returns it. */
 export interface CustomModelEntry {
@@ -14,13 +15,17 @@ export interface CustomModelEntry {
   efforts?: string[];
 }
 
-/** The window sizes the form offers by name; anything else is typed under "Other". */
-const WINDOWS = [128_000, 200_000, 256_000, 512_000, 1_000_000] as const;
-/** The dropdown's value for "type an exact number". */
-const OTHER = "other";
-/** A window size the way people say it: 128000 is "128k", 1000000 is "1M". */
-const windowLabel = (tokens: number): string =>
-  tokens >= 1_000_000 ? `${tokens / 1_000_000}M` : `${tokens / 1000}k`;
+/** Store `models` as the whole list of added models for the mount `provider` names. Rejects with
+ *  the server's sentence when it refuses the list (a bad id, a duplicate), and nothing is
+ *  written then. */
+export const putCustomModels = (provider: string, models: CustomModelEntry[]): Promise<void> =>
+  fetch(`${ROUTE}/custom-models`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ provider, models }),
+  })
+    .then((r) => readJson<{ models?: CustomModelEntry[] }>(r))
+    .then(() => undefined);
 
 /** The router this feature was asked for, named the way the proxy row names Headroom. */
 const CC_SWITCH_URL = "https://github.com/farion1231/cc-switch";
@@ -37,10 +42,10 @@ const draftEntry = (id: string, name: string, tokens: string): CustomModelEntry 
 };
 
 /**
- * The added models of one box and the form that adds another. `saved` is the box's list as the
- * server last returned it; every change sends the whole next list and then calls `onSaved`, which
- * re-reads the block, so the rows above and this list never disagree about what is stored. A
- * refused save (a bad id, a duplicate) shows the server's sentence and keeps the draft.
+ * The form that adds a model to one box. `saved` is the box's list as the server last returned
+ * it; an add sends the whole next list and then calls `onSaved`, which re-reads the block, so
+ * the new model appears among the rows above. A refused save (a bad id, a duplicate) shows the
+ * server's sentence and keeps the draft.
  */
 export function CustomModelsEditor({
   provider,
@@ -62,18 +67,12 @@ export function CustomModelsEditor({
   const [error, setError] = useState("");
   const [done, setDone] = useState("");
   const idField = useRef<HTMLInputElement>(null);
-  const fold = useRef<HTMLElement>(null);
   /** Store `next` as this box's whole list; resolves true when the server took it. */
   const save = (next: CustomModelEntry[]): Promise<boolean> => {
     setBusy(true);
     setError("");
     setDone("");
-    return fetch(`${ROUTE}/custom-models`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider, models: next }),
-    })
-      .then((r) => readJson<{ models?: CustomModelEntry[] }>(r))
+    return putCustomModels(provider, next)
       .then(() => {
         onSaved();
         return true;
@@ -96,54 +95,11 @@ export function CustomModelsEditor({
       idField.current?.focus();
     });
   };
-  const remove = (entry: CustomModelEntry) => {
-    void save(saved.filter((m) => m.model !== entry.model)).then((ok) => {
-      if (!ok) return;
-      setDone(t("main.settingsUi.customDidRemove", { name: entry.label ?? entry.model }));
-      // The button that had focus is gone with its row; the fold's summary is the nearest thing
-      // that stays, so the keyboard does not fall back to the top of the page.
-      fold.current?.focus();
-    });
-  };
   const field = { display: "grid", gap: 4, fontSize: 12, color: T.muted } as const;
   return (
     <div data-omc-custom-models={provider} style={{ marginTop: 12 }}>
-      {saved.length > 0 && (
-        <div style={{ display: "grid", gap: 6, marginBottom: 8 }}>
-          <div style={{ color: T.muted, fontSize: 12 }}>{t("main.settingsUi.customAdded")}</div>
-          {saved.map((m) => (
-            <div
-              key={m.model}
-              data-omc-custom-model={m.model}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-              }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <div>{m.label ?? m.model}</div>
-                <div style={{ color: T.faint, fontSize: 11, fontFamily: "monospace" }}>
-                  {m.model}
-                </div>
-              </div>
-              <button
-                type="button"
-                data-omc-custom-model-remove=""
-                style={btn}
-                disabled={busy}
-                aria-label={t("main.settingsUi.customRemoveNamed", { name: m.label ?? m.model })}
-                onClick={() => remove(m)}
-              >
-                {t("main.settingsUi.customRemove")}
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
       <details data-omc-custom-models-add="">
-        <summary ref={fold} style={{ cursor: "pointer", color: T.muted, fontSize: 13 }}>
+        <summary style={{ cursor: "pointer", color: T.muted, fontSize: 13 }}>
           {t("main.settingsUi.customAddTitle")}
         </summary>
         <form

@@ -1,6 +1,7 @@
 import type { Spawner, SubprocessHandle, CliModel } from "../process.js";
 import { type PluginLoadError } from "../plugins.js";
 import { LlmAdapter, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { type PickerRow } from "../sessions.js";
 import { type OmcEvent } from "../events.js";
 import { readUsage } from "../usage.js";
 import { type McpBridge } from "../mcp.js";
@@ -214,6 +215,16 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * "issue with the selected model", and this is what lets the failure say why (`finishReason`).
      */
     private routerOnly;
+    /**
+     * The window a session on `model` in `cwd` has to be started with, or undefined when the CLI's
+     * own figure stands: every model of Claude's, and every row whose entry states no size. Set
+     * for a router's alias (the size kept in Settings, or the default) and for an added model with
+     * a stated size. A window someone chose themselves outranks it and leaves this undefined:
+     * `autoCompactWindow` in a settings file, or either of the CLI's two variables already in the
+     * environment or a settings `env`; the CLI lets the variable beat the settings key, so setting
+     * it here would overrule that choice.
+     */
+    private sizedWindow;
     /** What a listing is filtered by: the state, and this mount's "also list Claude's own models"
      *  switch (`routedClaude:<provider>` in the hints store). */
     private routeFilter;
@@ -263,13 +274,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     pickerBoxes(): Promise<Array<{
         provider: string;
         host: string | null;
-        models: Array<{
-            id: string;
-            name: string;
-            hidden: boolean;
-            locked: boolean;
-            off: boolean;
-        }>;
+        models: PickerRow[];
         custom: CustomModel[];
         route: Route;
     }>>;
@@ -289,13 +294,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * Anthropic, or one of Claude's own while a router has renamed the aliases. Default is left
      * out, since it is never hidden.
      */
-    pickerModels(): Promise<Array<{
-        id: string;
-        name: string;
-        hidden: boolean;
-        locked: boolean;
-        off: boolean;
-    }>>;
+    pickerModels(): Promise<PickerRow[]>;
     /** After a `result` frame: remember a login failure for the card, and name the box's providers
      *  logged out so the picker stops offering them; a turn that succeeded clears both. */
     noteTurnLogin(sessionId: string, result: ResultFrame): void;
@@ -981,9 +980,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * this box's panel login as CLAUDE_CODE_OAUTH_TOKEN for the default instance. A second instance
      * keeps its own login, which is what a second instance is for.
      */
-    localEnvOverride(firstParty?: boolean): Record<string, string> | undefined;
+    localEnvOverride(firstParty?: boolean, window?: number): Record<string, string> | undefined;
     /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
-    keeperEnv(firstParty?: boolean): Record<string, string>;
+    keeperEnv(firstParty?: boolean, window?: number): Record<string, string>;
     /** Spawner for one session: keeper mode needs the session to place and name the keeper. A spec
      *  with `child` set runs as dsh's child whatever the switch says now: the spec is the decision
      *  `prepare` made for this process. */
@@ -1026,7 +1025,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * purpose one-shot (title/compaction) always runs on the local claude for the default provider. */
     hostLabelFor(sessionId: string | undefined, purpose?: string): string | undefined;
     /** The function that spawns a session's claude: over SSH for an ssh box, over SSH on the box for a remote-workspace cwd, else the local seam or node spawner with this box's login. `child` picks the seam or node; a one-shot with no session passes none and gets the seam only under `spawn: dsh` in the config, as before the switch existed. */
-    spawner(firstParty?: boolean, child?: "node" | "dsh"): Spawner;
+    spawner(firstParty?: boolean, child?: "node" | "dsh", window?: number): Spawner;
     /** Kill this instance's live processes and drop them from the shared registry: called when an SSH
      * box is removed from the panel, so its remote `claude` sessions do not outlive the mount. */
     disposeProcesses(): void;
