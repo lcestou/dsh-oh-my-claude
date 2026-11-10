@@ -38,6 +38,7 @@ import {
   tookDuration,
 } from "./closing.js";
 import { COST_DIALOG_CSS } from "./cost.js";
+import { SETTINGS_EVENT } from "./picker.js";
 import { RAINBOW_CSS } from "./ultrathink.js";
 
 /** Default frames, played out and back on the CLI's eased 2 s cosine (see spinnerFrameAt). */
@@ -1021,6 +1022,13 @@ export function watchTurnStatus(ctx: ClientCtx) {
   markBody();
   const beat = setInterval(guard(markBody), 1000);
   whenContextGone(() => clearInterval(beat));
+  // The verbs come from settings.json, which the settings editor on this page can rewrite. Drop the
+  // read so the next row wired reads the file again; a row already up keeps the verbs it drew with.
+  const dropSpinner = () => {
+    spinnerSettings = undefined;
+  };
+  window.addEventListener(SETTINGS_EVENT, dropSpinner);
+  whenContextGone(() => window.removeEventListener(SETTINGS_EVENT, dropSpinner));
   /** The newest process group on the page, read once per scan pass rather than once per
    *  candidate: a streaming turn dirties the page many times a frame, and each candidate group
    *  asking for itself made the scan quadratic in the length of the conversation. */
@@ -1042,8 +1050,8 @@ export function watchTurnStatus(ctx: ClientCtx) {
     const activeId = activeClaudeSession(ctx);
     if (!activeId) return;
     if (!hasTheme("row")) return; // the Claude look's status row is off: dsh's own text stays
-    spinnerSettings ??= loadSpinnerSettings(); // once per page load
-    // The settings load once and resolve for good, so this is a microtask after the first frame.
+    spinnerSettings ??= loadSpinnerSettings(); // until a settings write drops it
+    // The read is shared until a settings write drops it, so after the first frame this is a microtask.
     // The await used to be unhandled, so a throw inside `wireTurnStatus` became a rejection
     // `guard` never saw: the spinner simply never appeared, with nothing on the console to say why.
     void spinnerSettings.then((settings) => {
