@@ -677,6 +677,37 @@ const noFlag = buildArgs({
 } as any);
 assert.ok(!noFlag.includes("--plugin-dir"), "older CLI without the flag: left out");
 
+// The spend cap is the only money guard the plugin hands the CLI: a chat turn carries it, a CLI
+// that does not list the flag is not handed one it would die on, unset means no cap (not a cap of
+// 0), and title and compaction one-shots never carry it.
+{
+  const valueOf = (args: string[], flag: string) => {
+    const i = args.indexOf(flag);
+    return i === -1 ? undefined : args[i + 1];
+  };
+  const capped = new Config({ maxBudgetUsd: 2.5 });
+  assert.equal(
+    valueOf(buildArgs({ model: "m", config: capped } as any), "--max-budget-usd"),
+    "2.5",
+  );
+  const listed = new Set(["--max-budget-usd"]);
+  assert.equal(
+    valueOf(buildArgs({ model: "m", config: capped, flags: listed } as any), "--max-budget-usd"),
+    "2.5",
+  );
+  const unlisted = new Set(["--model"]);
+  assert.ok(
+    !buildArgs({ model: "m", config: capped, flags: unlisted } as any).includes("--max-budget-usd"),
+  );
+  assert.ok(!buildArgs({ model: "m", config: new Config({}) } as any).includes("--max-budget-usd"));
+  assert.ok(
+    !buildArgs({ model: "m", config: capped, purpose: "title" } as any).includes(
+      "--max-budget-usd",
+    ),
+  );
+  console.log("budget cap ok");
+}
+
 // input line: text first, then images
 const line = JSON.parse(buildInput("hi", [{ mediaType: "image/png", data: "AAA" }]));
 assert.equal(line.type, "user");
@@ -1736,6 +1767,40 @@ trMissing.translate({
 });
 // no total_cost_usd or duration_ms → condition stays false, nothing recorded
 assert.equal(missing.length, 0);
+
+// A result with only one of the two figures, or one of an odd type, still records a finite
+// number: the adapter takes the cost as the session's running total, and NaN would stick there.
+{
+  const record = (frame: object) => {
+    const out: TurnRecord[] = [];
+    // SAFETY: test fixture; the money fields are not in the ClaudeEvent type but exist on CLI output
+    new Translator({ onResult: (s: TurnRecord) => out.push(s) }).translate({
+      type: "result",
+      is_error: false,
+      stop_reason: "end_turn",
+      ...frame,
+    } as any);
+    return out;
+  };
+  const durationOnly = record({ duration_ms: 1000 });
+  assert.equal(durationOnly.length, 1, "a duration alone is recorded");
+  assert.equal(durationOnly[0]?.costUsd, 0);
+  assert.equal(record({ total_cost_usd: "0.25", duration_ms: 1 })[0]?.costUsd, 0.25);
+  assert.equal(
+    record({ total_cost_usd: null, duration_ms: 1 })[0]?.costUsd,
+    0,
+    "null is 0, not NaN",
+  );
+  const failed = record({
+    is_error: true,
+    subtype: "error_during_execution",
+    total_cost_usd: 0.1,
+    duration_ms: 5,
+  });
+  assert.equal(failed[0]?.costUsd, 0.1, "an error result still records the money spent");
+  assert.doesNotThrow(() => record({ total_cost_usd: 0.1, permission_denials: [null, 3, {}] }));
+  console.log("result cost ok");
+}
 
 // permission_denials converts tool calls to rule labels, deduped and in insertion order
 const deniedTurns: TurnRecord[] = [];

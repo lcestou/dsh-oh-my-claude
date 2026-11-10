@@ -606,3 +606,61 @@ console.log("state.test: ok");
   await rm(dir, { recursive: true, force: true });
   console.log("busy chain ok");
 }
+{
+  // takeInterrupted queues on markBusy's chain. Called in the same tick as a mark, it runs strictly
+  // before or after it, never between the mark's read and its write: a take called first leaves
+  // the live mark in the file, and a take called second sees the mark already made.
+  const dir = tempDir("omc-busy-take-");
+  try {
+    const path = join(dir, "busy.json");
+    await writeFile(path, JSON.stringify(["old"]));
+    const [taken] = await Promise.all([takeInterrupted(path), markBusy("live", true, path)]);
+    assert.deepEqual(taken, ["old"], "the take ran first and saw only the old mark");
+    assert.deepEqual(JSON.parse(await readFile(path, "utf8")), ["live"], "the live mark survives");
+
+    await writeFile(path, JSON.stringify(["old"]));
+    const [, after] = await Promise.all([markBusy("live", true, path), takeInterrupted(path)]);
+    assert.deepEqual(after, ["old", "live"], "a take behind a mark in flight waits for its write");
+    assert.deepEqual(JSON.parse(await readFile(path, "utf8")), [], "and clears what it took");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+  console.log("busy take ok");
+}
+{
+  // costTotal and apiTotal are what a restarted process restores its running totals from, so they
+  // are kept only as a pair: one without the other would restore half a total.
+  const dir = tempDir("omc-turn-totals-");
+  try {
+    const base = {
+      at: 1,
+      costUsd: 0.5,
+      durationMs: 10,
+      input: 1,
+      output: 2,
+      cacheRead: 3,
+      cacheWrite: 4,
+      apiMs: 9,
+      turns: 1,
+    };
+    await saveTurnRecords(dir, "s", [
+      { ...base, costTotal: 7.5, apiTotal: 900, ttftMs: 40 },
+      { ...base, costTotal: 8 },
+    ]);
+    const [a, b] = (await loadTurnRecords(dir)).get("s") ?? [];
+    assert.equal(a?.costTotal, 7.5);
+    assert.equal(a?.apiTotal, 900);
+    assert.equal(a?.ttftMs, 40);
+    assert.equal(b?.costTotal, undefined, "a half pair is not restored as a total");
+    assert.equal(b?.apiTotal, undefined);
+
+    // Valid JSON of the wrong top-level shape: saving over it keeps the records.
+    await writeFile(TURNS_FILE(dir), "[]");
+    await saveTurnRecords(dir, "s", [base]);
+    const saved = JSON.parse(await readFile(TURNS_FILE(dir), "utf8"));
+    assert.equal(saved.s?.length, 1, "records saved over an array file");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+  console.log("turn totals ok");
+}

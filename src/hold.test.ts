@@ -13,6 +13,7 @@ import {
   holdName,
   holdStartScript,
   parseHoldLine,
+  asHoldRecord,
   reattachDelay,
   type RunOnBox,
 } from "./hold.js";
@@ -324,6 +325,50 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     h1.terminate();
     console.log("hold e2e ok");
   }
+}
+
+// asHoldRecord gates what a restart reattaches to from holds.json: a record with a field missing
+// or of the wrong type is refused, so no reattach runs ssh with bad arguments or a wrong offset.
+{
+  const good = {
+    sessionId: "s1",
+    host: "box",
+    name: "abc-1",
+    command: "claude",
+    args: ["-p", 7, "--verbose"],
+    cwd: "/srv",
+    procSpec: { key: "k" },
+    offset: 120,
+    startedAt: 5,
+    owner: "web",
+  };
+  const r = asHoldRecord(good);
+  assert.ok(r);
+  assert.deepEqual(r.args, ["-p", "--verbose"], "a non-string arg is dropped, not passed to ssh");
+  assert.equal(r.offset, 120);
+  assert.equal(r.owner, "web");
+  assert.equal(asHoldRecord({ ...good, owner: 3 })?.owner, undefined, "a bad owner reads as none");
+  const required = [
+    "sessionId",
+    "host",
+    "name",
+    "command",
+    "args",
+    "cwd",
+    "procSpec",
+    "offset",
+    "startedAt",
+  ];
+  for (const key of required) {
+    const rest: Record<string, unknown> = { ...good };
+    delete rest[key];
+    assert.equal(asHoldRecord(rest), undefined, `missing ${key} rejects`);
+  }
+  assert.equal(asHoldRecord({ ...good, offset: "120" }), undefined, "a string offset rejects");
+  assert.equal(asHoldRecord({ ...good, procSpec: null }), undefined);
+  assert.equal(asHoldRecord(null), undefined);
+  assert.equal(asHoldRecord("x"), undefined);
+  console.log("hold record ok");
 }
 
 // A real SubprocessHandle shape is what the runner must answer; the fake above is one.
