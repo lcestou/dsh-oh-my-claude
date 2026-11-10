@@ -1,13 +1,13 @@
 // dsh's compaction of a Claude session answered by Claude Code's own: the route, the `/compact`
 // run on the session's CLI, the reuse of a summary the CLI already made, and the sync after it.
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ClaudeCodeAdapter, Config, registryKey } from "../adapter.js";
 import { asSessionId, type PluginContext } from "../dsh.js";
 import type { ClaudeEvent, ClaudeProcess } from "../process.js";
 import { cliMidTurn, compactionRoute, type CompactionFacts } from "./cli-compaction.js";
+import { tempDir } from "../test-tmp.js";
 
 const facts = (o: Partial<CompactionFacts> = {}): CompactionFacts => ({
   enabled: true,
@@ -75,7 +75,7 @@ assert.equal(cliMidTurn({ ...idleCli, busy: true }), true);
 assert.equal(cliMidTurn({ ...idleCli, relays: { size: 1 } }), true);
 assert.equal(cliMidTurn({ ...idleCli, parked: "steer" }), true);
 
-const stateDir = await mkdtemp(join(tmpdir(), "omc-cli-compaction-"));
+const stateDir = tempDir("omc-cli-compaction-");
 const resumeLog = () => readFile(join(stateDir, "resume.log"), "utf8").catch(() => "");
 // SAFETY: partial fakes for tests; each carries what the code under test reads
 const fakeCtx = (o: object): PluginContext => o as unknown as PluginContext;

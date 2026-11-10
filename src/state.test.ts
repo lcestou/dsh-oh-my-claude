@@ -2,7 +2,6 @@
 import { livingModelId } from "./model-ids.js";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, readFile, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   loadSessionRepairs,
@@ -41,8 +40,9 @@ import {
   markBusy,
   takeInterrupted,
 } from "./state.js";
+import { tempDir } from "./test-tmp.js";
 
-const dir = await mkdtemp(join(tmpdir(), "omc-state-"));
+const dir = tempDir("omc-state-");
 
 // Nothing saved yet: empty map, no throw.
 assert.deepEqual(await loadPermissionModes(dir), new Map());
@@ -212,7 +212,7 @@ assert.deepEqual(await loadLimitWaits(dir), new Map([["s2", 2_000]]));
 console.log("limit-waits ok");
 
 // Asides: save a ring, reload; pending and malformed entries drop on load; concurrent saves serialize.
-const asidesDir = await mkdtemp(join(tmpdir(), "omc-asides-"));
+const asidesDir = tempDir("omc-asides-");
 assert.deepEqual(await loadAsides(asidesDir), new Map());
 await Promise.all([
   saveAsides(asidesDir, "a1", [
@@ -250,7 +250,7 @@ const cleaned = await loadAsides(asidesDir);
 assert.deepEqual(cleaned.get("a3"), [{ id: "ok", question: "q", pending: false, at: 1 }]);
 console.log("asides ok");
 // Starters: save per-session and default openers, reload, and clear one with a blank text.
-const startersDir = await mkdtemp(join(tmpdir(), "omc-starters-"));
+const startersDir = tempDir("omc-starters-");
 assert.deepEqual(await loadStarters(startersDir), new Map());
 await saveStarter(startersDir, "s1", "review the diff");
 await saveStarter(startersDir, "default", "what changed?");
@@ -265,7 +265,7 @@ assert.equal(starters.get("s1"), undefined);
 assert.equal(starters.get("default"), "what changed?");
 console.log("starters ok");
 // Workspace models: remember which Claude model a workspace last ran; cleared when blank or absent.
-const wsDir = await mkdtemp(join(tmpdir(), "omc-ws-"));
+const wsDir = tempDir("omc-ws-");
 // A remembered id the CLI has since renamed lands on the form the lineup still has.
 {
   const offered = [
@@ -377,7 +377,7 @@ assert.equal(
 }
 console.log("workspace models ok");
 // Context sizes: per-workspace character cost of each dsh context block.
-const csDir = await mkdtemp(join(tmpdir(), "omc-cs-"));
+const csDir = tempDir("omc-cs-");
 let csMap = await loadContextSizes(csDir);
 assert.equal(csMap.size, 0, "empty dir loads empty map");
 await saveContextSizes(csDir, "/w/a", { instructions: 100, skills: 200 }, 42);
@@ -400,7 +400,7 @@ assert.deepEqual(csMap.get("/w/b"), { sizes: { instructions: 10, runtime: 30 }, 
 console.log("context sizes ok");
 // Started ids: what another writer put in the file between two of ours survives, which it did not
 // while the set was read once and cached for the life of the process.
-const startedFile = join(await mkdtemp(join(tmpdir(), "omc-started-")), "sessions.json");
+const startedFile = join(tempDir("omc-started-"), "sessions.json");
 await rememberStarted("a", true, startedFile);
 await writeFile(startedFile, JSON.stringify(["a", "other-process"]));
 await rememberStarted("b", true, startedFile);
@@ -427,7 +427,7 @@ if (process.env.DSH_OMC_STATE_DIR !== undefined)
 // only its own name.
 {
   const { loadHolds, saveHold, dropHold } = await import("./state.js");
-  const dir = await mkdtemp(join(tmpdir(), "omc-holds-"));
+  const dir = tempDir("omc-holds-");
   await saveHold(dir, "s", { name: "old", offset: 1 });
   await saveHold(dir, "s", { name: "new", offset: 0 });
   await dropHold(dir, "s", "old");
@@ -442,7 +442,7 @@ console.log("state.test: ok");
 // undefined so the caller keeps its own default rather than having one asserted over it — the read
 // is asynchronous, and answering a value used to overwrite one set while it was in flight.
 {
-  const dir = await mkdtemp(join(tmpdir(), "omc-sync-"));
+  const dir = tempDir("omc-sync-");
   assert.equal(await loadTerminalSync(dir), undefined, "no file: no stored choice");
   await saveTerminalSync(dir, false);
   assert.equal(await loadTerminalSync(dir), false, "off once stored false");
@@ -486,7 +486,7 @@ console.log("state.test: ok");
 // The repairs record: two entries written one at a time and read back, a corrupt file reads as
 // the default, and an entry missing its verdict is skipped.
 {
-  const dir = await mkdtemp(join(tmpdir(), "omc-repairs-"));
+  const dir = tempDir("omc-repairs-");
   assert.deepEqual(await loadSessionRepairs(dir), { version: 1, lastSweepAt: 0, logs: {} });
   await recordRepair(dir, "s1", { path: "/a", mtimeMs: 1, size: 2, verdict: "fine", at: 10 });
   await recordRepair(dir, "s2", {
@@ -528,7 +528,7 @@ console.log("state.test: ok");
 {
   // An aside asked from a selection keeps its passage and its blank question across a reload,
   // so the card still shows what was asked about after a restart.
-  const dir = await mkdtemp(join(tmpdir(), "omc-asides-quote-"));
+  const dir = tempDir("omc-asides-quote-");
   await saveAsides(dir, "s", [
     { id: "q1", question: "", quote: "> hi", answer: "a", pending: false, at: 1 },
   ]);
@@ -541,7 +541,7 @@ console.log("state.test: ok");
 // The trace file is trimmed to its newest bytes once it passes the cap; the check runs on every
 // 256th append, so the test writes past that count.
 {
-  const dir = await mkdtemp(join(tmpdir(), "omc-trace-"));
+  const dir = tempDir("omc-trace-");
   const file = join(dir, "resume.log");
   const big = "x".repeat(20_000);
   for (let i = 0; i < 300; i++) await trace(file, `${i} ${big}`);
@@ -560,7 +560,7 @@ console.log("state.test: ok");
 {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
-  const home = await mkdtemp(join(tmpdir(), "omc-auth-"));
+  const home = tempDir("omc-auth-");
   const login = (token: string, expiresAt: number) =>
     JSON.stringify({ claudeAiOauth: { accessToken: token, expiresAt } });
   const bearer = (token: string) => ({
@@ -596,7 +596,7 @@ console.log("state.test: ok");
 {
   // A write that fails rejects for its own caller only: the next mark still runs. A directory
   // where the file should be makes the rename throw.
-  const dir = await mkdtemp(join(tmpdir(), "omc-busy-"));
+  const dir = tempDir("omc-busy-");
   const path = join(dir, "busy.json");
   await mkdir(path);
   await assert.rejects(markBusy("a", true, path));

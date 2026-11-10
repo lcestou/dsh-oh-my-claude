@@ -3,11 +3,11 @@
 // stdin closes, as `claude -p` does.
 import { strict as assert } from "node:assert";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pidAlive, readKeeperInfo, spawnKeeper } from "./process.js";
+import { tempDir } from "./test-tmp.js";
 
 const fake = `process.stdin.resume(); process.stdin.on("end", () => process.exit(0));`;
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -37,7 +37,7 @@ const until = async (ok: () => boolean, ms: number) => {
 };
 
 // Nobody ever attaches (the dsh that started it died first): Claude is ended.
-const lone = mkdtempSync(join(tmpdir(), "omc-orphan-"));
+const lone = tempDir("omc-orphan-");
 writeFileSync(join(lone, "spec.json"), JSON.stringify(specFor(lone, 300)));
 launch([process.execPath, fileURLToPath(new URL("./keeper.js", import.meta.url)), lone]);
 assert.ok(await until(() => Boolean(info(lone)?.exit), 6000), "an orphaned keeper ends its claude");
@@ -45,7 +45,7 @@ assert.equal(readKeeperInfo(lone)?.endedBy, "orphan", "and the boot that finds i
 assert.deepEqual(info(lone)?.exit, { code: 0, signal: null }, "by closing stdin, not a signal");
 
 // A dsh attached the whole time: nothing ends.
-const held = mkdtempSync(join(tmpdir(), "omc-orphan-"));
+const held = tempDir("omc-orphan-");
 const h = await spawnKeeper(held, specFor(held, 1500), launch);
 await wait(2500);
 assert.equal(info(held)?.exit, null, "an attached keeper is not an orphan");

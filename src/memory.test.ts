@@ -1,9 +1,9 @@
 // Offline self-check: bun src/memory.test.ts. No CLI, no network.
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deleteMemory, dropIndexLine, listMemory, memorySummary, isMemoryName } from "./memory.js";
+import { tempDir } from "./test-tmp.js";
 
 // Names: bare .md files only, no paths.
 assert.equal(isMemoryName("MEMORY.md"), true);
@@ -29,7 +29,7 @@ assert.equal(
 );
 
 {
-  const dir = await mkdtemp(join(tmpdir(), "omc-memory-"));
+  const dir = tempDir("omc-memory-");
   await writeFile(join(dir, "MEMORY.md"), "# Index\n- [A](a.md) — one\n- [B](b.md) — two\n");
   await writeFile(join(dir, "a.md"), "---\ndescription: fact a\n---\nA");
   await writeFile(join(dir, "b.md"), "---\ndescription: fact b\n---\nB");

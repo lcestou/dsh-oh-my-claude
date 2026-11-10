@@ -17,6 +17,7 @@ import {
   type RunOnBox,
 } from "./hold.js";
 import type { SubprocessHandle } from "./process.js";
+import { tempDir } from "./test-tmp.js";
 
 // One dir per spawn: same session, different stamp, different name; the hash part is stable.
 assert.notEqual(holdName("claude-code-box", "s1", 1), holdName("claude-code-box", "s1", 2));
@@ -257,9 +258,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
 // script through `sh -c` and driven through the attach script, so the FIFO, setsid, tail --pid and
 // the exit file are exercised the way the far shell will run them. Skipped where `setsid` is absent.
 {
-  const { mkdtempSync, writeFileSync, chmodSync, existsSync, readFileSync } =
-    await import("node:fs");
-  const { tmpdir } = await import("node:os");
+  const { writeFileSync, chmodSync, existsSync, readFileSync } = await import("node:fs");
   const { join } = await import("node:path");
   const { execFileSync } = await import("node:child_process");
   const { nodeSpawner } = await import("./process.js");
@@ -270,7 +269,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     hasSetsid = false;
   }
   if (hasSetsid) {
-    const home = mkdtempSync(join(tmpdir(), "omc-hold-home-"));
+    const home = tempDir("omc-hold-home-");
     const cli = join(home, "fake-claude");
     // Echoes each stdin line back as a result line; "quit" ends it with code 5.
     writeFileSync(

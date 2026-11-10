@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { costStatesOf } from "./process.js";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { REPAIR_MARKER, repairStoredTurns, repairTurns, type StoredTurn } from "./turn-repair.js";
+import { tempDir } from "./test-tmp.js";
 
 /** A stored record; `totals` adds the session totals a newer record carries. */
 const turn = (costUsd: number, apiMs: number, durationMs: number, totals?: [number, number]) => {
@@ -112,8 +112,8 @@ assert.deepEqual(costStatesOf(""), []);
 // alone, one that belongs to another mount not touched; a copy kept, a marker written, and a
 // second pass that does nothing.
 {
-  const stateDir = await mkdtemp(join(tmpdir(), "omc-repair-state-"));
-  const claudeHome = await mkdtemp(join(tmpdir(), "omc-repair-home-"));
+  const stateDir = tempDir("omc-repair-state-");
+  const claudeHome = tempDir("omc-repair-home-");
   await mkdir(join(claudeHome, "projects", "-w"), { recursive: true });
   await writeFile(
     join(claudeHome, "projects", "-w", "claude-a.jsonl"),
@@ -155,7 +155,7 @@ assert.deepEqual(costStatesOf(""), []);
   assert.equal(JSON.parse(await readFile(REPAIR_MARKER(stateDir), "utf8")).repaired, 1);
   assert.equal(await repairStoredTurns(host), undefined, "a second pass finds the marker");
   // Nothing to repair still leaves a marker, and no copy.
-  const clean = await mkdtemp(join(tmpdir(), "omc-repair-clean-"));
+  const clean = tempDir("omc-repair-clean-");
   const none = await repairStoredTurns({ ...host, stateDir: clean, ids: new Set(["b"]) });
   assert.deepEqual([none?.repaired, none?.sessions], [0, 0]);
   await assert.rejects(readFile(join(clean, "turns.json.before-repair"), "utf8"));

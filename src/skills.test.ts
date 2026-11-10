@@ -1,7 +1,6 @@
 // Offline checks for the SKILL.md head parser: bun src/skills.test.ts.
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   isWritableSkillScope,
@@ -11,6 +10,7 @@ import {
   skillTemplate,
   validSkillName,
 } from "./skills.js";
+import { tempDir } from "./test-tmp.js";
 
 {
   const plain =
@@ -67,7 +67,7 @@ import {
 // checkout root, so a session opened in a subdirectory lists the repository's skills too. A
 // directory above the checkout is not a level, and neither is a sibling.
 {
-  const tmp = await mkdtemp(join(tmpdir(), "omc-skills-"));
+  const tmp = tempDir("omc-skills-");
   const root = join(tmp, "repo");
   const sub = join(root, "packages", "app");
   const skill = async (dir: string, name: string) => {

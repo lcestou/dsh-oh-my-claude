@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UsageCredits } from "./usage.js";
 import {
@@ -12,6 +11,7 @@ import {
   usageCredits,
   usageWindows,
 } from "./usage.js";
+import { tempDir } from "./test-tmp.js";
 
 // The endpoint names a slightly different instant on every read; both land on the same minute.
 assert.deepEqual(
@@ -84,7 +84,7 @@ assert.deepEqual(usageWindows({ limits: "nope" }), []);
 
 // A fake login in a scratch home, so these reads never touch this box's own credentials: with the
 // box logged out they stopped at "needs a Claude Code login" before the fake fetch was ever called.
-const home = mkdtempSync(join(tmpdir(), "omc-usage-"));
+const home = tempDir("omc-usage-");
 writeFileSync(
   join(home, ".credentials.json"),
   JSON.stringify({

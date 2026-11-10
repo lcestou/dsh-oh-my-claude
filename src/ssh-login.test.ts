@@ -1,8 +1,7 @@
 // Offline self-check: bun src/ssh-login.test.ts. Fake spawn, fake verify, no ssh, no network.
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   deleteSshToken,
@@ -14,6 +13,7 @@ import {
   submitSshLoginCode,
   THIS_BOX,
 } from "./ssh-login.js";
+import { tempDir } from "./test-tmp.js";
 
 /** A whole token from the earlier setup-token flow: the ~100-char shape the store insists on. */
 const FULL = `sk-ant-oat01-${"A_b9".repeat(20)}`;
@@ -48,7 +48,7 @@ const no = async () => false;
 // Legacy token store: a token file from the setup-token days still reads back, a truncated one
 // reads as no login, and Log out's delete leaves nothing.
 {
-  const dir = mkdtempSync(join(tmpdir(), "omc-tok-"));
+  const dir = tempDir("omc-tok-");
   assert.equal(readSshToken(dir, "nova"), undefined);
   mkdirSync(join(dir, "ssh-tokens"), { recursive: true });
   writeFileSync(sshTokenPath(dir, "nova"), `${FULL}\n`);

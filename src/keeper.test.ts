@@ -1,10 +1,10 @@
 import { strict as assert } from "node:assert";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { attachKeeper, pidAlive, readKeeperInfo, spawnKeeper } from "./process.js";
+import { tempDir } from "./test-tmp.js";
 
 // A stand-in for claude: echoes each stdin line at once and again 300 ms later, exits on "quit".
 const fake = `
@@ -21,7 +21,7 @@ process.stdin.on("data", (d) => {
   }
 });
 `;
-const dir = mkdtempSync(join(tmpdir(), "omc-keeper-"));
+const dir = tempDir("omc-keeper-");
 const lines = (r: NodeJS.ReadableStream) => {
   const out: string[] = [];
   createInterface({ input: r, crlfDelay: Infinity }).on("line", (l) => out.push(l));
@@ -64,7 +64,7 @@ assert.equal(exit.exitCode, 3, "exit code reaches the attached client");
 await wait(100);
 assert.equal(readKeeperInfo(dir)?.exit?.code, 3, "exit recorded in keeper.json");
 // keeper.log records startup, attach/detach, kill, and child exit for post-mortem evidence
-const logDir = mkdtempSync(join(tmpdir(), "omc-keeper-log-"));
+const logDir = tempDir("omc-keeper-log-");
 await spawnKeeper(
   logDir,
   {
@@ -102,7 +102,7 @@ const hLogKill = await attachKeeper(logDir, 2000);
 hLogKill.terminate();
 await hLogKill.done;
 // Send kill to set endedBy=client, then check keeper.json.
-const logDir2 = mkdtempSync(join(tmpdir(), "omc-keeper-log2-"));
+const logDir2 = tempDir("omc-keeper-log2-");
 const h4 = await spawnKeeper(
   logDir2,
   {
@@ -127,7 +127,7 @@ console.log("keeper-log ok");
 
 // A respawn into the same directory must attach to the new keeper, not the old one still
 // listening for its last 3 s (the model-switch race of 2026-09-06).
-const raceDir = mkdtempSync(join(tmpdir(), "omc-keeper-race-"));
+const raceDir = tempDir("omc-keeper-race-");
 const spawnInto = (d: string) =>
   spawnKeeper(
     d,

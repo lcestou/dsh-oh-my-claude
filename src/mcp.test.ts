@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   handleRpc,
@@ -14,6 +13,7 @@ import {
 } from "./mcp.js";
 import { OWN_TOOL_NAMES } from "./mcp-config.js";
 import type { Agent } from "./dsh.js";
+import { tempDir } from "./test-tmp.js";
 
 const agent = { id: "a1" };
 // SAFETY: partial fake for tests
@@ -191,8 +191,7 @@ assert.ok(
 // Under DSH Desktop the bridge serves new Claude processes from its own loopback listener, so the
 // browser-access gate Desktop puts on web server routes cannot 403 it. The web server route stays
 // registered as a fallback. A host without the gate keeps the web server route and starts nothing.
-// Honor TMPDIR like the test script's DSH_OMC_STATE_DIR: sandboxed runs cannot write os.tmpdir().
-const tmp = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "omc-mcp-"));
+const tmp = tempDir("omc-mcp-");
 const cleanups: Array<() => void> = [];
 // SAFETY: minimal host double: only what registerMcpBridge reads
 /** A host double; `gated` adds the service DSH Desktop's launcher provides. */
