@@ -17,6 +17,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - A subagent Claude starts in the same step as `open_session` no longer has its result shown twice when the new session is slow to open. The step also no longer pauses a second and a half before the subagent starts.
 - The Sessions card in Settings says "1 prompt" for a session with a single prompt, not "1 prompts".
 - Screen readers now read out the outcome of a save or check in Settings: the settings editor's "Saved at" line and a refused save, the starter's Saved note, Check now in Claude updates, and a failed tool rows or terminal sync switch.
+- The update pill beside the Oh My Claude heading in Settings goes away as soon as you turn the Update notice switch off, and comes back when you turn it on again, without reopening Settings.
 
 ## [1.6.1] - 2026-11-09
 

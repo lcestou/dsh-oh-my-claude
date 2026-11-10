@@ -10,6 +10,7 @@ import { ACCENT, pill, readJson, T } from "./shared.js";
 import { REPO_URL } from "../stars.js";
 import { t, useLocale } from "./i18n.js";
 import { usePluginsPage } from "./plugins-page.js";
+import { HINTS_EVENT, loadHints } from "./hints.js";
 
 const ROUTE = "/dsh-oh-my-claude";
 
@@ -231,13 +232,32 @@ export function PluginUpdateBadge({ onOpen }: { onOpen?: () => void }) {
   const [upd, setUpd] = useState<PillStatus | null>(null);
   useEffect(() => {
     let live = true;
-    void loadStatus().then((s) => {
-      // The server sends `latest` only with an offer: a command, the dsh it needs, or, on DSH
-      // Desktop, which has no command, the release alone for the Plugins page to install.
-      if (live && s.latest) setUpd(s);
-    });
+    /** Read the offer and show or drop the pill; `fresh` skips the shared ten-second answer. */
+    const load = (fresh: boolean) => {
+      if (fresh) statusOnce = undefined;
+      void loadStatus().then((s) => {
+        // The server sends `latest` only with an offer: a command, the dsh it needs, or, on DSH
+        // Desktop, which has no command, the release alone for the Plugins page to install.
+        if (live) setUpd(s.latest ? s : null);
+      });
+    };
+    load(false);
+    // The Update notice switch (`updateCheckOff`) decides on the server whether `/status` offers
+    // anything, and it sits a few rows below this pill. Re-read when that one flag flips, from
+    // this tab or another; HINTS_EVENT fires after the write lands, so the read sees the new value.
+    // Not on every hint: `/status` runs the box's CLI probes.
+    let off: boolean | undefined;
+    const onHints = () =>
+      void loadHints().then((h) => {
+        const now = h.updateCheckOff === true;
+        if (off !== undefined && now !== off) load(true);
+        off = now;
+      });
+    onHints();
+    window.addEventListener(HINTS_EVENT, onHints);
     return () => {
       live = false;
+      window.removeEventListener(HINTS_EVENT, onHints);
     };
   }, []);
   return upd?.latest ? (
