@@ -4863,6 +4863,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     proc.prep = prep;
     if (cont.mode !== "relay") {
       proc.dshIds = new Set(); // ids only need to survive a relay round trip
+      proc.dshNames = new Map();
       proc.relayed = new Set();
       // dsh clears the todo panel at turn/start; re-append the last list now that the turn is
       // open (a todo/write outside an open turn is rejected by dsh's todo invariant).
@@ -4963,6 +4964,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       toolTextLimit: this.config.toolTextLimit,
       relay: this.mcp !== undefined && this.config.dshTools,
       dshIds: proc.dshIds,
+      dshNames: proc.dshNames,
       relayed: proc.relayed,
       hostLabel: this.hostLabelFor(options.sessionId),
       // A 5xx or 529 asks the status page once a minute; the note lands on the next retry line.
@@ -5286,7 +5288,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           c.reject(new Error("claude turn ended before dsh could run the tool"));
         return outcomeUnderUs;
       };
-      while (calls.length < tr.dshIds.size) {
+      while (calls.length < tr.relayableIds().length) {
         const more = await proc.nextEvent(RELAY_BATCH_MS);
         if (more === null) return abandon("ended");
         if (more.type === "timeout") break;
@@ -5328,8 +5330,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         }
       }
       flushPending();
-      // The oldest outstanding dsh tool_use blocks are the ones these calls came from.
-      const ids = [...tr.dshIds];
+      // The oldest outstanding dsh tool_use blocks are the ones these calls came from; the
+      // bridge's own tools never relay, so they are not among them.
+      const ids = tr.relayableIds();
       for (const [i, call] of calls.entries()) {
         if (ids[i] !== undefined) tr.relayed.add(ids[i]);
         yield* relayBlocks(tr, call);

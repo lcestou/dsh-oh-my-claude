@@ -31,17 +31,22 @@ type OpenHost = Required<Pick<PluginContext, "sessions" | "workspaceRegistry" | 
  */
 export declare function openSession(ctx: OpenHost, agent: Agent, args: OpenSessionArgs, signal: AbortSignal): Promise<string>;
 /**
- * Sends a follow-up into an existing session (#255, from huananhuxu-debug's patch). The session is
- * resolved first so an unknown id fails with dsh's own error instead of a bare prompt rejection; a
- * cold session resumes on dsh's side and keeps its route. The cursor is read before the prompt, so
- * replies past it are this message's, plus any the session's running turn finishes meanwhile.
+ * Sends a follow-up into an existing session (#255, from huananhuxu-debug's patch), under a line
+ * naming the calling session as its sender. The cursor is read before the prompt, so replies past
+ * it are this message's, plus any the session's running turn finishes meanwhile; reading it does
+ * not wake a cold session, and an unknown id fails there with dsh's own "not found". dsh's `prompt`
+ * resolves the session itself, so a cold one resumes only for a message that is really sent, and
+ * keeps its route.
  */
 export declare function promptSession(ctx: Pick<OpenHost, "sessionController">, agent: Agent, args: Record<string, JsonValue>, signal: AbortSignal): Promise<string>;
 /**
- * Waits on a session through dsh's own `sessionController.wait` and renders its assistant replies
- * as text, oldest first, under a status line with the cursor to pass next time. Only text blocks
- * are kept: tool calls and thinking are the session's working, not its answer. A timeout outside
- * 1..WAIT_MAX_S seconds is clamped rather than refused.
+ * Waits on a session through dsh's own `sessionController.wait` and renders its text replies,
+ * oldest first, under a status line that ends with the cursor to pass next time. The output is
+ * bounded twice: dsh is asked for WAIT_MAX_REPLIES messages at most, and the newest of those are
+ * kept up to WAIT_MAX_CHARS, the oldest kept one cut short; a line says when older replies were
+ * left out, and nothing here can fetch them afterwards. An afterSeq or timeoutSeconds of the wrong
+ * type is refused, since a wait that quietly ran without its cursor returned old replies as if they
+ * answered the last message. A timeout outside 1..WAIT_MAX_S seconds is clamped rather than refused.
  */
 export declare function waitSession(ctx: Pick<OpenHost, "sessionController">, agent: Agent, args: Record<string, JsonValue>, signal: AbortSignal): Promise<string>;
 /** One JSON-RPC request as the CLI sends it; only `id`, `method` and `params` are read. */

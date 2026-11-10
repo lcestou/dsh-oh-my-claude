@@ -32,6 +32,7 @@ import type {
   ToolSchema,
 } from "./dsh.js";
 import { asSessionId } from "./dsh.js";
+import { resolvedAgent } from "./adapter/turn.js";
 
 /** HTTP endpoint path for the MCP bridge handler. */
 export const MCP_PATH = "/dsh-oh-my-claude/mcp";
@@ -102,7 +103,7 @@ const OPEN_SESSION: ToolSchema = {
 const PROMPT_SESSION: ToolSchema = {
   name: "prompt_session",
   description:
-    "Send a follow-up message into an existing dsh session, e.g. one open_session returned. A cold session resumes and keeps its own model and context. mode queue (default) runs it after the current turn; steer injects it into the running turn. Returns at once with a cursor: pass it to wait_session as afterSeq to read only the replies that come after this message.",
+    "Send a follow-up message into an existing dsh session, e.g. one open_session returned. A cold session resumes and keeps its own model and context. mode queue (default) runs it after the current turn; steer injects it into the running turn. The message arrives under a line naming this session as its sender. Returns at once with a cursor: pass it to wait_session as afterSeq to read only the replies that come after this message.",
   parameters: {
     type: "object",
     properties: {
@@ -121,16 +122,27 @@ const PROMPT_SESSION: ToolSchema = {
 /** Longest wait_session accepts. Claude's MCP client drops a call that stays silent for about
  *  300 s, so a longer wait would lose its answer; Claude calls again instead. */
 const WAIT_MAX_S = 240;
+/** Most assistant messages one wait_session asks dsh for. dsh's own default, pinned here because
+ *  the tool description states it; WAIT_MAX_CHARS is what bounds the size. */
+const WAIT_MAX_REPLIES = 50;
+/** Most reply text one wait_session returns. Past its MCP output cap Claude Code moves a result
+ *  out of the conversation into a file, and below the cap a long one still fills the caller's
+ *  context; Chinese runs near a token a character, so the bound is set for that case. */
+const WAIT_MAX_CHARS = 16_000;
 
 /** Bridge-only tool: the other half of open_session and prompt_session, which return at once. */
 const WAIT_SESSION: ToolSchema = {
   name: "wait_session",
-  description: `Wait until a dsh session stops working (idle, or waiting on input such as an approval or a question) or the timeout passes, then return its assistant replies, oldest first. afterSeq, from prompt_session, limits them to the replies after that point; without it every reply in the session comes back. On timeout, call again with the same afterSeq. Default timeout 30 s, longest ${WAIT_MAX_S} s.`,
+  description: `Wait until a dsh session stops working (idle, or waiting on input such as an approval or a question) or the timeout passes, then return its assistant replies, oldest first. afterSeq, from prompt_session, limits them to the replies after that point; without it the session's latest replies come back. At most ${WAIT_MAX_REPLIES} replies and ${WAIT_MAX_CHARS} characters are returned, the newest kept. The first line ends with the next afterSeq: on timeout, call again with that one, and replies already returned are not repeated. Default timeout 30 s, longest ${WAIT_MAX_S} s.`,
   parameters: {
     type: "object",
     properties: {
       sessionId: { type: "string", description: "Session id, as open_session returned it." },
-      afterSeq: { type: "integer", description: "Return only replies after this cursor." },
+      afterSeq: {
+        type: "integer",
+        description:
+          "Return only replies after this cursor, as prompt_session or the last wait_session gave it.",
+      },
       timeoutSeconds: {
         type: "integer",
         description: `How long to wait, 1 to ${WAIT_MAX_S}. Default 30.`,
@@ -142,6 +154,10 @@ const WAIT_SESSION: ToolSchema = {
 
 /** The bridge's own tools in the order tools/list offers them. */
 const OWN_TOOLS = [OPEN_SESSION, PROMPT_SESSION, WAIT_SESSION];
+
+/** A call refused for its arguments. The caller made the mistake, so it gets the message alone:
+ *  no stack in the answer, no line in the log. */
+class BadCall extends Error {}
 
 /** The open_session arguments Claude sends, as far as the bridge reads them. */
 interface OpenSessionArgs {
@@ -199,13 +215,11 @@ export async function openSession(
   // so a failed call leaves no blank row in the sidebar.
   if (provider && model) {
     try {
-      const found = await ctx.sessionController.resolveAgent(sessionId);
-      if ("error" in found)
-        throw found.error instanceof Error ? found.error : new Error(String(found.error));
+      const child = resolvedAgent(await ctx.sessionController.resolveAgent(sessionId));
       // An agent without a model route would leave the session on dsh's default without a word.
-      if (!found.agent.model)
+      if (!child.model)
         throw new Error(`session ${sessionId} has no agent to select ${provider}/${model} on`);
-      found.agent.model.select(
+      child.model.select(
         reasoningEffort ? { provider, model, reasoningEffort } : { provider, model },
       );
     } catch (e) {
@@ -232,16 +246,25 @@ export async function openSession(
  *  waiting on itself would only ever time out. */
 function targetOf(agent: Agent, args: Record<string, JsonValue>, tool: string): SessionId {
   const id = str(args.sessionId);
-  if (!id) throw new Error(`${tool} needs a sessionId`);
-  if (agent.session?.id === id) throw new Error(`${tool} cannot target the calling session`);
+  if (!id) throw new BadCall(`${tool} needs a sessionId`);
+  if (agent.session?.id === id) throw new BadCall(`${tool} cannot target the calling session`);
   return asSessionId(id);
 }
 
+/** The line prompt_session puts above a message. dsh records the message as a plain user message
+ *  with nothing to say who sent it, so without this line the target session, and the owner reading
+ *  its transcript, could not tell it from the owner's own typing. The model reads it, so it is not
+ *  translated. */
+const senderLine = (agent: Agent): string =>
+  `[Sent by the agent in dsh session ${agent.session?.id ?? "unknown"} through prompt_session, not typed by the user.]`;
+
 /**
- * Sends a follow-up into an existing session (#255, from huananhuxu-debug's patch). The session is
- * resolved first so an unknown id fails with dsh's own error instead of a bare prompt rejection; a
- * cold session resumes on dsh's side and keeps its route. The cursor is read before the prompt, so
- * replies past it are this message's, plus any the session's running turn finishes meanwhile.
+ * Sends a follow-up into an existing session (#255, from huananhuxu-debug's patch), under a line
+ * naming the calling session as its sender. The cursor is read before the prompt, so replies past
+ * it are this message's, plus any the session's running turn finishes meanwhile; reading it does
+ * not wake a cold session, and an unknown id fails there with dsh's own "not found". dsh's `prompt`
+ * resolves the session itself, so a cold one resumes only for a message that is really sent, and
+ * keeps its route.
  */
 export async function promptSession(
   ctx: Pick<OpenHost, "sessionController">,
@@ -251,24 +274,50 @@ export async function promptSession(
 ): Promise<string> {
   const sessionId = targetOf(agent, args, PROMPT_SESSION.name);
   const prompt = str(args.prompt) ?? "";
-  if (!prompt.trim()) throw new Error("prompt_session needs a non-empty prompt");
-  const found = await ctx.sessionController.resolveAgent(sessionId);
-  if ("error" in found)
-    throw found.error instanceof Error ? found.error : new Error(String(found.error));
+  if (!prompt.trim()) throw new BadCall("prompt_session needs a non-empty prompt");
   const mode = str(args.mode) === "steer" ? "steer" : "queue";
   const { cursor } = await ctx.sessionController.state({ sessionId }, signal);
   await ctx.sessionController.prompt(
-    { sessionId, requestId: randomUUID(), mode, content: [{ type: "text", text: prompt }] },
+    {
+      sessionId,
+      requestId: randomUUID(),
+      mode,
+      content: [{ type: "text", text: `${senderLine(agent)}\n\n${prompt}` }],
+    },
     signal,
   );
   return `sent to session ${sessionId} (${mode}); afterSeq ${cursor}`;
 }
 
+/** The visible text of one dsh assistant message, its text blocks joined; empty when it has none.
+ *  dsh's reasoning blocks carry a `text` field too, so the block type is what is checked: tool
+ *  calls and thinking are the session's working, not its answer. */
+function replyText(data: JsonValue): string {
+  // SAFETY: dsh event data is JsonValue; an assistant message nests its blocks under `message`
+  const content = (data as { message?: { content?: unknown } } | null)?.message?.content;
+  return (Array.isArray(content) ? content : [])
+    .flatMap((b: unknown) =>
+      b &&
+      typeof b === "object" &&
+      "type" in b &&
+      b.type === "text" &&
+      "text" in b &&
+      typeof b.text === "string"
+        ? [b.text]
+        : [],
+    )
+    .join("\n")
+    .trim();
+}
+
 /**
- * Waits on a session through dsh's own `sessionController.wait` and renders its assistant replies
- * as text, oldest first, under a status line with the cursor to pass next time. Only text blocks
- * are kept: tool calls and thinking are the session's working, not its answer. A timeout outside
- * 1..WAIT_MAX_S seconds is clamped rather than refused.
+ * Waits on a session through dsh's own `sessionController.wait` and renders its text replies,
+ * oldest first, under a status line that ends with the cursor to pass next time. The output is
+ * bounded twice: dsh is asked for WAIT_MAX_REPLIES messages at most, and the newest of those are
+ * kept up to WAIT_MAX_CHARS, the oldest kept one cut short; a line says when older replies were
+ * left out, and nothing here can fetch them afterwards. An afterSeq or timeoutSeconds of the wrong
+ * type is refused, since a wait that quietly ran without its cursor returned old replies as if they
+ * answered the last message. A timeout outside 1..WAIT_MAX_S seconds is clamped rather than refused.
  */
 export async function waitSession(
   ctx: Pick<OpenHost, "sessionController">,
@@ -277,13 +326,24 @@ export async function waitSession(
   signal: AbortSignal,
 ): Promise<string> {
   const sessionId = targetOf(agent, args, WAIT_SESSION.name);
-  const after = args.afterSeq;
-  const seconds = typeof args.timeoutSeconds === "number" ? args.timeoutSeconds : 30;
+  // A JSON null reads as "not given", the way Claude sometimes fills an optional argument.
+  const after = args.afterSeq ?? undefined;
+  if (
+    after !== undefined &&
+    !(typeof after === "number" && Number.isSafeInteger(after) && after >= -1)
+  )
+    throw new BadCall(
+      "wait_session afterSeq must be an integer, -1 or more, as prompt_session or the last wait_session gave it",
+    );
+  const seconds = args.timeoutSeconds ?? 30;
+  if (typeof seconds !== "number")
+    throw new BadCall(`wait_session timeoutSeconds must be a number, 1 to ${WAIT_MAX_S}`);
   const timeoutMs = Math.round(Math.min(Math.max(seconds, 1), WAIT_MAX_S) * 1000);
   const { reason, state, output } = await ctx.sessionController.wait(
-    typeof after === "number" && Number.isSafeInteger(after) && after >= -1
-      ? { sessionId, timeoutMs, afterSeq: after }
-      : { sessionId, timeoutMs },
+    after === undefined
+      ? { sessionId, timeoutMs, maxMessages: WAIT_MAX_REPLIES }
+      : // `+ 0` turns a -0 into 0: dsh refuses -0 as a cursor.
+        { sessionId, timeoutMs, maxMessages: WAIT_MAX_REPLIES, afterSeq: after + 0 },
     signal,
   );
   const status = [
@@ -293,18 +353,22 @@ export async function waitSession(
     state.pendingInput.length > 0 ? `${state.pendingInput.length} waiting on input` : "",
     `afterSeq ${state.cursor}`,
   ].filter(Boolean);
-  const replies = output.records.toReversed().flatMap(({ event }) => {
-    // SAFETY: dsh event data is JsonValue; an assistant message nests its blocks under `message`
-    const content = (event.data as { message?: { content?: unknown } } | null)?.message?.content;
-    const text = (Array.isArray(content) ? content : [])
-      .flatMap((b: unknown) =>
-        b && typeof b === "object" && "text" in b && typeof b.text === "string" ? [b.text] : [],
-      )
-      .join("\n")
-      .trim();
-    return text ? [`--- reply at seq ${event.seq} ---\n${text}`] : [];
-  });
-  if (output.truncated) replies.unshift("(older replies left out)");
+  const replies: string[] = [];
+  let room = WAIT_MAX_CHARS;
+  let leftOut = output.truncated;
+  // dsh hands the records newest first, so the budget goes to the latest replies.
+  for (const { event } of output.records) {
+    const text = replyText(event.data);
+    if (!text) continue;
+    if (room <= 0) {
+      leftOut = true;
+      break;
+    }
+    const kept = text.length > room ? `${text.slice(0, room)}… (reply cut short)` : text;
+    room -= text.length;
+    replies.unshift(`--- reply at seq ${event.seq} ---\n${kept}`);
+  }
+  if (leftOut) replies.unshift("(older replies left out)");
   return [status.join(", "), ...(replies.length ? replies : ["(no replies in range)"])].join("\n");
 }
 
@@ -377,11 +441,13 @@ export async function handleRpc(
   if (prompt) own.set(PROMPT_SESSION.name, prompt);
   if (wait) own.set(WAIT_SESSION.name, wait);
   const reply = (result: object): JsonRpcReply => ({ jsonrpc: "2.0", id: msg.id, result });
-  const failed = (e: unknown): JsonRpcReply => {
+  /** Writes a failed call to the log with its stack, and returns that stack. */
+  const logged = (e: unknown): string => {
     const stack = e instanceof Error ? (e.stack ?? e.message) : String(e);
     log?.("warn", `mcp bridge: ${str(msg.params?.name) ?? msg.method} failed: ${stack}`);
-    return errorReply(msg.id, stack);
+    return stack;
   };
+  const failed = (e: unknown): JsonRpcReply => errorReply(msg.id, logged(e));
   if (msg.id === undefined) return null;
   switch (msg.method) {
     case "initialize":
@@ -425,7 +491,10 @@ export async function handleRpc(
         try {
           return reply({ content: [{ type: "text", text: await ownTool(args) }] });
         } catch (e) {
-          return failed(e);
+          // The message alone goes back: a stack of plugin and dsh paths tells Claude nothing
+          // about a mistyped session id. A refused argument is not logged either.
+          if (!(e instanceof BadCall)) logged(e);
+          return errorReply(msg.id, e);
         }
       }
       const codeMode = codeModeTool(agent) !== undefined;

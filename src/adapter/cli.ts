@@ -241,11 +241,11 @@ export function dshToolsGuidance(tools: readonly ToolSchema[] = []): string {
     );
   if (byName.has("open_session"))
     out.push(`${bridgedName("open_session")} makes a new top-level session, not a child.`);
+  // Each named only when listed: the host offers the two independently.
   if (byName.has("prompt_session"))
-    out.push(
-      `${bridgedName("prompt_session")} sends that session a follow-up, keeping its context;`,
-      `${bridgedName("wait_session")} reads its replies back.`,
-    );
+    out.push(`${bridgedName("prompt_session")} sends a session a follow-up, keeping its context.`);
+  if (byName.has("wait_session"))
+    out.push(`${bridgedName("wait_session")} reads a session's replies back.`);
 
   const shell = [byName.get("bash"), byName.get("pwsh")].find((t) => takes(t, "run_in_background"));
   if (shell) {

@@ -8,7 +8,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
-- Claude can send a follow-up into a session it opened, and read the answer back. `prompt_session` queues a message behind the session's running turn or steers it into that turn; the session keeps its own model and context, so a correction does not cost a fresh session. `wait_session` waits until the session goes idle or needs input and returns its replies. Thanks to @huananhuxu-debug (#255).
+- Claude can send a follow-up into a session it opened, and read the answer back. `prompt_session` queues a message behind the session's running turn or steers it into that turn; the session keeps its own model and context, so a correction does not cost a fresh session. The message arrives marked with the session that sent it. `wait_session` waits until the session goes idle or needs input and returns its latest replies, with the cursor to continue from. Thanks to @huananhuxu-debug (#255).
+
+### Fixed
+
+- A subagent Claude starts in the same step as `open_session` no longer has its result shown twice when the new session is slow to open. The step also no longer pauses a second and a half before the subagent starts.
 
 ## [1.6.1] - 2026-11-09
 

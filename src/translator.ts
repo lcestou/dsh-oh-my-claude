@@ -9,6 +9,7 @@ import { NATIVE_TOOL_MAP, commandNames } from "./adapter/cli.js";
 import { TurnRecord, finishReason } from "./adapter/turn.js";
 import { suggestRule } from "./permissions.js";
 import type { JsonValue } from "./dsh.js";
+import { OWN_TOOL_NAMES } from "./mcp-config.js";
 import { pluginErrorsOf, type PluginLoadError } from "./plugins.js";
 import { serverIsChinese, serverText, type ServerKey } from "./locale.js";
 
@@ -747,6 +748,7 @@ export class Translator {
     toolTextLimit = TOOL_TEXT_LIMIT,
     relay = false,
     dshIds,
+    dshNames,
     relayed,
     log,
     onToolCall,
@@ -768,6 +770,7 @@ export class Translator {
     toolTextLimit?: number;
     relay?: boolean;
     dshIds?: Set<string>;
+    dshNames?: Map<string, string>;
     relayed?: Set<string>;
     log?: (level: string, msg: string) => void;
     onToolCall?: (callId: string, name: string, args: string) => number | undefined;
@@ -802,7 +805,9 @@ export class Translator {
     this.statusNote = statusNote;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
     this.dshIds = dshIds ?? new Set(); // tool_use ids of dsh tools called over the MCP bridge
-    this.dshNames = new Map(); // dsh tool_use id → tool name, for a fallback row
+    // dsh tool_use id → tool name, for a fallback row and to tell the bridge's own tools apart.
+    // Shared across a turn's steps like dshIds: a call can outlive the step that drew it.
+    this.dshNames = dshNames ?? new Map();
     this.relayed = relayed ?? new Set(); // dsh tool_use ids dsh ran natively; results not drawn here
     this.limit = toolTextLimit;
     this.index = 0;
@@ -1737,6 +1742,15 @@ export class Translator {
     return events;
   }
 
+  /** Outstanding dsh tool_use ids a relay can still come from, oldest first. The bridge's own tools
+   *  (open_session, wait_session…) are answered inside the bridge and never relay: counted here, a
+   *  wait_session held open for minutes made the batch wait for a relay that never came and then
+   *  took the mark meant for the call beside it. An id whose name was never seen counts as
+   *  relayable, the safe side: at worst the batch waits out its window. */
+  relayableIds(): string[] {
+    return [...this.dshIds].filter((id) => !OWN_TOOL_NAMES.has(this.dshNames.get(id) ?? ""));
+  }
+
   /** dsh tools reached over the MCP bridge (subagents, jobs...) render as visible text rows, the
    *  rest as collapsed reasoning. Returns [block kind, lead text]. */
   toolLead(cb: { id?: string; name?: string }): [string, string] {
@@ -1881,6 +1895,8 @@ export class Translator {
       const toolUseId = b.tool_use_id ?? "";
       events.push(...this.endHeartbeat(toolUseId));
       const dsh = this.dshIds.delete(toolUseId);
+      const toolName = this.dshNames.get(toolUseId);
+      this.dshNames.delete(toolUseId);
       if (dsh && this.relayed.delete(toolUseId)) continue; // dsh drew the native call and result
       // Inline native result: draw a formatted markdown block matching its call, in stream order.
       if (!this.onToolResult && this.callNames.has(toolUseId)) {
@@ -1935,8 +1951,6 @@ export class Translator {
         }
         continue;
       }
-      const toolName = this.dshNames.get(toolUseId);
-      this.dshNames.delete(toolUseId);
       // A dsh call that could not be relayed ran inside the bridge: show it as one compact row.
       const lead =
         dsh && this.relay

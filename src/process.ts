@@ -1839,6 +1839,7 @@ export class ClaudeProcess {
    *  turn is reading: a line written to stdin now would start a turn of its own after it. */
   compacting: boolean = false;
   dshIds?: Set<string>;
+  dshNames?: Map<string, string>;
   relayed?: Set<string>;
   steerPending: boolean = false;
   /** Typed steers Claude has not read yet, by dsh message id: written to stdin during a native
