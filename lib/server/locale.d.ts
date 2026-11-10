@@ -121,6 +121,13 @@ declare const EN: {
     readonly claudeExited: "claude exited {code}: {detail}";
     readonly noOutput: "no output";
     readonly inputDeclined: "{who} asked for input dsh cannot present, declined";
+    readonly customModelId: "A model id is 1 to 200 characters with no spaces, does not start with a dash, and is not `default`.";
+    readonly customModelName: "A name is at most 100 characters.";
+    readonly customModelWindow: "A context window is a whole number of tokens, from 1,000 to 10,000,000.";
+    readonly customModelTwice: "{model} is already in the list.";
+    readonly customModelMany: "A box keeps at most {max} added models.";
+    readonly customModelBox: "No Claude Code box answers to {provider}.";
+    readonly customModelUnread: "That list of models could not be read.";
 };
 /** A key of the server's own strings. */
 export type ServerKey = keyof typeof EN;

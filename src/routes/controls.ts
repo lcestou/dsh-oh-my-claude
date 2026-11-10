@@ -21,6 +21,9 @@ import {
   type NewSessionDefault,
 } from "../state.js";
 import { EFFORTS_ALL } from "../adapter/catalog.js";
+import type { CustomModel } from "../adapter/config.js";
+import { parseCustomModels } from "../adapter/custom-models.js";
+import { serverText } from "../locale.js";
 import { typedPrompt } from "../transcript.js";
 import type { AsideEntry, RewindPrompt } from "../adapter/types.js";
 
@@ -46,6 +49,7 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       mcp,
       models,
       modelsUpdated,
+      setCustomModels,
       notOnBox,
       permissionAsks,
       permissionModes,
@@ -106,6 +110,30 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
         if (Object.keys(patch).some((k) => k.startsWith("hideModel:"))) modelsUpdated?.();
         return json(res, 200, next);
       }
+    }
+    // The Models block's "Add a model" form: the whole list for one mount, replaced in one write.
+    // The block reads the list back from `GET /models?all=1`, so there is no GET here.
+    if (req.method === "PUT" && url.pathname === `${ROUTE_PREFIX}/custom-models`) {
+      if (!setCustomModels) return json(res, 404, { error: "models not available" });
+      const body = await readBody(req);
+      const provider = typeof body.provider === "string" ? body.provider : "";
+      let rows: CustomModel[];
+      try {
+        rows = parseCustomModels(body.models);
+      } catch {
+        return json(res, 400, { error: serverText("customModelUnread") });
+      }
+      const saved = await setCustomModels(provider, rows);
+      if ("error" in saved) return json(res, 400, saved);
+      // The picker lists changed, which is what a hints event already means to every view built
+      // on them (the Models block, the new-session default): other tabs re-read on it.
+      if (sshBoxesPath)
+        events?.hub.publish({
+          kind: "hints",
+          session: null,
+          data: await readHints(join(dirname(sshBoxesPath), "hints.json")),
+        });
+      return json(res, 200, saved);
     }
     // The Claude Code updater for the box a session runs on: its state for the Tune rows,
     // a refresh (`now=1`, never an install), the switch, a dismissal, and the button. The

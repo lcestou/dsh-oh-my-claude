@@ -12,6 +12,7 @@ import { type HealHost, type RepairsSummary } from "./session-heal.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { type PluginLoadError } from "./plugins.js";
 import { EFFORTS_ALL } from "./adapter/catalog.js";
+import type { CustomModel } from "./adapter/config.js";
 import type { LoginNeed, PermissionModeInfo, PermissionModeReply, PermissionModeState, RewindReply, ContextUsageReply, SkillDoctorReply, WorkspaceDiffReply, PermissionReadoutReply, McpStatusReply, AsideEntry, AsidesReply, IdleReply, LiveTurnReply } from "./adapter/types.js";
 import type { TurnsReply, LiveTurn } from "./adapter/turn.js";
 import { type EventHub, type OmcEvent } from "./events.js";
@@ -514,6 +515,7 @@ export interface RouteCtx {
     models: SessionRouteOptions["models"];
     pickerModels: SessionRouteOptions["pickerModels"];
     modelsUpdated: SessionRouteOptions["modelsUpdated"];
+    setCustomModels: SessionRouteOptions["setCustomModels"];
     mtimeOf: typeof mtimeOf;
     notOnBox: (url: URL, what: string, cwd?: string | null) => string | undefined;
     onLoginStatus: SessionRouteOptions["onLoginStatus"];
@@ -928,9 +930,16 @@ export interface SessionRouteOptions {
             hidden: boolean;
             locked: boolean;
         }>;
+        custom: CustomModel[];
     }>>;
     /** Announces a changed picker to dsh, after a hints write that hid or showed a model. */
     modelsUpdated?: () => void;
+    /** Replaces the models added in Settings for one mount; `error` is the sentence to show. */
+    setCustomModels?: (provider: string, models: readonly CustomModel[]) => Promise<{
+        models: CustomModel[];
+    } | {
+        error: string;
+    }>;
     /** The provider id this machine's Claude mounts under; a restored session is put on it. */
     providerId?: string;
     /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
@@ -968,7 +977,7 @@ declare function sessionTranscript(box: MountBox, dir: string, sessionId: string
 /** True when this session already had one within the gap. Records the ask when it does not. */
 declare function recapIsRepeat(sessionId: string, now: number): boolean;
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, spawnMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, hookRuns, askAside, mcp, permissionAsks, sideQuestions, liveTasks, stopTask, taskOutput, compactNow, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, pickerModels, modelsUpdated, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, spawnMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, hookRuns, askAside, mcp, permissionAsks, sideQuestions, liveTasks, stopTask, taskOutput, compactNow, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, pickerModels, modelsUpdated, setCustomModels, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /** One settings file as the Diagnostics tab reports it: where it is, and why the CLI refuses it. */
 export interface DiagnosticFile {
     scope: SettingsScope;

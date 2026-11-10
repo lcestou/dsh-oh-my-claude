@@ -2,8 +2,19 @@
 // lists, such as an alias a local router sends to another model. They ride the same path as
 // settings.json's `modelPicker.options` rows, with a window and effort levels of their own.
 import { strict as assert } from "node:assert";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { KNOWN_MODELS, mergeCatalog, resolveModelInfo, withCustomModels } from "./catalog.js";
 import { Config } from "./config.js";
+import {
+  checkCustomModels,
+  CUSTOM_MODELS_FILE,
+  CUSTOM_MODELS_MAX,
+  loadCustomModels,
+  parseCustomModels,
+  saveCustomModels,
+} from "./custom-models.js";
 
 // Nothing configured: the picker settings pass through untouched, undefined included, so a box
 // without the key lists exactly what it listed before.
@@ -93,4 +104,70 @@ assert.equal(
   mergeCatalog([], KNOWN_MODELS, allowed).some((m) => m.id === "deepseek-flash"),
   false,
 );
+// The list Settings saves. A request body is parsed first: anything that is not a list of entries
+// is refused there, before a rule is looked at.
+assert.deepEqual(parseCustomModels(undefined), [], "a body with no list is an empty list");
+assert.throws(() => parseCustomModels("deepseek-flash"));
+assert.throws(() => parseCustomModels([{ label: "no id" }]));
+assert.throws(() => parseCustomModels([{ model: "x", contextWindow: "big" }]));
+
+// The rules a parse cannot say. Each refusal is the sentence the form shows.
+const kept = checkCustomModels([
+  { model: " deepseek-flash ", label: " DeepSeek Flash ", contextWindow: 128_000 },
+  { model: "bare", label: "  ", efforts: ["turbo", "high"] },
+]);
+assert.deepEqual(kept, [
+  { model: "deepseek-flash", label: "DeepSeek Flash", contextWindow: 128_000 },
+  { model: "bare", efforts: ["high"] },
+]);
+for (const bad of ["", "two words", "-flag", "default", "x".repeat(201)])
+  assert.match(String(checkCustomModels([{ model: bad }])), /^A model id is/, `id ${bad}`);
+assert.match(String(checkCustomModels([{ model: "a" }, { model: " a" }])), /already in the list/);
+assert.match(String(checkCustomModels([{ model: "a", label: "n".repeat(101) }])), /^A name is/);
+for (const bad of [999, 10_000_001, 1.5])
+  assert.match(
+    String(checkCustomModels([{ model: "a", contextWindow: bad }])),
+    /^A context window is/,
+    `window ${bad}`,
+  );
+assert.match(
+  String(
+    checkCustomModels(
+      Array.from({ length: CUSTOM_MODELS_MAX + 1 }, (_, i) => ({ model: `m${i}` })),
+    ),
+  ),
+  /at most 50/,
+);
+
+// On disk: one list per mount, an empty list drops the mount, and a file that cannot be read as
+// lists is no entries at all, so it can never empty or break the picker.
+const dir = mkdtempSync(join(tmpdir(), "omc-custom-models-"));
+try {
+  assert.deepEqual(await loadCustomModels(dir), {}, "no file yet");
+  await saveCustomModels(dir, "claude-code", [
+    { model: "deepseek-flash", label: "DeepSeek Flash" },
+  ]);
+  await saveCustomModels(dir, "claude-code-lilly", [{ model: "other" }]);
+  assert.deepEqual(await loadCustomModels(dir), {
+    "claude-code": [{ model: "deepseek-flash", label: "DeepSeek Flash" }],
+    "claude-code-lilly": [{ model: "other" }],
+  });
+  await saveCustomModels(dir, "claude-code", []);
+  assert.deepEqual(Object.keys(await loadCustomModels(dir)), ["claude-code-lilly"]);
+  assert.deepEqual(JSON.parse(readFileSync(CUSTOM_MODELS_FILE(dir), "utf8")), {
+    "claude-code-lilly": [{ model: "other" }],
+  });
+  // One mount's list broke a rule (hand-edited): that mount reads empty, the other is untouched.
+  writeFileSync(
+    CUSTOM_MODELS_FILE(dir),
+    JSON.stringify({ a: [{ model: "two words" }], b: [{ model: "fine" }] }),
+  );
+  assert.deepEqual(await loadCustomModels(dir), { b: [{ model: "fine" }] });
+  for (const text of ["{", "[]", '"x"', '{"a":"not a list"}']) {
+    writeFileSync(CUSTOM_MODELS_FILE(dir), text);
+    assert.deepEqual(await loadCustomModels(dir), {}, `file ${text}`);
+  }
+} finally {
+  rmSync(dir, { recursive: true, force: true });
+}
 console.log("custom models ok");

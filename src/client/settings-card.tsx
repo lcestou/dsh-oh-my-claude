@@ -33,6 +33,7 @@ import { ConfirmButton } from "./tune.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { COMPACT_AT, COMPACT_AT_CHOICES, compactThreshold } from "./nudge.js";
 import { BOXES_EVENT } from "./picker.js";
+import { CustomModelsEditor, type CustomModelEntry } from "./custom-models.js";
 import { Switch } from "./switch.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
 import { RECAP_AWAY_MS, RECAP_AWAY_CHOICES, recapAwayIn } from "./notices.js";
@@ -47,7 +48,7 @@ import {
   MASTER_KEY,
   OFF_KEY,
 } from "../context-sources.js";
-import { loadHints, useHintValue, writeHints, useHintFlag } from "./hints.js";
+import { HINTS_EVENT, loadHints, useHintValue, writeHints, useHintFlag } from "./hints.js";
 
 /** What the starter route answers: this session's own saved opener and the shared fallback. */
 interface StarterReply {
@@ -1335,7 +1336,14 @@ export function RecallSwitch() {
 }
 
 type PickerModel = { id: string; name: string; hidden: boolean; locked: boolean };
-type PickerBox = { provider: string; host: string | null; models: PickerModel[] };
+/** `custom` is absent from a server older than this client: the client hot-reloads, the server
+ *  waits for a restart. */
+type PickerBox = {
+  provider: string;
+  host: string | null;
+  models: PickerModel[];
+  custom?: CustomModelEntry[];
+};
 
 /** One model's row in the Models block: a switch over that box's `hideModel:<provider>:<id>` hint,
  *  on when the model is listed. A row the plugin config hides is shown off and disabled, with a note
@@ -1387,6 +1395,8 @@ export function ModelsBlock() {
   const [boxes, setBoxes] = useState<PickerBox[] | undefined>();
   const [error, setError] = useState("");
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => new Set());
+  const [reads, setReads] = useState(0);
+  const reread = useCallback(() => setReads((n) => n + 1), []);
   const onState = useCallback((key: string, hidden: boolean) => {
     setHiddenKeys((prev) => {
       if (prev.has(key) === hidden) return prev;
@@ -1417,11 +1427,16 @@ export function ModelsBlock() {
     void load();
     // A box added or removed in the card above changes the groups here; the card announces it.
     window.addEventListener(BOXES_EVENT, load);
+    // A model added or removed in another tab arrives as a hints event (the route publishes one);
+    // a hide switch flipped anywhere does too, and costs this block one re-read.
+    window.addEventListener(HINTS_EVENT, load);
     return () => {
       live = false;
       window.removeEventListener(BOXES_EVENT, load);
+      window.removeEventListener(HINTS_EVENT, load);
     };
-  }, []);
+    // `reads` is the block's own save: the form below bumps it after the server took a change.
+  }, [reads]);
   const total = boxes?.reduce((n, b) => n + b.models.length, 0) ?? 0;
   return (
     <details data-omc-models-block="" style={NESTED}>
@@ -1463,12 +1478,20 @@ export function ModelsBlock() {
                 ))}
               </fieldset>
             );
+            const added = (
+              <CustomModelsEditor
+                provider={box.provider}
+                saved={box.custom ?? []}
+                onSaved={reread}
+              />
+            );
             // One box: its rows sit right under the description, the outer fold is enough. More
             // than one: each box is its own fold, shut by default, so opening one box's list keeps
             // the others at one line each.
             return (boxes ?? []).length === 1 ? (
               <div key={box.provider} data-omc-models-box={box.provider}>
                 {rows}
+                {added}
               </div>
             ) : (
               <details
@@ -1482,7 +1505,10 @@ export function ModelsBlock() {
                     {` · ${t("main.settingsUi.modelsSummary", { shown: box.models.length - hiddenHere, hidden: hiddenHere })}`}
                   </span>
                 </summary>
-                <div style={{ padding: "8px 0 0 16px" }}>{rows}</div>
+                <div style={{ padding: "8px 0 0 16px" }}>
+                  {rows}
+                  {added}
+                </div>
               </details>
             );
           })

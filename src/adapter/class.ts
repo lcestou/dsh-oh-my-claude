@@ -185,11 +185,13 @@ import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "../pr
 import {
   boxFor,
   Config,
+  type CustomModel,
   isOrphanedStandIn,
   localConfig,
   remoteCwdFor,
   remoteWorkspaceFor,
 } from "./config.js";
+import { checkCustomModels, loadCustomModels, saveCustomModels } from "./custom-models.js";
 import {
   type AsideEntry,
   type AsidesReply,
@@ -763,10 +765,34 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** settings.json's say over the picker, plus this mount's `customModels`. The file is read on
    *  every listing rather than cached: an edit to settings.json takes effect at once. */
   private async pickerSettings() {
-    return withCustomModels(
-      await readPickerSettings(join(this.claudeHome, "settings.json")),
-      this.config.customModels,
-    );
+    return withCustomModels(await readPickerSettings(join(this.claudeHome, "settings.json")), [
+      ...this.config.customModels,
+      ...(await this.savedCustomModels()),
+    ]);
+  }
+
+  /** The models someone added for this mount in Settings; one small file read per listing, like
+   *  the hide switches, so a row added in one browser is in every picker at its next listing. */
+  async savedCustomModels(): Promise<CustomModel[]> {
+    return (await loadCustomModels(STATE_DIR))[this.providerId] ?? [];
+  }
+
+  /**
+   * Replace the Settings list of added models for the mount `provider` names, then tell dsh the
+   * picker changed. The answer is the list as stored, or `error` with the sentence to show (an id
+   * the CLI could not take, a duplicate, no such mount), in which case nothing was written.
+   */
+  async setCustomModels(
+    provider: string,
+    models: readonly CustomModel[],
+  ): Promise<{ models: CustomModel[] } | { error: string }> {
+    const mount = [...ClaudeCodeAdapter.mounts(this)].find((m) => m.providerId === provider);
+    if (!mount) return { error: serverText("customModelBox", { provider }) };
+    const rows = checkCustomModels(models);
+    if (!Array.isArray(rows)) return { error: rows };
+    await saveCustomModels(STATE_DIR, provider, rows);
+    this.modelsUpdated();
+    return { models: rows };
   }
 
   /** A box without a login lists nothing: dsh's catalog drops a provider whose listing throws into
@@ -816,6 +842,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       provider: string;
       host: string | null;
       models: Array<{ id: string; name: string; hidden: boolean; locked: boolean }>;
+      custom: CustomModel[];
     }>
   > {
     return Promise.all(
@@ -823,6 +850,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         provider: mount.providerId,
         host: mount.config.sshHost || null,
         models: await mount.pickerModels().catch(() => []),
+        // The entries added in Settings, which the block lists with a Remove each. Config entries
+        // are not here: Settings cannot remove what the profile's config adds.
+        custom: await mount.savedCustomModels().catch(() => []),
       })),
     );
   }

@@ -472,6 +472,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       models: () => adapter.getAdvisorModels(),
       pickerModels: () => adapter.pickerBoxes(),
       modelsUpdated: () => adapter.modelsUpdated(),
+      setCustomModels: (provider, models) => adapter.setCustomModels(provider, models),
       providerId: adapter.providerId,
       reloadPlugins: (sessionId: string) => adapter.ownerFor(sessionId).reloadPlugins(sessionId),
       reloadSkills: (sessionId: string) => adapter.ownerFor(sessionId).reloadSkills(sessionId),

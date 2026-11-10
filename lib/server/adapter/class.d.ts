@@ -14,7 +14,7 @@ import { type HealHost } from "../session-heal.js";
 import { Translator, type FallbackRecord, type SuggestionRow, type LiveTask, type LiveTaskPatch, type HookRun } from "../translator.js";
 import type { FinishReason } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayResult, TurnPrep } from "../process.js";
-import { Config } from "./config.js";
+import { Config, type CustomModel } from "./config.js";
 import { type AsideEntry, type AsidesReply, type AwaitingRow, Continuation, ControlRequestEvent, type ControlReply, type ContextUsageReply, type Decision, type HeldSteer, type HoldReply, type IdleReply, type LoginNeed, type LiveTurnReply, type McpAuthReply, type McpStatusReply, type PermissionModeInfo, type PermissionModeReply, type PermissionModeState, type PermissionReadoutReply, type RewindReply, type SessionOptions, type SkillDoctorReply, type SteerCardState, type SteerEditReply, type WorkspaceDiffReply } from "./types.js";
 import { type MirrorQueue, type StreamState, type TranscriptWatch } from "./transcript-watch.js";
 import { type LoadedImage } from "./prompt.js";
@@ -159,6 +159,19 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** settings.json's say over the picker, plus this mount's `customModels`. The file is read on
      *  every listing rather than cached: an edit to settings.json takes effect at once. */
     private pickerSettings;
+    /** The models someone added for this mount in Settings; one small file read per listing, like
+     *  the hide switches, so a row added in one browser is in every picker at its next listing. */
+    savedCustomModels(): Promise<CustomModel[]>;
+    /**
+     * Replace the Settings list of added models for the mount `provider` names, then tell dsh the
+     * picker changed. The answer is the list as stored, or `error` with the sentence to show (an id
+     * the CLI could not take, a duplicate, no such mount), in which case nothing was written.
+     */
+    setCustomModels(provider: string, models: readonly CustomModel[]): Promise<{
+        models: CustomModel[];
+    } | {
+        error: string;
+    }>;
     /** A box without a login lists nothing: dsh's catalog drops a provider whose listing throws into
      *  its "could not load" row with a Retry, which is the honest picker for a box no turn can use.
      *  The row names the fix; Retry after the login brings the models back. */
@@ -184,6 +197,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
             hidden: boolean;
             locked: boolean;
         }>;
+        custom: CustomModel[];
     }>>;
     /**
      * Tell dsh every mount's picker changed, the event dsh's own providers send when their lineup

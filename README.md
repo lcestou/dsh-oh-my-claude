@@ -128,7 +128,7 @@ dsh ships prereleases only and moves client APIs between them, so every release 
 
 ## What you get
 
-1. Any Claude model your login can use, in dsh's own picker. Hide the ones you don't use with a switch in Settings, or with `hiddenModels` in the plugin config. Add one the lineup doesn't list, such as an alias your local router sends to another model, with `customModels`. [Models](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#models)
+1. Any Claude model your login can use, in dsh's own picker. Hide the ones you don't use with a switch in Settings, or with `hiddenModels` in the plugin config. Add one the lineup doesn't list, such as a name your local router sends to another model, in the same Settings block or with `customModels`. [Models](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#models)
 2. Every dsh session resumes its Claude Code session, tool history included, and a terminal `claude /resume` sees the same one. [Sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#sessions)
 3. Restart dsh without killing a running Claude turn. [Restarts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#restarts)
 4. dsh's access shield sets Claude's six permission modes per session. [Permission mode](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#permission-mode-per-session)

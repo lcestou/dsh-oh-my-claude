@@ -38,6 +38,7 @@ const ALLOWED = new Map<string, string>([
   ["CLAUDE.md", "file name"],
   ["Claude Code", "product name"],
   ["Headroom", "product name"],
+  ["CC Switch", "product name"],
   ["GitHub", "product name"],
   ["Notion", "product name"],
   ["Sentry", "product name"],

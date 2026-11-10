@@ -99,6 +99,7 @@ import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { isPluginScope, pluginScopeNeedsCwd, type PluginLoadError } from "./plugins.js";
 import { CLAUDE_HOME, STATE_DIR, loadWorkspaceModels, trace, writeJson } from "./state.js";
 import { EFFORTS_ALL } from "./adapter/catalog.js";
+import type { CustomModel } from "./adapter/config.js";
 import { projectDirName } from "./adapter/transcript-watch.js";
 import type {
   LoginNeed,
@@ -1369,6 +1370,7 @@ export interface RouteCtx {
   models: SessionRouteOptions["models"];
   pickerModels: SessionRouteOptions["pickerModels"];
   modelsUpdated: SessionRouteOptions["modelsUpdated"];
+  setCustomModels: SessionRouteOptions["setCustomModels"];
   mtimeOf: typeof mtimeOf;
   notOnBox: (url: URL, what: string, cwd?: string | null) => string | undefined;
   onLoginStatus: SessionRouteOptions["onLoginStatus"];
@@ -2067,10 +2069,16 @@ export interface SessionRouteOptions {
       provider: string;
       host: string | null;
       models: Array<{ id: string; name: string; hidden: boolean; locked: boolean }>;
+      custom: CustomModel[];
     }>
   >;
   /** Announces a changed picker to dsh, after a hints write that hid or showed a model. */
   modelsUpdated?: () => void;
+  /** Replaces the models added in Settings for one mount; `error` is the sentence to show. */
+  setCustomModels?: (
+    provider: string,
+    models: readonly CustomModel[],
+  ) => Promise<{ models: CustomModel[] } | { error: string }>;
   /** The provider id this machine's Claude mounts under; a restored session is put on it. */
   providerId?: string;
   /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
@@ -2194,6 +2202,7 @@ export function registerSessionRoutes(
     models,
     pickerModels,
     modelsUpdated,
+    setCustomModels,
     providerId,
     reloadPlugins,
     reloadSkills,
@@ -2608,6 +2617,7 @@ export function registerSessionRoutes(
       models,
       pickerModels,
       modelsUpdated,
+      setCustomModels,
       mtimeOf,
       notOnBox,
       onLoginStatus,
