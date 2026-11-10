@@ -98,6 +98,15 @@ const EN = {
     "⚠ Claude Code is using the ANTHROPIC_API_KEY from dsh's environment, so this session bills that key, not your Claude subscription. Unset it where dsh starts (its .env or service file) to use the login.",
   taskCompleted: "completed",
   modelNeedsCliUpdate: "Newer than the installed Claude Code; update the CLI to unlock it.",
+  keyRefused:
+    "{host} refused the key Claude Code sent ({detail}). That key is set in a settings file's env, as a router or gateway does, and is not your Claude login, so logging in again will not help. Check that the router or gateway is running and is the one this address belongs to.",
+  keyRefusedSplit:
+    "The address comes from {address} and the key from {key}. A workspace's own settings outrank the box's, so the two no longer belong together: remove ANTHROPIC_BASE_URL from one of them, or open the session in another workspace.",
+  settingsScopeUser: "the box's settings.json",
+  settingsScopeProject: "this workspace's .claude/settings.json",
+  settingsScopeLocal: "this workspace's .claude/settings.local.json",
+  settingsScopeManaged: "the managed settings file",
+  settingsScopeEnvironment: "the environment dsh was started with",
   modelNeedsRouter:
     "{model} only answers through a router, and Claude Code on this box is talking to Anthropic right now. Switch the router on, or pick another model for this session.",
   taskFailed: "failed",
@@ -231,6 +240,15 @@ const ZH = {
     "⚠ Claude Code 正在使用 dsh 环境里的 ANTHROPIC_API_KEY，此会话按该密钥计费，而不是你的 Claude 订阅。在 dsh 启动处（.env 或服务文件）去掉该变量即可改用登录账号。",
   taskCompleted: "已完成",
   modelNeedsCliUpdate: "比已安装的 Claude Code 更新；更新 CLI 后即可使用。",
+  keyRefused:
+    "{host} 拒绝了 Claude Code 发送的密钥（{detail}）。该密钥来自某个设置文件的 env（由路由或网关写入），不是你的 Claude 登录，重新登录没有用。请确认路由或网关正在运行，并且这个地址确实属于它。",
+  keyRefusedSplit:
+    "地址来自{address}，密钥来自{key}。工作区自己的设置优先于主机的设置，所以两者已不再配套：请从其中一处移除 ANTHROPIC_BASE_URL，或在其他工作区打开会话。",
+  settingsScopeUser: "主机的 settings.json",
+  settingsScopeProject: "此工作区的 .claude/settings.json",
+  settingsScopeLocal: "此工作区的 .claude/settings.local.json",
+  settingsScopeManaged: "托管设置文件",
+  settingsScopeEnvironment: "dsh 启动时的环境变量",
   modelNeedsRouter:
     "{model} 只能通过路由工具使用，而这台主机上的 Claude Code 目前直连 Anthropic。请打开路由，或为此会话另选一个模型。",
   taskFailed: "失败",

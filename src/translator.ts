@@ -4,6 +4,7 @@ import {
   type ClaudeStreamPartial,
   type ClaudeContentBlock,
   toolResultText,
+  type SettingsKey,
 } from "./process.js";
 import { NATIVE_TOOL_MAP, commandNames } from "./adapter/cli.js";
 import { TurnRecord, finishReason } from "./adapter/turn.js";
@@ -619,6 +620,8 @@ export class Translator {
   hostLabel: string | undefined;
   /** Set when this turn's model needs a router the box is not behind: see `finishReason`. */
   routerOnly: string | undefined;
+  /** Set when this turn's key came from a settings file: see `finishReason`. */
+  settingsKey: SettingsKey | undefined;
   /** The suffix for a 5xx retry line, from the adapter's cache of Anthropic's status page. */
   statusNote: ((httpStatus: number) => string) | undefined;
   relay: boolean; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
@@ -765,6 +768,7 @@ export class Translator {
     onHookRun,
     hostLabel,
     routerOnly,
+    settingsKey,
     statusNote,
   }: {
     toolActivity?: boolean;
@@ -796,6 +800,8 @@ export class Translator {
     hostLabel?: string;
     /** This turn's model by name, when only a router answers for it and the box is not routed. */
     routerOnly?: string;
+    /** Set when this turn's key came from a settings file, so a 401 is not about the login. */
+    settingsKey?: SettingsKey;
     /** What to append to a 5xx retry line from the Anthropic status page cache. */
     statusNote?: (httpStatus: number) => string;
   } = {}) {
@@ -808,6 +814,7 @@ export class Translator {
     this.timeZone = timeZone;
     this.hostLabel = hostLabel;
     this.routerOnly = routerOnly;
+    this.settingsKey = settingsKey;
     this.statusNote = statusNote;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
     this.dshIds = dshIds ?? new Set(); // tool_use ids of dsh tools called over the MCP bridge
@@ -1395,7 +1402,7 @@ export class Translator {
             ? { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } }
             : this.limitFailure
               ? { kind: "error", failure: this.limitFailure }
-              : finishReason(event, this.hostLabel, this.routerOnly),
+              : finishReason(event, this.hostLabel, this.routerOnly, this.settingsKey),
         });
         return events;
       }

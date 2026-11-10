@@ -161,11 +161,27 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * The environment the CLI of this mount runs with, as far as this process can know it: dsh's
      * own, then the `env` of the mount's settings.json, then the managed file's, each outranking
      * the one before as it does for the CLI (measured on 2.1.322: a base URL in settings.json wins
-     * over an exported one). Empty for an ssh box, whose files and shell are not this one's. A
-     * project's own `.claude/settings*.json` is not read: its `env` holds for sessions in that
-     * directory only, and the listing is per mount.
+     * over an exported one). Empty for an ssh box, whose files and shell are not this one's.
+     * Without `cwd` it is the mount's own answer, which is what the listing follows, since a
+     * model menu is per mount. With `cwd` the workspace's project and local settings files are
+     * merged in as well, which is what a turn there really runs with: a workspace file outranks
+     * the user's, so a session can be pointed somewhere other than the box says (owner,
+     * 2026-11-10: a proxy's address in the home folder's `settings.local.json` kept every
+     * session opened there off the router that `settings.json` named).
      */
     private claudeEnv;
+    /** The settings files' `env` for this mount, or for a session in `cwd`, with the scope that
+     *  set each variable (`settingsEnvAt`). Nothing for an ssh box. */
+    private settingsEnv;
+    /**
+     * Set when the key a turn in `cwd` sends comes from a settings file's `env`
+     * (`ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY`) and not from the Claude login: what a
+     * router writes beside its address. A 401 on such a turn says nothing about the login, so it
+     * must not log the box out or tell anyone to log in. `host` is where the request goes;
+     * `split` is a sentence for the case where the address and the key were set by two different
+     * files, which is how a router's key ends up at somebody else's endpoint.
+     */
+    private settingsKey;
     /** The routing variables as the last listing or settings change saw them (`routeSignature`),
      *  so a write to settings.json that left them alone is not taken for a change. */
     private routeSeen;

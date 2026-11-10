@@ -390,11 +390,19 @@ export type AliasNames = Record<string, string>;
  *  are pointed at instead (`ANTHROPIC_DEFAULT_SONNET_MODEL`). */
 export declare function aliasNamesIn(env: Record<string, string | undefined>, suffix?: "_NAME" | ""): AliasNames;
 /**
- * The `env` block of one settings file, string values only, which is what the CLI exports to
- * itself at start. A file that is missing, unreadable or mid-edit reads as no variables: the
- * callers ask "does this file route Claude Code somewhere", and no answer is "no".
+ * The `env` the settings files give the CLI for a session in `cwd` on this box, merged the way
+ * the CLI merges them (user, then the workspace's project file, then its local file, then the
+ * managed file, each outranking the one before), string values only. `from` names the scope
+ * that had the last word on each variable, which is how a caller can tell that an address and
+ * the key sent to it were set by two different files. With `cwd` null only the user and managed
+ * files are read: that is the box's own answer, before any workspace has its say. A file that
+ * is missing, unreadable or mid-edit contributes nothing, and nothing here throws: the callers
+ * ask "do the settings route Claude Code somewhere", and no answer is "no".
  */
-export declare function readSettingsEnv(path: string): Promise<Record<string, string>>;
+export declare function settingsEnvAt(userPath: string, cwd: string | null): Promise<{
+    env: Record<string, string>;
+    from: Record<string, string>;
+}>;
 /**
  * Read what settings.json says about the picker. Anything the CLI would ignore is dropped here,
  * and a file that is missing, unreadable or silent on both keys reads as undefined, so a settings

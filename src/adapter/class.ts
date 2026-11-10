@@ -29,7 +29,7 @@ import {
   forgetIdentity,
   readHints,
   readPickerSettings,
-  readSettingsEnv,
+  settingsEnvAt,
 } from "../sessions.js";
 import { hub, type OmcEvent } from "../events.js";
 import { managedDir } from "../instructions.js";
@@ -188,7 +188,13 @@ import {
   applyTaskPatch,
 } from "../translator.js";
 import type { FinishReason, Message } from "@deepseek-ai/dsh-llm";
-import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "../process.js";
+import type {
+  ClaudeProcessSpec,
+  RelayEvent,
+  RelayResult,
+  SettingsKey,
+  TurnPrep,
+} from "../process.js";
 import {
   boxFor,
   Config,
@@ -205,6 +211,7 @@ import {
   routeEnvIn,
   routeOf,
   routeSignature,
+  settingsScopeText,
   watchSettingsIn,
 } from "./routing.js";
 import {
@@ -781,17 +788,54 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * The environment the CLI of this mount runs with, as far as this process can know it: dsh's
    * own, then the `env` of the mount's settings.json, then the managed file's, each outranking
    * the one before as it does for the CLI (measured on 2.1.322: a base URL in settings.json wins
-   * over an exported one). Empty for an ssh box, whose files and shell are not this one's. A
-   * project's own `.claude/settings*.json` is not read: its `env` holds for sessions in that
-   * directory only, and the listing is per mount.
+   * over an exported one). Empty for an ssh box, whose files and shell are not this one's.
+   * Without `cwd` it is the mount's own answer, which is what the listing follows, since a
+   * model menu is per mount. With `cwd` the workspace's project and local settings files are
+   * merged in as well, which is what a turn there really runs with: a workspace file outranks
+   * the user's, so a session can be pointed somewhere other than the box says (owner,
+   * 2026-11-10: a proxy's address in the home folder's `settings.local.json` kept every
+   * session opened there off the router that `settings.json` named).
    */
-  private async claudeEnv(): Promise<Record<string, string | undefined>> {
+  private async claudeEnv(cwd?: string): Promise<Record<string, string | undefined>> {
     if (this.config.sshHost) return {};
-    const [mine, managed] = await Promise.all([
-      readSettingsEnv(join(this.claudeHome, "settings.json")),
-      readSettingsEnv(join(managedDir(), "managed-settings.json")),
-    ]);
-    return { ...process.env, ...mine, ...managed };
+    return { ...process.env, ...(await this.settingsEnv(cwd)).env };
+  }
+
+  /** The settings files' `env` for this mount, or for a session in `cwd`, with the scope that
+   *  set each variable (`settingsEnvAt`). Nothing for an ssh box. */
+  private async settingsEnv(cwd?: string) {
+    if (this.config.sshHost) return { env: {}, from: {} };
+    return settingsEnvAt(join(this.claudeHome, "settings.json"), cwd ?? null);
+  }
+
+  /**
+   * Set when the key a turn in `cwd` sends comes from a settings file's `env`
+   * (`ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY`) and not from the Claude login: what a
+   * router writes beside its address. A 401 on such a turn says nothing about the login, so it
+   * must not log the box out or tell anyone to log in. `host` is where the request goes;
+   * `split` is a sentence for the case where the address and the key were set by two different
+   * files, which is how a router's key ends up at somebody else's endpoint.
+   */
+  private async settingsKey(cwd: string): Promise<SettingsKey | undefined> {
+    const { env, from } = await this.settingsEnv(cwd);
+    const keyFrom = from.ANTHROPIC_AUTH_TOKEN ?? from.ANTHROPIC_API_KEY;
+    if (keyFrom === undefined) return undefined;
+    const baseUrl = (env.ANTHROPIC_BASE_URL ?? process.env.ANTHROPIC_BASE_URL)?.trim();
+    let host = "api.anthropic.com";
+    try {
+      if (baseUrl) host = new URL(baseUrl).host;
+    } catch {
+      host = baseUrl ?? host;
+    }
+    const urlFrom = from.ANTHROPIC_BASE_URL ?? (baseUrl ? "environment" : keyFrom);
+    const split =
+      urlFrom === keyFrom
+        ? undefined
+        : serverText("keyRefusedSplit", {
+            address: serverText(settingsScopeText(urlFrom)),
+            key: serverText(settingsScopeText(keyFrom)),
+          });
+    return split === undefined ? { host } : { host, split };
   }
 
   /** The routing variables as the last listing or settings change saw them (`routeSignature`),
@@ -1087,6 +1131,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       return;
     }
+    // The key that was refused came from a settings file, not from the login: a router's, or a
+    // gateway's. The login is as good as it was, and calling the box logged out took the model
+    // menu away and sent the owner to log in again for nothing (2026-11-10).
+    const held0 = this.processes.get(registryKey(this.providerId, sessionId));
+    if (held0?.prep?.settingsKey) return;
     const label = this.hostLabelFor(sessionId);
     // This box is the empty string here and in loginDone/logoutBox, one spelling for the compare.
     const host = label ?? "";
@@ -1455,8 +1504,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Asked of the base URL the CLI will really use, which settings.json can set over the head of
     // dsh's own environment: with a router there and a forwarding proxy exported, the exported
     // one's answer would tell the CLI its router is Anthropic.
-    const inForce = routeEnvIn(await this.claudeEnv()).baseUrl;
+    // Read for this workspace, not for the mount: its own settings files can set another address.
+    const here = this.config.sshHost || remoteWorkspaceFor(cwd) ? undefined : cwd;
+    const inForce = routeEnvIn(await this.claudeEnv(here)).baseUrl;
     this.proxyFirstParty = wantsFirstParty(hints, await detectFirstParty(inForce));
+    const settingsKey = here === undefined ? undefined : await this.settingsKey(here);
     const turns = selectTurns(options.messages, session?.resuming ?? false, this.providerId);
     let prompt = buildPrompt(turns, drops);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
@@ -1560,6 +1612,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       input: stdin ? buildInput(prompt, images) : null,
       drops,
       sizes,
+      settingsKey,
     };
   }
 
@@ -5259,6 +5312,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       relayed: proc.relayed,
       hostLabel: this.hostLabelFor(options.sessionId),
       routerOnly: await this.routerOnly(prep.spec.model),
+      settingsKey: prep.settingsKey,
       // A 5xx or 529 asks the status page once a minute; the note lands on the next retry line.
       statusNote: () => {
         const known = peekStatus();

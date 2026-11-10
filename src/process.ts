@@ -1388,6 +1388,16 @@ export interface TurnPrep {
   /** What each of those blocks cost this turn in characters, before any of them were withheld.
    *  Absent on a side call, which has no workspace to record a number against. */
   sizes?: ContextSizes;
+  /** Set when this turn's key comes from a settings file's `env`, not from the Claude login:
+   *  see `ClaudeCodeAdapter.settingsKey`. */
+  settingsKey?: SettingsKey;
+}
+
+/** Where a turn's request goes when its key was set by a settings file, and, when the address
+ *  and the key were set by two different files, a sentence saying which. */
+export interface SettingsKey {
+  host: string;
+  split?: string;
 }
 
 /** Everything a Claude process needs at spawn: where it runs, how it is reached, what it may do. */

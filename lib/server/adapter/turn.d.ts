@@ -1,7 +1,7 @@
 import { type FinishReason, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { type ContextSource } from "../context-sources.js";
 import { type Agent, type JsonValue, type ResolvedAgent } from "../dsh.js";
-import { type ClaudeEvent, type ClaudeProcessSpec, type RelayEvent, type WorkspaceDiff } from "../process.js";
+import { type ClaudeEvent, type ClaudeProcessSpec, type SettingsKey, type RelayEvent, type WorkspaceDiff } from "../process.js";
 import { type FsBox } from "../remote-fs.js";
 import { type LiveMode, type Translator } from "../translator.js";
 import { type LooseMessage } from "./prompt.js";
@@ -90,9 +90,12 @@ export declare function isLoginFailure(result: ResultFrame): boolean;
  * `routerOnly` is the turn's model by name when only a router answers for it and the box is not
  * behind one: Anthropic refuses the id, and the CLI's "it may not exist or you may not have
  * access" sends the reader looking for a typo or a plan limit, so the refusal says what is
- * missing. Any other failure on that model keeps the CLI's own words.
+ * missing. Any other failure on that model keeps the CLI's own words. `settingsKey` is set when
+ * the key the turn sent came from a settings file and not from the Claude login: a 401 then
+ * names the endpoint that refused it and says logging in will not help, where the login text
+ * would send the reader to do exactly that.
  */
-export declare function finishReason(result: ResultFrame, hostLabel?: string, routerOnly?: string): FinishReason;
+export declare function finishReason(result: ResultFrame, hostLabel?: string, routerOnly?: string, settingsKey?: SettingsKey): FinishReason;
 /**
  * Incremental translator from Claude Code stream-json lines to dsh StreamChunks.
  * Prefers partial `stream_event`s; falls back to whole `assistant` messages when no partials arrived.

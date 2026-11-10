@@ -6743,6 +6743,41 @@ console.log("interrupt-on-abort ok");
     const turn = { messages: messageList([{ role: "user", content: "hi" }]) } as never;
     assert.equal((await routed.prepare(turn)).spec.route, routerUrl);
 
+    // The key a routed turn sends is the router's, set in a settings file, not the Claude login.
+    // The turn knows it, and a 401 on it leaves the box logged in: flagged logged out, the box
+    // lost its model menu and its owner was told to log in again, which could not help.
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: {
+          ANTHROPIC_BASE_URL: routerUrl,
+          ANTHROPIC_AUTH_TOKEN: "PROXY_MANAGED",
+          ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen",
+        },
+      }),
+    );
+    assert.equal((await routed.prepare(turn)).settingsKey?.host, "router.test:15721");
+    const refusedKey = { is_error: true, api_error_status: 401, result: "Invalid bearer token" };
+    const loggedOut = (a: ClaudeCodeAdapter) => (a as unknown as { loggedOut: boolean }).loggedOut;
+    routed.processes.set(
+      registryKey(routed.providerId, "keyed"),
+      fakeProc({ alive: true, prep: { settingsKey: { host: "router.test:15721" } } }),
+    );
+    routed.noteTurnLogin("keyed", refusedKey);
+    assert.equal(loggedOut(routed), false, "a refused settings key is not a logout");
+    routed.processes.set(registryKey(routed.providerId, "plain"), fakeProc({ alive: true }));
+    routed.noteTurnLogin("plain", refusedKey);
+    assert.equal(loggedOut(routed), true, "a refused login still is");
+    routed.setLoggedIn(true);
+    routed.processes.clear();
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 700));
+
     // A router switched while Settings is open: the file changes, and the CLI is asked for its
     // lineup again, since the one in hand was answered under the old file.
     const before = routedCli.spawned.length;

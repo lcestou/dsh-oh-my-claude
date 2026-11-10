@@ -71,6 +71,13 @@ declare const EN: {
     readonly apiKeyBilling: "⚠ Claude Code is using the ANTHROPIC_API_KEY from dsh's environment, so this session bills that key, not your Claude subscription. Unset it where dsh starts (its .env or service file) to use the login.";
     readonly taskCompleted: "completed";
     readonly modelNeedsCliUpdate: "Newer than the installed Claude Code; update the CLI to unlock it.";
+    readonly keyRefused: "{host} refused the key Claude Code sent ({detail}). That key is set in a settings file's env, as a router or gateway does, and is not your Claude login, so logging in again will not help. Check that the router or gateway is running and is the one this address belongs to.";
+    readonly keyRefusedSplit: "The address comes from {address} and the key from {key}. A workspace's own settings outrank the box's, so the two no longer belong together: remove ANTHROPIC_BASE_URL from one of them, or open the session in another workspace.";
+    readonly settingsScopeUser: "the box's settings.json";
+    readonly settingsScopeProject: "this workspace's .claude/settings.json";
+    readonly settingsScopeLocal: "this workspace's .claude/settings.local.json";
+    readonly settingsScopeManaged: "the managed settings file";
+    readonly settingsScopeEnvironment: "the environment dsh was started with";
     readonly modelNeedsRouter: "{model} only answers through a router, and Claude Code on this box is talking to Anthropic right now. Switch the router on, or pick another model for this session.";
     readonly taskFailed: "failed";
     readonly taskKilled: "killed";

@@ -3,6 +3,7 @@
 // The model listing follows the answer (`mergeCatalog`), and so does the Settings card.
 import { type FSWatcher, watch } from "node:fs";
 import type { FirstPartyProbe } from "../first-party.js";
+import type { ServerKey } from "../locale.js";
 import { type AliasNames, aliasNamesIn } from "../sessions.js";
 import { proxyBaseUrl } from "./catalog.js";
 
@@ -100,6 +101,19 @@ export function routeOf(
   if (answer === undefined) return { state: "unknown", host };
   return { state: answer ? "direct" : "routed", host };
 }
+
+/** How an error names the place a routing variable was set, by settings scope, plus
+ *  `environment` for one dsh itself was started with. */
+const SCOPE_TEXT = new Map<string, ServerKey>([
+  ["user", "settingsScopeUser"],
+  ["project", "settingsScopeProject"],
+  ["local", "settingsScopeLocal"],
+  ["managed", "settingsScopeManaged"],
+  ["environment", "settingsScopeEnvironment"],
+]);
+/** The text key for a scope name; one this file does not know reads as the box's own file. */
+export const settingsScopeText = (scope: string): ServerKey =>
+  SCOPE_TEXT.get(scope) ?? "settingsScopeUser";
 
 /** The settings files whose `env` can route the CLI, by name: the user's and the managed one. */
 const SETTINGS_FILES = new Set(["settings.json", "managed-settings.json"]);

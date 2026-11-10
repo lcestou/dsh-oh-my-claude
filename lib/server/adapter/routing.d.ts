@@ -1,4 +1,5 @@
 import type { FirstPartyProbe } from "../first-party.js";
+import type { ServerKey } from "../locale.js";
 import { type AliasNames } from "../sessions.js";
 /**
  * `direct`: the CLI talks to Anthropic, straight or through a proxy that forwards (headroom).
@@ -48,6 +49,8 @@ export declare function routeOf(env: RouteEnv, mount: {
     ssh: boolean;
     forwards: boolean;
 }, known: (baseUrl: string) => FirstPartyProbe): Route;
+/** The text key for a scope name; one this file does not know reads as the box's own file. */
+export declare const settingsScopeText: (scope: string) => ServerKey;
 /** How long a burst of writes to a settings file is left to settle before it is read. */
 export declare const SETTINGS_SETTLE_MS = 400;
 /**

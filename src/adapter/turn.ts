@@ -15,6 +15,7 @@ import { serverText } from "../locale.js";
 import {
   type ClaudeEvent,
   type ClaudeProcessSpec,
+  type SettingsKey,
   type RelayEvent,
   type WorkspaceDiff,
 } from "../process.js";
@@ -145,17 +146,26 @@ const isModelRefusal = (result: ResultFrame): boolean =>
  * `routerOnly` is the turn's model by name when only a router answers for it and the box is not
  * behind one: Anthropic refuses the id, and the CLI's "it may not exist or you may not have
  * access" sends the reader looking for a typo or a plan limit, so the refusal says what is
- * missing. Any other failure on that model keeps the CLI's own words.
+ * missing. Any other failure on that model keeps the CLI's own words. `settingsKey` is set when
+ * the key the turn sent came from a settings file and not from the Claude login: a 401 then
+ * names the endpoint that refused it and says logging in will not help, where the login text
+ * would send the reader to do exactly that.
  */
 export function finishReason(
   result: ResultFrame,
   hostLabel?: string,
   routerOnly?: string,
+  settingsKey?: SettingsKey,
 ): FinishReason {
   if (result.is_error) {
     let message = resultMessage(result);
     if (routerOnly !== undefined && isModelRefusal(result))
       message = serverText("modelNeedsRouter", { model: routerOnly });
+    if (settingsKey !== undefined && isLoginFailure(result)) {
+      const refused = serverText("keyRefused", { host: settingsKey.host, detail: message });
+      message = settingsKey.split === undefined ? refused : `${refused} ${settingsKey.split}`;
+      return { kind: "error", failure: { message, code: "PROVIDER_ERROR" } };
+    }
     // Name the box the turn actually ran on: an SSH box or a remote workspace runs the far claude, so
     // the local hostname would point the user at the wrong machine to run `claude auth login` on.
     if (isLoginFailure(result))

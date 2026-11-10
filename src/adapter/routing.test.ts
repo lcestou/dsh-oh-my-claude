@@ -2,11 +2,12 @@
 // read from the env a router leaves behind, the listing filtered by that state, and the watch
 // that notices a router being switched.
 import { strict as assert } from "node:assert";
-import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { KNOWN_MODELS, mergeCatalog, resolveModelInfo, withCustomModels } from "./catalog.js";
+import { settingsEnvAt } from "../sessions.js";
 import { finishReason } from "./turn.js";
 import {
   routeEnvIn,
@@ -249,6 +250,80 @@ assert.match(
   failure(finishReason({ is_error: true, result: "Prompt is too long" }, undefined, "Local LLM")),
   /^Prompt is too long/,
 );
+
+// A key set in a settings file is not the Claude login. A 401 on such a turn names the endpoint
+// and says logging in will not help; the login text would send the reader to do exactly that.
+// Recorded 2026-11-10: a router's placeholder key reached Anthropic through another proxy.
+{
+  const refused = {
+    is_error: true,
+    api_error_status: 401,
+    result: "Failed to authenticate. API Error: 401 Invalid bearer token",
+  };
+  const asLogin = failure(finishReason(refused, "this-box"));
+  assert.match(asLogin, /not logged in on this-box/);
+  const keyed = failure(finishReason(refused, "this-box", undefined, { host: "127.0.0.1:8787" }));
+  assert.match(keyed, /^127\.0\.0\.1:8787 refused the key/);
+  assert.match(keyed, /Invalid bearer token/, "the CLI's own words are kept as the detail");
+  assert.doesNotMatch(keyed, /Log in above/);
+  const split = failure(
+    finishReason(refused, "this-box", undefined, { host: "h", split: "The address comes from X." }),
+  );
+  assert.match(split, /The address comes from X\.$/);
+  // Any other failure keeps its words, key or no key.
+  assert.match(
+    failure(
+      finishReason({ is_error: true, result: "Prompt is too long" }, "b", undefined, { host: "h" }),
+    ),
+    /^Prompt is too long/,
+  );
+}
+
+// The settings a session really runs with: the user's file, then the workspace's own, each
+// variable remembering which file had the last word. The case below is the one that sent a
+// router's key to the wrong endpoint: the box's file names the router and its key, and the
+// workspace's local file still names another address.
+{
+  const dir = mkdtempSync(join(tmpdir(), "omc-settings-env-"));
+  try {
+    const user = join(dir, "home", "settings.json");
+    const work = join(dir, "work");
+    mkdirSync(join(dir, "home"));
+    mkdirSync(join(work, ".claude"), { recursive: true });
+    writeFileSync(
+      user,
+      JSON.stringify({
+        env: {
+          ANTHROPIC_BASE_URL: "http://127.0.0.1:15721",
+          ANTHROPIC_AUTH_TOKEN: "PROXY_MANAGED",
+          KEPT: "1",
+          NOT_TEXT: 5,
+        },
+      }),
+    );
+    const box = await settingsEnvAt(user, null);
+    assert.equal(box.env.ANTHROPIC_BASE_URL, "http://127.0.0.1:15721");
+    assert.equal(box.from.ANTHROPIC_BASE_URL, "user");
+    assert.equal("NOT_TEXT" in box.env, false, "only text values are exported");
+    writeFileSync(
+      join(work, ".claude", "settings.local.json"),
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: "http://127.0.0.1:8787" } }),
+    );
+    const here = await settingsEnvAt(user, work);
+    assert.equal(here.env.ANTHROPIC_BASE_URL, "http://127.0.0.1:8787", "the workspace outranks");
+    assert.deepEqual(
+      [here.from.ANTHROPIC_BASE_URL, here.from.ANTHROPIC_AUTH_TOKEN, here.env.KEPT],
+      ["local", "user", "1"],
+    );
+    // No file at all is no variables, not a throw.
+    assert.deepEqual(await settingsEnvAt(join(dir, "none", "settings.json"), null), {
+      env: {},
+      from: {},
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 // The watch: only a settings file counts, a burst of writes is one call, and a save by rename
 // (write a temp file, move it over) is seen, which a watch on the file itself would miss.

@@ -1175,17 +1175,34 @@ export function aliasNamesIn(
 }
 
 /**
- * The `env` block of one settings file, string values only, which is what the CLI exports to
- * itself at start. A file that is missing, unreadable or mid-edit reads as no variables: the
- * callers ask "does this file route Claude Code somewhere", and no answer is "no".
+ * The `env` the settings files give the CLI for a session in `cwd` on this box, merged the way
+ * the CLI merges them (user, then the workspace's project file, then its local file, then the
+ * managed file, each outranking the one before), string values only. `from` names the scope
+ * that had the last word on each variable, which is how a caller can tell that an address and
+ * the key sent to it were set by two different files. With `cwd` null only the user and managed
+ * files are read: that is the box's own answer, before any workspace has its say. A file that
+ * is missing, unreadable or mid-edit contributes nothing, and nothing here throws: the callers
+ * ask "do the settings route Claude Code somewhere", and no answer is "no".
  */
-export async function readSettingsEnv(path: string): Promise<Record<string, string>> {
-  const file = await readSettings({}, path).catch(() => undefined);
-  const env = file?.exists ? parseSettingsText(file.text).value?.env : undefined;
-  const out: Record<string, string> = {};
-  if (isJsonObject(env))
-    for (const [k, v] of Object.entries(env)) if (typeof v === "string") out[k] = v;
-  return out;
+export async function settingsEnvAt(
+  userPath: string,
+  cwd: string | null,
+): Promise<{ env: Record<string, string>; from: Record<string, string> }> {
+  const env: Record<string, string> = {};
+  const from: Record<string, string> = {};
+  const texts = await settingsTexts({}, userPath, cwd).catch(() => []);
+  // `settingsTexts` answers highest precedence first; assigning lowest first lets each scope
+  // overwrite the ones it outranks.
+  for (const { scope, text } of texts.toReversed()) {
+    const block = parseSettingsText(text).value?.env;
+    if (!isJsonObject(block)) continue;
+    for (const [k, v] of Object.entries(block))
+      if (typeof v === "string") {
+        env[k] = v;
+        from[k] = scope;
+      }
+  }
+  return { env, from };
 }
 
 /**
