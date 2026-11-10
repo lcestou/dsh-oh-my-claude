@@ -19,6 +19,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - Screen readers now read out the outcome of a save or check in Settings: the settings editor's "Saved at" line and a refused save, the starter's Saved note, Check now in Claude updates, and a failed tool rows or terminal sync switch.
 - The update pill beside the Oh My Claude heading in Settings goes away as soon as you turn the Update notice switch off, and comes back when you turn it on again, without reopening Settings.
 - After a save in the settings.json editor in Settings, the CLAUDE.md row and the Claude updates channel show the new values at once. A channel picked in Claude updates, or a change from the Tune tab, now shows in the settings.json editor too, unless an edit is open there.
+- Switching a Claude session to a non-Claude model after picking a permission mode from the shield no longer leaves a Claude mode name on dsh's own access control.
 
 ## [1.6.1] - 2026-11-09
 

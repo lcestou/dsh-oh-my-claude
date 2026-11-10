@@ -141,6 +141,10 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
       // dsh's own label and aria-label, kept for the cleanup; refreshed whenever dsh rewrites them.
       let lastDshLabelText = labelSpan()?.textContent ?? "";
       let lastDshAriaLabel = trigger.getAttribute("aria-label") ?? "";
+      // What this code last wrote, so a mode change does not mistake our previous label for dsh's
+      // and hand it back to dsh's trigger on cleanup.
+      let ourLabelText: string | undefined;
+      let ourAriaLabel: string | undefined;
 
       // Apply our Claude-mode label to the trigger's label span and aria-label. Compares against
       // the DOM, so our own write is a no-op and a rewrite by dsh is overwritten again.
@@ -150,8 +154,9 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         const text = `${modeLabel(currentMode)}${refused ? " ⚠" : ""}`;
         const target = labelSpan();
         if (target && target.textContent !== text) {
-          lastDshLabelText = target.textContent ?? "";
+          if (target.textContent !== ourLabelText) lastDshLabelText = target.textContent ?? "";
           target.textContent = text;
+          ourLabelText = text;
         }
         const newAria = t("panel.access.ariaLabel", {
           text,
@@ -159,8 +164,9 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         });
         const aria = trigger.getAttribute("aria-label") ?? "";
         if (aria !== newAria) {
-          lastDshAriaLabel = aria;
+          if (aria !== ourAriaLabel) lastDshAriaLabel = aria;
           trigger.setAttribute("aria-label", newAria);
+          ourAriaLabel = newAria;
         }
       };
 
