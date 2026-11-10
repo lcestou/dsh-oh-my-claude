@@ -9539,6 +9539,149 @@ for (const [outcome, behavior, message] of [
 }
 console.log("approval beside relay ok");
 
+// Regression, the same exit by another door: a message typed while two approvals were open. The
+// plugin writes the steer to the CLI and parks the step at the next tool result, so dsh draws the
+// message there. With one call approved and running, its result was that tool result: the step
+// parked, the exit aborted the dialog still open for the other call, and that call was refused
+// "cancelled before anyone answered". The park now waits for a tool result with no dialog open.
+// Same stubbed stream(); a function in the queue runs when the loop reaches it, then the next
+// event is read, the way a click lands between two frames.
+{
+  const session = {
+    header: { version: 0 },
+    snapshotEvents: () => [
+      { type: "turn/start", data: { turn: 1 } },
+      { type: "step/start", data: { step: 1 } },
+    ],
+    append: () => ({ seq: 1 }),
+  };
+  const grants: Array<(outcome: string) => void> = [];
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({
+      on() {},
+      sessions: { get: () => session },
+      agents: { get: () => ({ id: "ag", session: { id: "ssteer" } }) },
+      approval: {
+        request: ({ signal }: { signal: AbortSignal }) =>
+          new Promise<string>((resolve) => {
+            grants.push(resolve);
+            signal.addEventListener("abort", () => resolve("cancelled"), { once: true });
+          }),
+      },
+    }),
+    Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
+  );
+  a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
+  (a as any).mcp = { base: "http://127.0.0.1:1", key: "k", via: "webserver", toolsFor: () => [] };
+  const ask = (requestId: string, toolUseId: string) => ({
+    type: "control_request",
+    request_id: requestId,
+    request: {
+      subtype: "can_use_tool",
+      tool_name: "mcp__dsh__wait_session",
+      input: { sessionId: "other" },
+      tool_use_id: toolUseId,
+    },
+  });
+  const result = (toolUseId: string) => ({
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: toolUseId, content: "waited" }] },
+  });
+  const queue: Array<unknown> = [
+    {
+      type: "assistant",
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "w1", name: "mcp__dsh__wait_session", input: {} },
+          { type: "tool_use", id: "w2", name: "mcp__dsh__wait_session", input: {} },
+        ],
+      },
+    },
+    ask("c1", "w1"),
+    ask("c2", "w2"),
+    () => grants[0]?.("allowed-once"), // the person approves the first call
+    result("w1"), // it runs and answers while the second dialog is still open
+    () => grants[1]?.("allowed-once"),
+    result("w2"),
+  ];
+  const written: string[] = [];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    parked: undefined,
+    // A steer typed a moment ago is already on the CLI's stdin.
+    steerPending: true,
+    forwarded: 1,
+    relays: new Map(),
+    sent: new Set(),
+    queue: { lines: [] },
+    queuedIndexes: [],
+    idleKilled: false,
+    exitCode: 0,
+    stderr: "",
+    stray: "",
+    staleResults: 0,
+    countStaleResults: () => 0,
+    write: (line: string) => (written.push(line), true),
+    nextEvent: async () => {
+      let item = queue.shift();
+      while (typeof item === "function") {
+        item();
+        // Let the decision settle and write its answer before the next frame is read.
+        await new Promise((r) => setTimeout(r, 5));
+        item = queue.shift();
+      }
+      return item ?? null;
+    },
+    kill: () => {},
+  };
+  const prep = {
+    input: "go",
+    spec: { model: "m" },
+    cwd: "/tmp",
+    session: undefined,
+    args: [],
+    accessMode: "workspace-write",
+  };
+  a.acquire = async () => ({ prep, proc }) as any;
+  a.reconnectIfStale = async () => {};
+  a.watchTranscript = (async () => {}) as any;
+  a.pumpMirror = (async () => {}) as any;
+  const chunks: any[] = [];
+  for await (const c of a.stream({
+    sessionId: "ssteer",
+    model: "m",
+    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    signal: new AbortController().signal,
+  } as any))
+    chunks.push(c);
+  await new Promise((r) => setTimeout(r, 20));
+  const answers = written
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line)];
+      } catch {
+        return [];
+      }
+    })
+    .filter((m) => m.type === "control_response")
+    .map((m) => [m.response.response.behavior, m.response.response.toolUseID]);
+  assert.deepEqual(
+    answers,
+    [
+      ["allow", "w1"],
+      ["allow", "w2"],
+    ],
+    "both answers are the person's: the park does not cancel the dialog still open",
+  );
+  assert.equal(proc.parked, "steer", "the step still parks for the steer");
+  assert.equal(chunks.at(-1)?.reason?.kind, "stop");
+  assert.deepEqual(queue, [], "and it parks at the second result, with no dialog open");
+  console.log("approval beside steer park ok");
+}
+
 // Regression (2026-09-23 13:01, a second session lost the same day #100 shipped): a user Stop
 // while a native call is running. The adapter asks the CLI to interrupt, the CLI answers with a
 // result frame, and dsh, seeing its abort, breaks out of the stream at the first chunk of that

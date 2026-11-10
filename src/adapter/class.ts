@@ -5266,7 +5266,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         publishAsidesFor();
         return "finished";
       }
-      if (proc.steerPending && event.type === "user") {
+      // Not while a dialog is open: this result belongs to one call of a batch, another call of it
+      // is still waiting on a person, and ending the step would abort that dialog in `finally`.
+      // The CLI takes the steer once the whole batch has answered, so the answered call's own
+      // result comes next and the step parks there. If none ever comes, the steer is handled as
+      // one that never met a tool result is: at the turn's end.
+      if (proc.steerPending && event.type === "user" && pending.size === 0) {
         // Tool results are in; the CLI injects the forwarded steer next. End the dsh step here
         // so dsh draws the steer now, then resume this same Claude turn on the next call. The CLI
         // takes its whole queue at one tool result (probed 2026-09-22), so no steer stays editable.
