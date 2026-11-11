@@ -1681,6 +1681,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly commandRows = new CommandRows();
   /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */
   readonly rowsRefused = new Set<string>();
+  /** Sessions already warned that dsh had no one to answer an approval. */
+  readonly approvalsUnanswered = new Set<string>();
   /** Terminal exchanges the watcher found, by dsh session, each shown as one turn of its own. */
   readonly mirrors = new Map<string, MirrorQueue>();
   /** Terminal turns being streamed live into an open dsh turn, by dsh session. */
@@ -5814,78 +5816,92 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const relayBatch = async function* (first: RelayEvent) {
       relaying = true;
       const calls: RelayEvent[] = [first];
-      const abandon = (outcomeUnderUs: Outcome) => {
-        for (const c of calls)
-          c.reject(new Error("claude turn ended before dsh could run the tool"));
-        return outcomeUnderUs;
-      };
-      while (calls.length < tr.relayableIds().length) {
-        const more = await proc.nextEvent(RELAY_BATCH_MS);
-        if (more === null) return abandon("ended");
-        if (more.type === "timeout") break;
-        if (more.type === "dsh_relay") {
-          calls.push(more);
-          continue;
+      // Set once every call is parked on the process, which is where dsh's answer finds it.
+      let parkedAll = false;
+      try {
+        const abandon = (outcomeUnderUs: Outcome) => {
+          for (const c of calls)
+            c.reject(new Error("claude turn ended before dsh could run the tool"));
+          return outcomeUnderUs;
+        };
+        while (calls.length < tr.relayableIds().length) {
+          const more = await proc.nextEvent(RELAY_BATCH_MS);
+          if (more === null) return abandon("ended");
+          if (more.type === "timeout") break;
+          if (more.type === "dsh_relay") {
+            calls.push(more);
+            continue;
+          }
+          const what = yield* dispatch(more);
+          if (what !== "continue") return abandon(what);
         }
-        const what = yield* dispatch(more);
-        if (what !== "continue") return abandon(what);
+        // Claude's own Bash or Read fired beside the dsh call, and its result reaches us from the
+        // CLI a moment after the relay. dsh refuses a log whose step ends with a tool/call and no
+        // tool/result ("step/end leaves unresolved tool call", a session lost 2026-09-23), so wait
+        // for those results here, bounded, and close any still running with a placeholder row so
+        // the step ends valid. Wrong case: a Bash longer than the wait gets the placeholder, and
+        // its real output shows in the next step as text under a "result" line.
+        // Run flushPending on every exit from the wait below, including the two that end the turn
+        // under us (pr-review #99): a step that ends with a tool/call and no tool/result is the
+        // corruption this guards against whether the turn ended for a relay or because the process
+        // died mid-step, and the session log outlives the process, so the append is valid either way.
+        //
+        // A dialog still open (an approval, a question, a plan review) belongs to another call of
+        // this same message, and ending the step aborts it in `finally`: the person's approval came
+        // back "cancelled before anyone answered" and the call was refused, before they could click.
+        // So the relay waits for every open dialog first, with no deadline of its own: the idle
+        // watchdog bounds it exactly as it bounds a dialog in a step without a relay. The stream
+        // keeps flowing meanwhile. A settled dialog queues no event,
+        // hence the short timed reads. The bounded wait for native results starts once no dialog is
+        // open, since a call approved a moment ago has only just begun.
+        let waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
+        while (pending.size > 0 || callSeqs.size > 0) {
+          const asking = pending.size > 0;
+          if (asking) waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
+          const left = asking ? DIALOG_POLL_MS : waitUntil - Date.now();
+          if (left <= 0) break;
+          const more = await proc.nextEvent(left);
+          if (more === null) {
+            flushPending();
+            return abandon("ended");
+          }
+          if (more.type === "timeout") {
+            if (asking) continue;
+            break;
+          }
+          if (more.type === "dsh_relay") {
+            calls.push(more);
+            continue;
+          }
+          const what = yield* dispatch(more);
+          if (what !== "continue") {
+            flushPending();
+            return abandon(what);
+          }
+        }
+        flushPending();
+        // The oldest outstanding dsh tool_use blocks are the ones these calls came from; the
+        // bridge's own tools never relay, so they are not among them.
+        const ids = tr.relayableIds();
+        for (const [i, call] of calls.entries()) {
+          if (ids[i] !== undefined) tr.relayed.add(ids[i]);
+          yield* relayBlocks(tr, call);
+          proc.relays.set(call.id, call);
+        }
+        publishAsidesFor();
+        tr.onProgress?.({ relay: { name: first.name } });
+        parkedAll = true;
+        return "relayed";
+      } finally {
+        // A Stop ends the step with `return()` at whichever yield the gather is on, which runs
+        // none of the exits above. A call gathered and not yet parked would never be answered and
+        // its MCP request would stay open, so it is refused here. Rejecting one already rejected
+        // by `abandon` does nothing.
+        if (!parkedAll)
+          for (const c of calls)
+            if (!proc.relays.has(c.id))
+              c.reject(new Error("dsh stopped the turn before the tool ran"));
       }
-      // Claude's own Bash or Read fired beside the dsh call, and its result reaches us from the
-      // CLI a moment after the relay. dsh refuses a log whose step ends with a tool/call and no
-      // tool/result ("step/end leaves unresolved tool call", a session lost 2026-09-23), so wait
-      // for those results here, bounded, and close any still running with a placeholder row so
-      // the step ends valid. Wrong case: a Bash longer than the wait gets the placeholder, and
-      // its real output shows in the next step as text under a "result" line.
-      // Run flushPending on every exit from the wait below, including the two that end the turn
-      // under us (pr-review #99): a step that ends with a tool/call and no tool/result is the
-      // corruption this guards against whether the turn ended for a relay or because the process
-      // died mid-step, and the session log outlives the process, so the append is valid either way.
-      //
-      // A dialog still open (an approval, a question, a plan review) belongs to another call of
-      // this same message, and ending the step aborts it in `finally`: the person's approval came
-      // back "cancelled before anyone answered" and the call was refused, before they could click.
-      // So the relay waits for every open dialog first, with no deadline of its own: the idle
-      // watchdog bounds it exactly as it bounds a dialog in a step without a relay. The stream
-      // keeps flowing meanwhile. A settled dialog queues no event,
-      // hence the short timed reads. The bounded wait for native results starts once no dialog is
-      // open, since a call approved a moment ago has only just begun.
-      let waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
-      while (pending.size > 0 || callSeqs.size > 0) {
-        const asking = pending.size > 0;
-        if (asking) waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
-        const left = asking ? DIALOG_POLL_MS : waitUntil - Date.now();
-        if (left <= 0) break;
-        const more = await proc.nextEvent(left);
-        if (more === null) {
-          flushPending();
-          return abandon("ended");
-        }
-        if (more.type === "timeout") {
-          if (asking) continue;
-          break;
-        }
-        if (more.type === "dsh_relay") {
-          calls.push(more);
-          continue;
-        }
-        const what = yield* dispatch(more);
-        if (what !== "continue") {
-          flushPending();
-          return abandon(what);
-        }
-      }
-      flushPending();
-      // The oldest outstanding dsh tool_use blocks are the ones these calls came from; the
-      // bridge's own tools never relay, so they are not among them.
-      const ids = tr.relayableIds();
-      for (const [i, call] of calls.entries()) {
-        if (ids[i] !== undefined) tr.relayed.add(ids[i]);
-        yield* relayBlocks(tr, call);
-        proc.relays.set(call.id, call);
-      }
-      publishAsidesFor();
-      tr.onProgress?.({ relay: { name: first.name } });
-      return "relayed";
     };
     try {
       // A relay dsh never answered would otherwise hand its figures to the next turn.
@@ -6706,6 +6722,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.permissionAsks.set(sessionId, asks.slice(-ASK_SUGGESTIONS));
     }
     if (outcome === "allowed-once") return allowResult(toolUseId, input);
+    // "unavailable" means dsh found nobody to ask (#202: DSH Desktop skipped every request that
+    // named no tool call). Claude is told nobody was asked; the log says where, once a session.
+    if (outcome === "unavailable" && !this.approvalsUnanswered.has(sessionId ?? "")) {
+      this.approvalsUnanswered.add(sessionId ?? "");
+      this.log(
+        "warn",
+        `approval settled "unavailable": dsh had no one to answer ${toolName} in session ${sessionId ?? "?"} (call ${toolUseId})`,
+      );
+    }
     // Under dsh's "never" policy every ask comes back rejected without anyone seeing it, and "the
     // user denied" would send Claude arguing with a person who was never asked.
     if (outcome === "rejected" && sessionId !== undefined && this.approvalsOff.has(sessionId))

@@ -78,11 +78,12 @@ assert.equal((await call("bash")).text, "ran bash", "an unknown mode gates nothi
 assert.equal(planRefuses("run_code", "plan"), true, "code mode's program can call anything");
 assert.equal(planRefuses("bash", "bypassPermissions"), false);
 
-// statusMode reads the CLI's mode-change frame and nothing else.
+// statusMode reads the CLI's mode-change frame and the frame that opens each turn, nothing else.
 const status = (permissionMode: string) =>
   JSON.stringify({ type: "system", subtype: "status", status: null, permissionMode });
 assert.equal(statusMode(status("plan")), "plan");
-assert.equal(statusMode('{"type":"system","subtype":"init","permissionMode":"plan"}'), undefined);
+assert.equal(statusMode('{"type":"system","subtype":"init","permissionMode":"plan"}'), "plan");
+assert.equal(statusMode('{"type":"assistant","note":"init","permissionMode":"plan"}'), undefined);
 assert.equal(statusMode('{"type":"system","subtype":"status","status":"compacting"}'), undefined);
 assert.equal(statusMode('"permissionMode" "status" not json'), undefined);
 
@@ -119,5 +120,9 @@ assert.equal(proc.liveMode, "plan", "EnterPlanMode's status frame moves liveMode
 await feed(status("default"));
 assert.equal(proc.liveMode, "default", "an approved plan moves it back");
 assert.equal(proc.spec.mode, "default", "the launch mode is left alone");
+// A process adopted after a dsh restart starts from its launch mode; the next turn's init frame
+// says what the CLI is really in, and the gate follows it.
+await feed(JSON.stringify({ type: "system", subtype: "init", tools: [], permissionMode: "plan" }));
+assert.equal(proc.liveMode, "plan", "the turn's init frame corrects a stale mode");
 console.log("plan-gate ok");
 process.exit(0);

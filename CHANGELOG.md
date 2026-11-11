@@ -20,6 +20,9 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- With the permission mode on Auto, a subagent's report is shown on its task line and on the Agent row. Claude Code hands the report to the parent as a message there, and both places showed only the note that says so ("This agent's report was delivered to you as a message").
+- Stopping a turn while Claude was still handing several dsh tools over at once no longer leaves one of those calls unanswered and its request open.
+- After a dsh restart, a kept Claude session that had moved into plan mode is treated as in plan mode again from its next turn. It was read as the mode it was launched in until the mode next changed, so the plan-mode refusals did not apply.
 - A Claude alias that a router renamed keeps that name in dsh's model picker and in Settings. CC Switch and similar tools set `ANTHROPIC_DEFAULT_SONNET_MODEL_NAME` and its siblings to say which model `sonnet` really reaches, Claude Code's own picker shows the name, and dsh's read "Claude Sonnet 5" regardless.
 - "Proxy reaches Anthropic" is now decided by the base URL Claude Code really uses. A base URL in `settings.json` outranks an exported one for the CLI, and the plugin asked only the exported one: with a router in `settings.json` and a forwarding proxy in the environment, Claude Code was told its router was Anthropic and assumed a 1M window for models that do not have one.
 - In a permission mode that asks, a tool call waiting for your approval is no longer refused when Claude starts a subagent in the same step, or when a subagent's report or another message reaches the session while another call of that step finishes. The approval used to be cancelled before anyone could answer it. The subagent now starts, and the message is shown, once the dialog is answered.

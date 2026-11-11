@@ -2911,6 +2911,39 @@ console.log("ok");
   });
   assert.equal(orphan.at(-1).type, "block-end");
   assert.equal(orphan.at(-1).block.text, "Task failed: boom");
+  // In auto mode a subagent hands its report back as a message: the summary and the Agent result
+  // are a stub that says so, and the report itself rides beside them (CLI 2.1.322). The stub is
+  // not what a reader wants in either place.
+  const stub =
+    'This agent\'s report was delivered to you as a message from "ace" (its SubagentHandback call). Read it there; it is not repeated here.';
+  const handed = new Translator() as any;
+  const note = handed.translate({
+    type: "system",
+    subtype: "task_notification",
+    task_id: "h1",
+    status: "completed",
+    summary: stub,
+    handback: "send",
+    handback_report: { text: "the answer is 391" },
+  });
+  assert.equal(note.at(-1).block.text, "Task completed: the answer is 391");
+  const warned = handed.translate({
+    type: "system",
+    subtype: "task_notification",
+    task_id: "h2",
+    status: "completed",
+    summary: stub,
+    handback_report: { text: "391", warning: "report was cut short" },
+  });
+  assert.equal(warned.at(-1).block.text, "Task completed: report was cut short 391");
+  const row = handed.translate({
+    type: "user",
+    message: { content: [{ type: "tool_result", tool_use_id: "toolu_agent", content: stub }] },
+    tool_use_result: { handbackReport: { text: "the answer is 391" } },
+  });
+  const drawn = JSON.stringify(row);
+  assert.ok(drawn.includes("the answer is 391"), "the Agent result shows the report");
+  assert.ok(!drawn.includes("not repeated here"), "and not the stub");
   // background_tasks_changed is silent.
   const t4 = new Translator() as any;
   assert.deepEqual(
@@ -4679,8 +4712,10 @@ console.log("plan-review ok");
 {
   let outcome = "unavailable";
   const asked: { callId?: string }[] = [];
+  const warned: string[] = [];
   const ctx = fakeCtx({
     on() {},
+    logger: { warn: (line: string) => warned.push(line) },
     approval: {
       request: async (req: { callId?: string }) => (asked.push(req), outcome),
     },
@@ -4700,6 +4735,12 @@ console.log("plan-review ok");
   assert.ok(un.behavior === "deny", "unavailable denies");
   assert.equal(un.message, OUTCOME_MESSAGE.unavailable);
   assert.ok(un.message.includes("nobody was asked"), "unavailable is not a refusal");
+  // Nobody sees this happen: the log names the session, the tool and the call, once per session,
+  // so a dsh with no one to answer approvals is found from the log (#202 took a day without it).
+  assert.equal(warned.length, 1);
+  assert.match(warned[0]!, /unavailable.*Bash.*s-ap.*tu-ap/);
+  await adapter.decide(base as any);
+  assert.equal(warned.length, 1, "one warning per session, not one per ask");
   outcome = "cancelled";
   const ca = await adapter.decide(base as any);
   assert.equal(ca.behavior === "deny" && ca.message, OUTCOME_MESSAGE.cancelled);
@@ -9812,6 +9853,100 @@ console.log("watch-save-race ok");
   assert.deepEqual(timedReads, [], "no window spent waiting on a relay wait_session never sends");
   assert.deepEqual([...proc.dshIds], ["w1", "d1"], "wait_session stays tracked for its own row");
   console.log("relay beside own tool ok");
+}
+
+// Stop while a batch is still being gathered: dsh ends the step with `return()` at a yield inside
+// the gather, before the calls are parked on the process. A call left there was never answered,
+// so its MCP request stayed open. Same stubbed stream() as above.
+{
+  const session = {
+    header: { version: 0 },
+    snapshotEvents: () => [
+      { type: "turn/start", data: { turn: 1 } },
+      { type: "step/start", data: { step: 1 } },
+    ],
+    append: () => ({ seq: 1 }),
+  };
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
+  );
+  a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
+  (a as any).mcp = { base: "http://127.0.0.1:1", key: "k", via: "webserver", toolsFor: () => [] };
+  const rejected: string[] = [];
+  let relayTaken = false;
+  const queue: Array<any> = [
+    {
+      type: "assistant",
+      message: {
+        id: "m1",
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "d1", name: "mcp__dsh__subagent", input: {} },
+          { type: "tool_use", id: "d2", name: "mcp__dsh__subagent", input: {} },
+        ],
+      },
+    },
+    {
+      type: "dsh_relay",
+      id: "r1",
+      name: "subagent",
+      args: {},
+      resolve() {},
+      reject: (e: Error) => rejected.push(e.message),
+    },
+    // Text that streams while the second call is still awaited: the gather yields it.
+    {
+      type: "assistant",
+      message: { id: "m2", role: "assistant", content: [{ type: "text", text: "one moment" }] },
+    },
+  ];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    parked: undefined,
+    steerPending: false,
+    relays: new Map(),
+    sent: new Set(),
+    queue: { lines: [] },
+    queuedIndexes: [],
+    idleKilled: false,
+    exitCode: 0,
+    stderr: "",
+    stray: "",
+    staleResults: 0,
+    countStaleResults: () => 0,
+    write: () => true,
+    nextEvent: async (ms?: number) => {
+      const next = queue.shift();
+      if (next?.type === "dsh_relay") relayTaken = true;
+      if (next) return next;
+      return ms === undefined ? null : { type: "timeout" };
+    },
+    kill: () => {},
+  };
+  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
+  a.acquire = async () => ({ prep, proc }) as any;
+  a.reconnectIfStale = async () => {};
+  a.watchTranscript = (async () => {}) as any;
+  a.pumpMirror = (async () => {}) as any;
+  const run = a.stream({
+    sessionId: "sstop",
+    model: "m",
+    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    signal: new AbortController().signal,
+  } as any);
+  const it = run[Symbol.asyncIterator]();
+  // Pull until a chunk arrives from inside the gather, then end the step the way a Stop does.
+  for (let i = 0; i < 50; i++) {
+    const step = await it.next();
+    if (step.done || relayTaken) break;
+  }
+  assert.equal(relayTaken, true, "the first call was gathered");
+  await it.return?.(undefined);
+  assert.equal(proc.relays.size, 0, "the call never reached the process's parked relays");
+  assert.equal(rejected.length, 1, "so it is answered with a refusal, not left open");
+  console.log("relay stop mid-batch ok");
 }
 
 // Regression: in a permission mode that asks, Claude calls a tool that needs approval and a

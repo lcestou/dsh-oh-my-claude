@@ -397,6 +397,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly commandRows: CommandRows;
     /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */
     readonly rowsRefused: Set<string>;
+    /** Sessions already warned that dsh had no one to answer an approval. */
+    readonly approvalsUnanswered: Set<string>;
     /** Terminal exchanges the watcher found, by dsh session, each shown as one turn of its own. */
     readonly mirrors: Map<string, MirrorQueue>;
     /** Terminal turns being streamed live into an open dsh turn, by dsh session. */
