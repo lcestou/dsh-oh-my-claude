@@ -1568,7 +1568,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         via = routedTo;
       }
     }
-    this.routedNow = via !== undefined;
     const turns = selectTurns(options.messages, session?.resuming ?? false, this.providerId);
     let prompt = buildPrompt(turns, drops);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
@@ -1650,6 +1649,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       !remoteWorkspaceFor(cwd)
     )
       spec.route = inForce;
+    // `via` is set only for a local turn, so this never rides to a box.
+    if (via !== undefined) spec.routed = true;
     // And for a window the plugin or the user has to state: see `ClaudeProcessSpec.window`.
     const sized = here === undefined ? undefined : await this.sizedWindow(model, here);
     if (sized !== undefined) spec.window = sized;
@@ -1681,6 +1682,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Claude slash commands already registered as dsh commands, name → disposer. */
   readonly bridged = new Map<string, () => void>();
+  /** Whether this box's Claude Code is proven to talk to a router right now, for a spawn that has
+   *  no prepared turn to read it from (the lineup probe, the skill doctor, a one-shot). False when
+   *  the route cannot be read, which is the same as before the panel login was ever withheld. */
+  private async boxRouted(): Promise<boolean> {
+    return (await this.route().catch((): Route => ({ state: "unknown" }))).state === "routed";
+  }
+
   /** Moves hides stored before the key named a box onto this mount's key, once: see
    *  `carriedHides`. Runs at start on the default mount; a store with none is left untouched,
    *  and a failed read or write leaves it for the next start. */
@@ -1689,6 +1697,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const patch = carriedHides(await readHints(path));
       if (Object.keys(patch).length === 0) return;
       await updateHints(path, patch);
+      // The pickers and the Settings rows were built from the store as it was.
+      await this.routeChanged();
       this.log(
         "info",
         `carried ${Object.keys(patch).length / 2} model hides over to this box's keys`,
@@ -1698,10 +1708,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
 
-  /** Whether the turn last prepared on this mount was proven to go to a router (`TurnPrep.via`).
-   *  Read where a local Claude's environment is built, beside `proxyFirstParty` and with the same
-   *  limit: one value per mount, so two workspaces whose settings route differently share it. */
-  routedNow = false;
   /** Pending rows the command bridge queued, so one edited into plain text can leave the queue. */
   readonly commandRows = new CommandRows();
   /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */
@@ -2654,7 +2660,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           temporary: true,
         },
         command: this.config.command,
-        spawner: this.spawner(),
+        spawner: this.spawner(undefined, undefined, undefined, await this.boxRouted()),
       });
       const answered = await this.refreshCliModels(proc);
       const why = proc.stderr.trim().slice(-200) || "no lineup in the answer";
@@ -3110,7 +3116,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         temporary: false,
       },
       command: this.config.command,
-      spawner: this.spawner(),
+      spawner: this.spawner(undefined, undefined, undefined, await this.boxRouted()),
       onExit: () => {},
     });
     proc.write(buildInput("/skill-doctor", []));
@@ -3803,6 +3809,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   localEnvOverride(
     firstParty = this.proxyFirstParty,
     window?: number,
+    routed = false,
   ): Record<string, string> | undefined {
     const over: Record<string, string> = {};
     if (this.config.configDir || this.config.ownTranscripts)
@@ -3810,7 +3817,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const token = this.providerId === "claude-code" ? readSshToken(STATE_DIR, THIS_BOX) : undefined;
     // Not to a router: the token is the Claude account's, and an endpoint that is not Anthropic
     // has no business holding it. The CLI falls back to whatever the router's settings give it.
-    if (token && !this.routedNow) over.CLAUDE_CODE_OAUTH_TOKEN = token;
+    if (token && !routed) over.CLAUDE_CODE_OAUTH_TOKEN = token;
     // The bridge key for the `${KEY_ENV}` the `--mcp-config` argument names. Every local spawn
     // gets it, bridged or not: one that passes no bridge never reads it.
     if (this.mcp) over[KEY_ENV] = this.mcp.key;
@@ -3835,8 +3842,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
-  keeperEnv(firstParty?: boolean, window?: number) {
-    return childEnv(process.env, this.localEnvOverride(firstParty, window));
+  keeperEnv(firstParty?: boolean, window?: number, routed?: boolean) {
+    return childEnv(process.env, this.localEnvOverride(firstParty, window, routed));
   }
 
   /** Spawner for one session: keeper mode needs the session to place and name the keeper. A spec
@@ -3844,7 +3851,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  `prepare` made for this process. */
   spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner {
     const firstParty = spec.firstParty === true;
-    if (spec.child || !sessionId) return this.spawner(firstParty, spec.child, spec.window);
+    if (spec.child || !sessionId)
+      return this.spawner(firstParty, spec.child, spec.window, spec.routed === true);
     const boxHost = this.config.sshHost;
     if (boxHost)
       return (command, args, cwd) =>
@@ -3869,7 +3877,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             command,
             args,
             cwd,
-            env: this.keeperEnv(firstParty, spec.window),
+            env: this.keeperEnv(firstParty, spec.window, spec.routed === true),
             sessionId,
             procSpec: spec,
             owner: this.keeperOwner,
@@ -4211,6 +4219,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     firstParty = this.proxyFirstParty,
     child: "node" | "dsh" = this.config.spawn === "dsh" ? "dsh" : "node",
     window?: number,
+    routed = false,
   ) {
     // A remote instance drives the far `claude` over SSH; no keeper, no seam, its own remote login.
     // A remote-workspace cwd is a local placeholder here; redirect it to the box's real path.
@@ -4228,7 +4237,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // Read per spawn, not once: a login made in the panel applies to the next session started.
     const local: Spawner = (command, args, cwd) =>
-      base(command, args, cwd, this.localEnvOverride(firstParty, window));
+      base(command, args, cwd, this.localEnvOverride(firstParty, window, routed));
     // A remote-workspace cwd runs the far `claude` over SSH on its box, even when this provider is
     // local: otherwise the session sits in the empty local placeholder dir.
     return (command: string, args: string[], cwd: string) => {
@@ -6801,7 +6810,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         temporary: false,
       },
       command: this.config.command,
-      spawner: this.spawner(),
+      spawner: this.spawner(undefined, undefined, undefined, await this.boxRouted()),
       onExit: () => {},
     });
     if (this.config.debug) this.log("info", `one-shot cwd=${cwd} claude ${proc.args.join(" ")}`);

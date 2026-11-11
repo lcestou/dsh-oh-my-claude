@@ -88,8 +88,8 @@ assert.equal(
     woken.push(sessionId);
     return true;
   };
-  /** A usage answer with no window at its cap. */
   // SAFETY: the probe's reply shape, as far as `stillLimitedUntil` reads it
+  /** A usage answer with no window at its cap. */
   const lifted = (async () => ({ ok: true, fetchedAt: 0, windows: [] })) as any;
   a.route = async () => ({ state: "routed", host: "127.0.0.1:15721" });
   await a.continueAfterLimit("s1", lifted);
@@ -108,8 +108,16 @@ assert.equal(
   writeFileSync(file, token);
   const a = adapterHere();
   assert.equal(a.localEnvOverride()?.CLAUDE_CODE_OAUTH_TOKEN, token, "direct: the token rides");
-  a.routedNow = true;
-  assert.equal(a.localEnvOverride()?.CLAUDE_CODE_OAUTH_TOKEN, undefined, "routed: it stays home");
+  assert.equal(
+    a.localEnvOverride(false, undefined, true)?.CLAUDE_CODE_OAUTH_TOKEN,
+    undefined,
+    "routed: it stays home",
+  );
+  // A spawn with no prepared turn asks the box's route: the lineup probe and the skill doctor.
+  a.route = async () => ({ state: "routed", host: "127.0.0.1:15721" });
+  assert.equal(await a["boxRouted"](), true);
+  a.route = async () => ({ state: "unknown" });
+  assert.equal(await a["boxRouted"](), false, "an unproven route is not treated as a router");
 }
 
 // Hides stored before the key named a box are carried to this box's key at start, once.

@@ -1428,6 +1428,11 @@ export interface ClaudeProcessSpec {
    *  switched on or off under a running session changes the key and the session's next turn
    *  replaces the process; without that it would go on talking to wherever it was started for. */
   route?: string;
+  /** The turn was proven to go to a router (`TurnPrep.via`), so the process is started without
+   *  the Claude account's panel login in its environment. On the spec, like `firstParty`, so the
+   *  environment and the key that names the process are one decision: a flag on the adapter could
+   *  be flipped by another session's `prepare` between the two. Present only when on. */
+  routed?: true;
   /** The context window the CLI was told to run this model with (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`
    *  and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` at spawn), for a row whose window is the plugin's or
    *  the user's to say: a router's alias, an added model with a stated size. Absent otherwise, so

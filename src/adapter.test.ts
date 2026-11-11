@@ -2944,6 +2944,21 @@ console.log("ok");
   const drawn = JSON.stringify(row);
   assert.ok(drawn.includes("the answer is 391"), "the Agent result shows the report");
   assert.ok(!drawn.includes("not repeated here"), "and not the stub");
+  // A frame with two results is not a hand-back for both.
+  const two = JSON.stringify(
+    handed.translate({
+      type: "user",
+      message: {
+        content: [
+          { type: "tool_result", tool_use_id: "a1", content: "first result" },
+          { type: "tool_result", tool_use_id: "a2", content: "second result" },
+        ],
+      },
+      tool_use_result: { handbackReport: { text: "the answer is 391" } },
+    }),
+  );
+  assert.ok(two.includes("first result") && two.includes("second result"));
+  assert.ok(!two.includes("the answer is 391"));
   // background_tasks_changed is silent.
   const t4 = new Translator() as any;
   assert.deepEqual(
@@ -6955,6 +6970,8 @@ console.log("interrupt-on-abort ok");
     // The turn is tagged with the router that will answer it, which is what keeps its record
     // out of the money: the CLI prices it at Claude's rates whoever answers.
     assert.equal((await routed.prepare(on(routedId))).via, "router.test:15721");
+    // And the process spec says so, which is what keeps the panel login out of its environment.
+    assert.equal((await routed.prepare(on(routedId))).spec.routed, true);
     const hintsFile = joinPath(stateDir("claude-code"), "hints.json");
     await writeFile(
       hintsFile,
