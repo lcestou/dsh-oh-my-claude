@@ -329,6 +329,10 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         realHome: adapter.realClaudeHome,
         command: adapter.config.command,
         boxFor: usageBoxFor,
+        routed: (providerId) =>
+          ((providerId && g[ADAPTER_CURRENT]?.get(providerId)) || adapter)
+            .route()
+            .then((r) => r.state === "routed"),
       },
     );
     registerSessionRoutes(ctx, {

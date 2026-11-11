@@ -16,6 +16,14 @@ export interface LimitWindow {
  *  not `normal`, so a grade the API adds later still shows rather than passing silently. */
 export type LimitLevel = "critical" | "warning";
 
+/** The part of a usage answer the limit warnings read. */
+export interface LimitAnswer {
+  ok: boolean;
+  windows?: readonly LimitWindow[];
+  /** The box's Claude Code talks to a router, not to Anthropic. */
+  routed?: boolean;
+}
+
 /** A name's words, lowercased: `claude-fable-5-1` gives claude, fable, 5, 1. */
 const words = (s: string): string[] =>
   s
@@ -51,4 +59,17 @@ export function worstLimit(
     if (louder || longer) found = { level, window: w };
   }
   return found;
+}
+
+/** The limit to warn about for a session on `model`, read from a usage answer. Nothing when the
+ *  answer failed, and nothing while the box's traffic goes to a router: those turns do not spend
+ *  the plan, so a full window does not hold the session up, and a warning that names the Sonnet or
+ *  weekly limit would be about a model the session is not using. */
+export function limitFor(
+  answer: LimitAnswer,
+  model: string | undefined,
+): ReturnType<typeof worstLimit> {
+  return answer.ok && !answer.routed && answer.windows
+    ? worstLimit(answer.windows, model)
+    : undefined;
 }

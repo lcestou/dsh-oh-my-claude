@@ -15,7 +15,7 @@ import {
 } from "./shared.js";
 import type { LoginNeed, SteerAttachmentRow, SteerCardData } from "./events.js";
 import { Spark } from "./spark.js";
-import { worstLimit } from "./limits.js";
+import { limitFor, type worstLimit } from "./limits.js";
 import { noteWithdrawn } from "./steer-restore.js";
 import { takeDraft, subscribeDraft, noteDraft } from "./draft.js";
 import { useHintFlag } from "./hints.js";
@@ -150,9 +150,7 @@ export function useBindingLimit(sessionId: string, ctx: ClientCtx) {
     let live = true;
     const read = () =>
       loadUsage(claudeProviderOf(ctx, sessionId)).then(
-        (r) =>
-          live &&
-          setLimit(r.ok ? worstLimit(r.windows, sessionModelOf(ctx, sessionId)) : undefined),
+        (r) => live && setLimit(limitFor(r, sessionModelOf(ctx, sessionId))),
         () => {},
       );
     void read();
