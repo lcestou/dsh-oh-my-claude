@@ -315,6 +315,7 @@ import {
   steerKey,
   textOf,
 } from "./prompt.js";
+import { busyEnterOf, CommandRows, commandNameOf, leavesQueue, lineReceipt } from "./lane.js";
 import {
   accessModeOf,
   approvalsDisabled,
@@ -644,7 +645,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const session = sessionArg as { id?: string };
       // SAFETY: same event object, narrowed to the agent/inbox/spliced shape this handler reads
       const event = eventArg as SpliceEvent;
-      if (event?.type !== "agent/inbox/spliced" || event.data?.target !== "next-step") return;
+      if (event?.type !== "agent/inbox/spliced") return;
+      if (event.data?.target === "next-turn")
+        return this.editedInQueue(session?.id ?? "", event.data.inserted ?? []);
+      if (event.data?.target !== "next-step") return;
       const proc = this.processes.get(registryKey(this.providerId, session?.id ?? ""));
       if (!proc?.alive) return;
       // A relay pending means the CLI is inside a dsh tool: dsh keeps the message and staples it to
@@ -1673,6 +1677,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Claude slash commands already registered as dsh commands, name → disposer. */
   readonly bridged = new Map<string, () => void>();
+  /** Pending rows the command bridge queued, so one edited into plain text can leave the queue. */
+  readonly commandRows = new CommandRows();
   /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */
   readonly rowsRefused = new Set<string>();
   /** Terminal exchanges the watcher found, by dsh session, each shown as one turn of its own. */
@@ -1794,13 +1800,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
                     return { kind: "error", text: serverText("compactNoArgs") };
                   if (this.notClaude(target, "compact") === undefined) {
                     this.compactQueued.add(target.id);
+                    // Before the line is queued: an idle session's turn starts inside `followup`.
+                    const status = target.status;
+                    // Not remembered in `commandRows`: `compactQueued` already expects this row
+                    // to run as `/compact`, so an edit into plain text leaves it in the queue.
                     target.followup(
                       createUserMessage({
                         content: [{ type: "text", text: "/compact" }],
                         source: { kind: "user" },
                       }),
                     );
-                    return { kind: "success", text: serverText("compactSent") };
+                    return {
+                      kind: "success",
+                      text: lineReceipt("/compact", status, serverText("compactSent")),
+                    };
                   }
                   const compaction = child.get("compaction");
                   if (!compaction) return { kind: "error", text: serverText("compactUnavailable") };
@@ -1929,17 +1942,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             // bubble the person sent. It went as a plugin-sourced notice before, which dsh draws
             // as a collapsed context row; the owner found the prompt hard to find in the
             // transcript that way (2026-09-18). The user form also carries attachment chips.
-            target.followup(
-              createUserMessage({
-                content: [{ type: "text", text: line }, ...attachments],
-                source: { kind: "user" },
-              }),
-            );
+            const queued = createUserMessage({
+              content: [{ type: "text", text: line }, ...attachments],
+              source: { kind: "user" },
+            });
+            // Read before the line is queued: on an idle session `followup` starts the turn at
+            // once, and the receipt would call a line that is already running queued.
+            const status = target.status;
+            target.followup(queued);
+            // Remembered so an edit that turns the row into plain text can steer it.
+            this.commandRows.add(queued.id);
+            const receipt = lineReceipt(line, status, `${line} sent to Claude Code`);
             return {
               kind: "success",
-              text: renamed
-                ? `${line} sent to Claude Code; dsh session renamed to ${title}`
-                : `${line} sent to Claude Code`,
+              text: renamed ? `${receipt}; dsh session renamed to ${title}` : receipt,
             };
           },
         });
@@ -2365,8 +2381,56 @@ export class ClaudeCodeAdapter extends LlmAdapter {
               ],
             },
           ];
-    for (const m of out) agent.steer(m);
+    // An edit that turned the steer into a Claude command or skill line: Claude Code expands
+    // those only at the start of a turn, so it goes to the queue and waits for this turn to end.
+    const name = how === "restore" ? undefined : commandNameOf(how.text);
+    const asCommand =
+      name !== undefined && this.bridged.has(name) && !ClaudeCodeAdapter.OWN_COMMANDS.has(name);
+    for (const m of out) {
+      if (!asCommand) {
+        agent.steer(m);
+        continue;
+      }
+      agent.followup(m);
+      this.commandRows.add(m.id);
+    }
     return { ok: true };
+  }
+
+  /**
+   * dsh wrote into a session's queue. When the message is a row the command bridge queued and an
+   * edit in dsh's queue dock has turned it into plain text, it no longer has to wait for the turn
+   * to end: with dsh's busy-Enter preference on steer, where plain text typed mid-turn steers, the
+   * row is taken out of the queue and steered, which is what the dock's own Steer button does.
+   * With the preference on queue, or unreadable, the row stays. Runs after dsh's own splice has
+   * returned, since moving the row inside its event would re-enter the inbox. A failure while
+   * moving it is logged and leaves the row queued, where it was.
+   */
+  private editedInQueue(sessionId: string, inserted: readonly LooseMessage[]): void {
+    for (const m of inserted) {
+      const id = m.id;
+      if (!id || !leavesQueue(m, this.commandRows)) continue;
+      this.commandRows.delete(id);
+      queueMicrotask(() => {
+        try {
+          if (busyEnterOf(this.ctx?.get?.("settings")) !== "steer") return;
+          const agent = this.ctx?.agents?.get?.(asSessionId(sessionId));
+          const row = agent?.inbox?.nextTurn?.find((queued) => queued.id === id);
+          if (!agent?.steer || !row || agent.status !== "running") return;
+          if (!agent.inbox?.remove(id)) return;
+          try {
+            agent.steer(row);
+          } catch (error) {
+            // Out of the queue and not steered would lose the message: back where it was.
+            agent.followup(row);
+            throw error;
+          }
+          this.log("info", `queued command row ${id} edited into plain text: steered`);
+        } catch (error) {
+          this.log("warn", `edited queue row ${id} not steered: ${errorText(error)}`);
+        }
+      });
+    }
   }
 
   /**

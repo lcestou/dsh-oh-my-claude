@@ -120,6 +120,9 @@ export interface Agent {
   };
   ctx?: PluginContext;
   followup(message: Message): void;
+  /** dsh-agent-loop's phase: `running` while a turn is open. Optional because the mirror also
+   *  types agents built some other way. */
+  readonly status?: string;
   /** Put a message on dsh's steer list: a running turn takes it at its next step, an idle session
    *  starts a turn for it. Optional because the mirror also types agents built some other way. */
   steer?(message: Message): void;
@@ -133,6 +136,8 @@ export interface Agent {
    *  message is no longer pending. */
   readonly inbox?: {
     readonly nextStep: readonly Message[];
+    /** The queue: what waits for the running turn to end. */
+    readonly nextTurn?: readonly Message[];
     replace(messageId: string, message: Message): boolean;
     remove(messageId: string): boolean;
   };

@@ -4852,6 +4852,30 @@ console.log("approval outcomes ok");
   });
   assert.deepEqual(sent, ["/compact"], "sent to Claude as the next user message");
   assert.equal(ok.kind, "success");
+  assert.equal(ok.text, "/compact sent to Claude Code");
+  // Typed while a turn runs it has only been queued, and the receipt says so.
+  const midTurn = await handler({
+    agent: { ...agent, status: "running" },
+    rawInput: "",
+    attachments: [],
+    signal: new AbortController().signal,
+  });
+  assert.equal(midTurn.text, "/compact added to the queue, for when this turn ends");
+  sent.pop();
+  // On an idle session `followup` starts the turn at once: the receipt reads the status from
+  // before it, so a line that is already running is not called queued.
+  const waking = { ...agent, status: "idle" };
+  waking.followup = () => {
+    waking.status = "running";
+    return 0;
+  };
+  const woke = await handler({
+    agent: waking,
+    rawInput: "",
+    attachments: [],
+    signal: new AbortController().signal,
+  });
+  assert.equal(woke.text, "/compact sent to Claude Code");
   const refused = await handler({
     agent,
     rawInput: " now",
