@@ -73,3 +73,12 @@ export function limitFor(
     ? worstLimit(answer.windows, model)
     : undefined;
 }
+
+/** How long before a login ends its date starts to show. */
+const LOGIN_END_NOTICE_MS = 14 * 86_400_000;
+
+/** The moment a login ends, when that is worth saying: within two weeks, or already past. Undefined
+ *  earlier than that and when the CLI reported no date, so the usage caption stays as short as it
+ *  was for everyone whose login is not about to lapse. */
+export const loginEndSoon = (endsAt: number | undefined, now = Date.now()): number | undefined =>
+  endsAt !== undefined && endsAt - now <= LOGIN_END_NOTICE_MS ? endsAt : undefined;

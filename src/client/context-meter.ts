@@ -14,7 +14,7 @@ import {
   maskEmail,
   type ClientCtx,
 } from "./shared.js";
-import { type LimitLevel, limitFor } from "./limits.js";
+import { type LimitLevel, limitFor, loginEndSoon } from "./limits.js";
 import { paceOf, WINDOW_MS } from "./pace.js";
 import { sparkNode } from "./spark.js";
 import { HINTS_EVENT, loadHints } from "./hints.js";
@@ -53,6 +53,8 @@ export type UsageReply =
       credits?: UsageCredits;
       host?: string;
       email?: string | null;
+      /** When this login ends, epoch ms, when the box's CLI reports it. */
+      loginEndsAt?: number;
       /** The box's Claude Code talks to a router: its turns do not spend these windows. */
       routed?: true;
     }
@@ -63,6 +65,16 @@ export const whose = (r: UsageReply): string => {
   const host = r.host ?? "";
   if (email && host) return t("main.usage.whoOn", { email, host });
   return email || host;
+};
+
+/** "Login ends Dec 9" in the login's last two weeks, "Login ended Dec 9" after, else "". Claude
+ *  Code says so only in a terminal, and a dsh session would otherwise learn of it from a failed
+ *  turn. A line of its own under the account: beside it, the one-line caption cut the date off. */
+export const loginEndNote = (r: UsageReply): string => {
+  const ends = r.ok ? loginEndSoon(r.loginEndsAt) : undefined;
+  if (ends === undefined) return "";
+  const date = new Date(ends).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return t(ends <= Date.now() ? "main.usage.loginEnded" : "main.usage.loginEnds", { date });
 };
 
 /** A clock time, with the weekday once it is a day or more away: a weekly window at twice its
@@ -486,6 +498,11 @@ export function watchContextMeter(ctx: ClientCtx) {
     // Flush left, not indented under the spark: it names the whole section, not the title's icon.
     const caption = document.createElement("div");
     caption.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;margin:-2px 0 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap`;
+    // The day the login ends, only when that is near: empty and unseen otherwise.
+    const loginEnds = document.createElement("div");
+    loginEnds.setAttribute("data-omc-login-ends", "");
+    loginEnds.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;margin:-4px 0 4px`;
+    loginEnds.hidden = true;
     const rows = document.createElement("div");
     rows.textContent = t("loading");
     rows.style.color = T.faint;
@@ -495,7 +512,7 @@ export function watchContextMeter(ctx: ClientCtx) {
     breakdown.style.cssText = `margin-top:6px;padding-top:6px;border-top:1px solid ${T.border};color:${T.faint};font-size:12px;line-height:18px`;
     breakdown.textContent = t("main.usage.contextBreakdownLoading");
     // Between the plan bars and the context breakdown: what drives the plan limits (this pass).
-    block.append(title, caption, rows, breakdown);
+    block.append(title, caption, loginEnds, rows, breakdown);
     panel.prepend(block);
     const sid = activeClaudeSession(ctx);
     const provider = activeClaudeProvider(ctx);
@@ -524,6 +541,8 @@ export function watchContextMeter(ctx: ClientCtx) {
           caption.textContent = who;
           caption.title = who;
         } else caption.remove();
+        loginEnds.textContent = loginEndNote(reply);
+        loginEnds.hidden = loginEnds.textContent === "";
         renderUsage(rows, reply);
       },
       (e: Error) => renderUsage(rows, { ok: false, error: e.message }),

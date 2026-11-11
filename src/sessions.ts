@@ -791,6 +791,9 @@ export interface AuthStatus {
   authMethod: string | null;
   email?: string | null;
   projectsDirectory?: string | null;
+  /** When the stored claude.ai sign-in ends, in epoch ms (`loginExpiresAt`, CLI 2.1.318). Absent
+   *  on an older CLI, an API-key login, or a date that does not parse. */
+  loginEndsAt?: number;
 }
 
 /** The login half of `claude auth status` output, tolerant of an older CLI printing prose. */
@@ -798,12 +801,15 @@ export function authFromStatus(text: string): AuthStatus {
   try {
     const parsed: unknown = JSON.parse(text);
     const j = isJsonObject(parsed) ? parsed : {};
-    return {
+    const auth: AuthStatus = {
       loggedIn: j.loggedIn === true,
       authMethod: typeof j.authMethod === "string" ? j.authMethod : null,
       email: typeof j.email === "string" ? j.email : null,
       projectsDirectory: typeof j.projectsDirectory === "string" ? j.projectsDirectory : null,
     };
+    const ends = typeof j.loginExpiresAt === "string" ? Date.parse(j.loginExpiresAt) : Number.NaN;
+    if (Number.isFinite(ends)) auth.loginEndsAt = ends;
+    return auth;
   } catch {
     return { loggedIn: /logged in/i.test(text) && !/not logged in/i.test(text), authMethod: null };
   }
@@ -814,6 +820,8 @@ export interface AccountIdentity {
   host: string;
   email: string | null;
   loggedIn: boolean;
+  /** When this login ends, when the CLI says (`AuthStatus.loginEndsAt`). */
+  loginEndsAt?: number;
 }
 /** Per config dir: a second plugin instance has its own login, so its own answer. */
 const identityCache = new Map<string, { at: number; value: AccountIdentity }>();
@@ -839,7 +847,12 @@ export async function accountIdentity(
     ? await run("ssh", sshArgs(sshHost, `${shq(command)} auth status`))
     : await run(command, ["auth", "status"], cliEnvFor(configDir));
   const auth = authFromStatus(status.out);
-  const value = { host: sshHost || hostname(), email: auth.email ?? null, loggedIn: auth.loggedIn };
+  const value: AccountIdentity = {
+    host: sshHost || hostname(),
+    email: auth.email ?? null,
+    loggedIn: auth.loggedIn,
+  };
+  if (auth.loginEndsAt !== undefined) value.loginEndsAt = auth.loginEndsAt;
   identityCache.set(key, { at: Date.now(), value });
   return value;
 }

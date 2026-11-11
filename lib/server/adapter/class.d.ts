@@ -1187,7 +1187,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     openTurn(cont: Continuation, proc: ClaudeProcess, prep: TurnPrep): Promise<void>;
     /**
      * Arm the idle watchdog for a stream: `proc` is killed after `timeoutMs` of silence, which
-     * defaults to the configured one. Every event re-arms. Shortly before the kill (60 s, or half the
+     * defaults to the configured one. Every event re-arms. Not while an approval, a question or a
+     * plan review is open for the session (`awaitingInput`, keyed like the main stream): that
+     * silence is the person's, and stepping away for an hour killed Claude along with the dialog. Shortly before the kill (60 s, or half the
      * timeout when it is under 120 s) a warning event is queued on the process so the turn loop draws
      * a countdown row; `warn: false` skips that for the aux stream, whose loop has no reasoning lane.
      */
