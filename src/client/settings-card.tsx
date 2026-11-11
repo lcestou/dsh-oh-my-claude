@@ -1392,18 +1392,26 @@ type PickerBox = {
  *  Two kinds of row also carry their context size, because nobody but the person at the box
  *  knows it: a router's alias, whose size is kept as a hint under the alias
  *  (`routerWindow:<provider>:<alias>`), and a model added in Settings, whose size is part of its
- *  entry. That entry is also where Remove lives, so an added model shows once. `saved` is the
- *  box's list of added models and `onSaved` re-reads the block after a change to it. */
+ *  entry. That entry is also where Remove lives, so an added model shows once. `onSaved`
+ *  re-reads the block after a change to the box's added models. Every such change sends the
+ *  box's whole list as this row last saw it, so two of them must not be in flight at once: a
+ *  second one would carry the list from before the first. `frozen` is another row or the form
+ *  saving, which holds this row's size and Remove until the block has re-read, and `onSaving`
+ *  is how this row says the same to the others. */
 function ModelRow({
   box,
   model,
+  frozen,
   onState,
   onSaved,
+  onSaving,
 }: {
   box: PickerBox;
   model: PickerModel;
+  frozen: boolean;
   onState: (key: string, hidden: boolean) => void;
   onSaved: () => void;
+  onSaving: (on: boolean) => void;
 }) {
   const key = `hideModel:${box.provider}:${model.id}`;
   const [off, setOff] = useHintFlag(key);
@@ -1414,18 +1422,21 @@ function ModelRow({
   const [routerSize, setRouterSize] = useHintValue(
     `routerWindow:${box.provider}:${model.routers ?? ""}`,
   );
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const saved = box.custom ?? [];
   const entry = saved.find((m) => m.model === model.id);
   /** Store the box's added models as `next`, then re-read the block; a refusal shows on the row. */
   const store = (next: CustomModelEntry[]) => {
-    setBusy(true);
+    onSaving(true);
     setError("");
+    // Released by the block once it has re-read (`ModelsBlock`), not here: until then every row
+    // still holds the list from before this save.
     void putCustomModels(box.provider, next)
       .then(onSaved)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setBusy(false));
+      .catch((e: Error) => {
+        setError(e.message);
+        onSaving(false);
+      });
   };
   const size =
     model.routers !== undefined ? (
@@ -1438,7 +1449,7 @@ function ModelRow({
       <SizeSelect
         name={model.name}
         value={entry.contextWindow}
-        disabled={busy}
+        disabled={frozen}
         onChange={(next) => {
           const { contextWindow: _old, ...rest } = entry;
           const changed = next === undefined ? rest : { ...rest, contextWindow: next };
@@ -1471,7 +1482,7 @@ function ModelRow({
             type="button"
             data-omc-custom-model-remove=""
             style={{ ...btn, fontSize: 12 }}
-            disabled={busy}
+            disabled={frozen}
             aria-label={t("main.settingsUi.customRemoveNamed", { name: model.name })}
             onClick={() => store(saved.filter((m) => m.model !== entry.model))}
           >
@@ -1507,6 +1518,9 @@ export function ModelsBlock() {
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => new Set());
   const [reads, setReads] = useState(0);
   const reread = useCallback(() => setReads((n) => n + 1), []);
+  // The box whose added models are being saved, by provider. Each save sends the box's whole
+  // list, so its rows and its form wait for one another: see `ModelRow`.
+  const [saving, setSaving] = useState<string | undefined>();
   const onState = useCallback((key: string, hidden: boolean) => {
     setHiddenKeys((prev) => {
       if (prev.has(key) === hidden) return prev;
@@ -1532,8 +1546,14 @@ export function ModelsBlock() {
           );
           setHiddenKeys((prev) => new Set([...prev].filter((k) => alive.has(k))));
           setBoxes(next);
+          // The rows now hold the list a save left behind, so the next save may go.
+          setSaving(undefined);
         })
-        .catch((e: Error) => live && setError(e.message));
+        .catch((e: Error) => {
+          if (!live) return;
+          setError(e.message);
+          setSaving(undefined);
+        });
     void load();
     // A box added or removed in the card above changes the groups here; the card announces it.
     window.addEventListener(BOXES_EVENT, load);
@@ -1590,7 +1610,15 @@ export function ModelsBlock() {
                   {box.host ?? t("main.sessions.thisBox")}
                 </legend>
                 {box.models.map((m) => (
-                  <ModelRow key={m.id} box={box} model={m} onState={onState} onSaved={reread} />
+                  <ModelRow
+                    key={m.id}
+                    box={box}
+                    model={m}
+                    frozen={saving === box.provider}
+                    onState={onState}
+                    onSaved={reread}
+                    onSaving={(on) => setSaving(on ? box.provider : undefined)}
+                  />
                 ))}
               </fieldset>
             );
@@ -1607,7 +1635,9 @@ export function ModelsBlock() {
               <CustomModelsEditor
                 provider={box.provider}
                 saved={box.custom ?? []}
+                frozen={saving === box.provider}
                 onSaved={reread}
+                onSaving={(on) => setSaving(on ? box.provider : undefined)}
               />
             );
             // One box: its rows sit right under the description, the outer fold is enough. More

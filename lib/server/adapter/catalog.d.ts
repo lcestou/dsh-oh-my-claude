@@ -166,6 +166,13 @@ export declare function unknownEffortLevels(): Array<{
     level: string;
     models: string[];
 }>;
+/**
+ * The catalog as it stands, with no read of the Models API: what a turn about to start uses to
+ * look up its own row. `getCatalog` waits on that API whenever the cache is stale, and when the
+ * API cannot be reached the cache stays stale, so each call there costs the request's timeout.
+ * A listing can afford that once; a turn that asked several times before it spawned could not.
+ */
+export declare function catalogNow(cli?: CliModel[], picker?: PickerSettings, route?: RouteFilter): Promise<CatalogModel[]>;
 /** Serves the model catalog from cache, fetching Anthropic's API when the cache is stale, and
  *  keeps the last good catalog on any failure so the picker never goes empty. */
 export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], picker?: PickerSettings, route?: RouteFilter): Promise<CatalogModel[]>;

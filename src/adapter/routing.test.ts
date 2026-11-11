@@ -368,6 +368,18 @@ assert.match(
   assert.match(said, /^The router at 127\.0\.0\.1:15721 refused this turn: API Error: 400/);
   assert.match(said, /缺少 base_url/, "the router's own words are kept");
   assert.match(failure(finishReason(fromRouter, "b")), /^API Error: 400/, "no router, no claim");
+  // A 401 from a router is the router's too, whatever key the turn sent: not a lost login.
+  const routed401 = failure(
+    finishReason(
+      { is_error: true, api_error_status: 401, result: "Failed to authenticate. API Error: 401" },
+      "b",
+      undefined,
+      undefined,
+      "gateway.test",
+    ),
+  );
+  assert.match(routed401, /^The router at gateway\.test refused this turn/);
+  assert.doesNotMatch(routed401, /not logged in/);
   // A failure with no status is not the router speaking.
   assert.match(
     failure(
@@ -419,6 +431,14 @@ assert.match(
       [here.from.ANTHROPIC_BASE_URL, here.from.ANTHROPIC_AUTH_TOKEN, here.env.KEPT],
       ["local", "user", "1"],
     );
+    // A workspace file that cannot be read (here a directory where the file should be) drops
+    // the workspace from the answer and keeps the box's: the router's address must not vanish
+    // because of somebody's broken project folder.
+    const broken = join(dir, "broken");
+    mkdirSync(join(broken, ".claude", "settings.local.json"), { recursive: true });
+    const kept = await settingsEnvAt(user, broken);
+    assert.equal(kept.env.ANTHROPIC_BASE_URL, "http://127.0.0.1:15721");
+    assert.equal(kept.from.ANTHROPIC_AUTH_TOKEN, "user");
     // No file at all is no variables, not a throw.
     assert.deepEqual(await settingsEnvAt(join(dir, "none", "settings.json"), null), {
       env: {},

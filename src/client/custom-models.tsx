@@ -45,16 +45,21 @@ const draftEntry = (id: string, name: string, tokens: string): CustomModelEntry 
  * The form that adds a model to one box. `saved` is the box's list as the server last returned
  * it; an add sends the whole next list and then calls `onSaved`, which re-reads the block, so
  * the new model appears among the rows above. A refused save (a bad id, a duplicate) shows the
- * server's sentence and keeps the draft.
+ * server's sentence and keeps the draft. `frozen` and `onSaving` are the same handshake the rows
+ * use (`ModelRow`): one save of the box's list at a time.
  */
 export function CustomModelsEditor({
   provider,
   saved,
+  frozen,
   onSaved,
+  onSaving,
 }: {
   provider: string;
   saved: CustomModelEntry[];
+  frozen: boolean;
   onSaved: () => void;
+  onSaving: (on: boolean) => void;
 }) {
   useLocale();
   const [id, setId] = useState("");
@@ -70,6 +75,7 @@ export function CustomModelsEditor({
   /** Store `next` as this box's whole list; resolves true when the server took it. */
   const save = (next: CustomModelEntry[]): Promise<boolean> => {
     setBusy(true);
+    onSaving(true);
     setError("");
     setDone("");
     return putCustomModels(provider, next)
@@ -79,6 +85,8 @@ export function CustomModelsEditor({
       })
       .catch((e: Error) => {
         setError(e.message);
+        // A refused save changed nothing, so the rows need not wait for a re-read.
+        onSaving(false);
         return false;
       })
       .finally(() => setBusy(false));
@@ -178,7 +186,7 @@ export function CustomModelsEditor({
               type="submit"
               data-omc-custom-model-add=""
               style={btnPrimary}
-              disabled={busy || id.trim() === ""}
+              disabled={busy || frozen || id.trim() === ""}
             >
               {t("main.settingsUi.customAdd")}
             </button>

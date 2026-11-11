@@ -105,6 +105,28 @@ await saveTurnRecords(turnsDir, "ts2", [
     turns: 3,
   },
 ]);
+// A turn a router answered keeps its tag across a restart. Dropped on the way back in, the turn
+// read as one of Claude's and its figure went back into the session's money.
+await saveTurnRecords(turnsDir, "ts-routed", [
+  {
+    at: 4000,
+    costUsd: 0.08,
+    durationMs: 900,
+    input: 15_639,
+    output: 22,
+    cacheRead: 0,
+    cacheWrite: 0,
+    apiMs: 800,
+    turns: 1,
+    via: "127.0.0.1:15721",
+  },
+]);
+assert.equal((await loadTurnRecords(turnsDir)).get("ts-routed")?.[0]?.via, "127.0.0.1:15721");
+assert.equal(
+  (await loadTurnRecords(turnsDir)).get("ts2")?.[0]?.via,
+  undefined,
+  "a turn with no tag gets none",
+);
 const loadedTurns = await loadTurnRecords(turnsDir);
 assert.deepEqual(loadedTurns.get("ts1"), [
   {

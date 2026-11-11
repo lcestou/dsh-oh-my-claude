@@ -643,6 +643,21 @@ export function unknownEffortLevels(): Array<{ level: string; models: string[] }
   return [...byLevel].map(([level, models]) => ({ level, models }));
 }
 
+/**
+ * The catalog as it stands, with no read of the Models API: what a turn about to start uses to
+ * look up its own row. `getCatalog` waits on that API whenever the cache is stale, and when the
+ * API cannot be reached the cache stays stale, so each call there costs the request's timeout.
+ * A listing can afford that once; a turn that asked several times before it spawned could not.
+ */
+export async function catalogNow(
+  cli: CliModel[] = [],
+  picker?: PickerSettings,
+  route?: RouteFilter,
+) {
+  await Promise.all([seedFromDisk(), seedLiveWindows()]);
+  return mergeCatalog(cli, catalog.models, picker, route);
+}
+
 /** Serves the model catalog from cache, fetching Anthropic's API when the cache is stale, and
  *  keeps the last good catalog on any failure so the picker never goes empty. */
 export async function getCatalog(

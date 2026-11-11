@@ -253,6 +253,7 @@ import {
 } from "./types.js";
 import {
   CATALOG_TTL_MS,
+  catalogNow,
   LINEUP_PROBE_ARGS,
   LINEUP_PROBE_WAIT_MS,
   detectFirstParty,
@@ -917,12 +918,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   private async routerOnly(model: string | undefined): Promise<string | undefined> {
     if (!model || (await this.route()).state !== "direct") return undefined;
     const picker = await this.pickerSettings();
-    const row = (await getCatalog(undefined, this.cliModels, picker)).find((m) => m.id === model);
+    const row = (await catalogNow(this.cliModels, picker)).find((m) => m.id === model);
     if (!row) return undefined;
-    const direct = await getCatalog(undefined, this.cliModels, picker, {
-      state: "direct",
-      claudeToo: false,
-    });
+    const direct = await catalogNow(this.cliModels, picker, { state: "direct", claudeToo: false });
     return direct.some((m) => m.id === model) ? undefined : row.name;
   }
 
@@ -947,7 +945,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return undefined;
     const picker = await this.pickerSettings();
     const rows = picker && { ...picker, availableModels: undefined, replaceBuiltInOptions: false };
-    const row = (await getCatalog(undefined, this.cliModels, rows)).find((m) => m.id === model);
+    const row = (await catalogNow(this.cliModels, rows)).find((m) => m.id === model);
     return row?.sized ? row.contextWindow : undefined;
   }
 
@@ -1172,8 +1170,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // The key that was refused came from a settings file, not from the login: a router's, or a
     // gateway's. The login is as good as it was, and calling the box logged out took the model
     // menu away and sent the owner to log in again for nothing (2026-11-10).
+    // The same for any turn a router answered, whatever key it sent.
     const held0 = this.processes.get(registryKey(this.providerId, sessionId));
-    if (held0?.prep?.settingsKey) return;
+    if (held0?.prep?.settingsKey || held0?.prep?.via !== undefined) return;
     const label = this.hostLabelFor(sessionId);
     // This box is the empty string here and in loginDone/logoutBox, one spelling for the compare.
     const host = label ?? "";

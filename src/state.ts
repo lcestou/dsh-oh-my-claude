@@ -572,6 +572,9 @@ export async function loadTurnRecords(dir: string): Promise<Map<string, TurnReco
             record.costTotal = costTotal;
             record.apiTotal = apiTotal;
           }
+          // The router a turn went through. Dropped here, a routed turn came back from a restart
+          // as one of Claude's and its figure went back into the money.
+          if (typeof r.via === "string") record.via = r.via;
           records.push(record);
         }
         if (records.length > 0) map.set(k, records);

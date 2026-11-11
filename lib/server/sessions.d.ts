@@ -414,7 +414,8 @@ export declare function aliasNamesIn(env: Record<string, string | undefined>, su
  * that had the last word on each variable, which is how a caller can tell that an address and
  * the key sent to it were set by two different files. With `cwd` null only the user and managed
  * files are read: that is the box's own answer, before any workspace has its say. A file that
- * is missing, unreadable or mid-edit contributes nothing, and nothing here throws: the callers
+ * is missing or mid-edit contributes nothing. A workspace file that cannot be read at all drops
+ * the workspace's files from the answer and keeps the box's. Nothing here throws: the callers
  * ask "do the settings route Claude Code somewhere", and no answer is "no".
  */
 export declare function settingsEnvAt(userPath: string, cwd: string | null): Promise<{

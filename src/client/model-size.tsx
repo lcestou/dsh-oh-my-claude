@@ -54,6 +54,7 @@ export function SizeSelect({
     setTyping(value !== undefined && !isNamed(value));
     setTokens(value === undefined ? "" : String(value));
   }, [value]);
+  /** Hand the typed number on, when it is one the server would take and not what is stored. */
   const commit = () => {
     const n = /^\d+$/.test(tokens.trim()) ? Number(tokens.trim()) : Number.NaN;
     if (Number.isInteger(n) && n >= MIN_WINDOW && n <= MAX_WINDOW && n !== value) onChange(n);

@@ -177,8 +177,14 @@ export function finishReason(
     // Any other refusal with a status, on a turn a router answered. The model refusal above
     // already has its own sentence; a failure with no status (a tool error, an abort) is not
     // the router's to own.
-    if (via !== undefined && routerOnly === undefined && (result.api_error_status ?? 0) >= 400)
-      message = serverText("routerRefused", { host: via, detail: message });
+    // That includes a 401: the router answered it, whatever key the turn sent, and "log in
+    // again" is not what fixes a router's refusal. Nor is Anthropic's status page what a
+    // router's 5xx is about.
+    if (via !== undefined) {
+      if (routerOnly === undefined && (result.api_error_status ?? 0) >= 400)
+        message = serverText("routerRefused", { host: via, detail: message });
+      return { kind: "error", failure: { message, code: "PROVIDER_ERROR" } };
+    }
     // Name the box the turn actually ran on: an SSH box or a remote workspace runs the far claude, so
     // the local hostname would point the user at the wrong machine to run `claude auth login` on.
     if (isLoginFailure(result))
