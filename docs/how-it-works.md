@@ -80,7 +80,7 @@ One `claude` process stays alive per dsh session (`processIdleMs`, default 30 mi
 
 ### Idle watchdog
 
-`idleTimeoutMs` stops a process that produces nothing for that long, but not silently. Half a timeout before the stop (60 s when the timeout is two minutes or more), a reasoning row announces the countdown, and the session header shows `stopping in Ns` with an Extend button that pushes the deadline out by a full timeout. A tool call in flight pauses the watchdog. `GET /dsh-oh-my-claude/idle?session=` and `POST /idle/extend` are the routes behind the chip.
+`idleTimeoutMs` stops a process that produces nothing for that long, but not silently. Half a timeout before the stop (60 s when the timeout is two minutes or more), a reasoning row announces the countdown, and the session header shows `stopping in Ns` with an Extend button that pushes the deadline out by a full timeout. A tool call in flight pauses the watchdog. So does an approval, a question or a plan review waiting for your answer: the countdown does not start, and nothing is stopped, until the dialog is answered. `GET /dsh-oh-my-claude/idle?session=` and `POST /idle/extend` are the routes behind the chip.
 
 ## Approvals and questions
 
