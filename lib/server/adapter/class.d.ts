@@ -20,6 +20,7 @@ import { type Route } from "./routing.js";
 import { type AsideEntry, type AsidesReply, type AwaitingRow, Continuation, ControlRequestEvent, type ControlReply, type ContextUsageReply, type Decision, type HeldSteer, type HoldReply, type IdleReply, type LoginNeed, type LiveTurnReply, type McpAuthReply, type McpStatusReply, type PermissionModeInfo, type PermissionModeReply, type PermissionModeState, type PermissionReadoutReply, type RewindReply, type SessionOptions, type SkillDoctorReply, type SteerCardState, type SteerEditReply, type WorkspaceDiffReply } from "./types.js";
 import { type MirrorQueue, type StreamState, type TranscriptWatch } from "./transcript-watch.js";
 import { type LoadedImage } from "./prompt.js";
+import { CommandRows } from "./lane.js";
 import { type IdleTarget, type LiveTurn, type ResultFrame, type TurnRecord, type TurnsReply, type UltracodeState } from "./turn.js";
 /** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
 export declare class ClaudeCodeAdapter extends LlmAdapter {
@@ -392,6 +393,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     }): Promise<TurnPrep>;
     /** Claude slash commands already registered as dsh commands, name → disposer. */
     readonly bridged: Map<string, () => void>;
+    /** Pending rows the command bridge queued, so one edited into plain text can leave the queue. */
+    readonly commandRows: CommandRows;
     /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */
     readonly rowsRefused: Set<string>;
     /** Terminal exchanges the watcher found, by dsh session, each shown as one turn of its own. */
@@ -580,6 +583,16 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     releaseHold(sessionId: string, holdId: string, how: "restore" | "drop" | {
         text: string;
     }): Promise<SteerEditReply>;
+    /**
+     * dsh wrote into a session's queue. When the message is a row the command bridge queued and an
+     * edit in dsh's queue dock has turned it into plain text, it no longer has to wait for the turn
+     * to end: with dsh's busy-Enter preference on steer, where plain text typed mid-turn steers, the
+     * row is taken out of the queue and steered, which is what the dock's own Steer button does.
+     * With the preference on queue, or unreadable, the row stays. Runs after dsh's own splice has
+     * returned, since moving the row inside its event would re-enter the inbox. Never throws: a
+     * failure leaves the row queued, where it was.
+     */
+    private editedInQueue;
     /**
      * Send waiting steers now, the way Claude Code's own send-now key does: take them back from the
      * CLI, cut the running turn short, and put them to the idle agent, which starts a turn for them.
