@@ -15,6 +15,7 @@ import { serverText } from "../locale.js";
 import {
   type ClaudeEvent,
   type ClaudeProcessSpec,
+  type SettingsKey,
   type RelayEvent,
   type WorkspaceDiff,
 } from "../process.js";
@@ -40,6 +41,11 @@ export interface TurnRecord {
    *  the same process after a dsh restart knows where to count from. Absent on older records. */
   costTotal?: number;
   apiTotal?: number;
+  /** The host this turn's requests went to when that was a router or gateway and not Anthropic.
+   *  The CLI prices every turn at Claude's API rates whatever answered it, so `costUsd` on such
+   *  a turn is a figure for a bill nobody gets (a local model's turn was recorded at $0.08,
+   *  2026-11-10). Readers that add up money leave these turns out; time and tokens still count. */
+  via?: string;
 }
 
 /** dsh splicing messages into a session's inbox mid-turn; the steers this adapter forwards live. */
@@ -135,11 +141,50 @@ export function isLoginFailure(result: ResultFrame): boolean {
   );
 }
 
-/** On an error result it builds the message a person sees: it names the box the turn ran on and,
- *  for a 5xx, appends the incident the status page reports so the failure reads as the provider's. */
-export function finishReason(result: ResultFrame, hostLabel?: string): FinishReason {
+/** The API's refusal of a model id, as the CLI words it, or its 404 when the wording moves. */
+const isModelRefusal = (result: ResultFrame): boolean =>
+  result.api_error_status === 404 || /issue with the selected model/i.test(resultMessage(result));
+
+/**
+ * On an error result it builds the message a person sees: it names the box the turn ran on and,
+ * for a 5xx, appends the incident the status page reports so the failure reads as the provider's.
+ * `routerOnly` is the turn's model by name when only a router answers for it and the box is not
+ * behind one: Anthropic refuses the id, and the CLI's "it may not exist or you may not have
+ * access" sends the reader looking for a typo or a plan limit, so the refusal says what is
+ * missing. Any other failure on that model keeps the CLI's own words. `settingsKey` is set when
+ * the key the turn sent came from a settings file and not from the Claude login: a 401 then
+ * names the endpoint that refused it and says logging in will not help, where the login text
+ * would send the reader to do exactly that. `via` is the router or gateway the turn went to
+ * (`TurnRecord.via`): an error status it answers with is its own, often in its own words and
+ * language, and reads as Claude failing unless the failure says who is speaking.
+ */
+export function finishReason(
+  result: ResultFrame,
+  hostLabel?: string,
+  routerOnly?: string,
+  settingsKey?: SettingsKey,
+  via?: string,
+): FinishReason {
   if (result.is_error) {
     let message = resultMessage(result);
+    if (routerOnly !== undefined && isModelRefusal(result))
+      message = serverText("modelNeedsRouter", { model: routerOnly });
+    if (settingsKey !== undefined && isLoginFailure(result)) {
+      const refused = serverText("keyRefused", { host: settingsKey.host, detail: message });
+      message = settingsKey.split === undefined ? refused : `${refused} ${settingsKey.split}`;
+      return { kind: "error", failure: { message, code: "PROVIDER_ERROR" } };
+    }
+    // Any other refusal with a status, on a turn a router answered. The model refusal above
+    // already has its own sentence; a failure with no status (a tool error, an abort) is not
+    // the router's to own.
+    // That includes a 401: the router answered it, whatever key the turn sent, and "log in
+    // again" is not what fixes a router's refusal. Nor is Anthropic's status page what a
+    // router's 5xx is about.
+    if (via !== undefined) {
+      if (routerOnly === undefined && (result.api_error_status ?? 0) >= 400)
+        message = serverText("routerRefused", { host: via, detail: message });
+      return { kind: "error", failure: { message, code: "PROVIDER_ERROR" } };
+    }
     // Name the box the turn actually ran on: an SSH box or a remote workspace runs the far claude, so
     // the local hostname would point the user at the wrong machine to run `claude auth login` on.
     if (isLoginFailure(result))

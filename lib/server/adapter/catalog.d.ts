@@ -1,7 +1,9 @@
 import type { LlmModelInfo, LlmResolvedModelInfo } from "@deepseek-ai/dsh-llm";
 import { type FirstPartyProbe } from "../first-party.js";
+import type { RouteFilter } from "./routing.js";
 import type { CliModel } from "../process.js";
 import type { PickerSettings } from "../sessions.js";
+import type { CustomModel } from "./config.js";
 /** The CLI's effort ladder, low to high; `readPickerSettings` validates `maxEffortLevel` against it. */
 export declare const EFFORTS_ALL: readonly ["low", "medium", "high", "xhigh", "max"];
 /** One effort level's capability flag, as the Models API reports it. */
@@ -33,6 +35,14 @@ interface CatalogModel {
     createdAt?: number;
     /** Effort levels the Models API reports for this model that the plugin does not know yet. */
     unknownEfforts?: string[];
+    /** Set on one of the CLI's aliases that a router took over (`mergeCatalog`), to the alias
+     *  (`sonnet`, `opus`, `haiku`): the model behind it is the router's, so its window is not
+     *  Claude's and can be set in Settings, where the alias is the key it is kept under. */
+    routers?: string;
+    /** The window on this row is one the plugin decided or was told, not one the CLI knows for the
+     *  model: a router's alias, or a row whose entry states a size. A session on such a row is
+     *  started with that window, since the CLI would otherwise manage it against its own guess. */
+    sized?: true;
 }
 /** Build one KNOWN_MODELS row: the provider is always claude-code, so callers pass only the id, label, context window and efforts, filling description when given. */
 declare const M: (id: string, label: string, contextWindow: number, efforts: readonly string[], description?: string) => CatalogModel;
@@ -82,8 +92,15 @@ export declare const FIRST_PARTY_FLAG = "_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_UR
  *  test is the CLI's own (`av()` in 2.1.274: `new URL(e).host` against `["api.anthropic.com"]`),
  *  `host` with its port included, so this fires exactly when the CLI demotes. */
 export declare const proxyBaseUrl: (raw: string | undefined) => string | undefined;
-/** Ask once per dsh process whether this box is first-party, memoised on globalThis (the adapter is built more than once at boot) and retried while unanswered, so a proxy still starting does not fail the turn. */
-export declare const detectFirstParty: () => Promise<FirstPartyProbe>;
+/**
+ * Whether the base URL in force for a mount reaches Anthropic. `raw` is that URL as the mount's
+ * settings and environment give it (`routeEnv`), which is not always this process's own
+ * `ANTHROPIC_BASE_URL`: settings.json's `env` outranks it for the CLI. No URL, or Anthropic's
+ * own, is false without a request, since the flag changes nothing there. Otherwise the answer is
+ * kept per URL (`firstPartyOf`), so one turn in a while waits on the request and an unanswered
+ * probe is asked again by the next turn, a proxy still starting being the likeliest reason.
+ */
+export declare const detectFirstParty: (raw: string | undefined) => Promise<FirstPartyProbe>;
 /** Record what a session answered. A missing or nonsense figure leaves the last good one standing. */
 export declare const noteLiveWindow: (modelId: string | undefined, maxTokens: number | undefined) => void;
 /** The context window a live session last reported for this model, which beats the catalog's
@@ -119,10 +136,29 @@ export declare const hideModelHint: (provider: string, id: string) => string;
  * nothing.
  */
 export declare const hintHiddenModels: (hints: Record<string, boolean | number>, provider: string) => string[];
+/** The hints key a router alias's window is kept under, for one mount. */
+export declare const routerWindowHint: (provider: string, alias: string) => string;
+/** The windows Settings holds for one mount's router aliases, by alias, read off the hints
+ *  store: whole numbers within the bounds a custom model's window is held to. */
+export declare const hintRouterWindows: (hints: Record<string, boolean | number>, provider: string) => Record<string, number>;
+/**
+ * settings.json's picker with the plugin config's `customModels` added as option rows, after the
+ * file's own: `mergeCatalog` keeps the last row written for an id, so a model named in both takes
+ * the plugin's label and window. Entries the picker
+ * cannot use are dropped rather than refused: one with no model id, a window that is not a positive
+ * whole number, an effort level the CLI does not have. No entries leaves `picker` as it was,
+ * undefined included, so a box with none configured lists exactly what it listed before.
+ * `availableModels` in settings.json still applies to these rows, as it does to the file's own.
+ */
+export declare function withCustomModels(picker: PickerSettings | undefined, custom: readonly CustomModel[]): PickerSettings | undefined;
+/** The window a router's alias row gets until someone states the real one: what the CLI assumes
+ *  for a model it has never heard of, since the model behind the alias is not one this catalog
+ *  can look up. */
+export declare const ROUTED_WINDOW = 200000;
 /** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
  *  short spelling. */
-export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[], picker?: PickerSettings): CatalogModel[];
+export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[], picker?: PickerSettings, route?: RouteFilter): CatalogModel[];
 /** Each effort level the last Models API read reported that the plugin does not know, with the
  *  models that carry it, for Diagnostics. Empty until a read has happened, and after a read that
  *  found none. */
@@ -130,9 +166,16 @@ export declare function unknownEffortLevels(): Array<{
     level: string;
     models: string[];
 }>;
+/**
+ * The catalog as it stands, with no read of the Models API: what a turn about to start uses to
+ * look up its own row. `getCatalog` waits on that API whenever the cache is stale, and when the
+ * API cannot be reached the cache stays stale, so each call there costs the request's timeout.
+ * A listing can afford that once; a turn that asked several times before it spawned could not.
+ */
+export declare function catalogNow(cli?: CliModel[], picker?: PickerSettings, route?: RouteFilter): Promise<CatalogModel[]>;
 /** Serves the model catalog from cache, fetching Anthropic's API when the cache is stale, and
  *  keeps the last good catalog on any failure so the picker never goes empty. */
-export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], picker?: PickerSettings): Promise<CatalogModel[]>;
+export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], picker?: PickerSettings, route?: RouteFilter): Promise<CatalogModel[]>;
 /** The provider-scoped half of a model entry; every Claude model takes text and images. */
 export declare function modelInfo(provider: string, model: {
     id?: string;

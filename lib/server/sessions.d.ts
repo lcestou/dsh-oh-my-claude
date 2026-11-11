@@ -12,6 +12,8 @@ import { type HealHost, type RepairsSummary } from "./session-heal.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { type PluginLoadError } from "./plugins.js";
 import { EFFORTS_ALL } from "./adapter/catalog.js";
+import type { CustomModel } from "./adapter/config.js";
+import type { Route } from "./adapter/routing.js";
 import type { LoginNeed, PermissionModeInfo, PermissionModeReply, PermissionModeState, RewindReply, ContextUsageReply, SkillDoctorReply, WorkspaceDiffReply, PermissionReadoutReply, McpStatusReply, AsideEntry, AsidesReply, IdleReply, LiveTurnReply } from "./adapter/types.js";
 import type { TurnsReply, LiveTurn } from "./adapter/turn.js";
 import { type EventHub, type OmcEvent } from "./events.js";
@@ -346,12 +348,33 @@ declare function settingsTexts(box: FsBox, userPath: string, cwd: string | null)
     scope: string;
     text: string;
 }>>;
-/** One `modelPicker.options` row, down to what a picker row shows. */
-interface PickerOption {
+/** One `modelPicker.options` row, down to what a picker row shows. A row that comes from the
+ *  plugin's own `customModels` config can also say how large the model's window is and which
+ *  effort levels it takes, which settings.json has no key for. */
+export interface PickerOption {
     model: string;
     label?: string;
+    contextWindow?: number;
+    efforts?: string[];
+    /** True for a row the plugin added (`customModels`, the Settings form), unset for one
+     *  settings.json's own `modelPicker.options` names. Only the first kind follows the router
+     *  state: see `mergeCatalog`. */
+    added?: true;
 }
 type EffortLevel = (typeof EFFORTS_ALL)[number];
+/** One model as the Settings card's Models block gets it. `hidden` is the row's switch, `locked`
+ *  a hide the plugin config holds, `off` the picker leaving it out for the box's route.
+ *  `window` is the context window the row reports, and `routers` the alias a router took over,
+ *  present only on such a row: the key its window is kept under in the hints store. */
+export interface PickerRow {
+    id: string;
+    name: string;
+    hidden: boolean;
+    locked: boolean;
+    off: boolean;
+    window: number;
+    routers?: string;
+}
 /** The two settings.json keys that shape Claude Code's own `/model` picker. */
 export interface PickerSettings {
     /** Allowlist entries: a family alias, a version prefix or a full id. Absent means no allowlist. */
@@ -364,7 +387,43 @@ export interface PickerSettings {
     maxEffortLevel?: EffortLevel;
     /** Per-model `modelSettings.<id>.maxEffortLevel`, which overrides the top level for that model. */
     modelEffortCaps?: Record<string, EffortLevel>;
+    /** Names settings.json's `env` gives the CLI's aliases, by alias (`sonnet`, `opus`, `haiku`,
+     *  `fable`): `ANTHROPIC_DEFAULT_<ALIAS>_MODEL_NAME`. A router such as CC Switch sets these to say
+     *  which model an alias really reaches, and the CLI's own picker shows them. */
+    aliasNames?: AliasNames;
+    /** The model ids the same `env` points the aliases at (`ANTHROPIC_DEFAULT_<ALIAS>_MODEL`), by
+     *  alias. A router that names nothing still says here which aliases it took over. */
+    aliasModels?: AliasNames;
+    /** The context window someone set in Settings for a router's alias, by alias: the size of the
+     *  model the router really sends it to, which no file of the router's states. Present, even
+     *  empty, only for a mount whose requests do not go straight to Anthropic: its presence is
+     *  what makes `mergeCatalog` treat a renamed alias as a model with a window of its own. */
+    routerWindows?: Record<string, number>;
 }
+/** A name per CLI alias (`sonnet`, `opus`, `haiku`, `fable`), as someone set them. */
+export type AliasNames = Record<string, string>;
+/** The alias names an `env` block sets (`ANTHROPIC_DEFAULT_SONNET_MODEL_NAME` gives `sonnet`),
+ *  blank ones left out. Also read off the plugin's own environment by the adapter, since the same
+ *  variables work exported in a shell. With `suffix` empty it reads the model ids the aliases
+ *  are pointed at instead (`ANTHROPIC_DEFAULT_SONNET_MODEL`). */
+export declare function aliasNamesIn(env: Record<string, string | undefined>, suffix?: "_NAME" | ""): AliasNames;
+/**
+ * The `env` the settings files give the CLI for a session in `cwd` on this box, merged the way
+ * the CLI merges them (user, then the workspace's project file, then its local file, then the
+ * managed file, each outranking the one before), string values only. `from` names the scope
+ * that had the last word on each variable, which is how a caller can tell that an address and
+ * the key sent to it were set by two different files. With `cwd` null only the user and managed
+ * files are read: that is the box's own answer, before any workspace has its say. A file that
+ * is missing or mid-edit contributes nothing. A workspace file that cannot be read at all drops
+ * the workspace's files from the answer and keeps the box's. Nothing here throws: the callers
+ * ask "do the settings route Claude Code somewhere", and no answer is "no".
+ */
+export declare function settingsEnvAt(userPath: string, cwd: string | null): Promise<{
+    env: Record<string, string>;
+    from: Record<string, string>;
+    /** The `autoCompactWindow` key of the highest file that sets one: a window someone chose. */
+    autoCompactWindow?: number;
+}>;
 /**
  * Read what settings.json says about the picker. Anything the CLI would ignore is dropped here,
  * and a file that is missing, unreadable or silent on both keys reads as undefined, so a settings
@@ -508,8 +567,10 @@ export interface RouteCtx {
     mcp: SessionRouteOptions["mcp"];
     memoryDirAt: (box: MountBox, cwd: string) => Promise<string>;
     models: SessionRouteOptions["models"];
+    offeredModels: SessionRouteOptions["offeredModels"];
     pickerModels: SessionRouteOptions["pickerModels"];
     modelsUpdated: SessionRouteOptions["modelsUpdated"];
+    setCustomModels: SessionRouteOptions["setCustomModels"];
     mtimeOf: typeof mtimeOf;
     notOnBox: (url: URL, what: string, cwd?: string | null) => string | undefined;
     onLoginStatus: SessionRouteOptions["onLoginStatus"];
@@ -914,19 +975,29 @@ export interface SessionRouteOptions {
         id: string;
         name: string;
     }>>;
-    /** The Settings card's Models block: every mount with its rows, hidden ones included. */
+    /** Every model one mount can still name, whatever its picker leaves out right now: what a
+     *  remembered model is judged against (`ClaudeCodeAdapter.offeredModels`). */
+    offeredModels?: (provider?: string) => Promise<Array<{
+        id: string;
+        name: string;
+    }>>;
+    /** The Settings card's Models block: every mount with its rows, hidden ones included, and
+     *  where the mount's traffic goes. */
     pickerModels?: () => Promise<Array<{
         provider: string;
         host: string | null;
-        models: Array<{
-            id: string;
-            name: string;
-            hidden: boolean;
-            locked: boolean;
-        }>;
+        models: PickerRow[];
+        custom: CustomModel[];
+        route: Route;
     }>>;
     /** Announces a changed picker to dsh, after a hints write that hid or showed a model. */
     modelsUpdated?: () => void;
+    /** Replaces the models added in Settings for one mount; `error` is the sentence to show. */
+    setCustomModels?: (provider: string, models: readonly CustomModel[]) => Promise<{
+        models: CustomModel[];
+    } | {
+        error: string;
+    }>;
     /** The provider id this machine's Claude mounts under; a restored session is put on it. */
     providerId?: string;
     /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
@@ -964,7 +1035,7 @@ declare function sessionTranscript(box: MountBox, dir: string, sessionId: string
 /** True when this session already had one within the gap. Records the ask when it does not. */
 declare function recapIsRepeat(sessionId: string, now: number): boolean;
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, spawnMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, hookRuns, askAside, mcp, permissionAsks, sideQuestions, liveTasks, stopTask, taskOutput, compactNow, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, pickerModels, modelsUpdated, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, spawnMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, hookRuns, askAside, mcp, permissionAsks, sideQuestions, liveTasks, stopTask, taskOutput, compactNow, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, offeredModels, pickerModels, modelsUpdated, setCustomModels, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /** One settings file as the Diagnostics tab reports it: where it is, and why the CLI refuses it. */
 export interface DiagnosticFile {
     scope: SettingsScope;

@@ -21,6 +21,9 @@ import {
   type NewSessionDefault,
 } from "../state.js";
 import { EFFORTS_ALL } from "../adapter/catalog.js";
+import type { CustomModel } from "../adapter/config.js";
+import { parseCustomModels } from "../adapter/custom-models.js";
+import { serverText } from "../locale.js";
 import { typedPrompt } from "../transcript.js";
 import type { AsideEntry, RewindPrompt } from "../adapter/types.js";
 
@@ -45,7 +48,9 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       loginNeeded,
       mcp,
       models,
+      offeredModels,
       modelsUpdated,
+      setCustomModels,
       notOnBox,
       permissionAsks,
       permissionModes,
@@ -103,9 +108,45 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
         events?.hub.publish({ kind: "hints", session: null, data: next });
         // A model switched off or on changes what `listModels` answers; dsh's picker reloads on
         // the event its own providers send for that, so the open menu follows without a reload.
-        if (Object.keys(patch).some((k) => k.startsWith("hideModel:"))) modelsUpdated?.();
+        // So do the two switches the route filter reads: "also list Claude's own models", and
+        // "Proxy reaches Anthropic", which decides whether a base URL counts as a router.
+        if (
+          Object.keys(patch).some(
+            (k) =>
+              k.startsWith("hideModel:") ||
+              k.startsWith("routedClaude:") ||
+              k.startsWith("routerWindow:") ||
+              k === "proxyFirstParty" ||
+              k === "proxyFirstPartyOff",
+          )
+        )
+          modelsUpdated?.();
         return json(res, 200, next);
       }
+    }
+    // The Models block's "Add a model" form: the whole list for one mount, replaced in one write.
+    // The block reads the list back from `GET /models?all=1`, so there is no GET here.
+    if (req.method === "PUT" && url.pathname === `${ROUTE_PREFIX}/custom-models`) {
+      if (!setCustomModels) return json(res, 404, { error: "models not available" });
+      const body = await readBody(req);
+      const provider = typeof body.provider === "string" ? body.provider : "";
+      let rows: CustomModel[];
+      try {
+        rows = parseCustomModels(body.models);
+      } catch {
+        return json(res, 400, { error: serverText("customModelUnread") });
+      }
+      const saved = await setCustomModels(provider, rows);
+      if ("error" in saved) return json(res, 400, saved);
+      // The picker lists changed, which is what a hints event already means to every view built
+      // on them (the Models block, the new-session default): other tabs re-read on it.
+      if (sshBoxesPath)
+        events?.hub.publish({
+          kind: "hints",
+          session: null,
+          data: await readHints(join(dirname(sshBoxesPath), "hints.json")),
+        });
+      return json(res, 200, saved);
     }
     // The Claude Code updater for the box a session runs on: its state for the Tune rows,
     // a refresh (`now=1`, never an install), the switch, a dismissal, and the button. The
@@ -179,7 +220,10 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       // The remembered id may be one the CLI has since renamed; answer the form the
       // lineup still has, or nothing, never an id the picker cannot name. Without the
       // catalog (a test harness) the saved id goes out as it is.
-      const offered = models ? (await models()).map((m) => m.id) : undefined;
+      // Against the saved mount's own rows, added models and rows the picker is leaving out
+      // for now included (`offeredModels`): a model that is only out of the menu is not retired.
+      const list = offeredModels ? () => offeredModels(saved.provider) : models;
+      const offered = list ? (await list()).map((m) => m.id) : undefined;
       const model = offered ? livingModelId(saved.model, offered) : saved.model;
       return json(res, 200, model ? { ...saved, model } : {});
     }
@@ -203,7 +247,8 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       if (!saved) return json(res, 200, {});
       // Same rule as the workspace memory: a model the CLI has since renamed answers in the form
       // the lineup still has, and one it no longer offers answers nothing.
-      const offered = models ? (await models()).map((m) => m.id) : undefined;
+      const list = offeredModels ? () => offeredModels(saved.provider) : models;
+      const offered = list ? (await list()).map((m) => m.id) : undefined;
       const model = offered ? livingModelId(saved.model, offered) : saved.model;
       return json(res, 200, model ? { ...saved, model } : {});
     }

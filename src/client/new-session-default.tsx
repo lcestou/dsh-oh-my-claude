@@ -93,7 +93,9 @@ export const loadSessionDefault = (): Promise<SessionDefault | undefined> =>
     )
     .catch(() => undefined);
 
-type PickerModel = { id: string; name: string; hidden: boolean };
+/** `off` is a row the picker leaves out because of where the box's traffic goes (a model that
+ *  needs a router on a box talking to Anthropic, or the reverse); absent from an older server. */
+type PickerModel = { id: string; name: string; hidden: boolean; off?: boolean };
 type PickerBox = { provider: string; host: string | null; models: PickerModel[] };
 
 /** Settings → Oh My Claude: the model and effort a new Claude session opens on where its
@@ -187,9 +189,11 @@ export function NewSessionDefaultRow() {
           ) : null}
           {boxes.map((box) => {
             // A hidden model stays listed while it is the stored default, so the row shows what is
-            // in effect instead of reading "No default" over a default that still applies.
+            // in effect instead of reading "No default" over a default that still applies. A row
+            // the route sets aside is treated the same: a default no session could open on now is
+            // not offered, and one already stored stays visible.
             const rows = box.models
-              .filter((m) => !m.hidden || `${box.provider}\n${m.id}` === key)
+              .filter((m) => (!m.hidden && !m.off) || `${box.provider}\n${m.id}` === key)
               .map((m) => (
                 <option key={`${box.provider}\n${m.id}`} value={`${box.provider}\n${m.id}`}>
                   {m.name}

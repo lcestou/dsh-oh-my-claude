@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { costDetails, isStatsRow } from "./index.js";
+import { priced } from "./cost.js";
 
 /** The smallest node the predicate reads: dsh's row, its children and its class. */
 function el(
@@ -109,6 +110,24 @@ const turn = (over: Partial<Parameters<typeof costDetails>[0][number]>) => ({
   cacheWrite: 0,
   ...over,
 });
+// A turn a router answered is counted, timed and tokened like any other and never priced: the
+// figure the CLI attached is Claude's rate for somebody else's model.
+{
+  const routed = costDetails([turn({}), turn({ costUsd: 0.08, via: "127.0.0.1:15721" })]);
+  assert.deepEqual(routed[0], ["Last turn", "not priced (through 127.0.0.1:15721)"]);
+  assert.deepEqual(
+    routed.find(([label]) => label.startsWith("Turns through")),
+    ["Turns through a router (not priced)", "1"],
+  );
+  assert.deepEqual(routed[1], ["Turns", "2"]);
+  assert.equal(priced(turn({ costUsd: 0.08, via: "127.0.0.1:15721" })), 0);
+  assert.equal(priced(turn({ costUsd: 0.08 })), 0.08);
+  assert.equal(
+    costDetails([turn({})]).some(([label]) => label.startsWith("Turns through")),
+    false,
+    "no routed turn, no extra row",
+  );
+}
 assert.deepEqual(costDetails([turn({}), turn({ costUsd: 0.42, ttftMs: 840 })]), [
   ["Last turn", "$0.42"],
   ["Turns", "2"],

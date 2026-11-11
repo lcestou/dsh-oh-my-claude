@@ -53,6 +53,9 @@ const costText = (total: number, last: number) =>
 /** A token count for the dialog: `0` rather than the readout's blank for none. */
 const fmtTokens = (n: number): string => formatCacheRead(n) || "0";
 
+/** What a turn adds to the money: its API-rate cost, or nothing when a router answered it. */
+export const priced = (turn: TurnRecord): number => (turn.via === undefined ? turn.costUsd : 0);
+
 /**
  * The rows of the cost dialog, label and value, from the session's turn records.
  * ponytail: the token rows are the result frame's `usage`, which is the main agent loop only.
@@ -68,8 +71,16 @@ export const costDetails = (turns: TurnRecord[]): [string, string][] => {
     cacheRead: sum((r) => r.cacheRead),
     cacheWrite: sum((r) => r.cacheWrite),
   };
+  const routed = turns.filter((r) => r.via !== undefined);
   const rows: [string, string][] = [
-    [t("main.cost.lastTurn"), fmtCost(last?.costUsd ?? 0)],
+    // A turn a router answered has no price here: the figure the CLI attaches is Claude's rate
+    // for a model that is not Claude's.
+    [
+      t("main.cost.lastTurn"),
+      last?.via === undefined
+        ? fmtCost(last?.costUsd ?? 0)
+        : t("main.cost.routedTurn", { host: last.via }),
+    ],
     [t("main.cost.turns"), String(turns.length)],
     [t("main.cost.wallTime"), fmtDuration(sum((r) => r.durationMs))],
     [t("main.cost.apiTime"), fmtDuration(sum((r) => r.apiMs))],
@@ -78,6 +89,7 @@ export const costDetails = (turns: TurnRecord[]): [string, string][] => {
   ];
   if (totals.cacheWrite > 0) rows.push([t("main.cost.cacheWrite"), fmtTokens(totals.cacheWrite)]);
   rows.push([t("main.cost.output"), fmtTokens(sum((r) => r.output))]);
+  if (routed.length > 0) rows.push([t("main.cost.routedTurns"), String(routed.length)]);
   if (totals.input + totals.cacheRead + totals.cacheWrite > 0)
     rows.push([t("main.cost.cacheHit"), `${Math.round(cacheShare(totals) * 100)}%`]);
   if (last?.ttftMs !== undefined && last.ttftMs > 0)
@@ -275,9 +287,10 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   useLayoutEffect(() => {
     mineRef.current = mine;
   });
-  const total = turns.reduce((s, r) => s + r.costUsd, 0);
+  // Money is Claude's turns only: a turn a router answered is not priced (`TurnRecord.via`).
+  const total = turns.reduce((s, r) => s + priced(r), 0);
   const last = turns[turns.length - 1];
-  const text = mine && !costOff && total > 0 && last ? costText(total, last.costUsd) : "";
+  const text = mine && !costOff && total > 0 && last ? costText(total, priced(last)) : "";
   // Past the line the pill turns orange and the tooltip leads with the fact; every wording says
   // API-rate, since a subscription login is not billed by this figure.
   const over = mine && total > 0 && line !== undefined && total >= line;
@@ -285,7 +298,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
     mine && total > 0 && last
       ? t(turns.length === 1 ? "main.cost.tooltipOne" : "main.cost.tooltipOther", {
           total: fmtCost(total),
-          last: fmtCost(last.costUsd),
+          last: fmtCost(priced(last)),
           n: turns.length,
           ttft: fmtTtft(last.ttftMs),
         })

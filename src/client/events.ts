@@ -86,6 +86,9 @@ export interface TurnRecord {
   cacheRead: number;
   cacheWrite: number;
   ttftMs?: number;
+  /** The host that answered when it was a router or gateway and not Anthropic. Such a turn's
+   *  `costUsd` is not money anyone is charged, and nothing here adds it up. */
+  via?: string;
 }
 /** `GET /turns`: the records and their sums. */
 export interface TurnsReply {

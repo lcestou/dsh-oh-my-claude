@@ -168,6 +168,8 @@ const blockTextOf = (c: StreamChunk | undefined): string => {
 };
 import { PassThrough } from "node:stream";
 import { tmpdir } from "node:os";
+import { firstPartyOf, forgetFirstParty } from "./first-party.js";
+import { unwatchSettings } from "./adapter/routing.js";
 import { homedir } from "node:os";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { serverText } from "./locale.js";
@@ -6635,6 +6637,264 @@ console.log("interrupt-on-abort ok");
   await remote.probeCliModels();
   assert.equal(box.spawned.length, 0, "an ssh box is not probed");
   console.log("lineup probe ok");
+
+  // The listing follows where the mount's traffic goes. The route is read from the mount's own
+  // settings.json, which outranks whatever this test process has exported, so both cases below
+  // hold on a box with a proxy in its environment.
+  const home = await mkdtemp(joinPath(tmpdir(), "omc-route-home-"));
+  try {
+    const settings = joinPath(home, "settings.json");
+    const mount = (providerId: string) => {
+      const cliForMount = fakeCli(lineup);
+      const built = new ClaudeCodeAdapter(
+        fakeCtx({ on() {} }),
+        Config({
+          providerId,
+          configDir: home,
+          customModels: [{ model: "router-only", label: "Router Only", contextWindow: 64_000 }],
+        }),
+      );
+      built.spawner = () => cliForMount.spawner;
+      return { built, cli: cliForMount };
+    };
+    const ids = async (a: ClaudeCodeAdapter, provider: string) =>
+      (await a.listModels(provider)).map((m) => m.id);
+
+    // Straight to Anthropic: the added model is out of the picker and marked so in Settings,
+    // and it still resolves and still counts as a model the mount can name.
+    await writeFile(
+      settings,
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://api.anthropic.com" } }),
+    );
+    const direct = mount("claude-code-route-direct").built;
+    assert.deepEqual(await direct.route(), { state: "direct" });
+    assert.equal(
+      (await direct.prepare({ messages: messageList([{ role: "user", content: "hi" }]) } as never))
+        .via,
+      undefined,
+      "a turn that reaches Anthropic is not tagged",
+    );
+    assert.equal((await ids(direct, "claude-code-route-direct")).includes("router-only"), false);
+    const row = (await direct.pickerModels()).find((m) => m.id === "router-only");
+    assert.deepEqual([row?.off, row?.hidden], [true, false], "out for the route, not switched off");
+    assert.equal(
+      (await direct.pickerModels()).some((m) => m.id !== "router-only" && m.off),
+      false,
+      "nothing of Claude's is set aside on a direct box",
+    );
+    assert.equal(
+      (await direct.resolveModel("claude-code-route-direct", "router-only")).context?.contextWindow,
+      64_000,
+      "a session already on it keeps its window",
+    );
+    assert.ok(
+      (await direct.offeredModels("claude-code-route-direct")).some((m) => m.id === "router-only"),
+      "a workspace that last ran it is not told the model is gone",
+    );
+    assert.equal(
+      (await direct.getAdvisorModels()).some((m) => m.id === "router-only"),
+      false,
+      "the advisor list, which the remembered-model routes used to judge against, has no added model",
+    );
+
+    // Through a router that names an alias: once the endpoint has answered as not Anthropic and
+    // the lineup carries the router's name, Claude's own rows are set aside.
+    const routerUrl = "http://router.test:15721";
+    await firstPartyOf(routerUrl, async () => false);
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    const routedLineup = lineup.map((r) =>
+      r.value === "sonnet" ? { ...r, displayName: "Local Qwen" } : r,
+    );
+    const routedCli = fakeCli(routedLineup);
+    const routed = new ClaudeCodeAdapter(
+      fakeCtx({ on() {} }),
+      Config({
+        providerId: "claude-code-route-routed",
+        configDir: home,
+        customModels: [{ model: "router-only", label: "Router Only" }],
+      }),
+    );
+    routed.spawner = () => routedCli.spawner;
+    assert.deepEqual(await routed.route(), { state: "routed", host: "router.test:15721" });
+    const listed = await routed.listModels("claude-code-route-routed");
+    assert.deepEqual(
+      listed.map((m) => m.name),
+      ["Default (recommended)", "Local Qwen", "Router Only"],
+      "the router's alias and the added model; Opus is set aside",
+    );
+    assert.ok(
+      (await routed.pickerModels()).some((m) => m.off && m.name.includes("Opus")),
+      "Settings still shows what is set aside",
+    );
+    // The switch that keeps Claude's own rows listed is this mount's hint.
+    await writeFile(
+      joinPath(stateDir("claude-code"), "hints.json"),
+      JSON.stringify({ "routedClaude:claude-code-route-routed": true }),
+    );
+    assert.ok(
+      (await routed.listModels("claude-code-route-routed")).some((m) => m.name.includes("Opus")),
+      "with the switch on Claude's rows are listed too",
+    );
+    await rm(joinPath(stateDir("claude-code"), "hints.json"), { force: true });
+
+    // A process reads its environment once, so the base URL a settings file sets joins the spec
+    // that keys it: a session started before the router was switched is replaced on its next
+    // turn. An export dsh was started with never moves under a running dsh and stays out, so no
+    // spec written before the field existed keys differently.
+    const turn = { messages: messageList([{ role: "user", content: "hi" }]) } as never;
+    assert.equal((await routed.prepare(turn)).spec.route, routerUrl);
+
+    // A session on one of the router's rows is started with that row's window, since the CLI
+    // would run it against Claude's (measured: 1,000,000 for `sonnet` behind a router). The
+    // default until a size is set in Settings, then that size; a row of Claude's own is left to
+    // the CLI. Both variables are set: one sizes a model the CLI has never heard of, the other
+    // caps one it knows.
+    const on = (model: string) =>
+      ({ messages: messageList([{ role: "user", content: "hi" }]), model }) as never;
+    const routedId =
+      (await routed.listModels("claude-code-route-routed")).find((m) => m.name === "Local Qwen")
+        ?.id ?? "";
+    assert.equal((await routed.prepare(on(routedId))).spec.window, 200_000);
+    // The turn is tagged with the router that will answer it, which is what keeps its record
+    // out of the money: the CLI prices it at Claude's rates whoever answers.
+    assert.equal((await routed.prepare(on(routedId))).via, "router.test:15721");
+    const hintsFile = joinPath(stateDir("claude-code"), "hints.json");
+    await writeFile(
+      hintsFile,
+      JSON.stringify({ "routerWindow:claude-code-route-routed:sonnet": 262_144 }),
+    );
+    const sizedSpec = (await routed.prepare(on(routedId))).spec;
+    assert.equal(sizedSpec.window, 262_144, "the size set in Settings");
+    assert.equal(
+      (await routed.resolveModel("claude-code-route-routed", routedId)).context?.contextWindow,
+      262_144,
+      "and dsh's ring is told the same number",
+    );
+    assert.deepEqual(
+      [
+        routed.localEnvOverride(false, sizedSpec.window)?.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
+        routed.localEnvOverride(false, sizedSpec.window)?.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+      ],
+      ["262144", "262144"],
+    );
+    assert.equal(
+      routed.localEnvOverride(false)?.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+      undefined,
+      "no window in the spec, nothing set",
+    );
+    assert.equal((await routed.prepare(on("claude-opus-5-5"))).spec.window, undefined);
+    assert.equal(
+      (await routed.prepare(on("router-only"))).spec.window,
+      undefined,
+      "no size stated",
+    );
+    // A window someone chose in a settings file outranks the row's: the CLI lets the variable
+    // beat that key, so setting it would overrule them.
+    await writeFile(
+      settings,
+      JSON.stringify({
+        autoCompactWindow: 150_000,
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    assert.equal((await routed.prepare(on(routedId))).spec.window, undefined);
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    await rm(hintsFile, { force: true });
+
+    // The key a routed turn sends is the router's, set in a settings file, not the Claude login.
+    // The turn knows it, and a 401 on it leaves the box logged in: flagged logged out, the box
+    // lost its model menu and its owner was told to log in again, which could not help.
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: {
+          ANTHROPIC_BASE_URL: routerUrl,
+          ANTHROPIC_AUTH_TOKEN: "PROXY_MANAGED",
+          ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen",
+        },
+      }),
+    );
+    assert.equal((await routed.prepare(turn)).settingsKey?.host, "router.test:15721");
+    const refusedKey = { is_error: true, api_error_status: 401, result: "Invalid bearer token" };
+    const loggedOut = (a: ClaudeCodeAdapter) => (a as unknown as { loggedOut: boolean }).loggedOut;
+    routed.processes.set(
+      registryKey(routed.providerId, "keyed"),
+      fakeProc({ alive: true, prep: { settingsKey: { host: "router.test:15721" } } }),
+    );
+    routed.noteTurnLogin("keyed", refusedKey);
+    assert.equal(loggedOut(routed), false, "a refused settings key is not a logout");
+    routed.processes.set(registryKey(routed.providerId, "plain"), fakeProc({ alive: true }));
+    routed.noteTurnLogin("plain", refusedKey);
+    assert.equal(loggedOut(routed), true, "a refused login still is");
+    routed.setLoggedIn(true);
+    routed.processes.clear();
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 700));
+
+    // A router switched while Settings is open: the file changes, and the CLI is asked for its
+    // lineup again, since the one in hand was answered under the old file.
+    const before = routedCli.spawned.length;
+    await writeFile(settings, JSON.stringify({ env: {} }));
+    for (let i = 0; i < 40 && routedCli.spawned.length === before; i++)
+      await new Promise((r) => setTimeout(r, 50));
+    assert.equal(routedCli.spawned.length, before + 1, "a routing change re-asks the lineup");
+    // A write that leaves the routing variables alone asks nothing.
+    await new Promise((r) => setTimeout(r, 100));
+    const settled = routedCli.spawned.length;
+    await writeFile(settings, JSON.stringify({ env: {}, theme: "dark" }));
+    await new Promise((r) => setTimeout(r, 900));
+    assert.equal(routedCli.spawned.length, settled, "an unrelated settings write asks nothing");
+    assert.equal(
+      (await routed.prepare(turn)).spec.route,
+      undefined,
+      "with the router off the spec has no route, so it differs from the routed one",
+    );
+
+    // A router switched while dsh was down. The lineup on disk was answered under the old
+    // variables, and the signature kept beside it says so: the next boot asks the CLI again,
+    // once, and the boot after that, with nothing changed, asks nothing.
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    const boot = async () => {
+      const cliAtBoot = fakeCli(routedLineup);
+      const booted = new ClaudeCodeAdapter(
+        fakeCtx({ on() {} }),
+        Config({ providerId: "claude-code-route-routed", configDir: home }),
+      );
+      booted.spawner = () => cliAtBoot.spawner;
+      await booted.listModels("claude-code-route-routed");
+      for (let i = 0; i < 10 && cliAtBoot.spawned.length === 0; i++)
+        await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50));
+      return cliAtBoot.spawned.length;
+    };
+    assert.equal(await boot(), 1, "a boot that finds other routing variables re-asks the lineup");
+    assert.equal(await boot(), 0, "a boot that finds the same ones does not");
+    console.log("route listing ok");
+  } finally {
+    forgetFirstParty();
+    unwatchSettings();
+    await rm(home, { recursive: true, force: true });
+  }
 }
 
 // The live steer path: a text-only message goes to stdin at once; a message carrying a file or an

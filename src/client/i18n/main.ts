@@ -440,6 +440,36 @@ export const en = {
     "Switch a model off to leave it out of that box's model picker. Each box has its own list, so a box you added over SSH can keep a model this one hides. A session already on it keeps running. A newer model shows up on its own.",
   "main.settingsUi.modelsLocked": "hidden by hiddenModels in the plugin config",
   "main.settingsUi.modelsSummary": "{shown} listed, {hidden} hidden",
+  "main.settingsUi.modelsWaiting": "{count} not listed right now",
+  "main.settingsUi.modelOffDirect": "listed while a router is on",
+  "main.settingsUi.modelOffRouted": "set aside while the router is on",
+  "main.settingsUi.routeRoutedNamed":
+    "Claude Code on this box is going through a router at {host}. The model menu lists the router's models, and Claude's own are set aside until the router is switched off.",
+  "main.settingsUi.routeRoutedPlain":
+    "Claude Code on this box is going through {host}, not straight to Anthropic.",
+  "main.settingsUi.routeDirectWaiting":
+    "Claude Code on this box is talking to Anthropic. The models you added join the model menu when a router is switched on.",
+  "main.settingsUi.routeQuiet":
+    "Claude Code on this box is pointed at {host}, which is not answering, so its turns will fail. Start the router there, or switch its routing off.",
+  "main.settingsUi.routeClaudeToo": "Also list Claude's own models",
+  "main.settingsUi.routeClaudeTooDesc": "A turn on one goes wherever the router sends it.",
+  "main.settingsUi.modelSizeNamed": "Context size of {name}",
+  "main.settingsUi.modelSizeTokensNamed": "Context size of {name} in tokens",
+  "main.settingsUi.customAddTitle": "Add a model",
+  "main.settingsUi.customDescBefore":
+    "For a model the list above does not have, served by your gateway or local router, such as a name set up in ",
+  "main.settingsUi.customDescAfter":
+    ". Claude Code is started with this id exactly as written. Where its requests go is decided by your router, not here.",
+  "main.settingsUi.customId": "Model id",
+  "main.settingsUi.customName": "Name in the picker (optional)",
+  "main.settingsUi.customWindow": "Context window",
+  "main.settingsUi.customWindowDefault": "Default (200k)",
+  "main.settingsUi.customWindowOther": "Other…",
+  "main.settingsUi.customWindowTokens": "Context window in tokens",
+  "main.settingsUi.customAdd": "Add",
+  "main.settingsUi.customRemove": "Remove",
+  "main.settingsUi.customRemoveNamed": "Remove {name}",
+  "main.settingsUi.customDidAdd": "Added {name}.",
   "main.settingsUi.claudeSkillsTitle": "Claude Code skills on every model",
   "main.settingsUi.claudeSkillsDesc":
     "A skill or custom command only Claude Code has, typed in a session on another model, goes to that model with its instructions instead of being refused. Skills dsh serves itself run either way.",
@@ -557,6 +587,8 @@ export const en = {
   // Cost dialog detail rows
   "main.cost.lastTurn": "Last turn",
   "main.cost.turns": "Turns",
+  "main.cost.routedTurn": "not priced (through {host})",
+  "main.cost.routedTurns": "Turns through a router (not priced)",
   "main.cost.wallTime": "Wall time",
   "main.cost.apiTime": "API time",
   "main.cost.input": "Input",
@@ -989,6 +1021,35 @@ export const zh = {
     "关掉一个模型，它就不再出现在该主机的模型选择器里。每台主机各有一份列表，所以通过 SSH 添加的主机可以保留本机隐藏的模型。已在用它的会话照常运行。新模型会自动出现。",
   "main.settingsUi.modelsLocked": "已被插件配置的 hiddenModels 隐藏",
   "main.settingsUi.modelsSummary": "{shown} 个显示，{hidden} 个隐藏",
+  "main.settingsUi.modelsWaiting": "{count} 个当前未列出",
+  "main.settingsUi.modelOffDirect": "路由打开时列出",
+  "main.settingsUi.modelOffRouted": "路由打开期间暂不列出",
+  "main.settingsUi.routeRoutedNamed":
+    "这台主机上的 Claude Code 正经由 {host} 上的路由。模型菜单列出路由提供的模型，Claude 自带的模型在路由关闭前暂不列出。",
+  "main.settingsUi.routeRoutedPlain":
+    "这台主机上的 Claude Code 正经由 {host}，而非直连 Anthropic。",
+  "main.settingsUi.routeDirectWaiting":
+    "这台主机上的 Claude Code 直连 Anthropic。你添加的模型会在路由打开后出现在模型菜单里。",
+  "main.settingsUi.routeQuiet":
+    "这台主机上的 Claude Code 指向 {host}，但那里没有响应，对话会失败。请启动那里的路由，或关闭它的路由功能。",
+  "main.settingsUi.routeClaudeToo": "同时列出 Claude 自带的模型",
+  "main.settingsUi.routeClaudeTooDesc": "在这些模型上的对话会被发往路由指定的去处。",
+  "main.settingsUi.modelSizeNamed": "{name} 的上下文大小",
+  "main.settingsUi.modelSizeTokensNamed": "{name} 的上下文大小（token 数）",
+  "main.settingsUi.customAddTitle": "添加模型",
+  "main.settingsUi.customDescBefore": "用于上面列表里没有、由你的网关或本地路由提供的模型，例如在 ",
+  "main.settingsUi.customDescAfter":
+    " 中配置的名称。Claude Code 会原样使用这个 ID 启动。请求发往哪里由你的路由决定，不在这里设置。",
+  "main.settingsUi.customId": "模型 ID",
+  "main.settingsUi.customName": "选择器中的名称（可选）",
+  "main.settingsUi.customWindow": "上下文窗口",
+  "main.settingsUi.customWindowDefault": "默认（200k）",
+  "main.settingsUi.customWindowOther": "其他…",
+  "main.settingsUi.customWindowTokens": "上下文窗口的 token 数",
+  "main.settingsUi.customAdd": "添加",
+  "main.settingsUi.customRemove": "移除",
+  "main.settingsUi.customRemoveNamed": "移除 {name}",
+  "main.settingsUi.customDidAdd": "已添加 {name}。",
   "main.settingsUi.claudeSkillsTitle": "在所有模型上使用 Claude Code 技能",
   "main.settingsUi.claudeSkillsDesc":
     "在其他模型的会话中输入只有 Claude Code 才有的技能或自定义命令时，会连同其指令一起交给该模型，而不是被拒绝。dsh 自己提供的技能无论如何都能运行。",
@@ -1097,6 +1158,8 @@ export const zh = {
   "main.selection.askFailed": "问题未能发送，请重试。",
   "main.cost.lastTurn": "上一轮",
   "main.cost.turns": "轮数",
+  "main.cost.routedTurn": "不计价（经由 {host}）",
+  "main.cost.routedTurns": "经由路由的轮数（不计价）",
   "main.cost.wallTime": "总耗时",
   "main.cost.apiTime": "API 耗时",
   "main.cost.input": "输入",

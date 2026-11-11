@@ -21,11 +21,19 @@ import {
   type MessageSource,
 } from "@deepseek-ai/dsh-llm";
 import { repairStoredTurns } from "../turn-repair.js";
-import { wantsFirstParty } from "../first-party.js";
+import { firstPartyKnown, firstPartyMode, wantsFirstParty } from "../first-party.js";
 import { readCompactSummary } from "../compact-summary.js";
 import { CONTEXT_SIZE_KEYS, contextDrops, type ContextSizes } from "../context-sources.js";
-import { accountIdentity, forgetIdentity, readHints, readPickerSettings } from "../sessions.js";
+import {
+  accountIdentity,
+  forgetIdentity,
+  readHints,
+  type PickerRow,
+  readPickerSettings,
+  settingsEnvAt,
+} from "../sessions.js";
 import { hub, type OmcEvent } from "../events.js";
+import { managedDir } from "../instructions.js";
 import { readUsage, stillLimitedUntil } from "../usage.js";
 import { MCP_PATH, type McpBridge } from "../mcp.js";
 import {
@@ -181,15 +189,32 @@ import {
   applyTaskPatch,
 } from "../translator.js";
 import type { FinishReason, Message } from "@deepseek-ai/dsh-llm";
-import type { ClaudeProcessSpec, RelayEvent, RelayResult, TurnPrep } from "../process.js";
+import type {
+  ClaudeProcessSpec,
+  RelayEvent,
+  RelayResult,
+  SettingsKey,
+  TurnPrep,
+} from "../process.js";
 import {
   boxFor,
   Config,
+  type CustomModel,
   isOrphanedStandIn,
   localConfig,
   remoteCwdFor,
   remoteWorkspaceFor,
 } from "./config.js";
+import { checkCustomModels, loadCustomModels, saveCustomModels } from "./custom-models.js";
+import {
+  type Route,
+  type RouteFilter,
+  routeEnvIn,
+  routeOf,
+  routeSignature,
+  settingsScopeText,
+  watchSettingsIn,
+} from "./routing.js";
 import {
   type AsideEntry,
   type AsidesReply,
@@ -228,6 +253,7 @@ import {
 } from "./types.js";
 import {
   CATALOG_TTL_MS,
+  catalogNow,
   LINEUP_PROBE_ARGS,
   LINEUP_PROBE_WAIT_MS,
   detectFirstParty,
@@ -241,6 +267,8 @@ import {
   resolveModelInfo,
   windowKey,
   hintHiddenModels,
+  hintRouterWindows,
+  withCustomModels,
   withoutHiddenModels,
 } from "./catalog.js";
 import {
@@ -759,9 +787,253 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
   }
 
-  /** Read on every listing rather than cached: an edit to settings.json takes effect at once. */
-  private pickerSettings() {
-    return readPickerSettings(join(this.claudeHome, "settings.json"));
+  /**
+   * The environment the CLI of this mount runs with, as far as this process can know it: dsh's
+   * own, then the `env` of the mount's settings.json, then the managed file's, each outranking
+   * the one before as it does for the CLI (measured on 2.1.322: a base URL in settings.json wins
+   * over an exported one). Empty for an ssh box, whose files and shell are not this one's.
+   * Without `cwd` it is the mount's own answer, which is what the listing follows, since a
+   * model menu is per mount. With `cwd` the workspace's project and local settings files are
+   * merged in as well, which is what a turn there really runs with: a workspace file outranks
+   * the user's, so a session can be pointed somewhere other than the box says (owner,
+   * 2026-11-10: a proxy's address in the home folder's `settings.local.json` kept every
+   * session opened there off the router that `settings.json` named).
+   */
+  private async claudeEnv(cwd?: string): Promise<Record<string, string | undefined>> {
+    if (this.config.sshHost) return {};
+    return { ...process.env, ...(await this.settingsEnv(cwd)).env };
+  }
+
+  /** The settings files' `env` for this mount, or for a session in `cwd`, with the scope that
+   *  set each variable (`settingsEnvAt`). Nothing for an ssh box. */
+  private async settingsEnv(cwd?: string): ReturnType<typeof settingsEnvAt> {
+    if (this.config.sshHost) return { env: {}, from: {} };
+    return settingsEnvAt(join(this.claudeHome, "settings.json"), cwd ?? null);
+  }
+
+  /**
+   * Set when the key a turn in `cwd` sends comes from a settings file's `env`
+   * (`ANTHROPIC_AUTH_TOKEN` or `ANTHROPIC_API_KEY`) and not from the Claude login: what a
+   * router writes beside its address. A 401 on such a turn says nothing about the login, so it
+   * must not log the box out or tell anyone to log in. `host` is where the request goes;
+   * `split` is a sentence for the case where the address and the key were set by two different
+   * files, which is how a router's key ends up at somebody else's endpoint.
+   */
+  private async settingsKey(cwd: string): Promise<SettingsKey | undefined> {
+    const { env, from } = await this.settingsEnv(cwd);
+    const keyFrom = from.ANTHROPIC_AUTH_TOKEN ?? from.ANTHROPIC_API_KEY;
+    if (keyFrom === undefined) return undefined;
+    const baseUrl = (env.ANTHROPIC_BASE_URL ?? process.env.ANTHROPIC_BASE_URL)?.trim();
+    let host = "api.anthropic.com";
+    try {
+      if (baseUrl) host = new URL(baseUrl).host;
+    } catch {
+      host = baseUrl ?? host;
+    }
+    const urlFrom = from.ANTHROPIC_BASE_URL ?? (baseUrl ? "environment" : keyFrom);
+    const split =
+      urlFrom === keyFrom
+        ? undefined
+        : serverText("keyRefusedSplit", {
+            address: serverText(settingsScopeText(urlFrom)),
+            key: serverText(settingsScopeText(keyFrom)),
+          });
+    return split === undefined ? { host } : { host, split };
+  }
+
+  /** The routing variables as the last listing or settings change saw them (`routeSignature`),
+   *  so a write to settings.json that left them alone is not taken for a change. */
+  private routeSeen: string | undefined;
+
+  /** Where `routeSeen` is kept across restarts, beside the lineup it vouches for. */
+  private routeSeenPath() {
+    return join(this.stateDir, "route-seen.json");
+  }
+
+  /**
+   * The first look at the routing variables this boot. The lineup on disk was answered under
+   * whatever they were when it was written; a router switched while dsh was down leaves it
+   * naming the wrong models until some session's process answers again, which without this is
+   * the first turn. So the signature is kept on disk with the lineup, and a boot that finds
+   * another one asks the CLI again before the picker is trusted. A box that has no kept
+   * signature yet asks once, unless its lineup was answered this boot. Failures are swallowed:
+   * the listing goes on with what it has.
+   */
+  private async routeFirstSeen(signature: string) {
+    this.routeSeen = signature;
+    const kept = await readFile(this.routeSeenPath(), "utf8").catch(() => "");
+    // A settings change landed during the read and has written its own, newer signature.
+    if (this.routeSeen !== signature) return;
+    if (kept === signature) return;
+    await this.keepRouteSeen(signature);
+    // A lineup asked for this boot (the boot probe, a session's process) was asked under these
+    // variables already, whether or not it answered; only one read back from disk can be from
+    // before the change.
+    if (this.cliModelsAt !== 0 || this.lineupProbe !== undefined) return;
+    await this.relistCliModels();
+    await this.routeChanged();
+  }
+
+  /** Write the signature the lineup now on disk was answered under. */
+  private async keepRouteSeen(signature: string) {
+    try {
+      await mkdir(this.stateDir, { recursive: true });
+      await writeFile(this.routeSeenPath(), signature);
+    } catch {
+      /* read-only state dir: the next boot asks the lineup again, which is the safe side */
+    }
+  }
+
+  /**
+   * Where this mount's traffic goes right now. Never waits on the endpoint: it answers from what
+   * is kept and, when that is missing or old, asks behind the caller and lists again if the
+   * answer moved (`routeChanged`). Also arms the watch on the settings files, here rather than
+   * in the constructor because dsh builds adapters it never lists from.
+   */
+  async route(): Promise<Route> {
+    const env = routeEnvIn(await this.claudeEnv());
+    if (!this.config.sshHost) {
+      if (this.routeSeen === undefined)
+        void this.routeFirstSeen(routeSignature(env)).catch(() => {});
+      // The real home: with the mirror on, `claudeHome` holds links, and a link's target
+      // changing is not an event in the directory that holds the link.
+      for (const dir of [this.realClaudeHome, managedDir()])
+        watchSettingsIn(dir, this.providerId, () => void this.settingsMoved());
+    }
+    const hints = await readHints(join(STATE_DIR, "hints.json"));
+    return routeOf(
+      env,
+      { ssh: Boolean(this.config.sshHost), forwards: firstPartyMode(hints) === "on" },
+      (baseUrl) => firstPartyKnown(baseUrl, () => void this.routeChanged()),
+    );
+  }
+
+  /**
+   * The name of `model` when only a router can answer for it and this mount is talking to
+   * Anthropic, else undefined. A session can sit on such a model after the router is switched
+   * off (dsh refuses a new pick of an unlisted model, not a prompt on one already picked), and so
+   * can a new session, which opens on the last model picked. Its turn fails with the API's
+   * "issue with the selected model", and this is what lets the failure say why (`finishReason`).
+   */
+  private async routerOnly(model: string | undefined): Promise<string | undefined> {
+    if (!model || (await this.route()).state !== "direct") return undefined;
+    const picker = await this.pickerSettings();
+    const row = (await catalogNow(this.cliModels, picker)).find((m) => m.id === model);
+    if (!row) return undefined;
+    const direct = await catalogNow(this.cliModels, picker, { state: "direct", claudeToo: false });
+    return direct.some((m) => m.id === model) ? undefined : row.name;
+  }
+
+  /**
+   * The window a session on `model` in `cwd` has to be started with, or undefined when the CLI's
+   * own figure stands: every model of Claude's, and every row whose entry states no size. Set
+   * for a router's alias (the size kept in Settings, or the default) and for an added model with
+   * a stated size. A window someone chose themselves outranks it and leaves this undefined:
+   * `autoCompactWindow` in a settings file, or either of the CLI's two variables already in the
+   * environment or a settings `env`; the CLI lets the variable beat the settings key, so setting
+   * it here would overrule that choice.
+   */
+  private async sizedWindow(model: string | undefined, cwd: string): Promise<number | undefined> {
+    if (!model) return undefined;
+    const settings = await this.settingsEnv(cwd);
+    const env = { ...process.env, ...settings.env };
+    if (
+      settings.autoCompactWindow !== undefined ||
+      env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined ||
+      env.CLAUDE_CODE_MAX_CONTEXT_TOKENS !== undefined
+    )
+      return undefined;
+    const picker = await this.pickerSettings();
+    const rows = picker && { ...picker, availableModels: undefined, replaceBuiltInOptions: false };
+    const row = (await catalogNow(this.cliModels, rows)).find((m) => m.id === model);
+    return row?.sized ? row.contextWindow : undefined;
+  }
+
+  /** What a listing is filtered by: the state, and this mount's "also list Claude's own models"
+   *  switch (`routedClaude:<provider>` in the hints store). */
+  private async routeFilter(): Promise<RouteFilter> {
+    const hints = await readHints(join(STATE_DIR, "hints.json"));
+    return {
+      state: (await this.route()).state,
+      claudeToo: hints[`routedClaude:${this.providerId}`] === true,
+    };
+  }
+
+  /**
+   * A settings file was written. When the routing variables really moved (a router switched on
+   * or off, a provider changed), the CLI's lineup is asked for again before anything is told:
+   * the rows it names are the router's only once the lineup says so, and the kept one is from
+   * before the change. A write that left those variables alone ends here, which is most of them.
+   */
+  private async settingsMoved() {
+    const signature = routeSignature(routeEnvIn(await this.claudeEnv()));
+    if (signature === this.routeSeen) return;
+    this.routeSeen = signature;
+    await this.keepRouteSeen(signature);
+    await this.relistCliModels();
+    await this.routeChanged();
+  }
+
+  /** Tell dsh's pickers and the plugin's own views that this box's lists moved: the event dsh
+   *  reloads `listModels` on, and the hints event the Settings rows built on these lists re-read
+   *  on (the same one a saved custom model sends). */
+  private async routeChanged() {
+    this.modelsUpdated();
+    const data = await readHints(join(STATE_DIR, "hints.json")).catch(() => ({}));
+    hub.publish({ kind: "hints", session: null, data });
+  }
+
+  /** settings.json's say over the picker, plus this mount's `customModels`. The file is read on
+   *  every listing rather than cached: an edit to settings.json takes effect at once. */
+  private async pickerSettings() {
+    const fromFile = await readPickerSettings(join(this.claudeHome, "settings.json"));
+    // The alias names from every layer of the mount's env: they work exported in the shell dsh
+    // started from and in the managed file as well as in settings.json.
+    const { aliasNames, aliasModels } = routeEnvIn(await this.claudeEnv());
+    const named =
+      Object.keys(aliasNames).length + Object.keys(aliasModels).length === 0
+        ? fromFile
+        : {
+            ...(fromFile ?? { options: [], replaceBuiltInOptions: false }),
+            aliasNames,
+            aliasModels,
+          };
+    // The sizes set in Settings for the aliases the router took over. Not on a mount that talks
+    // straight to Anthropic: an alias renamed there still reaches the Claude model the CLI
+    // knows, and capping it at the default would shrink a real 1M window.
+    if (named?.aliasNames && (await this.route()).state !== "direct")
+      named.routerWindows = hintRouterWindows(
+        await readHints(join(STATE_DIR, "hints.json")),
+        this.providerId,
+      );
+    return withCustomModels(named, [
+      ...this.config.customModels,
+      ...(await this.savedCustomModels()),
+    ]);
+  }
+
+  /** The models someone added for this mount in Settings; one small file read per listing, like
+   *  the hide switches, so a row added in one browser is in every picker at its next listing. */
+  async savedCustomModels(): Promise<CustomModel[]> {
+    return (await loadCustomModels(STATE_DIR))[this.providerId] ?? [];
+  }
+
+  /**
+   * Replace the Settings list of added models for the mount `provider` names, then tell dsh the
+   * picker changed. The answer is the list as stored, or `error` with the sentence to show (an id
+   * the CLI could not take, a duplicate, no such mount), in which case nothing was written.
+   */
+  async setCustomModels(
+    provider: string,
+    models: readonly CustomModel[],
+  ): Promise<{ models: CustomModel[] } | { error: string }> {
+    const mount = [...ClaudeCodeAdapter.mounts(this)].find((m) => m.providerId === provider);
+    if (!mount) return { error: serverText("customModelBox", { provider }) };
+    const rows = checkCustomModels(models);
+    if (!Array.isArray(rows)) return { error: rows };
+    await saveCustomModels(STATE_DIR, provider, rows);
+    this.modelsUpdated();
+    return { models: rows };
   }
 
   /** A box without a login lists nothing: dsh's catalog drops a provider whose listing throws into
@@ -784,7 +1056,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       throw new Error(serverText("loggedOutError", { host: this.config.sshHost || hostname() }));
     await this.cliSeed;
     await this.probeCliModels();
-    const models = await getCatalog(undefined, this.cliModels, await this.pickerSettings());
+    const models = await getCatalog(
+      undefined,
+      this.cliModels,
+      await this.pickerSettings(),
+      await this.routeFilter(),
+    );
     return withoutHiddenModels(models, await this.hiddenModelIds()).map((m) =>
       modelInfo(provider, m),
     );
@@ -810,7 +1087,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     Array<{
       provider: string;
       host: string | null;
-      models: Array<{ id: string; name: string; hidden: boolean; locked: boolean }>;
+      models: PickerRow[];
+      custom: CustomModel[];
+      route: Route;
     }>
   > {
     return Promise.all(
@@ -818,6 +1097,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         provider: mount.providerId,
         host: mount.config.sshHost || null,
         models: await mount.pickerModels().catch(() => []),
+        // The entries added in Settings, each of which the block can resize and remove. Config entries
+        // are not here: Settings cannot remove what the profile's config adds.
+        custom: await mount.savedCustomModels().catch(() => []),
+        // Where the box's traffic goes, for the block's opening line and each row's note.
+        route: await mount.route().catch((): Route => ({ state: "unknown" })),
       })),
     );
   }
@@ -836,14 +1120,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /**
    * One mount's model list: every row the catalog and settings.json would offer, hidden or
    * not, so a hidden model can be switched back on. `locked` marks a row the plugin config hides,
-   * which the switch cannot undo; `hidden` is the picker's answer either way. Default is left out,
-   * since it is never hidden.
+   * which the switch cannot undo; `hidden` is that switch's answer either way. `off` marks a row
+   * the picker leaves out because of where the box's traffic goes (`mergeCatalog`'s route
+   * filter), whatever its switch says: a model only a router answers for while the box talks to
+   * Anthropic, or one of Claude's own while a router has renamed the aliases. Default is left
+   * out, since it is never hidden.
    */
-  async pickerModels(): Promise<
-    Array<{ id: string; name: string; hidden: boolean; locked: boolean }>
-  > {
+  async pickerModels(): Promise<PickerRow[]> {
     await this.cliSeed;
-    const models = await getCatalog(undefined, this.cliModels, await this.pickerSettings());
+    const picker = await this.pickerSettings();
+    const models = await getCatalog(undefined, this.cliModels, picker);
+    const routed = new Set(
+      (await getCatalog(undefined, this.cliModels, picker, await this.routeFilter())).map(
+        (m) => m.id,
+      ),
+    );
     const shown = new Set(
       withoutHiddenModels(models, await this.hiddenModelIds()).map((m) => m.id),
     );
@@ -852,12 +1143,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     );
     return models
       .filter((m) => m.id !== "default")
-      .map((m) => ({
-        id: m.id,
-        name: m.name,
-        hidden: !shown.has(m.id),
-        locked: !unlocked.has(m.id),
-      }));
+      .map((m) => {
+        const row: PickerRow = {
+          id: m.id,
+          name: m.name,
+          hidden: !shown.has(m.id),
+          locked: !unlocked.has(m.id),
+          off: !routed.has(m.id),
+          window: m.contextWindow,
+        };
+        if (m.routers !== undefined) row.routers = m.routers;
+        return row;
+      });
   }
 
   /** After a `result` frame: remember a login failure for the card, and name the box's providers
@@ -870,6 +1167,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
       return;
     }
+    // The key that was refused came from a settings file, not from the login: a router's, or a
+    // gateway's. The login is as good as it was, and calling the box logged out took the model
+    // menu away and sent the owner to log in again for nothing (2026-11-10).
+    // The same for any turn a router answered, whatever key it sent.
+    const held0 = this.processes.get(registryKey(this.providerId, sessionId));
+    if (held0?.prep?.settingsKey || held0?.prep?.via !== undefined) return;
     const label = this.hostLabelFor(sessionId);
     // This box is the empty string here and in loginDone/logoutBox, one spelling for the compare.
     const host = label ?? "";
@@ -980,10 +1283,38 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Full metadata for one model, capacity included: the single source both methods above narrow. */
   private async fullModelInfo(provider: string, model: string): Promise<LlmResolvedModelInfo> {
-    const models = await getCatalog(undefined, this.cliModels);
     const picker = await this.pickerSettings();
+    // With the picker's own rows in the list: a model only a `customModels` entry or a
+    // `modelPicker.options` row names is in no catalog, and with no row it resolved without a
+    // window, which dsh answers with "no context capacity" on the switch to it.
+    // The two filters are left out: they shape the listing, and a session already on a model
+    // the allowlist excludes keeps resolving it, as the terminal does.
+    const rows = picker && { ...picker, availableModels: undefined, replaceBuiltInOptions: false };
+    // No route either: a session on a model the route filter leaves out keeps resolving it.
+    const models = await getCatalog(undefined, this.cliModels, rows);
     const cap = picker?.modelEffortCaps?.[model] ?? picker?.maxEffortLevel;
     return resolveModelInfo(provider, model, models, cap);
+  }
+
+  /**
+   * Every model the mount `provider` names can still name, whatever its listing leaves out right
+   * now: the lineup, settings.json's rows and the added models, with no allowlist, no route
+   * filter and no hide switches. This is what a remembered model is judged against (a
+   * workspace's last model, the new-session default): a model the picker is not showing at the
+   * moment is not a retired one, and treating it as retired would move a workspace to another
+   * model each time a router is switched. A provider no mount carries is judged against this
+   * mount, which is what the callers did before they could name one.
+   */
+  async offeredModels(provider?: string): Promise<Array<{ id: string; name: string }>> {
+    const mount =
+      [...ClaudeCodeAdapter.mounts(this)].find((m) => m.providerId === provider) ?? this;
+    await mount.cliSeed;
+    const picker = await mount.pickerSettings();
+    const rows = picker && { ...picker, availableModels: undefined, replaceBuiltInOptions: false };
+    return (await getCatalog(undefined, mount.cliModels, rows)).map((m) => ({
+      id: m.id,
+      name: m.name,
+    }));
   }
 
   /** Get the effective permission mode for a session, checking for an override first. */
@@ -1207,7 +1538,27 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // this file, and a stale set is a switch that visibly does nothing.
     const hints = await readHints(join(this.stateDir, "hints.json"));
     const drops = contextDrops(hints);
-    this.proxyFirstParty = wantsFirstParty(hints, await detectFirstParty());
+    // Asked of the base URL the CLI will really use, which settings.json can set over the head of
+    // dsh's own environment: with a router there and a forwarding proxy exported, the exported
+    // one's answer would tell the CLI its router is Anthropic.
+    // Read for this workspace, not for the mount: its own settings files can set another address.
+    const here = this.config.sshHost || remoteWorkspaceFor(cwd) ? undefined : cwd;
+    const inForce = routeEnvIn(await this.claudeEnv(here)).baseUrl;
+    const forwards = await detectFirstParty(inForce);
+    this.proxyFirstParty = wantsFirstParty(hints, forwards);
+    const settingsKey = here === undefined ? undefined : await this.settingsKey(here);
+    // Answered by something that is not Anthropic: the turn is tagged, so its record is kept
+    // apart from Claude's in everything that adds up money (`TurnRecord.via`). Only when the
+    // endpoint said so; one that did not answer, and one the owner vouched for, are not tagged.
+    const routedTo = proxyBaseUrl(inForce);
+    let via: string | undefined;
+    if (here !== undefined && routedTo && forwards === false && firstPartyMode(hints) !== "on") {
+      try {
+        via = new URL(routedTo).host;
+      } catch {
+        via = routedTo;
+      }
+    }
     const turns = selectTurns(options.messages, session?.resuming ?? false, this.providerId);
     let prompt = buildPrompt(turns, drops);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
@@ -1282,6 +1633,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Local spawns only; the flag does not ride to a box, whose own environment decides.
     if (this.proxyFirstParty && !this.config.sshHost && !remoteWorkspaceFor(cwd))
       spec.firstParty = true;
+    // The same for a base URL a settings file sets: see `ClaudeProcessSpec.route`.
+    if (
+      inForce !== undefined &&
+      inForce !== process.env.ANTHROPIC_BASE_URL?.trim() &&
+      !this.config.sshHost &&
+      !remoteWorkspaceFor(cwd)
+    )
+      spec.route = inForce;
+    // And for a window the plugin or the user has to state: see `ClaudeProcessSpec.window`.
+    const sized = here === undefined ? undefined : await this.sizedWindow(model, here);
+    if (sized !== undefined) spec.window = sized;
     // Keeper or child joins the spec the same way: a flip of the Settings switch replaces each
     // running process on its session's next turn, never during one. The switch lives in the
     // default instance's hints file, which the Settings route writes, so a second instance (an SSH
@@ -1303,6 +1665,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       input: stdin ? buildInput(prompt, images) : null,
       drops,
       sizes,
+      settingsKey,
+      via,
     };
   }
 
@@ -2111,7 +2475,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   async refreshCliModels(proc: ClaudeProcess): Promise<boolean> {
     if (Date.now() - this.cliModelsAt < CATALOG_TTL_MS) return false;
     this.cliModelsAt = Date.now();
+    const asked = this.lineupEpoch;
     const reply = await this.control(proc, { subtype: "list_models" }, 10_000);
+    // The routing variables moved while this process was answering: it was started under the
+    // old ones, and its lineup would replace the one asked for since.
+    if (asked !== this.lineupEpoch) return false;
     if (!reply.ok) {
       this.log("info", `list_models declined: ${reply.error}`);
       return false;
@@ -2140,6 +2508,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       /* read-only state dir or full disk: the live answer still served this boot */
     }
   }
+  /** Counts the routing changes seen this boot (`relistCliModels`). An answer to `list_models`
+   *  that was asked for under an earlier count is dropped. */
+  private lineupEpoch = 0;
   /** This boot's one lineup probe, shared by every listing that waits on it. */
   private lineupProbe: Promise<void> | undefined;
   /**
@@ -2169,6 +2540,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   private async askLineup(): Promise<void> {
     let proc: ClaudeProcess | undefined;
     try {
+      // Asked the way a session's process would be: behind a proxy that forwards to Anthropic
+      // the CLI lists one lineup with its "the proxy is Anthropic" flag and a longer one
+      // without, and `proxyFirstParty` is otherwise only as fresh as the last turn (false at
+      // boot). Without this the menu would change shape each time the probe ran.
+      const hints = await readHints(join(this.stateDir, "hints.json"));
+      this.proxyFirstParty = wantsFirstParty(
+        hints,
+        await detectFirstParty(routeEnvIn(await this.claudeEnv()).baseUrl),
+      );
       proc = new ClaudeProcess({
         args: LINEUP_PROBE_ARGS,
         cwd: tmpdir(),
@@ -2196,6 +2576,22 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // No lineup came back: clear the TTL stamp so the first session's process asks at once.
       if (this.cliModels.length === 0) this.cliModelsAt = 0;
     }
+  }
+  /**
+   * Ask the CLI for its lineup again now, past the once-per-TTL stamp and the "already have one"
+   * exit: what settings.json tells the CLI about its aliases changed, and the kept lineup was
+   * answered under the old file. The same short-lived process as the boot probe, so no model is
+   * called. Not on an ssh box. An ask that brings nothing back keeps the old rows and clears the
+   * stamp, so the next session's process is asked.
+   */
+  async relistCliModels(): Promise<void> {
+    if (this.config.sshHost) return;
+    const before = this.cliModels;
+    this.lineupEpoch++;
+    this.cliModelsAt = 0;
+    this.lineupProbe = this.askLineup();
+    await this.lineupProbe;
+    if (this.cliModels === before) this.cliModelsAt = 0;
   }
   /** Seed from the last answer, unless a process has already answered this boot. */
   async seedCliModels() {
@@ -2448,7 +2844,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       count: 0,
     };
     for (const t of turns) {
-      total.costUsd += t.costUsd;
+      // A routed turn's figure is the CLI pricing somebody else's model at Claude's rates.
+      if (t.via === undefined) total.costUsd += t.costUsd;
       total.durationMs += t.durationMs;
       total.input += t.input;
       total.output += t.output;
@@ -2798,8 +3195,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // asks for a window by the id it stored, which is the spec's, while the CLI answers with its
     // own name for the model. `retarget` writes the new spec on a `set_model`, so a model switched
     // mid-session banks under the model it switched to, and the ring follows on the next turn.
-    noteLiveWindow(proc.spec?.model, usage.maxTokens);
-    noteLiveWindow(usage.model, usage.maxTokens);
+    // Not for a process that was told its window (`ClaudeProcessSpec.window`): the figure it
+    // reports is the one it was given, for whatever model a router put behind the id. Banked
+    // under that id, a local model's 256k became Claude Sonnet 5's window once the router was
+    // switched off (2026-11-10).
+    if (proc.spec?.window === undefined) {
+      noteLiveWindow(proc.spec?.model, usage.maxTokens);
+      noteLiveWindow(usage.model, usage.maxTokens);
+    }
     // The CLI's guess, when it is one: below the table's window for this model, from one of the
     // two sources the demotion produces (`auto` for Fable, `model-default` for Opus 5 and Sonnet
     // 5; `settings` and `env` are a window the user chose), while this box's base URL is a proxy
@@ -2808,7 +3211,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const known = usage.model
       ? (KNOWN_MODELS.find((m) => m.id === windowKey(usage.model ?? ""))?.contextWindow ?? 0)
       : 0;
-    const behind = proxyBaseUrl(process.env.ANTHROPIC_BASE_URL);
+    const inForce = routeEnvIn(await this.claudeEnv()).baseUrl;
+    const behind = proxyBaseUrl(inForce);
     const guessed = usage.autocompact === "auto" || usage.autocompact === "model-default";
     const local = !this.config.sshHost && !remoteWorkspaceFor(proc.cwd);
     if (behind && local && guessed && usage.maxTokens > 0 && usage.maxTokens < known) {
@@ -2817,7 +3221,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // spec's `firstParty`), so the note says that instead of naming a switch that is on. Read
       // here, not from `proxyFirstParty`, which only refreshes when some session starts a turn.
       const hints = await readHints(join(this.stateDir, "hints.json"));
-      if (wantsFirstParty(hints, await detectFirstParty())) usage.followsNext = true;
+      if (wantsFirstParty(hints, await detectFirstParty(inForce))) usage.followsNext = true;
     }
     return { ok: true, ...usage };
   }
@@ -3298,7 +3702,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * this box's panel login as CLAUDE_CODE_OAUTH_TOKEN for the default instance. A second instance
    * keeps its own login, which is what a second instance is for.
    */
-  localEnvOverride(firstParty = this.proxyFirstParty): Record<string, string> | undefined {
+  localEnvOverride(
+    firstParty = this.proxyFirstParty,
+    window?: number,
+  ): Record<string, string> | undefined {
     const over: Record<string, string> = {};
     if (this.config.configDir || this.config.ownTranscripts)
       over.CLAUDE_CONFIG_DIR = this.claudeHome;
@@ -3312,12 +3719,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // field alone could be flipped by another session's `prepare()` between the two reads, and a
     // process whose spec says one thing and whose env says the other never gets replaced.
     if (firstParty) over[FIRST_PARTY_FLAG] = "1";
+    // A window the spec carries (`ClaudeProcessSpec.window`) is told to the CLI both ways it
+    // listens: the first sets the size of a model it has never heard of, the second caps one it
+    // knows. Measured on 2.1.322 with `get_context_usage`: `sonnet` behind a router reads
+    // 1,000,000 with neither, and the number given with the second; an unknown id reads 200,000
+    // with neither and the number given with the first.
+    if (window !== undefined) {
+      over.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(window);
+      over.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(window);
+    }
     return Object.keys(over).length === 0 ? undefined : over;
   }
 
   /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
-  keeperEnv(firstParty?: boolean) {
-    return childEnv(process.env, this.localEnvOverride(firstParty));
+  keeperEnv(firstParty?: boolean, window?: number) {
+    return childEnv(process.env, this.localEnvOverride(firstParty, window));
   }
 
   /** Spawner for one session: keeper mode needs the session to place and name the keeper. A spec
@@ -3325,7 +3741,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  `prepare` made for this process. */
   spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner {
     const firstParty = spec.firstParty === true;
-    if (spec.child || !sessionId) return this.spawner(firstParty, spec.child);
+    if (spec.child || !sessionId) return this.spawner(firstParty, spec.child, spec.window);
     const boxHost = this.config.sshHost;
     if (boxHost)
       return (command, args, cwd) =>
@@ -3350,7 +3766,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             command,
             args,
             cwd,
-            env: this.keeperEnv(firstParty),
+            env: this.keeperEnv(firstParty, spec.window),
             sessionId,
             procSpec: spec,
             owner: this.keeperOwner,
@@ -3691,6 +4107,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   spawner(
     firstParty = this.proxyFirstParty,
     child: "node" | "dsh" = this.config.spawn === "dsh" ? "dsh" : "node",
+    window?: number,
   ) {
     // A remote instance drives the far `claude` over SSH; no keeper, no seam, its own remote login.
     // A remote-workspace cwd is a local placeholder here; redirect it to the box's real path.
@@ -3708,7 +4125,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // Read per spawn, not once: a login made in the panel applies to the next session started.
     const local: Spawner = (command, args, cwd) =>
-      base(command, args, cwd, this.localEnvOverride(firstParty));
+      base(command, args, cwd, this.localEnvOverride(firstParty, window));
     // A remote-workspace cwd runs the far `claude` over SSH on its box, even when this provider is
     // local: otherwise the session sits in the empty local placeholder dir.
     return (command: string, args: string[], cwd: string) => {
@@ -4968,6 +5385,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       dshNames: proc.dshNames,
       relayed: proc.relayed,
       hostLabel: this.hostLabelFor(options.sessionId),
+      routerOnly: await this.routerOnly(prep.spec.model),
+      settingsKey: prep.settingsKey,
+      via: prep.via,
       // A 5xx or 529 asks the status page once a minute; the note lands on the next retry line.
       statusNote: () => {
         const known = peekStatus();
@@ -5127,6 +5547,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         proc.apiMsSoFar = apiMsSoFar;
         summary.costTotal = costSoFar;
         summary.apiTotal = apiMsSoFar;
+        if (prep.via !== undefined) summary.via = prep.via;
         const buf = this.turnBuffer.get(options.sessionId) ?? [];
         buf.push(summary);
         if (buf.length > TURN_RING) buf.shift();
