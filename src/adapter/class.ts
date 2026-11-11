@@ -999,12 +999,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             ...(fromFile ?? { options: [], replaceBuiltInOptions: false }),
             aliasNames,
             aliasModels,
-            // The sizes set in Settings for the aliases the router took over.
-            routerWindows: hintRouterWindows(
-              await readHints(join(STATE_DIR, "hints.json")),
-              this.providerId,
-            ),
           };
+    // The sizes set in Settings for the aliases the router took over. Not on a mount that talks
+    // straight to Anthropic: an alias renamed there still reaches the Claude model the CLI
+    // knows, and capping it at the default would shrink a real 1M window.
+    if (named?.aliasNames && (await this.route()).state !== "direct")
+      named.routerWindows = hintRouterWindows(
+        await readHints(join(STATE_DIR, "hints.json")),
+        this.providerId,
+      );
     return withCustomModels(named, [
       ...this.config.customModels,
       ...(await this.savedCustomModels()),
@@ -1096,7 +1099,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         provider: mount.providerId,
         host: mount.config.sshHost || null,
         models: await mount.pickerModels().catch(() => []),
-        // The entries added in Settings, which the block lists with a Remove each. Config entries
+        // The entries added in Settings, each of which the block can resize and remove. Config entries
         // are not here: Settings cannot remove what the profile's config adds.
         custom: await mount.savedCustomModels().catch(() => []),
         // Where the box's traffic goes, for the block's opening line and each row's note.

@@ -158,11 +158,31 @@ const named = (id: string) =>
 assert.ok(routed.includes("default"));
 assert.equal(named("claude-sonnet-5"), "Local Qwen");
 // The router's rows do not borrow Claude's window: Sonnet 5 holds 1M, the model behind the
-// alias is somebody else's, and the row reports what the CLI assumes behind a router.
-const windowOf = (id: string, route?: { state: "routed"; claudeToo: boolean }) =>
-  mergeCatalog(cli, KNOWN_MODELS, picker, route).find((m) => m.id === id)?.contextWindow;
-assert.equal(windowOf("claude-sonnet-5", { state: "routed", claudeToo: false }), 200_000);
-assert.equal(windowOf("claude-sonnet-5"), 200_000, "whoever lists it: the row is the router's");
+// alias is somebody else's, and the row reports a modest default the session is started with.
+// `routerWindows` present, even empty, is the mount saying its requests do not go straight to
+// Anthropic. Without it a renamed alias is someone's own name for a Claude model (a pinned
+// version on a direct box), and Claude's window stands.
+const offAnthropic = picker && { ...picker, routerWindows: {} };
+const windowOf = (
+  id: string,
+  settings: typeof picker,
+  route?: { state: "routed"; claudeToo: boolean },
+) => mergeCatalog(cli, KNOWN_MODELS, settings, route).find((m) => m.id === id)?.contextWindow;
+assert.equal(
+  windowOf("claude-sonnet-5", offAnthropic, { state: "routed", claudeToo: false }),
+  200_000,
+);
+assert.equal(windowOf("claude-sonnet-5", offAnthropic), 200_000, "whoever lists it");
+assert.equal(
+  windowOf("claude-sonnet-5", picker),
+  1_000_000,
+  "a renamed alias on a mount that talks to Anthropic keeps Claude's window",
+);
+assert.equal(
+  mergeCatalog(cli, KNOWN_MODELS, picker).find((m) => m.id === "claude-sonnet-5")?.sized,
+  undefined,
+  "and is not started with a window of the plugin's",
+);
 assert.equal(
   mergeCatalog(
     cli.map((row) => ({ ...row, displayName: row.value })),

@@ -395,7 +395,9 @@ export interface PickerSettings {
      *  alias. A router that names nothing still says here which aliases it took over. */
     aliasModels?: AliasNames;
     /** The context window someone set in Settings for a router's alias, by alias: the size of the
-     *  model the router really sends it to, which no file of the router's states. */
+     *  model the router really sends it to, which no file of the router's states. Present, even
+     *  empty, only for a mount whose requests do not go straight to Anthropic: its presence is
+     *  what makes `mergeCatalog` treat a renamed alias as a model with a window of its own. */
     routerWindows?: Record<string, number>;
 }
 /** A name per CLI alias (`sonnet`, `opus`, `haiku`, `fable`), as someone set them. */

@@ -522,6 +522,11 @@ export function mergeCatalog(
       c.value === "default" || name === undefined || named
         ? c.displayName
         : `${name}${c.resolvedModel.endsWith("[1m]") ? " (1M context)" : ""}`;
+    // Only where the mount hands sizes over, which it does when its requests do not go straight
+    // to Anthropic. Someone who names an alias on a direct box (a pinned version, say) still
+    // reaches the Claude model the CLI knows, and its window is left alone.
+    const sizes = picker?.routerWindows;
+    const resized = (named || remapped) && sizes !== undefined;
     const row: MergedRow = {
       // A row the router took over reaches some other model, whose window nobody here knows.
       // Claude's figure for the alias (1M for Sonnet 5) promises room a local model may not
@@ -531,14 +536,14 @@ export function mergeCatalog(
       row: M(
         stable ?? c.value,
         label,
-        named || remapped ? (picker?.routerWindows?.[c.value] ?? ROUTED_WINDOW) : window,
+        resized ? (sizes[c.value] ?? ROUTED_WINDOW) : window,
         c.efforts,
         c.description,
       ),
       match: c.resolvedModel,
       routers: named || remapped,
     };
-    if (row.routers) {
+    if (resized) {
       row.row.routers = c.value;
       row.row.sized = true;
     }
