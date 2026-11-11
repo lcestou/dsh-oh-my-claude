@@ -376,6 +376,9 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
             backup: b.backup ?? "?",
           }),
         );
+        // A read another control's write started before this save would answer with the file as
+        // it was; counting the save as newer drops that answer.
+        loadSeq.current++;
         ownSave.current = true;
         window.dispatchEvent(new Event(SETTINGS_EVENT));
         ownSave.current = false;
