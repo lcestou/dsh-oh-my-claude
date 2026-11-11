@@ -1094,7 +1094,13 @@ export class Translator {
         if (event.subtype === "task_notification") {
           const taskId = event.task_id ?? "";
           const entry = this.taskBlocks.get(taskId);
-          const summary = (event.summary ?? "").trim();
+          // A report handed back as a message leaves `summary` saying only that; the report, and
+          // the CLI's warning about it when there is one, is what the line should show.
+          const report = event.handback_report;
+          const handedRaw = [report?.warning, report?.text].filter(Boolean).join(" ").trim();
+          // A report is whatever the subagent wrote, so it is masked like a tool result is.
+          const handed = this.redact ? this.redact(handedRaw) : handedRaw;
+          const summary = handed || (event.summary ?? "").trim();
           const completionLine = serverText("taskLine", {
             status: taskStatus(event.status ?? "done"),
             detail: summary ? clip(summary) : taskId || "?",
@@ -1319,7 +1325,11 @@ export class Translator {
           event.message?.id,
         );
       case "user":
-        return this.toolResults(event.message?.content ?? [], event.parent_tool_use_id);
+        return this.toolResults(
+          event.message?.content ?? [],
+          event.parent_tool_use_id,
+          event.tool_use_result?.handbackReport?.text,
+        );
       case "result": {
         this.finished = true;
         const events: StreamChunk[] = [];
@@ -1920,8 +1930,14 @@ export class Translator {
 
   /** Render the tool_result blocks of a user event into StreamChunks, or [] when tool activity is
    *  off. Each result routes to a dsh session row, an inline markdown block, or a compact reasoning
-   *  row, and auto-denied and denied counts are tallied for the result-frame summary. */
-  toolResults(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined) {
+   *  row, and auto-denied and denied counts are tallied for the result-frame summary. `handback` is
+   *  a subagent's report from the frame's `tool_use_result`, drawn in place of the result text,
+   *  which then only says the report was delivered as a message. */
+  toolResults(
+    content: ClaudeContentBlock[],
+    parentToolUseId: string | null | undefined,
+    handback?: string,
+  ) {
     this.nested = parentToolUseId != null;
     for (const b of content)
       if (b.type === "tool_result" && b.tool_use_id) this.calls.delete(b.tool_use_id);
@@ -1938,9 +1954,12 @@ export class Translator {
     }
     if (!this.toolActivity) return [];
     const events: StreamChunk[] = [];
+    const single = content.filter((b) => b.type === "tool_result").length === 1;
     for (const b of content) {
       if (b.type !== "tool_result") continue;
-      const rawText = toolResultText(b).trim();
+      // A subagent's report the CLI delivered as a message: the result text is a note saying so.
+      // Only for the frame's one result, and not for a refusal, whose own text is read below.
+      const rawText = ((single && !b.is_error && handback?.trim()) || toolResultText(b)).trim();
       const raw = this.redact ? this.redact(rawText) : rawText;
       const auto = b.is_error ? AUTO_DENIED_RE.exec(raw) : null;
       if (auto) this.autoDenied.push(auto[1]!);

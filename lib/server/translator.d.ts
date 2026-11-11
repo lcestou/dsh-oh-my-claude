@@ -392,6 +392,8 @@ export declare class Translator {
     endHeartbeat(toolUseId: string): StreamChunk[];
     /** Render the tool_result blocks of a user event into StreamChunks, or [] when tool activity is
      *  off. Each result routes to a dsh session row, an inline markdown block, or a compact reasoning
-     *  row, and auto-denied and denied counts are tallied for the result-frame summary. */
-    toolResults(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined): StreamChunk[];
+     *  row, and auto-denied and denied counts are tallied for the result-frame summary. `handback` is
+     *  a subagent's report from the frame's `tool_use_result`, drawn in place of the result text,
+     *  which then only says the report was delivered as a message. */
+    toolResults(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined, handback?: string): StreamChunk[];
 }

@@ -136,6 +136,14 @@ export declare const hideModelHint: (provider: string, id: string) => string;
  * nothing.
  */
 export declare const hintHiddenModels: (hints: Record<string, boolean | number>, provider: string) => string[];
+/**
+ * The patch that carries hides written before the key named a box (`hideModel:<id>`, until
+ * 2026-10-28) over to the default mount's key, and removes the old ones. Nothing reads the bare
+ * form since then, so those models came back into the picker with no switch showing them hidden.
+ * A bare key is one with no second colon: every id of that time was a Claude id, which has none.
+ * Empty when there is nothing to move.
+ */
+export declare const carriedHides: (hints: Record<string, boolean | number>) => Record<string, boolean>;
 /** The hints key a router alias's window is kept under, for one mount. */
 export declare const routerWindowHint: (provider: string, alias: string) => string;
 /** The windows Settings holds for one mount's router aliases, by alias, read off the hints

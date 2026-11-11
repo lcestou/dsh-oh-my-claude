@@ -114,6 +114,12 @@ export type ClaudeEvent = {
     subagent_type?: string;
     is_backgrounded?: boolean;
     summary?: string;
+    /** In auto mode a subagent's report goes to the parent as a message and `summary` only says
+     *  so; the report is here, with a `warning` when the CLI cut or altered it (2.1.322). */
+    handback_report?: {
+        text?: string;
+        warning?: string;
+    };
     last_tool_name?: string;
     usage?: {
         input_tokens?: number;
@@ -198,6 +204,13 @@ export type ClaudeEvent = {
         content?: ClaudeContentBlock[];
     };
     parent_tool_use_id?: string | null;
+    /** What the CLI records beside a tool result. `handbackReport` holds a subagent's report
+     *  when the result text is only the note that it was delivered as a message. */
+    tool_use_result?: {
+        handbackReport?: {
+            text?: string;
+        };
+    };
 } | {
     type: "result";
     is_error?: boolean;
@@ -697,6 +710,11 @@ export interface ClaudeProcessSpec {
      *  switched on or off under a running session changes the key and the session's next turn
      *  replaces the process; without that it would go on talking to wherever it was started for. */
     route?: string;
+    /** The turn was proven to go to a router (`TurnPrep.via`), so the process is started without
+     *  the Claude account's panel login in its environment. On the spec, like `firstParty`, so the
+     *  environment and the key that names the process are one decision: a flag on the adapter could
+     *  be flipped by another session's `prepare` between the two. Present only when on. */
+    routed?: true;
     /** The context window the CLI was told to run this model with (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`
      *  and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` at spawn), for a row whose window is the plugin's or
      *  the user's to say: a router's alias, an added model with a stated size. Absent otherwise, so
@@ -826,7 +844,11 @@ export type WaitingSteer = {
  * The permission mode a CLI stdout line reports, else undefined. The CLI writes
  * `{"type":"system","subtype":"status","permissionMode":…}` whenever its mode changes, including a
  * change it makes itself (EnterPlanMode, an approved ExitPlanMode), the only way the plugin learns
- * of those (CLI 2.1.322). Lines without the key are not parsed, so the hot path stays cheap.
+ * of those (CLI 2.1.322). The `init` frame that opens every turn names the mode the CLI is in at
+ * that moment too (probed on 2.1.322: switched to plan between two turns, the second turn's init
+ * said plan). That one matters after a dsh restart: the kept process is adopted with the mode it
+ * was launched in, and until its mode next changed the plan-mode gate read the wrong one. Lines
+ * without the key are not parsed, so the hot path stays cheap.
  */
 export declare function statusMode(line: string): string | undefined;
 /**

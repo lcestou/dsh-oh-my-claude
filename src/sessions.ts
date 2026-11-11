@@ -363,9 +363,11 @@ export function updateHints(
     const current = await readHints(hintsPath);
     const merged = { ...current };
     for (const [k, v] of Object.entries(patch)) {
-      // A letter first keeps `__proto__` and friends out; `:`, `.` and `-` admit a scoped key such
-      // as `hideModel:claude-code-lilly:claude-opus-5`.
-      if (!/^[a-zA-Z][a-zA-Z0-9:._-]{0,120}$/.test(k)) continue;
+      // A letter first keeps `__proto__` and friends out. The rest is anything without whitespace:
+      // a scoped key ends in a model id (`hideModel:claude-code-lilly:claude-opus-5`), and an id may
+      // hold a slash, an at sign or the CLI's `[1m]` mark and run to 200 characters. A narrower
+      // rule dropped those keys in silence, so the switch for such a model flipped back on.
+      if (!/^[a-zA-Z]\S{0,300}$/.test(k)) continue;
       if (v === true) merged[k] = true;
       else if (typeof v === "number" && Number.isFinite(v) && v >= 0) merged[k] = v;
       else if (v === false || v === null) delete merged[k];

@@ -14,6 +14,7 @@ import {
   noteLiveWindow,
   resolveModelInfo,
   seedLiveWindows,
+  carriedHides,
   hintHiddenModels,
   withoutHiddenModels,
 } from "./adapter/catalog.js";
@@ -198,6 +199,28 @@ assert.deepEqual(
   "this mount's keys to ids",
 );
 assert.deepEqual(hintHiddenModels({}, "claude-code"), []);
+// Hides written before the keys carried a box (`hideModel:<id>`) are no longer read. They move to
+// this box's key and the old one goes; a key already scoped, another hint and a false are left.
+assert.deepEqual(
+  carriedHides({
+    "hideModel:claude-sonnet-5": true,
+    "hideModel:claude-opus-4-8": true,
+    "hideModel:claude-code:claude-opus-4-8": true,
+    "hideModel:claude-code-lilly:claude-haiku-5-5": true,
+    starterOff: true,
+  }),
+  {
+    "hideModel:claude-sonnet-5": false,
+    "hideModel:claude-code:claude-sonnet-5": true,
+    "hideModel:claude-opus-4-8": false,
+    "hideModel:claude-code:claude-opus-4-8": true,
+  },
+);
+assert.deepEqual(
+  carriedHides({ "hideModel:claude-code:claude-opus-5": true }),
+  {},
+  "nothing to move",
+);
 console.log("hint hidden models ok");
 
 // A level the plugin does not know is kept out of the picker but named on the row, so Diagnostics

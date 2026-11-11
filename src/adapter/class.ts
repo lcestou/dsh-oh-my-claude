@@ -28,6 +28,7 @@ import {
   accountIdentity,
   forgetIdentity,
   readHints,
+  updateHints,
   type PickerRow,
   readPickerSettings,
   settingsEnvAt,
@@ -267,6 +268,7 @@ import {
   proxyBaseUrl,
   resolveModelInfo,
   windowKey,
+  carriedHides,
   hintHiddenModels,
   hintRouterWindows,
   withCustomModels,
@@ -528,6 +530,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.settingsNs = `llm-${this.providerId}`;
     this.stateDir = stateDir(this.providerId);
     this.cliSeed = this.seedCliModels();
+    if (this.providerId === "claude-code") void this.carryHides();
     // With the switch on the CLI runs against the mirror, so `claudeHome`, the path every read in
     // this plugin resolves against, is the mirror too: its settings and login are the real files,
     // read through their links, and only `projects/` is the plugin's own. It needs `stateDir`,
@@ -1646,6 +1649,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       !remoteWorkspaceFor(cwd)
     )
       spec.route = inForce;
+    // `via` is set only for a local turn, so this never rides to a box.
+    if (via !== undefined) spec.routed = true;
     // And for a window the plugin or the user has to state: see `ClaudeProcessSpec.window`.
     const sized = here === undefined ? undefined : await this.sizedWindow(model, here);
     if (sized !== undefined) spec.window = sized;
@@ -1677,10 +1682,38 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Claude slash commands already registered as dsh commands, name → disposer. */
   readonly bridged = new Map<string, () => void>();
+  /** Whether this box's Claude Code is proven to talk to a router right now, for a spawn that has
+   *  no prepared turn to read it from (the lineup probe, the skill doctor, a one-shot). False when
+   *  the route cannot be read, which is the same as before the panel login was ever withheld. */
+  private async boxRouted(): Promise<boolean> {
+    return (await this.route().catch((): Route => ({ state: "unknown" }))).state === "routed";
+  }
+
+  /** Moves hides stored before the key named a box onto this mount's key, once: see
+   *  `carriedHides`. Runs at start on the default mount; a store with none is left untouched,
+   *  and a failed read or write leaves it for the next start. */
+  async carryHides(path = join(STATE_DIR, "hints.json")): Promise<void> {
+    try {
+      const patch = carriedHides(await readHints(path));
+      if (Object.keys(patch).length === 0) return;
+      await updateHints(path, patch);
+      // The pickers and the Settings rows were built from the store as it was.
+      await this.routeChanged();
+      this.log(
+        "info",
+        `carried ${Object.keys(patch).length / 2} model hides over to this box's keys`,
+      );
+    } catch (error) {
+      this.log("warn", `model hides not carried over: ${errorText(error)}`);
+    }
+  }
+
   /** Pending rows the command bridge queued, so one edited into plain text can leave the queue. */
   readonly commandRows = new CommandRows();
   /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */
   readonly rowsRefused = new Set<string>();
+  /** Sessions already warned that dsh had no one to answer an approval. */
+  readonly approvalsUnanswered = new Set<string>();
   /** Terminal exchanges the watcher found, by dsh session, each shown as one turn of its own. */
   readonly mirrors = new Map<string, MirrorQueue>();
   /** Terminal turns being streamed live into an open dsh turn, by dsh session. */
@@ -2627,7 +2660,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           temporary: true,
         },
         command: this.config.command,
-        spawner: this.spawner(),
+        spawner: this.spawner(undefined, undefined, undefined, await this.boxRouted()),
       });
       const answered = await this.refreshCliModels(proc);
       const why = proc.stderr.trim().slice(-200) || "no lineup in the answer";
@@ -3083,7 +3116,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         temporary: false,
       },
       command: this.config.command,
-      spawner: this.spawner(),
+      spawner: this.spawner(undefined, undefined, undefined, await this.boxRouted()),
       onExit: () => {},
     });
     proc.write(buildInput("/skill-doctor", []));
@@ -3265,7 +3298,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // reports is the one it was given, for whatever model a router put behind the id. Banked
     // under that id, a local model's 256k became Claude Sonnet 5's window once the router was
     // switched off (2026-11-10).
-    if (proc.spec?.window === undefined) {
+    // Nor for a turn that went through a router on a Claude id with no stated size (a session
+    // kept from before the router came on, or Claude's own rows listed beside it): the CLI's
+    // figure there is the router's, and it would be remembered as that Claude model's.
+    if (proc.spec?.window === undefined && proc.prep?.via === undefined) {
       noteLiveWindow(proc.spec?.model, usage.maxTokens);
       noteLiveWindow(usage.model, usage.maxTokens);
     }
@@ -3773,12 +3809,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   localEnvOverride(
     firstParty = this.proxyFirstParty,
     window?: number,
+    routed = false,
   ): Record<string, string> | undefined {
     const over: Record<string, string> = {};
     if (this.config.configDir || this.config.ownTranscripts)
       over.CLAUDE_CONFIG_DIR = this.claudeHome;
     const token = this.providerId === "claude-code" ? readSshToken(STATE_DIR, THIS_BOX) : undefined;
-    if (token) over.CLAUDE_CODE_OAUTH_TOKEN = token;
+    // Not to a router: the token is the Claude account's, and an endpoint that is not Anthropic
+    // has no business holding it. The CLI falls back to whatever the router's settings give it.
+    if (token && !routed) over.CLAUDE_CODE_OAUTH_TOKEN = token;
     // The bridge key for the `${KEY_ENV}` the `--mcp-config` argument names. Every local spawn
     // gets it, bridged or not: one that passes no bridge never reads it.
     if (this.mcp) over[KEY_ENV] = this.mcp.key;
@@ -3803,8 +3842,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
-  keeperEnv(firstParty?: boolean, window?: number) {
-    return childEnv(process.env, this.localEnvOverride(firstParty, window));
+  keeperEnv(firstParty?: boolean, window?: number, routed?: boolean) {
+    return childEnv(process.env, this.localEnvOverride(firstParty, window, routed));
   }
 
   /** Spawner for one session: keeper mode needs the session to place and name the keeper. A spec
@@ -3812,7 +3851,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  `prepare` made for this process. */
   spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner {
     const firstParty = spec.firstParty === true;
-    if (spec.child || !sessionId) return this.spawner(firstParty, spec.child, spec.window);
+    if (spec.child || !sessionId)
+      return this.spawner(firstParty, spec.child, spec.window, spec.routed === true);
     const boxHost = this.config.sshHost;
     if (boxHost)
       return (command, args, cwd) =>
@@ -3837,7 +3877,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             command,
             args,
             cwd,
-            env: this.keeperEnv(firstParty, spec.window),
+            env: this.keeperEnv(firstParty, spec.window, spec.routed === true),
             sessionId,
             procSpec: spec,
             owner: this.keeperOwner,
@@ -4179,6 +4219,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     firstParty = this.proxyFirstParty,
     child: "node" | "dsh" = this.config.spawn === "dsh" ? "dsh" : "node",
     window?: number,
+    routed = false,
   ) {
     // A remote instance drives the far `claude` over SSH; no keeper, no seam, its own remote login.
     // A remote-workspace cwd is a local placeholder here; redirect it to the box's real path.
@@ -4196,7 +4237,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // Read per spawn, not once: a login made in the panel applies to the next session started.
     const local: Spawner = (command, args, cwd) =>
-      base(command, args, cwd, this.localEnvOverride(firstParty, window));
+      base(command, args, cwd, this.localEnvOverride(firstParty, window, routed));
     // A remote-workspace cwd runs the far `claude` over SSH on its box, even when this provider is
     // local: otherwise the session sits in the empty local placeholder dir.
     return (command: string, args: string[], cwd: string) => {
@@ -4286,6 +4327,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         model: prep.spec.model,
         temporary: prep.spec.temporary,
         origin: wsHeader?.origin,
+        via: prep.via,
       })
     ) {
       // One file write per change, not per turn: a long session on one model writes once.
@@ -5814,78 +5856,92 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const relayBatch = async function* (first: RelayEvent) {
       relaying = true;
       const calls: RelayEvent[] = [first];
-      const abandon = (outcomeUnderUs: Outcome) => {
-        for (const c of calls)
-          c.reject(new Error("claude turn ended before dsh could run the tool"));
-        return outcomeUnderUs;
-      };
-      while (calls.length < tr.relayableIds().length) {
-        const more = await proc.nextEvent(RELAY_BATCH_MS);
-        if (more === null) return abandon("ended");
-        if (more.type === "timeout") break;
-        if (more.type === "dsh_relay") {
-          calls.push(more);
-          continue;
+      // Set once every call is parked on the process, which is where dsh's answer finds it.
+      let parkedAll = false;
+      try {
+        const abandon = (outcomeUnderUs: Outcome) => {
+          for (const c of calls)
+            c.reject(new Error("claude turn ended before dsh could run the tool"));
+          return outcomeUnderUs;
+        };
+        while (calls.length < tr.relayableIds().length) {
+          const more = await proc.nextEvent(RELAY_BATCH_MS);
+          if (more === null) return abandon("ended");
+          if (more.type === "timeout") break;
+          if (more.type === "dsh_relay") {
+            calls.push(more);
+            continue;
+          }
+          const what = yield* dispatch(more);
+          if (what !== "continue") return abandon(what);
         }
-        const what = yield* dispatch(more);
-        if (what !== "continue") return abandon(what);
+        // Claude's own Bash or Read fired beside the dsh call, and its result reaches us from the
+        // CLI a moment after the relay. dsh refuses a log whose step ends with a tool/call and no
+        // tool/result ("step/end leaves unresolved tool call", a session lost 2026-09-23), so wait
+        // for those results here, bounded, and close any still running with a placeholder row so
+        // the step ends valid. Wrong case: a Bash longer than the wait gets the placeholder, and
+        // its real output shows in the next step as text under a "result" line.
+        // Run flushPending on every exit from the wait below, including the two that end the turn
+        // under us (pr-review #99): a step that ends with a tool/call and no tool/result is the
+        // corruption this guards against whether the turn ended for a relay or because the process
+        // died mid-step, and the session log outlives the process, so the append is valid either way.
+        //
+        // A dialog still open (an approval, a question, a plan review) belongs to another call of
+        // this same message, and ending the step aborts it in `finally`: the person's approval came
+        // back "cancelled before anyone answered" and the call was refused, before they could click.
+        // So the relay waits for every open dialog first, with no deadline of its own: the idle
+        // watchdog bounds it exactly as it bounds a dialog in a step without a relay. The stream
+        // keeps flowing meanwhile. A settled dialog queues no event,
+        // hence the short timed reads. The bounded wait for native results starts once no dialog is
+        // open, since a call approved a moment ago has only just begun.
+        let waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
+        while (pending.size > 0 || callSeqs.size > 0) {
+          const asking = pending.size > 0;
+          if (asking) waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
+          const left = asking ? DIALOG_POLL_MS : waitUntil - Date.now();
+          if (left <= 0) break;
+          const more = await proc.nextEvent(left);
+          if (more === null) {
+            flushPending();
+            return abandon("ended");
+          }
+          if (more.type === "timeout") {
+            if (asking) continue;
+            break;
+          }
+          if (more.type === "dsh_relay") {
+            calls.push(more);
+            continue;
+          }
+          const what = yield* dispatch(more);
+          if (what !== "continue") {
+            flushPending();
+            return abandon(what);
+          }
+        }
+        flushPending();
+        // The oldest outstanding dsh tool_use blocks are the ones these calls came from; the
+        // bridge's own tools never relay, so they are not among them.
+        const ids = tr.relayableIds();
+        for (const [i, call] of calls.entries()) {
+          if (ids[i] !== undefined) tr.relayed.add(ids[i]);
+          yield* relayBlocks(tr, call);
+          proc.relays.set(call.id, call);
+        }
+        publishAsidesFor();
+        tr.onProgress?.({ relay: { name: first.name } });
+        parkedAll = true;
+        return "relayed";
+      } finally {
+        // A Stop ends the step with `return()` at whichever yield the gather is on, which runs
+        // none of the exits above. A call gathered and not yet parked would never be answered and
+        // its MCP request would stay open, so it is refused here. Rejecting one already rejected
+        // by `abandon` does nothing.
+        if (!parkedAll)
+          for (const c of calls)
+            if (!proc.relays.has(c.id))
+              c.reject(new Error("dsh stopped the turn before the tool ran"));
       }
-      // Claude's own Bash or Read fired beside the dsh call, and its result reaches us from the
-      // CLI a moment after the relay. dsh refuses a log whose step ends with a tool/call and no
-      // tool/result ("step/end leaves unresolved tool call", a session lost 2026-09-23), so wait
-      // for those results here, bounded, and close any still running with a placeholder row so
-      // the step ends valid. Wrong case: a Bash longer than the wait gets the placeholder, and
-      // its real output shows in the next step as text under a "result" line.
-      // Run flushPending on every exit from the wait below, including the two that end the turn
-      // under us (pr-review #99): a step that ends with a tool/call and no tool/result is the
-      // corruption this guards against whether the turn ended for a relay or because the process
-      // died mid-step, and the session log outlives the process, so the append is valid either way.
-      //
-      // A dialog still open (an approval, a question, a plan review) belongs to another call of
-      // this same message, and ending the step aborts it in `finally`: the person's approval came
-      // back "cancelled before anyone answered" and the call was refused, before they could click.
-      // So the relay waits for every open dialog first, with no deadline of its own: the idle
-      // watchdog bounds it exactly as it bounds a dialog in a step without a relay. The stream
-      // keeps flowing meanwhile. A settled dialog queues no event,
-      // hence the short timed reads. The bounded wait for native results starts once no dialog is
-      // open, since a call approved a moment ago has only just begun.
-      let waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
-      while (pending.size > 0 || callSeqs.size > 0) {
-        const asking = pending.size > 0;
-        if (asking) waitUntil = Date.now() + NATIVE_RESULT_WAIT_MS;
-        const left = asking ? DIALOG_POLL_MS : waitUntil - Date.now();
-        if (left <= 0) break;
-        const more = await proc.nextEvent(left);
-        if (more === null) {
-          flushPending();
-          return abandon("ended");
-        }
-        if (more.type === "timeout") {
-          if (asking) continue;
-          break;
-        }
-        if (more.type === "dsh_relay") {
-          calls.push(more);
-          continue;
-        }
-        const what = yield* dispatch(more);
-        if (what !== "continue") {
-          flushPending();
-          return abandon(what);
-        }
-      }
-      flushPending();
-      // The oldest outstanding dsh tool_use blocks are the ones these calls came from; the
-      // bridge's own tools never relay, so they are not among them.
-      const ids = tr.relayableIds();
-      for (const [i, call] of calls.entries()) {
-        if (ids[i] !== undefined) tr.relayed.add(ids[i]);
-        yield* relayBlocks(tr, call);
-        proc.relays.set(call.id, call);
-      }
-      publishAsidesFor();
-      tr.onProgress?.({ relay: { name: first.name } });
-      return "relayed";
     };
     try {
       // A relay dsh never answered would otherwise hand its figures to the next turn.
@@ -6081,6 +6137,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const provider = this.sessionProvider(sessionId);
     if (provider !== undefined && provider !== this.providerId) {
       await trace(log, `limit wait ${sessionId}: session now on ${provider}, notice dropped`);
+      return;
+    }
+    // The box may have been switched to a router meanwhile. The wake's turn would run there, and
+    // a local model would get the "continue" meant for Claude; the wait is dropped, not re-armed,
+    // since nothing says when the router goes off again.
+    if ((await this.route().catch((): Route => ({ state: "unknown" }))).state === "routed") {
+      await trace(log, `limit wait ${sessionId}: box is routed now, notice dropped`);
+      this.clearLimitWait(sessionId);
       return;
     }
     const reply = await probe(fetch, this.config.configDir ? this.claudeHome : undefined);
@@ -6706,6 +6770,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.permissionAsks.set(sessionId, asks.slice(-ASK_SUGGESTIONS));
     }
     if (outcome === "allowed-once") return allowResult(toolUseId, input);
+    // "unavailable" means dsh found nobody to ask (#202: DSH Desktop skipped every request that
+    // named no tool call). Claude is told nobody was asked; the log says where, once a session.
+    if (outcome === "unavailable" && !this.approvalsUnanswered.has(sessionId ?? "")) {
+      this.approvalsUnanswered.add(sessionId ?? "");
+      this.log(
+        "warn",
+        `approval settled "unavailable": dsh had no one to answer ${toolName} in session ${sessionId ?? "?"} (call ${toolUseId})`,
+      );
+    }
     // Under dsh's "never" policy every ask comes back rejected without anyone seeing it, and "the
     // user denied" would send Claude arguing with a person who was never asked.
     if (outcome === "rejected" && sessionId !== undefined && this.approvalsOff.has(sessionId))
@@ -6737,7 +6810,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         temporary: false,
       },
       command: this.config.command,
-      spawner: this.spawner(),
+      spawner: this.spawner(undefined, undefined, undefined, await this.boxRouted()),
       onExit: () => {},
     });
     if (this.config.debug) this.log("info", `one-shot cwd=${cwd} claude ${proc.args.join(" ")}`);

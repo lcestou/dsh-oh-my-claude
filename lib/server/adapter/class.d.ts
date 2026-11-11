@@ -393,10 +393,20 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     }): Promise<TurnPrep>;
     /** Claude slash commands already registered as dsh commands, name → disposer. */
     readonly bridged: Map<string, () => void>;
+    /** Whether this box's Claude Code is proven to talk to a router right now, for a spawn that has
+     *  no prepared turn to read it from (the lineup probe, the skill doctor, a one-shot). False when
+     *  the route cannot be read, which is the same as before the panel login was ever withheld. */
+    private boxRouted;
+    /** Moves hides stored before the key named a box onto this mount's key, once: see
+     *  `carriedHides`. Runs at start on the default mount; a store with none is left untouched,
+     *  and a failed read or write leaves it for the next start. */
+    carryHides(path?: string): Promise<void>;
     /** Pending rows the command bridge queued, so one edited into plain text can leave the queue. */
     readonly commandRows: CommandRows;
     /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */
     readonly rowsRefused: Set<string>;
+    /** Sessions already warned that dsh had no one to answer an approval. */
+    readonly approvalsUnanswered: Set<string>;
     /** Terminal exchanges the watcher found, by dsh session, each shown as one turn of its own. */
     readonly mirrors: Map<string, MirrorQueue>;
     /** Terminal turns being streamed live into an open dsh turn, by dsh session. */
@@ -993,9 +1003,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * this box's panel login as CLAUDE_CODE_OAUTH_TOKEN for the default instance. A second instance
      * keeps its own login, which is what a second instance is for.
      */
-    localEnvOverride(firstParty?: boolean, window?: number): Record<string, string> | undefined;
+    localEnvOverride(firstParty?: boolean, window?: number, routed?: boolean): Record<string, string> | undefined;
     /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
-    keeperEnv(firstParty?: boolean, window?: number): Record<string, string>;
+    keeperEnv(firstParty?: boolean, window?: number, routed?: boolean): Record<string, string>;
     /** Spawner for one session: keeper mode needs the session to place and name the keeper. A spec
      *  with `child` set runs as dsh's child whatever the switch says now: the spec is the decision
      *  `prepare` made for this process. */
@@ -1038,7 +1048,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * purpose one-shot (title/compaction) always runs on the local claude for the default provider. */
     hostLabelFor(sessionId: string | undefined, purpose?: string): string | undefined;
     /** The function that spawns a session's claude: over SSH for an ssh box, over SSH on the box for a remote-workspace cwd, else the local seam or node spawner with this box's login. `child` picks the seam or node; a one-shot with no session passes none and gets the seam only under `spawn: dsh` in the config, as before the switch existed. */
-    spawner(firstParty?: boolean, child?: "node" | "dsh", window?: number): Spawner;
+    spawner(firstParty?: boolean, child?: "node" | "dsh", window?: number, routed?: boolean): Spawner;
     /** Kill this instance's live processes and drop them from the shared registry: called when an SSH
      * box is removed from the panel, so its remote `claude` sessions do not outlive the mount. */
     disposeProcesses(): void;

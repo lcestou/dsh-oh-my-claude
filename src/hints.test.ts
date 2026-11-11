@@ -23,6 +23,25 @@ assert.deepEqual(all, { starterOff: true, costOff: true, spendWarnUsd: 25, theme
 await updateHints(path, { starterOff: false, costOff: null });
 assert.deepEqual(await readHints(path), { spendWarnUsd: 25, themeRowOff: true });
 
+// A model id is anything without whitespace, so a hide key carries a slash, an at sign or the CLI's
+// `[1m]` mark. The store dropped those keys in silence and the switch flipped back on.
+await updateHints(path, {
+  "hideModel:claude-code:qwen/qwen3-coder": true,
+  "hideModel:claude-code:opus[1m]": true,
+  "hideModel:claude-code:team@gateway": true,
+});
+{
+  const kept = await readHints(path);
+  assert.equal(kept["hideModel:claude-code:qwen/qwen3-coder"], true);
+  assert.equal(kept["hideModel:claude-code:opus[1m]"], true);
+  assert.equal(kept["hideModel:claude-code:team@gateway"], true);
+  await updateHints(path, {
+    "hideModel:claude-code:qwen/qwen3-coder": false,
+    "hideModel:claude-code:opus[1m]": false,
+    "hideModel:claude-code:team@gateway": false,
+  });
+}
+
 // Values the store does not keep, and key names it does not accept, change nothing.
 await updateHints(path, {
   nope: "yes",

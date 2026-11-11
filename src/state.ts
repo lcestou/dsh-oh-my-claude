@@ -884,7 +884,12 @@ export const countsForWorkspaceMemory = (turn: {
   model: string | undefined;
   temporary: boolean | undefined;
   origin: string | undefined;
-}): boolean => Boolean(turn.model) && !turn.temporary && turn.origin !== "subagent";
+  /** The router the turn went through, when it did (`TurnRecord.via`). Its model is the router's
+   *  name for something else, and remembered it replaced the workspace's Claude model: with the
+   *  router off again, `sonnet` resolved to Claude Sonnet and the Fable the workspace ran was gone. */
+  via?: string;
+}): boolean =>
+  Boolean(turn.model) && !turn.temporary && turn.origin !== "subagent" && turn.via === undefined;
 
 /** Save the model (and the mount and effort it ran on) for one cwd, or forget the row when `model`
  *  is undefined or blank. The row is replaced whole, so an absent effort clears a remembered one:
