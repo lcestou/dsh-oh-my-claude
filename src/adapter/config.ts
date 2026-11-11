@@ -106,7 +106,9 @@ export type Config = {
 };
 
 /** One `customModels` entry: a model the picker offers although neither the Models API nor the
- *  CLI's own lineup lists it, such as an alias a local router sends to another model. */
+ *  CLI's own lineup lists it, such as an alias a local router sends to another model. The shape
+ *  (the id passed to the CLI as written, a label for the picker, an optional window and effort
+ *  levels) is the one @chopstick1009 asked for in #259. */
 export interface CustomModel {
   /** Passed to `claude --model` exactly as written. */
   model: string;
