@@ -5387,6 +5387,7 @@ console.log("keeper-mode ok");
   assert.equal(killed, 2, "nothing is killed while a dialog waits for an answer");
   assert.deepEqual(injected, [], "and no idle warning is drawn over it");
   assert.ok((idleAdapter.idleDeadlineMap.get("s4") ?? 0) > Date.now(), "the watchdog stays armed");
+  assert.equal(idleAdapter.idleReply("s4").deadline, null, "but the tab is shown no countdown");
   idleAdapter.awaitingInput.delete("s4");
   await wait(400);
   assert.equal(killed, 3, "answered, a silent process is killed as before");

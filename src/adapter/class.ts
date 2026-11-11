@@ -2980,8 +2980,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** When the idle watchdog would end the session's process (null: not armed), from the mount
    *  that runs it, with the configured timeout so the tab can draw the countdown. */
   idleReply(sessionId: string): IdleReply {
+    const owner = this.ownerFor(sessionId);
     return {
-      deadline: this.ownerFor(sessionId).idleDeadlineMap.get(sessionId) ?? null,
+      // No deadline while a dialog waits on a person: the watchdog only re-arms then, and a
+      // "stopping in 40 s" chip over an approval would count down to nothing.
+      deadline: owner.awaitingInput.has(sessionId)
+        ? null
+        : (owner.idleDeadlineMap.get(sessionId) ?? null),
       timeoutMs: this.config.idleTimeoutMs,
     };
   }
@@ -3016,6 +3021,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  answered anywhere. A mount publishing only its own map would make a tab forget the root's
    *  prompts on the next box event. */
   private publishAwaiting(): void {
+    // A dialog opening or closing changes what `idleReply` answers for its session.
+    for (const key of this.idleTargets.keys()) this.publishIdle(key);
     hub.publish({ kind: "awaiting", session: null, data: this.awaitingAll() });
   }
 
@@ -5227,7 +5234,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.idleWarnTimers.set(
       key,
       setTimeout(() => {
-        if (this.awaitingInput.has(key)) return; // no countdown over a dialog that is not timed
+        // No countdown row over a dialog: it is not timed.
+        if (this.awaitingInput.has(key)) return;
         proc.inject({
           type: "idle_warning",
           silentSeconds: Math.round((timeoutMs - warnMs) / 1000),
