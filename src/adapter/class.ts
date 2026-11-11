@@ -2408,7 +2408,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           const agent = this.ctx?.agents?.get?.(asSessionId(sessionId));
           const row = agent?.inbox?.nextTurn?.find((queued) => queued.id === id);
           if (!agent?.steer || !row || agent.status !== "running") return;
-          if (agent.inbox?.remove(id)) agent.steer(row);
+          if (!agent.inbox?.remove(id)) return;
+          agent.steer(row);
+          this.log("info", `queued command row ${id} edited into plain text: steered`);
         } catch (error) {
           this.log("warn", `edited queue row ${id} not steered: ${errorText(error)}`);
         }
