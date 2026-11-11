@@ -8,7 +8,7 @@ Install from a checkout instead of npm: `dsh plugin --profile web add link:/path
 
 ## Where the code lives
 
-The server entry is `src/adapter.ts`, with its helper modules under `src/adapter/`: types, config, catalog, asides, transcript-watch, prompt, cli, turn, class (the ClaudeCodeAdapter class, whole), and ssh-boxes. The routes are in `src/sessions.ts`. The client entry is `src/client/index.tsx`: its imports, the session spinners and `apply()`. Each feature it mounts has a file beside it (the cost line, the context meter, the turn status, the Settings card, the dock and its cards, the selection popover, the Run button and the rest), and the panel's tab switch is `src/client/panel.tsx` with one file per tab under `src/client/panel/`. Tests sit beside the modules they test and the suite runs them recursively.
+The server entry is `src/adapter.ts`, with its helper modules under `src/adapter/`: types, config, catalog, asides, transcript-watch, prompt, cli, cli-compaction, claude-only, skill-line, spawn-mode, turn, class (the ClaudeCodeAdapter class, whole), and ssh-boxes. The HTTP routes are route groups under `src/routes/` (controls, files, settings, status, tasks, transcripts), dispatched from `src/sessions.ts`, which also keeps the box routes (SSH boxes, remote workspaces, Tailscale and WireGuard status). The client entry is `src/client/index.tsx`: its imports, the session spinners and `apply()`. Each feature it mounts has a file beside it (the cost line, the context meter, the turn status, the Settings card, the dock and its cards, the selection popover, the Run button and the rest), and the panel's tab switch is `src/client/panel.tsx` with one file per tab under `src/client/panel/`. Tests sit beside the modules they test and the suite runs them recursively.
 
 Both entries keep the exports they had before the code moved into these files, re-exported from the module that owns each symbol, so tests and tools import them as they always did. The entries only import and mount: new behaviour goes in a module beside the others, and `bun run validate` fails the gate when `src/adapter.ts` or `src/client/index.tsx` passes 800 lines.
 
@@ -16,11 +16,11 @@ Both entries keep the exports they had before the code moved into these files, r
 
 Two kinds of coupling, and only one of them is safe.
 
-**Named slots fail loudly.** dsh exposes 83 of them and this plugin mounts into seven. If dsh
+**Named slots fail loudly.** dsh exposes 83 of them and this plugin mounts into eleven. If dsh
 renames one, the plugin does not load and says which service it waited for: ugly, immediate, and
 nothing is half-broken. Prefer a slot wherever one exists. dsh publishes no slot reference, so the
-list is derived from the installed bundles; the command to regenerate it, the audit of what has no
-slot, and the version it was taken against are in `notes/reference/dsh-slots.md`.
+list is derived from the installed bundles: grep dsh's `dsh-client-ui-*` packages for
+`slots.register` and `slots.inject`.
 
 A name that looks like a slot is not one until something calls `slots.register` or `slots.inject`
 with it. `status.running` and its siblings read like slots and are status labels.
@@ -43,8 +43,8 @@ with a transform, filter, `will-change: transform` or `contain`, and dsh's compo
 `will-change: transform` in 0.2.2-alpha.3 without any hook or type changing: the cost dialog,
 rendered beside the pill inside that seat, kept its correct viewport coordinates and drew 770px
 below the pill. dsh's own dialogs portal to the body and were untouched. `tools/playwright/cost-pill.ts`
-and the upgrade skill's `ui-check.ts` open each floating surface and fail it when its box leaves
-the viewport, which is the only kind of check that sees this class of break.
+opens the cost dialog and fails it when its box leaves the viewport, which is the only kind of
+check that sees this class of break.
 
 ## Lint contract
 
