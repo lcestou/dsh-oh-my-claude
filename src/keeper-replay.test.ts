@@ -4,11 +4,10 @@
 // and the reply was gone. Now a line stays until a turn acknowledges it.
 import { strict as assert } from "node:assert";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { attachKeeper, pidAlive, readKeeperInfo, spawnKeeper } from "./process.js";
+import { tempDir } from "./test-tmp.js";
 
 // A stand-in for claude: on "go", a turn's five lines, the last one its result.
 const fake = `
@@ -28,7 +27,7 @@ const lines = (r: NodeJS.ReadableStream) => {
   return out;
 };
 
-const dir = mkdtempSync(join(tmpdir(), "omc-replay-"));
+const dir = tempDir("omc-replay-");
 const a = await spawnKeeper(
   dir,
   {

@@ -2,8 +2,8 @@
 import assert from "node:assert/strict";
 import type { Row } from "./session-repair.js";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   dshSessionsFor,
@@ -36,6 +36,7 @@ import type {
 } from "./adapter.js";
 import type { InstructionFile } from "./instructions.js";
 import type { TranscriptListItem } from "./transcript.js";
+import { tempDir } from "./test-tmp.js";
 
 // probeBox forwards init.method and init.body, plus content-type when body is set. Fake fetch, no network.
 {
@@ -104,7 +105,7 @@ import type { TranscriptListItem } from "./transcript.js";
 
 // Boxes settings routes: 400 when url param missing, 404 when box not found.
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-sessions-test-"));
+  const tmp = tempDir("dsh-sessions-test-");
   const boxesPath = join(tmp, "boxes.json");
   // Two remote workspaces: the placeholder dirs dsh stores, and the real paths on their boxes.
   const localWorkspace = join(tmp, "remote-workspaces", "wsbox__app");
@@ -667,7 +668,7 @@ const responder =
 // The steer card's routes: GET /side-questions carries the waiting and held steers, and POST
 // /steer-edit validates its body and passes each action through (remove is a hold and a drop).
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-steer-edit-test-"));
+  const tmp = tempDir("dsh-steer-edit-test-");
   let handler: ((req: any, res: any) => void) | undefined;
   const calls: Array<{ sid: string; op: string; arg: string[] }> = [];
   // SAFETY: partial fake for tests
@@ -781,7 +782,7 @@ const responder =
 // POST /side-questions: 400 when session or question is missing, 404 when askAside is absent,
 // and 200 that proves the callback received the parsed body.
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-side-question-test-"));
+  const tmp = tempDir("dsh-side-question-test-");
   let handler: ((req: any, res: any) => void) | undefined;
   // SAFETY: partial fake for tests
   const ctx = {
@@ -952,7 +953,7 @@ const responder =
 // GET /permissions: 400 when session is missing, 404 when permissionReadout is absent,
 // and 200 that returns both lists with decoded content.
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-permissions-test-"));
+  const tmp = tempDir("dsh-permissions-test-");
   let handler: ((req: any, res: any) => void) | undefined;
   // SAFETY: partial fake for tests
   const ctx = {
@@ -1053,7 +1054,7 @@ const responder =
 // GET /live-turn: `{}` when no turn is running; with a turn parked on a dsh tool, the tool's name
 // and how long the relay has been out, so the status row can say what the turn is waiting on.
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-live-turn-test-"));
+  const tmp = tempDir("dsh-live-turn-test-");
   let handler: ((req: any, res: any) => void) | undefined;
   // SAFETY: partial fake for tests
   const ctx = {
@@ -1120,7 +1121,7 @@ const responder =
 // POST /mcp-servers/ask: 400 when session or name is missing, 404 when mcp.ask is absent,
 // and 200 that proves the callback received session, name and the boolean.
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-mcp-ask-test-"));
+  const tmp = tempDir("dsh-mcp-ask-test-");
   let handler: ((req: any, res: any) => void) | undefined;
   // SAFETY: partial fake for tests
   const ctx = {
@@ -1254,7 +1255,7 @@ const responder =
 
 // readPickerSettings: the two picker keys out of settings.json, and undefined for anything else.
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-picker-test-"));
+  const tmp = tempDir("dsh-picker-test-");
   const path = join(tmp, "settings.json");
   await writeFile(
     path,
@@ -1414,7 +1415,7 @@ const responder =
 // persistence (which does not list a session flushed a moment ago). Four ways in, one contract:
 // the workspace for the cwd gets attachSession(id), and a fresh seed is attached before leave().
 {
-  const tmp = await mkdtemp(join(tmpdir(), "omc-open-"));
+  const tmp = tempDir("omc-open-");
   const cwd = join(tmp, "work");
   await mkdir(cwd, { recursive: true });
   const dir = join(tmp, "projects", projectDirName(cwd));
@@ -1615,7 +1616,7 @@ const responder =
 // (one broken redirect must not take every other workspace's sessions off its box). Neither may
 // throw: both are read before anything is on screen, and a throw there is a blank panel.
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-readers-test-"));
+  const tmp = tempDir("dsh-readers-test-");
   const write = async (name: string, text: string) => {
     const path = join(tmp, name);
     await writeFile(path, text, "utf8");
@@ -1673,7 +1674,7 @@ const responder =
 // rather than an import, so nothing else type-checks it and nothing else notices when it drifts
 // from `listTranscripts`. Both must survive a transcript whose first prompt is one enormous line.
 {
-  const home = await mkdtemp(join(tmpdir(), "dsh-oh-my-claude-ssh-home-"));
+  const home = tempDir("dsh-oh-my-claude-ssh-home-");
   const proj = join(home, ".claude", "projects", "-proj-app");
   await mkdir(proj, { recursive: true });
   const line = (o: unknown) => JSON.stringify(o) + "\n";
@@ -1726,7 +1727,7 @@ const responder =
 // the next read: gone from the answer, from the file, and its placeholder dir with it. Without a
 // registry nothing is dropped, since "cannot ask" is not "deleted".
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-rws-sync-test-"));
+  const tmp = tempDir("dsh-rws-sync-test-");
   const kept = join(tmp, "remote-workspaces", "box__kept");
   const ghost = join(tmp, "remote-workspaces", "box__ghost");
   await mkdir(kept, { recursive: true });
@@ -1812,7 +1813,7 @@ const responder =
 // dsh still draws that workspace, and a row dropped under it would be a sidebar entry nothing
 // redirects and nothing puts back.
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-rws-cascade-test-"));
+  const tmp = tempDir("dsh-rws-cascade-test-");
   const dirOf = (slug: string) => join(tmp, "remote-workspaces", slug);
   const row = (id: string, host: string) => ({
     name: id,
@@ -1940,7 +1941,7 @@ console.log("sessions ok");
 
 // readHints keeps true and finite non-negative numbers; drops everything else.
 {
-  const dir = await mkdtemp(join(tmpdir(), "omc-hints-"));
+  const dir = tempDir("omc-hints-");
   const hintsPath = join(dir, "hints.json");
   await writeFile(
     hintsPath,
@@ -1954,7 +1955,7 @@ console.log("sessions ok");
 // GET /side-questions carries the session's fallback record in the `fallback` field, and a session
 // with no record answers null. Mirrors the POST block's fake ctx and route registration.
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-fallback-route-test-"));
+  const tmp = tempDir("dsh-fallback-route-test-");
   let handler: ((req: any, res: any) => void) | undefined;
   // SAFETY: partial fake for tests
   const ctx = {
@@ -2012,7 +2013,7 @@ console.log("sessions ok");
 // Skill routes: create validates scope and name and refuses a duplicate; file PUT and remove refuse
 // a path the listing does not name and a plugin-scope skill.
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-skills-edit-test-"));
+  const tmp = tempDir("dsh-skills-edit-test-");
   const cwd = "/work/app";
   // A plugin skill on disk, so the listing carries a plugin-scope entry the guards must refuse.
   await mkdir(join(tmp, "claude", "plugins"), { recursive: true });
@@ -2161,7 +2162,7 @@ console.log("sessions ok");
 
 // GET /turns with only `turnRecords` wired (no `events`): the route's own body sums the records.
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-live-turn-test-"));
+  const tmp = tempDir("dsh-live-turn-test-");
   let handler: ((req: any, res: any) => void) | undefined;
   // SAFETY: partial fake for tests
   const ctx = {
@@ -2212,7 +2213,7 @@ console.log("sessions ok");
 // GET /events: an event stream. The fake res gains `write` and `on`; the hub writes the headers,
 // the connected comment and the snapshot, and holds the response open (no `end`).
 {
-  const tmp = await mkdtemp(join(tmpdir(), "dsh-live-turn-test-"));
+  const tmp = tempDir("dsh-live-turn-test-");
   let handler: ((req: any, res: any) => void) | undefined;
   // SAFETY: partial fake for tests
   const ctx = {

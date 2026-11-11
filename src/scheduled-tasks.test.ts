@@ -1,10 +1,10 @@
 // Offline self-check: bun src/scheduled-tasks.test.ts. No CLI, no network.
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { foldTranscript } from "./transcript.js";
 import { dshGoalsFrom, goalFrom, readDurableTasks, sessionTasksFrom } from "./scheduled-tasks.js";
+import { tempDir } from "./test-tmp.js";
 
 /** A transcript of one prompt and one assistant step making the given tool calls. */
 const transcript = (calls: Array<{ name: string; input: Record<string, unknown> }>) =>
@@ -74,7 +74,7 @@ const transcript = (calls: Array<{ name: string; input: Record<string, unknown> 
 
 // A missing file is no tasks; a file that does not parse is an error rather than a quiet empty list.
 {
-  const dir = await mkdtemp(join(tmpdir(), "omc-tasks-"));
+  const dir = tempDir("omc-tasks-");
   assert.deepEqual(await readDurableTasks({}, dir), []);
   await mkdir(join(dir, ".claude"), { recursive: true });
   const path = join(dir, ".claude", "scheduled_tasks.json");

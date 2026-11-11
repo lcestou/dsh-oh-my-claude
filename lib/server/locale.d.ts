@@ -53,7 +53,7 @@ declare const EN: {
     readonly toolResult: "Result";
     readonly toolError: "Error";
     readonly moreLines: "… {n} more lines";
-    readonly limitSession: "session limit";
+    readonly limitSession: "5-hour limit";
     readonly limitWeekly: "weekly limit";
     readonly limitOpus: "Opus limit";
     readonly limitSonnet: "Sonnet limit";
@@ -71,6 +71,15 @@ declare const EN: {
     readonly apiKeyBilling: "⚠ Claude Code is using the ANTHROPIC_API_KEY from dsh's environment, so this session bills that key, not your Claude subscription. Unset it where dsh starts (its .env or service file) to use the login.";
     readonly taskCompleted: "completed";
     readonly modelNeedsCliUpdate: "Newer than the installed Claude Code; update the CLI to unlock it.";
+    readonly keyRefused: "{host} refused the key Claude Code sent ({detail}). That key is set in a settings file's env, as a router or gateway does, and is not your Claude login, so logging in again will not help. Check that the router or gateway is running and is the one this address belongs to.";
+    readonly routerRefused: "The router at {host} refused this turn: {detail}. That is the router's own answer, not Claude's. Check which provider it is set to send to, or switch its routing off to go back to Claude.";
+    readonly keyRefusedSplit: "The address comes from {address} and the key from {key}. A workspace's own settings outrank the box's, so the two no longer belong together: remove ANTHROPIC_BASE_URL from one of them, or open the session in another workspace.";
+    readonly settingsScopeUser: "the box's settings.json";
+    readonly settingsScopeProject: "this workspace's .claude/settings.json";
+    readonly settingsScopeLocal: "this workspace's .claude/settings.local.json";
+    readonly settingsScopeManaged: "the managed settings file";
+    readonly settingsScopeEnvironment: "the environment dsh was started with";
+    readonly modelNeedsRouter: "{model} only answers through a router, and Claude Code on this box is talking to Anthropic right now. Switch the router on, or pick another model for this session.";
     readonly taskFailed: "failed";
     readonly taskKilled: "killed";
     readonly taskDone: "done";
@@ -121,6 +130,13 @@ declare const EN: {
     readonly claudeExited: "claude exited {code}: {detail}";
     readonly noOutput: "no output";
     readonly inputDeclined: "{who} asked for input dsh cannot present, declined";
+    readonly customModelId: "A model id is 1 to 200 characters with no spaces, does not start with a dash, and is not `default`.";
+    readonly customModelName: "A name is at most 100 characters.";
+    readonly customModelWindow: "A context window is a whole number of tokens, from 1,000 to 10,000,000.";
+    readonly customModelTwice: "{model} is already in the list.";
+    readonly customModelMany: "A box keeps at most {max} added models.";
+    readonly customModelBox: "No Claude Code box answers to {provider}.";
+    readonly customModelUnread: "That list of models could not be read.";
 };
 /** A key of the server's own strings. */
 export type ServerKey = keyof typeof EN;

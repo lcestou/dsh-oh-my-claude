@@ -1,16 +1,16 @@
 // Offline self-check: bun src/repo.test.ts. No CLI, no git, no network.
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { localSettingsRoot, projectKey, projectLevels, repoRoot } from "./repo.js";
+import { tempDir } from "./test-tmp.js";
 
 // repoRoot: the checkout root for a subdirectory, the main checkout for a linked worktree, and
 // the directory itself for everything that only looks like one. The layout is what
 // `git worktree add` writes, built by hand so the check needs no git.
 {
   // realpath: the worktree check resolves symlinks, and a temp dir can sit behind one.
-  const tmp = await realpath(await mkdtemp(join(tmpdir(), "omc-repo-root-")));
+  const tmp = await realpath(tempDir("omc-repo-root-"));
   const main = join(tmp, "main");
   const wt = join(tmp, "wt");
   const admin = join(main, ".git", "worktrees", "wt");

@@ -1,5 +1,5 @@
 import type { StreamChunk, LlmFailure } from "@deepseek-ai/dsh-llm";
-import { type ClaudeEvent, type ClaudeStreamPartial, type ClaudeContentBlock } from "./process.js";
+import { type ClaudeEvent, type ClaudeStreamPartial, type ClaudeContentBlock, type SettingsKey } from "./process.js";
 import { TurnRecord } from "./adapter/turn.js";
 import { type PluginLoadError } from "./plugins.js";
 /** Clamp a fenced body to its first `max` lines, with a count of what was elided. A tool-heavy turn
@@ -152,6 +152,12 @@ export declare class Translator {
     /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
     timeZone: string | undefined;
     hostLabel: string | undefined;
+    /** Set when this turn's model needs a router the box is not behind: see `finishReason`. */
+    routerOnly: string | undefined;
+    /** Set when this turn's key came from a settings file: see `finishReason`. */
+    settingsKey: SettingsKey | undefined;
+    /** The router this turn goes to, so its refusals are named as the router's: see `finishReason`. */
+    via: string | undefined;
     /** The suffix for a 5xx retry line, from the adapter's cache of Anthropic's status page. */
     statusNote: ((httpStatus: number) => string) | undefined;
     relay: boolean;
@@ -169,6 +175,8 @@ export declare class Translator {
     autoDenied: string[];
     toolPending: boolean;
     private calls;
+    private streaming;
+    private wholeId;
     private tokened;
     private nested;
     /** A compaction announced and not yet closed, so its 30-second heartbeat prints one line, not six.
@@ -256,7 +264,7 @@ export declare class Translator {
     private fireToolCall;
     /** Every option is optional: a bare Translator shows tool activity, relays nothing and reports
      *  to no callbacks, which is what a one-shot call wants. */
-    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, dshNames, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, noteApiKey, onTask, onHookRun, hostLabel, statusNote, }?: {
+    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, dshNames, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, noteApiKey, onTask, onHookRun, hostLabel, routerOnly, settingsKey, via, statusNote, }?: {
         toolActivity?: boolean;
         continueAfterLimit?: boolean;
         timeZone?: string;
@@ -279,6 +287,12 @@ export declare class Translator {
         onHookRun?: (run: HookRun) => void;
         /** The box a remote turn runs on, so a logged-out error names it, not this local host. */
         hostLabel?: string;
+        /** This turn's model by name, when only a router answers for it and the box is not routed. */
+        routerOnly?: string;
+        /** Set when this turn's key came from a settings file, so a 401 is not about the login. */
+        settingsKey?: SettingsKey;
+        /** The router or gateway this turn goes to, when it is not Anthropic. */
+        via?: string;
         /** What to append to a 5xx retry line from the Anthropic status page cache. */
         statusNote?: (httpStatus: number) => string;
     });
@@ -367,6 +381,13 @@ export declare class Translator {
     private closeThinking;
     /** Close the counter: the thinking block it stood in for is over, or the turn is. */
     endThinking(): StreamChunk[];
+    /** Whether a top-level call of the current message has not echoed its result yet, or the
+     *  message is still streaming and may open another call. Unlike `toolPending`, which follows
+     *  the last block that closed, this holds from the message's start to its last call's result:
+     *  the CLI runs a call as soon as its block closes, so a quick one can answer before the next
+     *  block has even begun. A fresh step's translator knows only what it saw itself: a call issued
+     *  in an earlier step of the same message is not counted. */
+    callsOutstanding(): boolean;
     /** Close the elapsed-time block a slow call opened, whichever way its result is drawn. */
     endHeartbeat(toolUseId: string): StreamChunk[];
     /** Render the tool_result blocks of a user event into StreamChunks, or [] when tool activity is

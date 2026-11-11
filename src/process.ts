@@ -1388,6 +1388,19 @@ export interface TurnPrep {
   /** What each of those blocks cost this turn in characters, before any of them were withheld.
    *  Absent on a side call, which has no workspace to record a number against. */
   sizes?: ContextSizes;
+  /** Set when this turn's key comes from a settings file's `env`, not from the Claude login:
+   *  see `ClaudeCodeAdapter.settingsKey`. */
+  settingsKey?: SettingsKey;
+  /** The host this turn's requests go to when it is not Anthropic and does not forward there:
+   *  see `TurnRecord.via`. */
+  via?: string;
+}
+
+/** Where a turn's request goes when its key was set by a settings file, and, when the address
+ *  and the key were set by two different files, a sentence saying which. */
+export interface SettingsKey {
+  host: string;
+  split?: string;
 }
 
 /** Everything a Claude process needs at spawn: where it runs, how it is reached, what it may do. */
@@ -1403,6 +1416,18 @@ export interface ClaudeProcessSpec {
    *  Present only when on, so a spec saved before the switch existed still keys the same; a flip
    *  changes the key, and the session's next turn replaces the process, as an effort change does. */
   firstParty?: true;
+  /** The base URL a settings file gave the CLI at spawn, when it is not the one dsh itself was
+   *  started with: a router switched on in settings.json. Absent otherwise, so every spec saved
+   *  before the field existed keys the same. A process reads its environment once, so a router
+   *  switched on or off under a running session changes the key and the session's next turn
+   *  replaces the process; without that it would go on talking to wherever it was started for. */
+  route?: string;
+  /** The context window the CLI was told to run this model with (`CLAUDE_CODE_MAX_CONTEXT_TOKENS`
+   *  and `CLAUDE_CODE_AUTO_COMPACT_WINDOW` at spawn), for a row whose window is the plugin's or
+   *  the user's to say: a router's alias, an added model with a stated size. Absent otherwise, so
+   *  every other spec keys as before; a size changed in Settings changes the key and the
+   *  session's next turn starts a process that knows it. */
+  window?: number;
   /** Started as dsh's child rather than under a keeper: the Settings switch off, or `spawn: node` or
    *  `dsh` in the config. Absent for a keeper, so a keeper's saved spec keys the same as it did
    *  before the field existed; a flip changes the key and the session's next turn respawns, never
@@ -1728,8 +1753,10 @@ export async function spawnKeeper(
   launch: (argv: string[]) => void,
 ): Promise<SubprocessHandle> {
   const paths = keeperPaths(dir);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(paths.spec, JSON.stringify(spec));
+  // Owner-only: the spec holds the child's whole environment, a login token and the bridge key
+  // among it, and the socket beside it takes stdin lines from whoever can open it.
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(paths.spec, JSON.stringify(spec), { mode: 0o600 });
   // A respawn reuses the session's directory while the previous keeper still listens for up to
   // 3 s after its Claude died. Left in place, that socket is what attachKeeper connects to first,
   // binding the new handle to the dying process (2026-09-06 21:27: "claude exited 143" on a model
@@ -1796,18 +1823,45 @@ export type WaitingSteer = {
 );
 
 /**
+ * The permission mode a CLI stdout line reports, else undefined. The CLI writes
+ * `{"type":"system","subtype":"status","permissionMode":…}` whenever its mode changes, including a
+ * change it makes itself (EnterPlanMode, an approved ExitPlanMode), the only way the plugin learns
+ * of those (CLI 2.1.322). Lines without the key are not parsed, so the hot path stays cheap.
+ */
+export function statusMode(line: string): string | undefined {
+  if (!line.includes('"permissionMode"') || !line.includes('"status"')) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  // SAFETY: a non-null object; each field is compared to a literal or type-checked before use
+  const r = parsed as { type?: unknown; subtype?: unknown; permissionMode?: unknown };
+  if (r.type !== "system" || r.subtype !== "status") return undefined;
+  return typeof r.permissionMode === "string" ? r.permissionMode : undefined;
+}
+
+/**
  * A running Claude Code process bound to one dsh session. `spec` is what the process was spawned
  * with (cwd, model, effort, permission mode, session flags); a turn whose spec differs replaces it.
  */
 export class ClaudeProcess {
   spec: ClaudeProcessSpec;
   /** The permission mode the CLI is running in right now: `spec.mode` at spawn, then whatever the
-   *  last accepted `set_permission_mode` set. `spec.mode` stays the launch mode on purpose, since
+   *  last accepted `set_permission_mode` or the CLI's own status frame set. `spec.mode` stays the launch mode on purpose, since
    *  the CLI takes a live switch to bypassPermissions only from a process launched in it. */
   liveMode: string;
   args: string[];
   cwd: string;
   busy: boolean;
+  /** A turn has taken this process and has not marked it `busy` yet: the spawn's own waits (the
+   *  initialize reply, up to 15 s) come first. The spawn cap skips it meanwhile. Without this a
+   *  second session starting in that gap evicted the newborn as the longest-idle process, and its
+   *  turn ended as "claude exited 143: no output" (2026-11-10, eleven subagents started at once
+   *  against a cap of four). */
+  claimed = false;
   lastUsed: number;
   stderr: string;
   stray: string;
@@ -1951,6 +2005,10 @@ export class ClaudeProcess {
     let lineIndex = 0;
     rl.on("line", (line) => {
       const index = lineIndex++;
+      // The CLI's own mode changes (EnterPlanMode, an approved plan) reach the plugin only here;
+      // the bridge's plan-mode gate reads liveMode. The frame still queues as before.
+      const reported = statusMode(line);
+      if (reported !== undefined) this.liveMode = reported;
       // Consumed here, not queued: the frame lands after the result that ended the turn, when no
       // turn is reading, and a queued copy would open the next turn as an unknown event.
       if (line.includes('"prompt_suggestion"') && this.noteSuggestion(line))

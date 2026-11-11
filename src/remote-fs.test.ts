@@ -2,9 +2,9 @@
 // pure strings and the local branch writes under a temp dir.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import {
@@ -33,6 +33,7 @@ import {
   copyToAt,
 } from "./remote-fs.js";
 import type { SubprocessHandle } from "./process.js";
+import { tempDir } from "./test-tmp.js";
 
 // Every path is single-quoted, so a space or a quote in a workspace path stays one argument.
 {
@@ -65,12 +66,12 @@ import type { SubprocessHandle } from "./process.js";
       encoding: "utf8",
       env: { ...process.env, HOME: dir },
     });
-  const empty = mkdtempSync(join(tmpdir(), "omc-dirs-empty-"));
-  const mixed = mkdtempSync(join(tmpdir(), "omc-dirs-mixed-"));
+  const empty = tempDir("omc-dirs-empty-");
+  const mixed = tempDir("omc-dirs-mixed-");
   mkdirSync(join(mixed, "sub dir"));
   mkdirSync(join(mixed, ".hidden"));
   writeFileSync(join(mixed, "file.txt"), "");
-  const plain = mkdtempSync(join(tmpdir(), "omc-dirs-plain-"));
+  const plain = tempDir("omc-dirs-plain-");
   mkdirSync(join(plain, "src"));
   for (const shell of ["sh", "bash", "zsh"].filter(
     (s) => spawnSync(s, ["-c", "exit 0"]).status === 0,
@@ -148,7 +149,7 @@ import type { SubprocessHandle } from "./process.js";
 
 // The local branch: a box with no sshHost goes straight to the filesystem.
 {
-  const dir = await mkdtemp(join(tmpdir(), "omc-remote-fs-"));
+  const dir = tempDir("omc-remote-fs-");
   const box = {};
   const file = join(dir, "nested", "settings.json");
 
@@ -184,7 +185,7 @@ import type { SubprocessHandle } from "./process.js";
 // one directory where the user is looking, and a typo in a deep path is an error rather than a tree
 // of empty directories nobody asked for.
 {
-  const dir = await mkdtemp(join(tmpdir(), "omc-mkdir-"));
+  const dir = tempDir("omc-mkdir-");
   const box = {};
   await makeDirAt(box, join(dir, "newfolder"));
   assert.ok((await listDirsAt(box, dir))?.names.includes("newfolder"));
@@ -216,7 +217,7 @@ import type { SubprocessHandle } from "./process.js";
   assert.ok(script.includes('if [ -e "$p" ]; then cat >/dev/null;'), "an existing file is kept");
   assert.ok(script.endsWith('printf %s "$p"'), "the script's answer is the absolute far path");
 
-  const tmp = await mkdtemp(join(tmpdir(), "omc-copy-test-"));
+  const tmp = tempDir("omc-copy-test-");
   const local = join(tmp, "payload.bin");
   const payload = Buffer.from([0, 1, 2, 250, 251, 252, 10, 13, 0]);
   await writeFile(local, payload);

@@ -4,10 +4,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { LlmModelInfo, LlmResolvedModelInfo, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
-import { type FirstPartyProbe, probeFirstParty } from "../first-party.js";
+import { type FirstPartyProbe, firstPartyOf } from "../first-party.js";
+import type { RouteFilter } from "./routing.js";
 import { serverText } from "../locale.js";
 import type { CliModel } from "../process.js";
-import type { PickerSettings } from "../sessions.js";
+import type { PickerOption, PickerSettings } from "../sessions.js";
+import type { CustomModel } from "./config.js";
 import { authHeaders, CLAUDE_HOME, STATE_DIR, writeJson } from "../state.js";
 
 // No default effort is advertised: `--effort` is only sent when dsh picks one, so the CLI's own default rules.
@@ -60,6 +62,14 @@ interface CatalogModel {
   createdAt?: number;
   /** Effort levels the Models API reports for this model that the plugin does not know yet. */
   unknownEfforts?: string[];
+  /** Set on one of the CLI's aliases that a router took over (`mergeCatalog`), to the alias
+   *  (`sonnet`, `opus`, `haiku`): the model behind it is the router's, so its window is not
+   *  Claude's and can be set in Settings, where the alias is the key it is kept under. */
+  routers?: string;
+  /** The window on this row is one the plugin decided or was told, not one the CLI knows for the
+   *  model: a router's alias, or a row whose entry states a size. A session on such a row is
+   *  started with that window, since the CLI would otherwise manage it against its own guess. */
+  sized?: true;
 }
 
 /** Build one KNOWN_MODELS row: the provider is always claude-code, so callers pass only the id, label, context window and efforts, filling description when given. */
@@ -308,28 +318,16 @@ export const proxyBaseUrl = (raw: string | undefined): string | undefined => {
   }
 };
 /**
- * Whether this box's base URL reaches Anthropic, asked once per dsh process.
- *
- * On the process rather than on the adapter: dsh builds the adapter more than once at boot, and
- * the question is about the box, not about an instance. The promise is memoised, not its answer,
- * so the turns that start while the first request is in flight all wait on that one request.
- * An unanswered probe is retried by the next turn, since a proxy that was still starting up is
- * the likeliest reason for it.
+ * Whether the base URL in force for a mount reaches Anthropic. `raw` is that URL as the mount's
+ * settings and environment give it (`routeEnv`), which is not always this process's own
+ * `ANTHROPIC_BASE_URL`: settings.json's `env` outranks it for the CLI. No URL, or Anthropic's
+ * own, is false without a request, since the flag changes nothing there. Otherwise the answer is
+ * kept per URL (`firstPartyOf`), so one turn in a while waits on the request and an unanswered
+ * probe is asked again by the next turn, a proxy still starting being the likeliest reason.
  */
-const FIRST_PARTY_PROBE = Symbol.for("dsh-oh-my-claude.firstPartyProbe");
-
-/** Ask once per dsh process whether this box is first-party, memoised on globalThis (the adapter is built more than once at boot) and retried while unanswered, so a proxy still starting does not fail the turn. */
-export const detectFirstParty = async (): Promise<FirstPartyProbe> => {
-  const baseUrl = proxyBaseUrl(process.env.ANTHROPIC_BASE_URL);
-  if (!baseUrl) return false; // no proxy in front: the flag changes nothing either way
-  // SAFETY: this plugin's own key on globalThis, typed here once, as the timers below are
-  const store = globalThis as typeof globalThis & {
-    [FIRST_PARTY_PROBE]?: Promise<FirstPartyProbe>;
-  };
-  const asked = (store[FIRST_PARTY_PROBE] ??= probeFirstParty(baseUrl));
-  const answer = await asked;
-  if (answer === undefined) store[FIRST_PARTY_PROBE] = undefined;
-  return answer;
+export const detectFirstParty = async (raw: string | undefined): Promise<FirstPartyProbe> => {
+  const baseUrl = proxyBaseUrl(raw);
+  return baseUrl ? firstPartyOf(baseUrl) : false;
 };
 
 /** Record what a session answered. A missing or nonsense figure leaves the last good one standing. */
@@ -420,6 +418,66 @@ export const hintHiddenModels = (
     .filter(([k, v]) => k.startsWith(prefix) && v === true)
     .map(([k]) => k.slice(prefix.length));
 };
+/** The hints key a router alias's window is kept under, for one mount. */
+export const routerWindowHint = (provider: string, alias: string): string =>
+  `routerWindow:${provider}:${alias}`;
+/** The windows Settings holds for one mount's router aliases, by alias, read off the hints
+ *  store: whole numbers within the bounds a custom model's window is held to. */
+export const hintRouterWindows = (hints: Record<string, boolean | number>, provider: string) => {
+  const prefix = routerWindowHint(provider, "");
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(hints))
+    if (k.startsWith(prefix) && Number.isInteger(v) && Number(v) >= 1000 && Number(v) <= 10_000_000)
+      out[k.slice(prefix.length)] = Number(v);
+  return out;
+};
+/**
+ * settings.json's picker with the plugin config's `customModels` added as option rows, after the
+ * file's own: `mergeCatalog` keeps the last row written for an id, so a model named in both takes
+ * the plugin's label and window. Entries the picker
+ * cannot use are dropped rather than refused: one with no model id, a window that is not a positive
+ * whole number, an effort level the CLI does not have. No entries leaves `picker` as it was,
+ * undefined included, so a box with none configured lists exactly what it listed before.
+ * `availableModels` in settings.json still applies to these rows, as it does to the file's own.
+ */
+export function withCustomModels(
+  picker: PickerSettings | undefined,
+  custom: readonly CustomModel[],
+): PickerSettings | undefined {
+  const rows = custom.flatMap((c): PickerOption[] => {
+    const model = c.model.trim();
+    if (model === "") return [];
+    const row: PickerOption = { model, added: true };
+    if (c.label !== undefined && c.label.trim() !== "") row.label = c.label.trim();
+    if (c.contextWindow !== undefined && Number.isInteger(c.contextWindow) && c.contextWindow > 0)
+      row.contextWindow = c.contextWindow;
+    // An empty list is what the config schema fills in for an entry that names none, so it means
+    // "not said" and a model the catalog knows keeps its own levels.
+    const efforts = EFFORTS_ALL.filter((level) => c.efforts?.includes(level));
+    if (efforts.length > 0) row.efforts = efforts;
+    return [row];
+  });
+  if (rows.length === 0) return picker;
+  const base = picker ?? { options: [], replaceBuiltInOptions: false };
+  return { ...base, options: [...base.options, ...rows] };
+}
+
+/** The window a router's alias row gets until someone states the real one: what the CLI assumes
+ *  for a model it has never heard of, since the model behind the alias is not one this catalog
+ *  can look up. */
+export const ROUTED_WINDOW = 200_000;
+
+/** One row on its way through `mergeCatalog`: the row, the id the allowlist reads it by, and what
+ *  the route filter needs to know about where it came from. */
+interface MergedRow {
+  row: CatalogModel;
+  match: string;
+  /** The router's or the user's own: an alias the router named, or a row written out by hand. */
+  routers: boolean;
+  /** Added through the plugin for a model the catalog does not know. */
+  foreign?: boolean;
+}
+
 /** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
  *  short spelling. */
@@ -427,6 +485,7 @@ export function mergeCatalog(
   cli: CliModel[],
   base: ReturnType<typeof M>[],
   picker?: PickerSettings,
+  route?: RouteFilter,
 ) {
   if (cli.length === 0 && !picker) return base;
   // A CLI row is keyed by an alias (`opus`, `default`), so each row carries the id the allowlist reads.
@@ -445,14 +504,50 @@ export function mergeCatalog(
     // in one menu read as two lineups (owner, 2026-09-16). A row landing on a known model takes
     // that model's name, with the window named the way the CLI names it; Default keeps its own.
     const name = known?.name ?? nameFromId(c.resolvedModel);
+    // The exception is a name someone gave the alias on purpose (`aliasNames`): a router that
+    // sends `sonnet` to another model says so there, the CLI's row carries that name, and
+    // replacing it with "Claude Sonnet 5" named a model the turn never reaches.
+    const given = picker?.aliasNames?.[c.value];
+    // Only when the lineup agrees with the file: a lineup asked before the router was switched
+    // on still says "Sonnet" for an alias the file now names, and that row is not the router's.
+    const named = given !== undefined && given === c.displayName;
+    // An alias pointed at a model that is not Claude's is the router's too, named or not: CC
+    // Switch connected straight to a provider points every alias at the provider's model and
+    // names only some. A Claude id there is a version pin or a cloud provider's spelling of the
+    // same model, which is no remap. The lineup has to agree here as well.
+    const target = picker?.aliasModels?.[c.value];
+    const remapped =
+      target !== undefined && !/claude/i.test(target) && strip(c.resolvedModel) === target;
     const label =
-      c.value === "default" || name === undefined
+      c.value === "default" || name === undefined || named
         ? c.displayName
         : `${name}${c.resolvedModel.endsWith("[1m]") ? " (1M context)" : ""}`;
-    return {
-      row: M(stable ?? c.value, label, window, c.efforts, c.description),
+    // Only where the mount hands sizes over, which it does when its requests do not go straight
+    // to Anthropic. Someone who names an alias on a direct box (a pinned version, say) still
+    // reaches the Claude model the CLI knows, and its window is left alone.
+    const sizes = picker?.routerWindows;
+    const resized = (named || remapped) && sizes !== undefined;
+    const row: MergedRow = {
+      // A row the router took over reaches some other model, whose window nobody here knows.
+      // Claude's figure for the alias (1M for Sonnet 5) promises room a local model may not
+      // have, and the CLI believes that figure too (measured on 2.1.322: 1,000,000 for `sonnet`
+      // behind a router). The row takes a modest default instead and is marked `sized`, so the
+      // session is started with it; an entry for the same id can state the real size.
+      row: M(
+        stable ?? c.value,
+        label,
+        resized ? (sizes[c.value] ?? ROUTED_WINDOW) : window,
+        c.efforts,
+        c.description,
+      ),
       match: c.resolvedModel,
+      routers: named || remapped,
     };
+    if (resized) {
+      row.row.routers = c.value;
+      row.row.sized = true;
+    }
+    return row;
   });
   // A known model follows unless a CLI row already carries its exact id. A `[1m]` variant or the
   // `default` alias resolving to it keeps its own id, so it does not cover the plain one: a session
@@ -483,14 +578,31 @@ export function mergeCatalog(
     (cli.length === 0 || reached.has(b.id.replace(/-\d{8}$/, "")) || newer(b));
   const leftover = (b: CatalogModel): CatalogModel =>
     cli.length > 0 && newer(b) ? { ...b, description: serverText("modelNeedsCliUpdate") } : b;
-  let rows = [...fromCli, ...base.filter(keep).map((b) => ({ row: leftover(b), match: b.id }))];
+  let rows: MergedRow[] = [
+    ...fromCli,
+    ...base.filter(keep).map((b) => ({ row: leftover(b), match: b.id, routers: false })),
+  ];
   if (picker) {
-    const extra = picker.options.map((o) => {
+    const extra = picker.options.map((o): MergedRow => {
       const known = base.find((b) => allows(o.model, b.id) || allows(b.id, o.model));
       const label = o.label ?? known?.name ?? o.model;
+      const row = M(
+        o.model,
+        label,
+        o.contextWindow ?? known?.contextWindow ?? 200_000,
+        o.efforts ?? known?.efforts ?? [],
+      );
+      // A size someone stated for a model the plugin added is the only thing that knows it.
+      if (o.added === true && o.contextWindow !== undefined) row.sized = true;
       return {
-        row: M(o.model, label, known?.contextWindow ?? 200_000, known?.efforts ?? []),
+        row,
         match: o.model,
+        // A row someone wrote out is theirs whatever the router names, so it stays while routed.
+        routers: true,
+        // A row the plugin added for a model Anthropic's catalog does not list: only a router
+        // can answer for it. One that names a Claude model (to keep a retired one listed, or to
+        // give it another window) answers without a router and is not foreign.
+        foreign: o.added === true && known === undefined,
       };
     });
     if (picker.replaceBuiltInOptions) rows = rows.filter((r) => r.row.id === "default");
@@ -499,7 +611,25 @@ export function mergeCatalog(
     if (allow)
       rows = rows.filter((r) => r.row.id === "default" || allow.some((e) => allows(e, r.match)));
   }
-  // Two aliases can resolve to one model, and they now share its id; the first listed wins.
+  // The listing follows where this mount's traffic goes. Straight to Anthropic, a model only a
+  // router could answer for is left out: picked there, its turn fails. Through a router that
+  // names the aliases it remaps, Claude's own rows are left out instead: the router sends them
+  // wherever it likes, and "Claude Opus 5" on a row that reaches a local model is the confusion
+  // this exists to end. Only once the lineup shows one of those names, so a lineup that predates
+  // the switch never empties the menu, and never for a gateway that names nothing: its Claude
+  // rows are real. `unknown`, and a caller that passes no route (`fullModelInfo`, the Settings
+  // list), keep every row.
+  if (route?.state === "direct") {
+    // By id as well as by mark: once a session has run on such a model the CLI lists it in its
+    // own lineup, and that row would otherwise stand in for the one just left out.
+    const foreign = new Set(rows.filter((r) => r.foreign === true).map((r) => r.row.id));
+    rows = rows.filter((r) => !foreign.has(r.row.id) && !foreign.has(r.match));
+  }
+  if (route?.state === "routed" && !route.claudeToo && fromCli.some((r) => r.routers))
+    rows = rows.filter((r) => r.row.id === "default" || r.routers);
+  // Two aliases can resolve to one model, and they now share its id. The row keeps the place of
+  // the first one listed and the values of the last, which is why a `customModels` entry, added
+  // after settings.json's own, is the one whose label and window show.
   return [...new Map(rows.map((r) => [r.row.id, r.row])).values()];
 }
 /** Each effort level the last Models API read reported that the plugin does not know, with the
@@ -513,18 +643,39 @@ export function unknownEffortLevels(): Array<{ level: string; models: string[] }
   return [...byLevel].map(([level, models]) => ({ level, models }));
 }
 
+/**
+ * The catalog as it stands, with no read of the Models API: what a turn about to start uses to
+ * look up its own row. `getCatalog` waits on that API whenever the cache is stale, and when the
+ * API cannot be reached the cache stays stale, so each call there costs the request's timeout.
+ * A listing can afford that once; a turn that asked several times before it spawned could not.
+ */
+export async function catalogNow(
+  cli: CliModel[] = [],
+  picker?: PickerSettings,
+  route?: RouteFilter,
+) {
+  await Promise.all([seedFromDisk(), seedLiveWindows()]);
+  return mergeCatalog(cli, catalog.models, picker, route);
+}
+
 /** Serves the model catalog from cache, fetching Anthropic's API when the cache is stale, and
  *  keeps the last good catalog on any failure so the picker never goes empty. */
-export async function getCatalog(fetchImpl = fetch, cli: CliModel[] = [], picker?: PickerSettings) {
+export async function getCatalog(
+  fetchImpl = fetch,
+  cli: CliModel[] = [],
+  picker?: PickerSettings,
+  route?: RouteFilter,
+) {
   await Promise.all([seedFromDisk(), seedLiveWindows()]);
-  if (Date.now() - catalog.at < CATALOG_TTL_MS) return mergeCatalog(cli, catalog.models, picker);
+  if (Date.now() - catalog.at < CATALOG_TTL_MS)
+    return mergeCatalog(cli, catalog.models, picker, route);
   // One read of the Models API at a time: every mount asks when the cache goes stale, and each
   // used to fire its own call (and, offline, wait out its own five-second timeout).
   apiRead ??= refreshFromApi(fetchImpl).finally(() => {
     apiRead = undefined;
   });
   await apiRead;
-  return mergeCatalog(cli, catalog.models, picker);
+  return mergeCatalog(cli, catalog.models, picker, route);
 }
 
 /** The Models API read in flight, shared by every caller that finds the cache stale meanwhile. */
@@ -605,7 +756,12 @@ export function resolveModelInfo(
     if (live !== undefined) info.context = { contextWindow: live };
     return info;
   }
-  info.context = { contextWindow: live ?? found.contextWindow };
+  // Except on a row whose window is stated (`sized`): the session is started with that number,
+  // so the CLI's answer is the same number a moment late, and a size just changed in Settings
+  // must not be hidden by the answer to the old one.
+  info.context = {
+    contextWindow: found.sized ? found.contextWindow : (live ?? found.contextWindow),
+  };
   const efforts = capEfforts(found.efforts, cap);
   if (efforts.length > 0) {
     info.reasoning = {

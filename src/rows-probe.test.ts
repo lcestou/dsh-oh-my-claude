@@ -2,11 +2,11 @@
 // the plugin at startup; here the log it sends is checked, and the answer when no dsh is around.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { probeRawToolRows, rawRowsLog } from "./rows-probe.js";
+import { tempDir } from "./test-tmp.js";
 
 {
   const { header, rows } = rawRowsLog();
@@ -46,7 +46,7 @@ import { probeRawToolRows, rawRowsLog } from "./rows-probe.js";
   // The plugin runs on Node, which reads a bare path handed to `import()` as a URL: a Windows path
   // fails as the scheme "c:" (#246) and a `#` in a folder name cuts the path short. Bun imports
   // both, so this half runs the read under Node, from a dsh tree whose folder has a `#` in it.
-  const root = join(await mkdtemp(join(tmpdir(), "omc-catalog-")), "dsh#1");
+  const root = join(tempDir("omc-catalog-"), "dsh#1");
   const lib = join(root, "node_modules", "@deepseek-ai", "dsh-session-format-catalog", "lib");
   await mkdir(lib, { recursive: true });
   await writeFile(join(lib, "..", "package.json"), '{"type":"module"}');

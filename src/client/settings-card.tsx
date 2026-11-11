@@ -34,6 +34,9 @@ import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { COMPACT_AT, COMPACT_AT_CHOICES, compactThreshold } from "./nudge.js";
 import { BOXES_EVENT, SETTINGS_EVENT } from "./picker.js";
 import { LiveNote } from "./live-note.js";
+import { CustomModelsEditor, type CustomModelEntry, putCustomModels } from "./custom-models.js";
+import { SizeSelect } from "./model-size.js";
+import { type BoxRoute, RouteLine, routeNote } from "./route-line.js";
 import { Switch } from "./switch.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
 import { RECAP_AWAY_MS, RECAP_AWAY_CHOICES, recapAwayIn } from "./notices.js";
@@ -48,7 +51,7 @@ import {
   MASTER_KEY,
   OFF_KEY,
 } from "../context-sources.js";
-import { loadHints, useHintValue, writeHints, useHintFlag } from "./hints.js";
+import { HINTS_EVENT, loadHints, useHintValue, writeHints, useHintFlag } from "./hints.js";
 
 /** What the starter route answers: this session's own saved opener and the shared fallback. */
 interface StarterReply {
@@ -142,7 +145,8 @@ export function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ct
  * composer seat read `claude-code/claude-fable-5-1[1m]`: dsh names a selection by finding it in the
  * catalog and prints the raw pair when it is not there (owner, 2026-09-17). Same model, new
  * spelling, so the repair is a plain select; never while a turn runs, since a model change makes the
- * next turn respawn the process. An id with no living form is left alone.
+ * next turn respawn the process. An id with no living form is left alone, and so is every session
+ * on a box whose Claude Code goes through a router, where a missing row means something else.
  */
 export function StaleModelRepair({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useEffect(() => {
@@ -167,8 +171,30 @@ export function StaleModelRepair({ sessionId, ctx }: { sessionId: string; ctx: C
       if (ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) return;
       settled = true;
       const living = livingModelId(cur.model, offered);
-      if (living && dir.select)
-        void dir.select({ provider: cur.provider, model: living }).catch(() => {});
+      if (!living || !dir.select) return;
+      const pick = dir.select;
+      // Only on a box that talks to Anthropic. Behind a router the list is the router's: a model
+      // missing from it is set aside, not renamed, and moving the session to its family's alias
+      // would put it on whatever the router sends that alias to, for good. Where the state
+      // cannot be told nothing is moved either. An older server sends no state and is repaired
+      // as before; a failed read repairs nothing, and the next open asks again.
+      void fetch(`${ROUTE}/models?all=1`)
+        .then((r) => readJson<{ models?: PickerBox[] }>(r))
+        .then((b) => {
+          const route = b.models?.find((box) => box.provider === cur.provider)?.route;
+          if (route !== undefined && route.state !== "direct") return;
+          // The read took a moment, and a turn may have started or the model been changed in
+          // it. Either way this repair is off: left unsettled, the next store change (the turn
+          // ending) runs it again from the top.
+          const now = dir.store.getSnapshot().current;
+          const moved = now?.provider !== cur.provider || now.model !== cur.model;
+          if (moved || ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) {
+            settled = false;
+            return;
+          }
+          return pick({ provider: cur.provider, model: living });
+        })
+        .catch(() => {});
     });
     repair();
     // The directory store for the catalog arriving, the list store for the turn ending: a session
@@ -1349,47 +1375,150 @@ export function RecallSwitch() {
   );
 }
 
-type PickerModel = { id: string; name: string; hidden: boolean; locked: boolean };
-type PickerBox = { provider: string; host: string | null; models: PickerModel[] };
+/** `off` is the picker leaving the row out because of where the box's traffic goes, whatever its
+ *  switch says. `window` is the context window the row reports and `routers` the alias a router
+ *  took over, set only on such a row; all three are absent from an older server. */
+type PickerModel = {
+  id: string;
+  name: string;
+  hidden: boolean;
+  locked: boolean;
+  off?: boolean;
+  window?: number;
+  routers?: string;
+};
+/** `custom` and `route` are absent from a server older than this client: the client hot-reloads,
+ *  the server waits for a restart. */
+type PickerBox = {
+  provider: string;
+  host: string | null;
+  models: PickerModel[];
+  custom?: CustomModelEntry[];
+  route?: BoxRoute;
+};
 
 /** One model's row in the Models block: a switch over that box's `hideModel:<provider>:<id>` hint,
  *  on when the model is listed. A row the plugin config hides is shown off and disabled, with a note
- *  saying why, since a switch here cannot undo a config entry. Reports its live state up so the
- *  summary can count. */
+ *  saying why, since a switch here cannot undo a config entry. A row the picker leaves out because
+ *  of the box's route (`model.off`) is dimmed with a note saying when it comes back; its switch
+ *  still works, since it is the row's own setting for when it does. Reports its live state up so
+ *  the summary can count.
+ *
+ *  Two kinds of row also carry their context size, because nobody but the person at the box
+ *  knows it: a router's alias, whose size is kept as a hint under the alias
+ *  (`routerWindow:<provider>:<alias>`), and a model added in Settings, whose size is part of its
+ *  entry. That entry is also where Remove lives, so an added model shows once. `onSaved`
+ *  re-reads the block after a change to the box's added models. Every such change sends the
+ *  box's whole list as this row last saw it, so two of them must not be in flight at once: a
+ *  second one would carry the list from before the first. `frozen` is another row or the form
+ *  saving, which holds this row's size and Remove until the block has re-read, and `onSaving`
+ *  is how this row says the same to the others. */
 function ModelRow({
   box,
   model,
+  frozen,
   onState,
+  onSaved,
+  onSaving,
 }: {
   box: PickerBox;
   model: PickerModel;
+  frozen: boolean;
   onState: (key: string, hidden: boolean) => void;
+  onSaved: () => void;
+  onSaving: (on: boolean) => void;
 }) {
   const key = `hideModel:${box.provider}:${model.id}`;
   const [off, setOff] = useHintFlag(key);
   const hidden = model.locked || off;
   useEffect(() => onState(key, hidden), [key, hidden, onState]);
+  // Read for every row, used only on a router's: hooks cannot be conditional, and a key no row
+  // writes costs one shared read of the hints store.
+  const [routerSize, setRouterSize] = useHintValue(
+    `routerWindow:${box.provider}:${model.routers ?? ""}`,
+  );
+  const [error, setError] = useState("");
+  const saved = box.custom ?? [];
+  const entry = saved.find((m) => m.model === model.id);
+  /** Store the box's added models as `next`, then re-read the block; a refusal shows on the row. */
+  const store = (next: CustomModelEntry[]) => {
+    onSaving(true);
+    setError("");
+    // Released by the block once it has re-read (`ModelsBlock`), not here: until then every row
+    // still holds the list from before this save.
+    void putCustomModels(box.provider, next)
+      .then(onSaved)
+      .catch((e: Error) => {
+        setError(e.message);
+        onSaving(false);
+      });
+  };
+  const size =
+    model.routers !== undefined ? (
+      <SizeSelect
+        name={model.name}
+        value={Number.isInteger(routerSize) ? Number(routerSize) : undefined}
+        onChange={(next) => setRouterSize(next ?? null)}
+      />
+    ) : entry ? (
+      <SizeSelect
+        name={model.name}
+        value={entry.contextWindow}
+        disabled={frozen}
+        onChange={(next) => {
+          const { contextWindow: _old, ...rest } = entry;
+          const changed = next === undefined ? rest : { ...rest, contextWindow: next };
+          store(saved.map((m) => (m.model === entry.model ? changed : m)));
+        }}
+      />
+    ) : null;
   return (
     <div
       data-omc-model-row={model.id}
       style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
     >
-      <div style={{ minWidth: 0, color: hidden ? T.faint : undefined }}>
+      <div style={{ minWidth: 0, color: hidden || model.off ? T.faint : undefined }}>
         <div>{model.name}</div>
-        <div style={{ color: T.faint, fontSize: 11, fontFamily: "monospace" }}>
-          {model.id}
+        <div style={{ color: T.faint, fontSize: 11 }}>
+          <span style={{ fontFamily: "monospace" }}>{model.id}</span>
           {model.locked ? ` · ${t("main.settingsUi.modelsLocked")}` : ""}
+          {model.off && <span data-omc-model-off="">{` · ${routeNote(box.route)}`}</span>}
         </div>
+        {error && (
+          <div role="alert" data-omc-model-row-error="" style={{ fontSize: 12 }}>
+            {error}
+          </div>
+        )}
       </div>
-      <Switch
-        on={!hidden}
-        disabled={model.locked}
-        onChange={(on) => setOff(!on)}
-        label={model.name}
-      />
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flex: "none" }}>
+        {size}
+        {entry && (
+          <button
+            type="button"
+            data-omc-custom-model-remove=""
+            style={{ ...btn, fontSize: 12 }}
+            disabled={frozen}
+            aria-label={t("main.settingsUi.customRemoveNamed", { name: model.name })}
+            onClick={() => store(saved.filter((m) => m.model !== entry.model))}
+          >
+            {t("main.settingsUi.customRemove")}
+          </button>
+        )}
+        <Switch
+          on={!hidden}
+          disabled={model.locked}
+          onChange={(on) => setOff(!on)}
+          label={model.name}
+        />
+      </div>
     </div>
   );
 }
+
+/** "4 listed, 1 hidden", plus how many rows the route keeps out of the picker when any are. */
+const modelsSummary = (all: number, hidden: number, out: number) =>
+  t("main.settingsUi.modelsSummary", { shown: all - hidden - out, hidden }) +
+  (out > 0 ? ` · ${t("main.settingsUi.modelsWaiting", { count: out })}` : "");
 
 /** The Models block: a folded `details` whose summary counts what the pickers list and what is
  *  hidden, so a long lineup reads as one line until opened. Inside, one group per box (this one
@@ -1402,6 +1531,11 @@ export function ModelsBlock() {
   const [boxes, setBoxes] = useState<PickerBox[] | undefined>();
   const [error, setError] = useState("");
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => new Set());
+  const [reads, setReads] = useState(0);
+  const reread = useCallback(() => setReads((n) => n + 1), []);
+  // The box whose added models are being saved, by provider. Each save sends the box's whole
+  // list, so its rows and its form wait for one another: see `ModelRow`.
+  const [saving, setSaving] = useState<string | undefined>();
   const onState = useCallback((key: string, hidden: boolean) => {
     setHiddenKeys((prev) => {
       if (prev.has(key) === hidden) return prev;
@@ -1427,17 +1561,34 @@ export function ModelsBlock() {
           );
           setHiddenKeys((prev) => new Set([...prev].filter((k) => alive.has(k))));
           setBoxes(next);
+          // The rows now hold the list a save left behind, so the next save may go.
+          setSaving(undefined);
         })
-        .catch((e: Error) => live && setError(e.message));
+        .catch((e: Error) => {
+          if (!live) return;
+          setError(e.message);
+          setSaving(undefined);
+        });
     void load();
     // A box added or removed in the card above changes the groups here; the card announces it.
     window.addEventListener(BOXES_EVENT, load);
+    // A model added or removed in another tab arrives as a hints event (the route publishes one);
+    // a hide switch flipped anywhere does too, and costs this block one re-read.
+    window.addEventListener(HINTS_EVENT, load);
     return () => {
       live = false;
       window.removeEventListener(BOXES_EVENT, load);
+      window.removeEventListener(HINTS_EVENT, load);
     };
-  }, []);
+    // `reads` is the block's own save: the form below bumps it after the server took a change.
+  }, [reads]);
   const total = boxes?.reduce((n, b) => n + b.models.length, 0) ?? 0;
+  /** A box's rows the picker leaves out for the route alone: not counting one switched off as
+   *  well, which the "hidden" figure already has. */
+  const waitingIn = (box: PickerBox) =>
+    box.models.filter((m) => m.off && !hiddenKeys.has(`hideModel:${box.provider}:${m.id}`)).length;
+  const waiting = boxes?.reduce((n, b) => n + waitingIn(b), 0) ?? 0;
+
   return (
     <details data-omc-models-block="" style={NESTED}>
       <summary style={{ cursor: "pointer" }}>
@@ -1445,7 +1596,7 @@ export function ModelsBlock() {
         <span style={{ color: T.faint, fontSize: 12 }}>
           {boxes === undefined
             ? ` · ${t("loading")}`
-            : ` · ${t("main.settingsUi.modelsSummary", { shown: total - hiddenKeys.size, hidden: hiddenKeys.size })}`}
+            : ` · ${modelsSummary(total, hiddenKeys.size, waiting)}`}
         </span>
       </summary>
       <div style={{ padding: "8px 0 0 16px" }}>
@@ -1474,16 +1625,44 @@ export function ModelsBlock() {
                   {box.host ?? t("main.sessions.thisBox")}
                 </legend>
                 {box.models.map((m) => (
-                  <ModelRow key={m.id} box={box} model={m} onState={onState} />
+                  <ModelRow
+                    key={m.id}
+                    box={box}
+                    model={m}
+                    frozen={saving === box.provider}
+                    onState={onState}
+                    onSaved={reread}
+                    onSaving={(on) => setSaving(on ? box.provider : undefined)}
+                  />
                 ))}
               </fieldset>
+            );
+            // Counted from the server's rows, not the live switches: whether the route sets a row
+            // aside is the server's call, and the line explains the rows the reader can see.
+            const line = (
+              <RouteLine
+                provider={box.provider}
+                route={box.route}
+                waiting={box.models.filter((m) => m.off).length}
+              />
+            );
+            const added = (
+              <CustomModelsEditor
+                provider={box.provider}
+                saved={box.custom ?? []}
+                frozen={saving === box.provider}
+                onSaved={reread}
+                onSaving={(on) => setSaving(on ? box.provider : undefined)}
+              />
             );
             // One box: its rows sit right under the description, the outer fold is enough. More
             // than one: each box is its own fold, shut by default, so opening one box's list keeps
             // the others at one line each.
             return (boxes ?? []).length === 1 ? (
               <div key={box.provider} data-omc-models-box={box.provider}>
+                {line}
                 {rows}
+                {added}
               </div>
             ) : (
               <details
@@ -1494,10 +1673,14 @@ export function ModelsBlock() {
                 <summary style={{ cursor: "pointer", color: T.muted, fontSize: 13 }}>
                   {box.host ?? t("main.sessions.thisBox")}
                   <span style={{ color: T.faint, fontSize: 12 }}>
-                    {` · ${t("main.settingsUi.modelsSummary", { shown: box.models.length - hiddenHere, hidden: hiddenHere })}`}
+                    {` · ${modelsSummary(box.models.length, hiddenHere, waitingIn(box))}`}
                   </span>
                 </summary>
-                <div style={{ padding: "8px 0 0 16px" }}>{rows}</div>
+                <div style={{ padding: "8px 0 0 16px" }}>
+                  {line}
+                  {rows}
+                  {added}
+                </div>
               </details>
             );
           })

@@ -1,8 +1,7 @@
 // Offline check for the Claude Code transcript → dsh events conversion.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { serverText } from "./locale.js";
 import {
@@ -27,6 +26,7 @@ import {
   probeBox,
   validateBoxes,
 } from "./sessions.js";
+import { tempDir } from "./test-tmp.js";
 
 const line = (o: any) => JSON.stringify(o);
 const T = "2026-09-03T08:00:00.000Z";
@@ -325,7 +325,7 @@ assert.equal(truncateBytes("hello", 0), "");
 assert.equal(truncateBytes("hello", 5), "hello", "a text that fits is returned whole");
 
 // Listing: uuid files only, sidechain-only and empty files skipped, newest first, excluded ids hidden.
-const dir = await mkdtemp(join(tmpdir(), "dsh-oh-my-claude-"));
+const dir = tempDir("dsh-oh-my-claude-");
 const idA = "11111111-1111-4111-8111-111111111111";
 const idB = "22222222-2222-4222-8222-222222222222";
 const idC = "33333333-3333-4333-8333-333333333333";
@@ -947,7 +947,7 @@ console.log("transcript ok");
   );
   assert.match(mirrorReply(long, 1000), /cut here/, "and says so");
   // The tail read starts at the byte offset the last turn ended on; a shorter file reads as "".
-  const dir = await mkdtemp(join(tmpdir(), "omc-tail-"));
+  const dir = tempDir("omc-tail-");
   const path = join(dir, "s.jsonl");
   await writeFile(path, `${ours}\n`);
   const seen = Buffer.byteLength(`${ours}\n`);
@@ -1074,7 +1074,7 @@ assert.equal(commandTitle("<local-command-stdout>Set model</local-command-stdout
 {
   // One fake home, read by the local lister and by the script an SSH box runs: the script is a
   // string nothing type-checks, so the same files going through both is what keeps them agreeing.
-  const home = await mkdtemp(join(tmpdir(), "omc-cmd-title-"));
+  const home = tempDir("omc-cmd-title-");
   const dir = join(home, ".claude", "projects", "-p");
   await mkdir(dir, { recursive: true });
   const user = (content: string, extra: object = {}) =>

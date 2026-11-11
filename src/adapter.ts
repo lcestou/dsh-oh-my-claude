@@ -273,6 +273,11 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       // the offer has to reach that mount's live turn (see ownerFor).
       relay: (sessionId, toolName, args, signal) =>
         adapter.ownerFor(sessionId).relay(sessionId, toolName, args, signal),
+      // The live process's mode, else the one its next spawn would get.
+      mode: (sessionId) => {
+        const info = adapter.ownerFor(sessionId).permissionModeInfo(sessionId);
+        return info.liveMode ?? info.mode;
+      },
     }).then(
       (mcp) => {
         adapter.mcp = mcp;
@@ -470,8 +475,10 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
           adapter.ownerFor(sessionId).setThinkingBudget(sessionId, tokens),
       },
       models: () => adapter.getAdvisorModels(),
+      offeredModels: (provider) => adapter.offeredModels(provider),
       pickerModels: () => adapter.pickerBoxes(),
       modelsUpdated: () => adapter.modelsUpdated(),
+      setCustomModels: (provider, models) => adapter.setCustomModels(provider, models),
       providerId: adapter.providerId,
       reloadPlugins: (sessionId: string) => adapter.ownerFor(sessionId).reloadPlugins(sessionId),
       reloadSkills: (sessionId: string) => adapter.ownerFor(sessionId).reloadSkills(sessionId),

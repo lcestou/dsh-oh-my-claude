@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UsageCredits } from "./usage.js";
 import {
@@ -12,6 +11,7 @@ import {
   usageCredits,
   usageWindows,
 } from "./usage.js";
+import { tempDir } from "./test-tmp.js";
 
 // The endpoint names a slightly different instant on every read; both land on the same minute.
 assert.deepEqual(
@@ -84,13 +84,15 @@ assert.deepEqual(usageWindows({ limits: "nope" }), []);
 
 // A fake login in a scratch home, so these reads never touch this box's own credentials: with the
 // box logged out they stopped at "needs a Claude Code login" before the fake fetch was ever called.
-const home = mkdtempSync(join(tmpdir(), "omc-usage-"));
+const home = tempDir("omc-usage-");
 writeFileSync(
   join(home, ".credentials.json"),
   JSON.stringify({
     claudeAiOauth: { accessToken: "sk-ant-your-token-here", expiresAt: Date.now() + 3_600_000 },
   }),
 );
+// A scratch home with no login in it.
+const loggedOut = tempDir("omc-usage-none-");
 
 // readUsage never throws
 const dead = await readUsage(async () => {
@@ -113,6 +115,54 @@ assert.equal(limited.ok === false && limited.retryAfterMs, 120_000);
 // a 429 with no header still backs off at the floor (60s), never 0
 const noHeader = await readUsage(async () => ({ status: 429, json: async () => ({}) }), home);
 assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
+
+// The other statuses: each is an error row with its own reason, a body that is not JSON included,
+// and an empty 200 is a readable reply with nothing in it.
+{
+  const reply = (status: number, json: () => Promise<object> = async () => ({})) =>
+    readUsage(async () => ({ status, json }), home);
+  assert.deepEqual(await reply(401), { ok: false, error: "login expired: run claude auth login" });
+  assert.deepEqual(await reply(503), { ok: false, error: "HTTP 503" });
+  const html = await reply(200, async () => {
+    throw new SyntaxError("Unexpected token <");
+  });
+  assert.equal(html.ok, false, "a proxy's HTML page on a 200 is an error row, never a throw");
+  const empty = await reply(200);
+  assert.ok(empty.ok);
+  assert.deepEqual(empty.ok && empty.windows, []);
+  assert.equal(empty.ok && empty.extraUsage, false);
+  // No login at all stops before any request.
+  let called = false;
+  const none = await readUsage(async () => {
+    called = true;
+    return { status: 200, json: async () => ({}) };
+  }, loggedOut);
+  assert.equal(none.ok, false);
+  assert.equal(called, false, "no request without a login");
+}
+
+// Minute rounding of resets_at against the limit-wait re-check: a reset at 17:00:29 reads as
+// 17:00:00, so a re-check at 17:00:05 finds the window's reset passed and nothing blocks, 24 s
+// before the real reset. Pinned as current behaviour: a fix to the early wake flips the second
+// assertion on purpose.
+{
+  const real = Date.parse("2026-11-10T17:00:29Z");
+  const [win] = usageWindows({
+    limits: [{ kind: "session", percent: 100, resets_at: real / 1000 }],
+  });
+  assert.equal(win?.resetsAt, Date.parse("2026-11-10T17:00:00Z"), "rounded to the nearest minute");
+  const full = {
+    ok: true as const,
+    fetchedAt: 0,
+    windows: win ? [win] : [],
+    extraUsage: false,
+    credits: { enabled: false, capped: false, canPurchase: false },
+  };
+  assert.equal(stillLimitedUntil(full, Date.parse("2026-11-10T17:00:05Z")), undefined);
+  // Seconds and milliseconds both read as the same instant.
+  const [ms] = usageWindows({ limits: [{ kind: "session", percent: 1, resets_at: real }] });
+  assert.equal(ms?.resetsAt, win?.resetsAt);
+}
 
 // still at the cap: the latest reset among full windows; nothing when all have room, expired, or unreadable
 {

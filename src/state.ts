@@ -125,19 +125,32 @@ export function markBusy(id: string, on: boolean, path = BUSY_FILE): Promise<voi
     },
     () => {},
   );
-  return busyChain;
+  const run = busyChain;
+  // The chain itself never stays rejected: a write that failed would otherwise send the next
+  // call down the rejection branch above, which does nothing, and that mark would be lost.
+  busyChain = run.catch(() => {});
+  return run;
 }
 
-/** Sessions whose turn the previous dsh process left unfinished; cleared on read. */
-export async function takeInterrupted(path = BUSY_FILE): Promise<string[]> {
-  let ids: unknown[] = [];
-  try {
-    ids = JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    return [];
-  }
-  await writeJson(path, []).catch(() => {});
-  return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
+/** Sessions whose turn the previous dsh process left unfinished; cleared on read. Queued behind
+ *  `markBusy`'s writes: read and cleared on its own, it could empty the file between a mark's read
+ *  and its write, or wipe a mark a turn had just made. */
+export function takeInterrupted(path = BUSY_FILE): Promise<string[]> {
+  const run = busyChain.then(async () => {
+    let ids: unknown[] = [];
+    try {
+      ids = JSON.parse(await readFile(path, "utf8"));
+    } catch {
+      return [];
+    }
+    await writeJson(path, []).catch(() => {});
+    return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
+  });
+  busyChain = run.then(
+    () => {},
+    () => {},
+  );
+  return run;
 }
 
 /** A `model/selection` no request has run on yet: the newest selection after the last
@@ -572,6 +585,9 @@ export async function loadTurnRecords(dir: string): Promise<Map<string, TurnReco
             record.costTotal = costTotal;
             record.apiTotal = apiTotal;
           }
+          // The router a turn went through. Dropped here, a routed turn came back from a restart
+          // as one of Claude's and its figure went back into the money.
+          if (typeof r.via === "string") record.via = r.via;
           records.push(record);
         }
         if (records.length > 0) map.set(k, records);
@@ -594,7 +610,8 @@ export function saveTurnRecords(
     let obj: Record<string, unknown[]> = {};
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
-      if (typeof parsed === "object" && parsed !== null) {
+      // An array is an object too, and a key set on one is not written back: every record lost.
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
         // SAFETY: top-level JSON object with string keys maps to a record of arrays.
         obj = parsed as Record<string, unknown[]>;
       }

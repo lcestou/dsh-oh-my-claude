@@ -1,7 +1,6 @@
 // Offline checks for the Claude Code updater: the pointer read and its cache, the settings reads, the file, the two predicates, and the class with a fake exec.
 import assert from "node:assert/strict";
-import { mkdtemp, unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   latestClaude,
@@ -19,8 +18,9 @@ import {
   type ClaudeUpdateState,
   type ClaudeUpdateEntry,
 } from "./claude-update.js";
+import { tempDir } from "./test-tmp.js";
 
-const dir = await mkdtemp(join(tmpdir(), "omc-claude-update-"));
+const dir = tempDir("omc-claude-update-");
 
 // A. latestClaude: cache, TTL, forget, junk answers, channel param.
 {
@@ -215,7 +215,7 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
 
 // H. ClaudeUpdater: check, settings-driven off/channel, setAuto, skip, concurrent runs, declined run, throwing exec.
 {
-  const dir2 = await mkdtemp(join(tmpdir(), "omc-claude-update-"));
+  const dir2 = tempDir("omc-claude-update-");
   let version = "2.1.273";
   const execCalls: string[][] = [];
   let fetchCallCount = 0;

@@ -2,12 +2,12 @@
 // and the local probe runs it beside `--version`. The row must read "not logged in" with the
 // version it found, never a "Command failed" that hides both.
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { probeRuntime } from "./sessions.js";
+import { tempDir } from "./test-tmp.js";
 
-const dir = await mkdtemp(join(tmpdir(), "omc-probe-"));
+const dir = tempDir("omc-probe-");
 const claude = join(dir, "claude");
 await writeFile(
   claude,

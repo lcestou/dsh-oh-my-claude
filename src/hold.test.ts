@@ -13,10 +13,12 @@ import {
   holdName,
   holdStartScript,
   parseHoldLine,
+  asHoldRecord,
   reattachDelay,
   type RunOnBox,
 } from "./hold.js";
 import type { SubprocessHandle } from "./process.js";
+import { tempDir } from "./test-tmp.js";
 
 // One dir per spawn: same session, different stamp, different name; the hash part is stable.
 assert.notEqual(holdName("claude-code-box", "s1", 1), holdName("claude-code-box", "s1", 2));
@@ -204,6 +206,26 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
   assert.equal((await h.done).exitCode, 0);
 }
 
+// ssh hands over Buffers cut at any byte: a character split across two of them reaches dsh whole,
+// and the offset moves by the bytes the file holds, so the next attach starts on a line boundary.
+{
+  const { run, sshes } = fakeRunner();
+  const offsets: number[] = [];
+  const lines: string[] = [];
+  const h = holdHandle(run, "utf8-1", 0, (o) => offsets.push(o));
+  h.stdout.on("data", (d) => lines.push(String(d)));
+  sshes[0]!.out.write(`${READY}\n`);
+  const line = '{"text":"café ✓"}';
+  const bytes = Buffer.from(`${line}\n`, "utf8");
+  const cut = bytes.indexOf(0xc3) + 1; // between the two bytes of "é"
+  sshes[0]!.out.write(bytes.subarray(0, cut));
+  sshes[0]!.out.write(bytes.subarray(cut));
+  await tick();
+  assert.deepEqual(lines, [`${line}\n`], "the line reaches dsh as the CLI wrote it");
+  assert.deepEqual(offsets, [bytes.length]);
+  h.terminate();
+}
+
 // A far dir that is gone ends the handle at once, as a failure, with no reattach loop.
 {
   const { run, sshes } = fakeRunner();
@@ -237,9 +259,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
 // script through `sh -c` and driven through the attach script, so the FIFO, setsid, tail --pid and
 // the exit file are exercised the way the far shell will run them. Skipped where `setsid` is absent.
 {
-  const { mkdtempSync, writeFileSync, chmodSync, existsSync, readFileSync } =
-    await import("node:fs");
-  const { tmpdir } = await import("node:os");
+  const { writeFileSync, chmodSync, existsSync, readFileSync } = await import("node:fs");
   const { join } = await import("node:path");
   const { execFileSync } = await import("node:child_process");
   const { nodeSpawner } = await import("./process.js");
@@ -250,7 +270,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     hasSetsid = false;
   }
   if (hasSetsid) {
-    const home = mkdtempSync(join(tmpdir(), "omc-hold-home-"));
+    const home = tempDir("omc-hold-home-");
     const cli = join(home, "fake-claude");
     // Echoes each stdin line back as a result line; "quit" ends it with code 5.
     writeFileSync(
@@ -305,6 +325,50 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     h1.terminate();
     console.log("hold e2e ok");
   }
+}
+
+// asHoldRecord gates what a restart reattaches to from holds.json: a record with a field missing
+// or of the wrong type is refused, so no reattach runs ssh with bad arguments or a wrong offset.
+{
+  const good = {
+    sessionId: "s1",
+    host: "box",
+    name: "abc-1",
+    command: "claude",
+    args: ["-p", 7, "--verbose"],
+    cwd: "/srv",
+    procSpec: { key: "k" },
+    offset: 120,
+    startedAt: 5,
+    owner: "web",
+  };
+  const r = asHoldRecord(good);
+  assert.ok(r);
+  assert.deepEqual(r.args, ["-p", "--verbose"], "a non-string arg is dropped, not passed to ssh");
+  assert.equal(r.offset, 120);
+  assert.equal(r.owner, "web");
+  assert.equal(asHoldRecord({ ...good, owner: 3 })?.owner, undefined, "a bad owner reads as none");
+  const required = [
+    "sessionId",
+    "host",
+    "name",
+    "command",
+    "args",
+    "cwd",
+    "procSpec",
+    "offset",
+    "startedAt",
+  ];
+  for (const key of required) {
+    const rest: Record<string, unknown> = { ...good };
+    delete rest[key];
+    assert.equal(asHoldRecord(rest), undefined, `missing ${key} rejects`);
+  }
+  assert.equal(asHoldRecord({ ...good, offset: "120" }), undefined, "a string offset rejects");
+  assert.equal(asHoldRecord({ ...good, procSpec: null }), undefined);
+  assert.equal(asHoldRecord(null), undefined);
+  assert.equal(asHoldRecord("x"), undefined);
+  console.log("hold record ok");
 }
 
 // A real SubprocessHandle shape is what the runner must answer; the fake above is one.

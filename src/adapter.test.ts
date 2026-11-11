@@ -168,12 +168,15 @@ const blockTextOf = (c: StreamChunk | undefined): string => {
 };
 import { PassThrough } from "node:stream";
 import { tmpdir } from "node:os";
+import { firstPartyOf, forgetFirstParty } from "./first-party.js";
+import { unwatchSettings } from "./adapter/routing.js";
 import { homedir } from "node:os";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { serverText } from "./locale.js";
 import { join as joinPath } from "node:path";
 import { STATE_DIR } from "./state.js";
 import { LINEUP_PROBE_ARGS } from "./adapter/catalog.js";
+import { removeOnExit, tempDir } from "./test-tmp.js";
 
 declare module "./adapter.js" {
   interface Translator {
@@ -549,7 +552,6 @@ const bridged = buildArgs({
   session: { id: "u", resuming: false },
   mcp: {
     url: "http://x/mcp/u",
-    key: "k",
     tools: [
       bridgedTool("subagent", "provider", "model"),
       bridgedTool("list_subagent_models"),
@@ -561,6 +563,16 @@ const bridged = buildArgs({
   },
 } as any);
 const bridgedSystem = bridged[bridged.indexOf("--append-system-prompt") + 1]!;
+// The command line names the variable the key arrives in, never the key: `ps` shows argv to
+// every local user.
+assert.deepEqual(JSON.parse(bridged[bridged.indexOf("--mcp-config") + 1]!).mcpServers.dsh.headers, {
+  "x-dsh-oh-my-claude-key": "${DSH_OMC_MCP_KEY}",
+});
+{
+  const keyed = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  (keyed as any).mcp = { base: "http://x", key: "secret" };
+  assert.equal(keyed.localEnvOverride()?.DSH_OMC_MCP_KEY, "secret", "the key rides in the env");
+}
 assert.ok(bridgedSystem.startsWith("sys\n\n"), "dsh system prompt comes first");
 assert.ok(bridgedSystem.includes("never the built-in Agent/Task tool"));
 assert.ok(bridgedSystem.includes("mcp__dsh__list_subagent_models"));
@@ -664,6 +676,37 @@ const noFlag = buildArgs({
   flags: new Set<string>(),
 } as any);
 assert.ok(!noFlag.includes("--plugin-dir"), "older CLI without the flag: left out");
+
+// The spend cap is the only money guard the plugin hands the CLI: a chat turn carries it, a CLI
+// that does not list the flag is not handed one it would die on, unset means no cap (not a cap of
+// 0), and title and compaction one-shots never carry it.
+{
+  const valueOf = (args: string[], flag: string) => {
+    const i = args.indexOf(flag);
+    return i === -1 ? undefined : args[i + 1];
+  };
+  const capped = new Config({ maxBudgetUsd: 2.5 });
+  assert.equal(
+    valueOf(buildArgs({ model: "m", config: capped } as any), "--max-budget-usd"),
+    "2.5",
+  );
+  const listed = new Set(["--max-budget-usd"]);
+  assert.equal(
+    valueOf(buildArgs({ model: "m", config: capped, flags: listed } as any), "--max-budget-usd"),
+    "2.5",
+  );
+  const unlisted = new Set(["--model"]);
+  assert.ok(
+    !buildArgs({ model: "m", config: capped, flags: unlisted } as any).includes("--max-budget-usd"),
+  );
+  assert.ok(!buildArgs({ model: "m", config: new Config({}) } as any).includes("--max-budget-usd"));
+  assert.ok(
+    !buildArgs({ model: "m", config: capped, purpose: "title" } as any).includes(
+      "--max-budget-usd",
+    ),
+  );
+  console.log("budget cap ok");
+}
 
 // input line: text first, then images
 const line = JSON.parse(buildInput("hi", [{ mediaType: "image/png", data: "AAA" }]));
@@ -962,7 +1005,11 @@ const limited = limitedTr.translate({ type: "result", is_error: false });
 // SAFETY: a held limit failure always produces a finish chunk with error reason
 const limitedFirst = limited.at(-1);
 assert.ok(limitedFirst && "reason" in limitedFirst && limitedFirst.reason.kind === "error");
-assert.equal(failureOf(chunkOf(limitedFirst, "finish").reason).code, "RATE_LIMIT");
+assert.equal(
+  failureOf(chunkOf(limitedFirst, "finish").reason).code,
+  "PROVIDER_ERROR",
+  "no reset ahead: not a code dsh retries, its retry reopens the step with nothing to send",
+);
 // SAFETY: result error always produces a finish chunk with error reason
 const resultChunk = new Translator()
   .translate({ type: "result", is_error: true, result: "boom" })
@@ -992,7 +1039,7 @@ assert.deepEqual(api, {
   efforts: ["low"],
 });
 // Aim the cache at an empty dir so this exercises the offline floor, not whatever this box cached.
-process.env.DSH_OMC_STATE_DIR = joinPath(tmpdir(), `omc-catalog-${process.pid}`);
+process.env.DSH_OMC_STATE_DIR = removeOnExit(joinPath(tmpdir(), `omc-catalog-${process.pid}`));
 const failing = await getCatalog(async () => {
   throw new Error("offline");
 });
@@ -1541,7 +1588,7 @@ const soon = Math.floor(Date.now() / 1000) + 120;
   });
   assert.equal(
     t.translate({ type: "result", is_error: false }).at(-1).reason.failure.message,
-    `You've hit your session limit · resets ${resetClock(soon * 1000)} · continuing automatically when it resets`,
+    `You've hit your 5-hour limit · resets ${resetClock(soon * 1000)} · continuing automatically when it resets`,
   );
   assert.equal(t.limitResetAt, soon * 1000);
   const past = new Translator({ continueAfterLimit: true }) as any;
@@ -1550,6 +1597,20 @@ const soon = Math.floor(Date.now() / 1000) + 120;
     rate_limit_info: { status: "rejected", resetsAt: 1 },
   });
   assert.equal(past.limitResetAt, undefined);
+  // The API throttling requests is a rejection with no reset and an error result: the turn
+  // reports the CLI's sentence, not a plan limit.
+  const throttled = new Translator() as any;
+  throttled.translate({ type: "rate_limit_event", rate_limit_info: { status: "rejected" } });
+  const gaveUp = throttled
+    .translate({
+      type: "result",
+      is_error: true,
+      api_error_status: 429,
+      result: "API Error: Server is temporarily limiting requests (not your usage limit)",
+    })
+    .at(-1).reason.failure;
+  assert.equal(gaveUp.code, "PROVIDER_ERROR");
+  assert.match(gaveUp.message, /not your usage limit/);
   // Extra usage covering the overflow: the CLI shows no limit, neither does the turn.
   const covered = new Translator() as any;
   assert.deepEqual(
@@ -1706,6 +1767,40 @@ trMissing.translate({
 });
 // no total_cost_usd or duration_ms → condition stays false, nothing recorded
 assert.equal(missing.length, 0);
+
+// A result with only one of the two figures, or one of an odd type, still records a finite
+// number: the adapter takes the cost as the session's running total, and NaN would stick there.
+{
+  const record = (frame: object) => {
+    const out: TurnRecord[] = [];
+    // SAFETY: test fixture; the money fields are not in the ClaudeEvent type but exist on CLI output
+    new Translator({ onResult: (s: TurnRecord) => out.push(s) }).translate({
+      type: "result",
+      is_error: false,
+      stop_reason: "end_turn",
+      ...frame,
+    } as any);
+    return out;
+  };
+  const durationOnly = record({ duration_ms: 1000 });
+  assert.equal(durationOnly.length, 1, "a duration alone is recorded");
+  assert.equal(durationOnly[0]?.costUsd, 0);
+  assert.equal(record({ total_cost_usd: "0.25", duration_ms: 1 })[0]?.costUsd, 0.25);
+  assert.equal(
+    record({ total_cost_usd: null, duration_ms: 1 })[0]?.costUsd,
+    0,
+    "null is 0, not NaN",
+  );
+  const failed = record({
+    is_error: true,
+    subtype: "error_during_execution",
+    total_cost_usd: 0.1,
+    duration_ms: 5,
+  });
+  assert.equal(failed[0]?.costUsd, 0.1, "an error result still records the money spent");
+  assert.doesNotThrow(() => record({ total_cost_usd: 0.1, permission_denials: [null, 3, {}] }));
+  console.log("result cost ok");
+}
 
 // permission_denials converts tool calls to rule labels, deduped and in insertion order
 const deniedTurns: TurnRecord[] = [];
@@ -2212,10 +2307,15 @@ console.log("ok");
   const parked = fake({ relays: new Map([["c1", {}]]) });
   const steered = fake({ parked: "steer" });
   const idle = fake({});
+  // Spawned for a turn that is still waiting on the initialize reply: not busy yet, so it is the
+  // one settled process left for the cap to take once the idle one is gone.
+  const starting = fake({ claimed: true, lastUsed: Date.now() });
   adapter.processes.set(registryKey("claude-code", "a"), parked);
   adapter.processes.set(registryKey("claude-code", "b"), steered);
   adapter.processes.set(registryKey("claude-code", "c"), idle);
+  adapter.processes.set(registryKey("claude-code", "d"), starting);
   adapter.evict();
+  assert.equal(starting.killed, 0, "a process a turn just took is not evicted before it is busy");
   assert.equal(parked.killed, 0, "a process waiting on dsh's tool result is not idle");
   assert.equal(steered.killed, 0, "a process parked for a steer is not idle");
   assert.equal(idle.killed, 1, "a truly idle process past processIdleMs is culled");
@@ -2349,6 +2449,21 @@ console.log("ok");
     "keep <= 0 keeps everything",
   );
   assert.equal(forkTranscriptText(src, "OLD", "NEW", 9).split("\n").filter(Boolean).length, 5);
+  // A skill body is a user row nobody typed (`isMeta`), and so is a task notice
+  // (`promptSource: "system"`): neither is a prompt to cut at.
+  const row = (v: object) => JSON.stringify({ sessionId: "OLD", ...v });
+  const withMeta = [
+    row({ type: "user", message: { role: "user", content: "first" } }),
+    row({ type: "user", isMeta: true, message: { role: "user", content: "# Skill body" } }),
+    row({ type: "user", promptSource: "system", message: { role: "user", content: "notice" } }),
+    row({ type: "assistant", message: { role: "assistant", content: [] } }),
+    row({ type: "user", message: { role: "user", content: "second" } }),
+  ].join("\n");
+  assert.equal(
+    forkTranscriptText(withMeta, "OLD", "NEW", 1).split("\n").filter(Boolean).length,
+    4,
+    "a fork at turn 1 keeps all of turn 1",
+  );
   const msgs = messageList([
     { role: "user", source: { kind: "user" }, content: [] },
     { role: "assistant", content: [] },
@@ -3252,7 +3367,7 @@ console.log("ok");
 {
   // continueAfterLimit: a rerouted session drops the notice, a window still at its cap re-arms,
   // otherwise (including extra usage on) the continue notice goes through wake.
-  const dir = await mkdtemp(joinPath(tmpdir(), "dsh-oh-my-claude-limit-"));
+  const dir = tempDir("dsh-oh-my-claude-limit-");
   const run = async (provider: string | undefined, windows: any[], extraUsage = false) => {
     const calls: string[] = [];
     const stub = {
@@ -3673,7 +3788,7 @@ console.log("ok");
     Config({ providerId: "claude-code-box" }),
   );
   // Both persist asides, so neither may point at the real state dir.
-  a.stateDir = await mkdtemp(joinPath(tmpdir(), "omc-aside-box-"));
+  a.stateDir = tempDir("omc-aside-box-");
   box.stateDir = a.stateDir;
   const wrote: string[] = [];
   box.processes.set(
@@ -3770,7 +3885,7 @@ console.log("ok");
   // the CLI but never stored in the persisted ring: the ring shows just the question, which is what
   // the bubble and the Asides tab display.
   const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  a.stateDir = await mkdtemp(joinPath(tmpdir(), "omc-aside-context-"));
+  a.stateDir = tempDir("omc-aside-context-");
   const wrote: string[] = [];
   a.processes.set(
     registryKey("claude-code", "ctx"),
@@ -4079,7 +4194,7 @@ console.log("schema-guard ok");
 
 // Busy bookkeeping survives a restart: mark on turn start, clear on end, take once after boot.
 {
-  const dir = await mkdtemp(joinPath(tmpdir(), "dsh-oh-my-claude-busy-"));
+  const dir = tempDir("dsh-oh-my-claude-busy-");
   const file = joinPath(dir, "busy.json");
   await markBusy("a", true, file);
   await markBusy("b", true, file);
@@ -4111,7 +4226,7 @@ console.log("schema-guard ok");
 // resumeInterrupted(): nudges sessions the previous process left mid-turn with the restart text,
 // skips ones whose process this instance adopted (a hot reload), and clears the file.
 {
-  const dir = await mkdtemp(joinPath(tmpdir(), "dsh-oh-my-claude-resume-"));
+  const dir = tempDir("dsh-oh-my-claude-resume-");
   const file = joinPath(dir, "busy.json");
   await markBusy("dead", true, file);
   await markBusy("live", true, file);
@@ -4366,7 +4481,7 @@ if (savedEnv !== undefined) process.env.CLAUDE_CONFIG_DIR = savedEnv;
 
 // noteBoot: first boot has no previous, a second boot reports the gap, and the file survives.
 {
-  const dir = await mkdtemp(joinPath(tmpdir(), "omc-boot-"));
+  const dir = tempDir("omc-boot-");
   const file = joinPath(dir, "boot.json");
   assert.equal(await noteBoot(file, 1_000), undefined, "no previous boot");
   assert.equal(await noteBoot(file, 31_000), 30_000, "gap since the previous boot");
@@ -4740,7 +4855,7 @@ console.log("approval outcomes ok");
 // A later frame naming fewer commands does not shrink what is saved: the registrations already made
 // are not removed, so the file follows them rather than the frame.
 {
-  const dir = await mkdtemp(joinPath(tmpdir(), "omc-catalog-shrink-"));
+  const dir = tempDir("omc-catalog-shrink-");
   const commands = {
     register: () => () => {},
     find: () => undefined,
@@ -4791,7 +4906,7 @@ console.log("command-catalog-live ok");
     },
     find: () => undefined,
   };
-  const dir = await mkdtemp(joinPath(tmpdir(), "omc-ultracode-"));
+  const dir = tempDir("omc-ultracode-");
   const a = new ClaudeCodeAdapter(
     fakeCtx({ on() {}, logger: { info() {}, warn() {} } }),
     Config({}),
@@ -4888,7 +5003,7 @@ console.log("native-rows ok");
 // the running Claude and never sees a second init frame, so the bridged commands used to leave the
 // menu until the next cold start.
 {
-  const dir = await mkdtemp(joinPath(tmpdir(), "omc-commands-"));
+  const dir = tempDir("omc-commands-");
   assert.deepEqual(await loadCommandCatalog(dir), [], "no file reads as no catalog");
   await saveCommandCatalog(dir, ["compact", "llama"]);
   assert.deepEqual(await loadCommandCatalog(dir), ["compact", "llama"]);
@@ -6453,7 +6568,7 @@ console.log("interrupt-on-abort ok");
 
   // A config dir of its own: the picker's settings.json shapes the efforts (a `maxEffortLevel` on
   // the box would trim ["max"] away) and this block is about the seed, not the box's settings.
-  const cliHome = await mkdtemp(joinPath(tmpdir(), "dsh-cli-models-home-"));
+  const cliHome = tempDir("dsh-cli-models-home-");
   const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({ configDir: cliHome }));
   let asked = 0;
   const proc: any = {
@@ -6635,6 +6750,264 @@ console.log("interrupt-on-abort ok");
   await remote.probeCliModels();
   assert.equal(box.spawned.length, 0, "an ssh box is not probed");
   console.log("lineup probe ok");
+
+  // The listing follows where the mount's traffic goes. The route is read from the mount's own
+  // settings.json, which outranks whatever this test process has exported, so both cases below
+  // hold on a box with a proxy in its environment.
+  const home = tempDir("omc-route-home-");
+  try {
+    const settings = joinPath(home, "settings.json");
+    const mount = (providerId: string) => {
+      const cliForMount = fakeCli(lineup);
+      const built = new ClaudeCodeAdapter(
+        fakeCtx({ on() {} }),
+        Config({
+          providerId,
+          configDir: home,
+          customModels: [{ model: "router-only", label: "Router Only", contextWindow: 64_000 }],
+        }),
+      );
+      built.spawner = () => cliForMount.spawner;
+      return { built, cli: cliForMount };
+    };
+    const ids = async (a: ClaudeCodeAdapter, provider: string) =>
+      (await a.listModels(provider)).map((m) => m.id);
+
+    // Straight to Anthropic: the added model is out of the picker and marked so in Settings,
+    // and it still resolves and still counts as a model the mount can name.
+    await writeFile(
+      settings,
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://api.anthropic.com" } }),
+    );
+    const direct = mount("claude-code-route-direct").built;
+    assert.deepEqual(await direct.route(), { state: "direct" });
+    assert.equal(
+      (await direct.prepare({ messages: messageList([{ role: "user", content: "hi" }]) } as never))
+        .via,
+      undefined,
+      "a turn that reaches Anthropic is not tagged",
+    );
+    assert.equal((await ids(direct, "claude-code-route-direct")).includes("router-only"), false);
+    const row = (await direct.pickerModels()).find((m) => m.id === "router-only");
+    assert.deepEqual([row?.off, row?.hidden], [true, false], "out for the route, not switched off");
+    assert.equal(
+      (await direct.pickerModels()).some((m) => m.id !== "router-only" && m.off),
+      false,
+      "nothing of Claude's is set aside on a direct box",
+    );
+    assert.equal(
+      (await direct.resolveModel("claude-code-route-direct", "router-only")).context?.contextWindow,
+      64_000,
+      "a session already on it keeps its window",
+    );
+    assert.ok(
+      (await direct.offeredModels("claude-code-route-direct")).some((m) => m.id === "router-only"),
+      "a workspace that last ran it is not told the model is gone",
+    );
+    assert.equal(
+      (await direct.getAdvisorModels()).some((m) => m.id === "router-only"),
+      false,
+      "the advisor list, which the remembered-model routes used to judge against, has no added model",
+    );
+
+    // Through a router that names an alias: once the endpoint has answered as not Anthropic and
+    // the lineup carries the router's name, Claude's own rows are set aside.
+    const routerUrl = "http://router.test:15721";
+    await firstPartyOf(routerUrl, async () => false);
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    const routedLineup = lineup.map((r) =>
+      r.value === "sonnet" ? { ...r, displayName: "Local Qwen" } : r,
+    );
+    const routedCli = fakeCli(routedLineup);
+    const routed = new ClaudeCodeAdapter(
+      fakeCtx({ on() {} }),
+      Config({
+        providerId: "claude-code-route-routed",
+        configDir: home,
+        customModels: [{ model: "router-only", label: "Router Only" }],
+      }),
+    );
+    routed.spawner = () => routedCli.spawner;
+    assert.deepEqual(await routed.route(), { state: "routed", host: "router.test:15721" });
+    const listed = await routed.listModels("claude-code-route-routed");
+    assert.deepEqual(
+      listed.map((m) => m.name),
+      ["Default (recommended)", "Local Qwen", "Router Only"],
+      "the router's alias and the added model; Opus is set aside",
+    );
+    assert.ok(
+      (await routed.pickerModels()).some((m) => m.off && m.name.includes("Opus")),
+      "Settings still shows what is set aside",
+    );
+    // The switch that keeps Claude's own rows listed is this mount's hint.
+    await writeFile(
+      joinPath(stateDir("claude-code"), "hints.json"),
+      JSON.stringify({ "routedClaude:claude-code-route-routed": true }),
+    );
+    assert.ok(
+      (await routed.listModels("claude-code-route-routed")).some((m) => m.name.includes("Opus")),
+      "with the switch on Claude's rows are listed too",
+    );
+    await rm(joinPath(stateDir("claude-code"), "hints.json"), { force: true });
+
+    // A process reads its environment once, so the base URL a settings file sets joins the spec
+    // that keys it: a session started before the router was switched is replaced on its next
+    // turn. An export dsh was started with never moves under a running dsh and stays out, so no
+    // spec written before the field existed keys differently.
+    const turn = { messages: messageList([{ role: "user", content: "hi" }]) } as never;
+    assert.equal((await routed.prepare(turn)).spec.route, routerUrl);
+
+    // A session on one of the router's rows is started with that row's window, since the CLI
+    // would run it against Claude's (measured: 1,000,000 for `sonnet` behind a router). The
+    // default until a size is set in Settings, then that size; a row of Claude's own is left to
+    // the CLI. Both variables are set: one sizes a model the CLI has never heard of, the other
+    // caps one it knows.
+    const on = (model: string) =>
+      ({ messages: messageList([{ role: "user", content: "hi" }]), model }) as never;
+    const routedId =
+      (await routed.listModels("claude-code-route-routed")).find((m) => m.name === "Local Qwen")
+        ?.id ?? "";
+    assert.equal((await routed.prepare(on(routedId))).spec.window, 200_000);
+    // The turn is tagged with the router that will answer it, which is what keeps its record
+    // out of the money: the CLI prices it at Claude's rates whoever answers.
+    assert.equal((await routed.prepare(on(routedId))).via, "router.test:15721");
+    const hintsFile = joinPath(stateDir("claude-code"), "hints.json");
+    await writeFile(
+      hintsFile,
+      JSON.stringify({ "routerWindow:claude-code-route-routed:sonnet": 262_144 }),
+    );
+    const sizedSpec = (await routed.prepare(on(routedId))).spec;
+    assert.equal(sizedSpec.window, 262_144, "the size set in Settings");
+    assert.equal(
+      (await routed.resolveModel("claude-code-route-routed", routedId)).context?.contextWindow,
+      262_144,
+      "and dsh's ring is told the same number",
+    );
+    assert.deepEqual(
+      [
+        routed.localEnvOverride(false, sizedSpec.window)?.CLAUDE_CODE_MAX_CONTEXT_TOKENS,
+        routed.localEnvOverride(false, sizedSpec.window)?.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+      ],
+      ["262144", "262144"],
+    );
+    assert.equal(
+      routed.localEnvOverride(false)?.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+      undefined,
+      "no window in the spec, nothing set",
+    );
+    assert.equal((await routed.prepare(on("claude-opus-5-5"))).spec.window, undefined);
+    assert.equal(
+      (await routed.prepare(on("router-only"))).spec.window,
+      undefined,
+      "no size stated",
+    );
+    // A window someone chose in a settings file outranks the row's: the CLI lets the variable
+    // beat that key, so setting it would overrule them.
+    await writeFile(
+      settings,
+      JSON.stringify({
+        autoCompactWindow: 150_000,
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    assert.equal((await routed.prepare(on(routedId))).spec.window, undefined);
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    await rm(hintsFile, { force: true });
+
+    // The key a routed turn sends is the router's, set in a settings file, not the Claude login.
+    // The turn knows it, and a 401 on it leaves the box logged in: flagged logged out, the box
+    // lost its model menu and its owner was told to log in again, which could not help.
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: {
+          ANTHROPIC_BASE_URL: routerUrl,
+          ANTHROPIC_AUTH_TOKEN: "PROXY_MANAGED",
+          ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen",
+        },
+      }),
+    );
+    assert.equal((await routed.prepare(turn)).settingsKey?.host, "router.test:15721");
+    const refusedKey = { is_error: true, api_error_status: 401, result: "Invalid bearer token" };
+    const loggedOut = (a: ClaudeCodeAdapter) => (a as unknown as { loggedOut: boolean }).loggedOut;
+    routed.processes.set(
+      registryKey(routed.providerId, "keyed"),
+      fakeProc({ alive: true, prep: { settingsKey: { host: "router.test:15721" } } }),
+    );
+    routed.noteTurnLogin("keyed", refusedKey);
+    assert.equal(loggedOut(routed), false, "a refused settings key is not a logout");
+    routed.processes.set(registryKey(routed.providerId, "plain"), fakeProc({ alive: true }));
+    routed.noteTurnLogin("plain", refusedKey);
+    assert.equal(loggedOut(routed), true, "a refused login still is");
+    routed.setLoggedIn(true);
+    routed.processes.clear();
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 700));
+
+    // A router switched while Settings is open: the file changes, and the CLI is asked for its
+    // lineup again, since the one in hand was answered under the old file.
+    const before = routedCli.spawned.length;
+    await writeFile(settings, JSON.stringify({ env: {} }));
+    for (let i = 0; i < 40 && routedCli.spawned.length === before; i++)
+      await new Promise((r) => setTimeout(r, 50));
+    assert.equal(routedCli.spawned.length, before + 1, "a routing change re-asks the lineup");
+    // A write that leaves the routing variables alone asks nothing.
+    await new Promise((r) => setTimeout(r, 100));
+    const settled = routedCli.spawned.length;
+    await writeFile(settings, JSON.stringify({ env: {}, theme: "dark" }));
+    await new Promise((r) => setTimeout(r, 900));
+    assert.equal(routedCli.spawned.length, settled, "an unrelated settings write asks nothing");
+    assert.equal(
+      (await routed.prepare(turn)).spec.route,
+      undefined,
+      "with the router off the spec has no route, so it differs from the routed one",
+    );
+
+    // A router switched while dsh was down. The lineup on disk was answered under the old
+    // variables, and the signature kept beside it says so: the next boot asks the CLI again,
+    // once, and the boot after that, with nothing changed, asks nothing.
+    await writeFile(
+      settings,
+      JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
+      }),
+    );
+    const boot = async () => {
+      const cliAtBoot = fakeCli(routedLineup);
+      const booted = new ClaudeCodeAdapter(
+        fakeCtx({ on() {} }),
+        Config({ providerId: "claude-code-route-routed", configDir: home }),
+      );
+      booted.spawner = () => cliAtBoot.spawner;
+      await booted.listModels("claude-code-route-routed");
+      for (let i = 0; i < 10 && cliAtBoot.spawned.length === 0; i++)
+        await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 50));
+      return cliAtBoot.spawned.length;
+    };
+    assert.equal(await boot(), 1, "a boot that finds other routing variables re-asks the lineup");
+    assert.equal(await boot(), 0, "a boot that finds the same ones does not");
+    console.log("route listing ok");
+  } finally {
+    forgetFirstParty();
+    unwatchSettings();
+    await rm(home, { recursive: true, force: true });
+  }
 }
 
 // The live steer path: a text-only message goes to stdin at once; a message carrying a file or an
@@ -8525,9 +8898,8 @@ console.log("interrupt-on-abort ok");
 // process stale and opens a mirror turn; a remote box is not watched ---
 {
   const fsp = await import("node:fs/promises");
-  const { tmpdir } = await import("node:os");
   const { join: j } = await import("node:path");
-  const home = await fsp.mkdtemp(j(tmpdir(), "omc-home-"));
+  const home = tempDir("omc-home-");
   const cwd = j(home, "ws");
   const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
   a.claudeHome = home;
@@ -9082,7 +9454,7 @@ console.log("interrupt-on-abort ok");
 // credentials; it is caught and falls back to KNOWN_MODELS, where fable carries all five levels,
 // so the assertion holds either way. If the suite slows noticeably, report it.)
 {
-  const capDir = await mkdtemp(joinPath(tmpdir(), "dsh-effortcap-int-"));
+  const capDir = tempDir("dsh-effortcap-int-");
   await writeFile(joinPath(capDir, "settings.json"), JSON.stringify({ maxEffortLevel: "medium" }));
   const capAdapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({ configDir: capDir }));
   const capInfo = await (capAdapter as any).fullModelInfo("claude-code", "claude-fable-5-1");
@@ -9095,7 +9467,7 @@ console.log("interrupt-on-abort ok");
     "a capped settings.json trims the efforts fullModelInfo returns",
   );
 
-  const perModelDir = await mkdtemp(joinPath(tmpdir(), "dsh-effortcap-permodel-"));
+  const perModelDir = tempDir("dsh-effortcap-permodel-");
   await writeFile(
     joinPath(perModelDir, "settings.json"),
     JSON.stringify({
@@ -9201,7 +9573,7 @@ console.log("forget-session ok");
 // file, change its entry and write it back, so two in flight at once lost the one that wrote first.
 {
   const { saveWatch: save, loadWatches: load } = await import("./state.js");
-  const dir = await mkdtemp(joinPath(tmpdir(), "omc-watch-race-"));
+  const dir = tempDir("omc-watch-race-");
   const saves = [];
   for (let i = 0; i < 20; i++) saves.push(save(dir, `s${i}`, { path: "/t", seen: i }));
   const kept = await load(dir); // not awaiting the saves: the load itself waits for them
@@ -9711,7 +10083,10 @@ console.log("approval beside relay ok");
   );
   a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
   (a as any).mcp = { base: "http://127.0.0.1:1", key: "k", via: "webserver", toolsFor: () => [] };
-  const input = { questions: [{ question: "Pick a colour?", options: [{ label: "Blue" }] }] };
+  const input = {
+    questions: [{ question: "Pick a colour?", options: [{ label: "Blue" }] }],
+    afkTimeoutMs: 60_000,
+  };
   const queue: Array<unknown> = [
     {
       type: "assistant",
@@ -9794,6 +10169,11 @@ console.log("approval beside relay ok");
     "the person's pick reaches Claude: the question is not cancelled by the relay",
   );
   assert.equal(chunks.at(-1)?.reason?.kind, "tool-calls");
+  assert.ok(
+    written.some((line) => line.includes('"answers"')) &&
+      !written.some((line) => line.includes("afkTimeoutMs")),
+    "the answer does not echo afkTimeoutMs, which Claude Code 2.1.321 refuses from a host",
+  );
   console.log("question beside relay ok");
 }
 
@@ -10020,7 +10400,7 @@ console.log("approval beside relay ok");
     "the context is a lead line and the passage quoted line by line",
   );
   const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  a.stateDir = await mkdtemp(joinPath(tmpdir(), "omc-aside-quote-"));
+  a.stateDir = tempDir("omc-aside-quote-");
   const wrote: string[] = [];
   a.processes.set(
     registryKey("claude-code", "sel"),
@@ -10187,7 +10567,7 @@ console.log("approval beside relay ok");
   // A skill or custom command only Claude Code has goes to the session's model with its
   // instructions, read from the file the CLI would expand; the hint switch turns that off, and an
   // ssh box never reads this box's files for it.
-  const home = await mkdtemp(joinPath(tmpdir(), "omc-claude-home-"));
+  const home = tempDir("omc-claude-home-");
   await mkdir(joinPath(home, "skills", "wish"), { recursive: true });
   await writeFile(
     joinPath(home, "skills", "wish", "SKILL.md"),

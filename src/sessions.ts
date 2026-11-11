@@ -99,6 +99,9 @@ import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { isPluginScope, pluginScopeNeedsCwd, type PluginLoadError } from "./plugins.js";
 import { CLAUDE_HOME, STATE_DIR, loadWorkspaceModels, trace, writeJson } from "./state.js";
 import { EFFORTS_ALL } from "./adapter/catalog.js";
+import type { CustomModel } from "./adapter/config.js";
+import type { Route } from "./adapter/routing.js";
+import { saveCustomModels } from "./adapter/custom-models.js";
 import { projectDirName } from "./adapter/transcript-watch.js";
 import type {
   LoginNeed,
@@ -1109,10 +1112,18 @@ async function settingsTexts(
   return texts;
 }
 
-/** One `modelPicker.options` row, down to what a picker row shows. */
-interface PickerOption {
+/** One `modelPicker.options` row, down to what a picker row shows. A row that comes from the
+ *  plugin's own `customModels` config can also say how large the model's window is and which
+ *  effort levels it takes, which settings.json has no key for. */
+export interface PickerOption {
   model: string;
   label?: string;
+  contextWindow?: number;
+  efforts?: string[];
+  /** True for a row the plugin added (`customModels`, the Settings form), unset for one
+   *  settings.json's own `modelPicker.options` names. Only the first kind follows the router
+   *  state: see `mergeCatalog`. */
+  added?: true;
 }
 
 type EffortLevel = (typeof EFFORTS_ALL)[number];
@@ -1120,6 +1131,20 @@ type EffortLevel = (typeof EFFORTS_ALL)[number];
  *  a settings file cannot offer an effort the picker cannot name. */
 const isEffortLevel = (v: unknown): v is EffortLevel =>
   typeof v === "string" && EFFORTS_ALL.some((level) => level === v);
+
+/** One model as the Settings card's Models block gets it. `hidden` is the row's switch, `locked`
+ *  a hide the plugin config holds, `off` the picker leaving it out for the box's route.
+ *  `window` is the context window the row reports, and `routers` the alias a router took over,
+ *  present only on such a row: the key its window is kept under in the hints store. */
+export interface PickerRow {
+  id: string;
+  name: string;
+  hidden: boolean;
+  locked: boolean;
+  off: boolean;
+  window: number;
+  routers?: string;
+}
 
 /** The two settings.json keys that shape Claude Code's own `/model` picker. */
 export interface PickerSettings {
@@ -1133,6 +1158,84 @@ export interface PickerSettings {
   maxEffortLevel?: EffortLevel;
   /** Per-model `modelSettings.<id>.maxEffortLevel`, which overrides the top level for that model. */
   modelEffortCaps?: Record<string, EffortLevel>;
+  /** Names settings.json's `env` gives the CLI's aliases, by alias (`sonnet`, `opus`, `haiku`,
+   *  `fable`): `ANTHROPIC_DEFAULT_<ALIAS>_MODEL_NAME`. A router such as CC Switch sets these to say
+   *  which model an alias really reaches, and the CLI's own picker shows them. */
+  aliasNames?: AliasNames;
+  /** The model ids the same `env` points the aliases at (`ANTHROPIC_DEFAULT_<ALIAS>_MODEL`), by
+   *  alias. A router that names nothing still says here which aliases it took over. */
+  aliasModels?: AliasNames;
+  /** The context window someone set in Settings for a router's alias, by alias: the size of the
+   *  model the router really sends it to, which no file of the router's states. Present, even
+   *  empty, only for a mount whose requests do not go straight to Anthropic: its presence is
+   *  what makes `mergeCatalog` treat a renamed alias as a model with a window of its own. */
+  routerWindows?: Record<string, number>;
+}
+
+/** A name per CLI alias (`sonnet`, `opus`, `haiku`, `fable`), as someone set them. */
+export type AliasNames = Record<string, string>;
+
+/** The alias names an `env` block sets (`ANTHROPIC_DEFAULT_SONNET_MODEL_NAME` gives `sonnet`),
+ *  blank ones left out. Also read off the plugin's own environment by the adapter, since the same
+ *  variables work exported in a shell. With `suffix` empty it reads the model ids the aliases
+ *  are pointed at instead (`ANTHROPIC_DEFAULT_SONNET_MODEL`). */
+export function aliasNamesIn(
+  env: Record<string, string | undefined>,
+  suffix: "_NAME" | "" = "_NAME",
+) {
+  const out: AliasNames = {};
+  const pattern = new RegExp(`^ANTHROPIC_DEFAULT_([A-Z]+)_MODEL${suffix}$`);
+  for (const [key, value] of Object.entries(env)) {
+    const alias = pattern.exec(key)?.[1];
+    if (alias !== undefined && value !== undefined && value.trim() !== "")
+      out[alias.toLowerCase()] = value.trim();
+  }
+  return out;
+}
+
+/**
+ * The `env` the settings files give the CLI for a session in `cwd` on this box, merged the way
+ * the CLI merges them (user, then the workspace's project file, then its local file, then the
+ * managed file, each outranking the one before), string values only. `from` names the scope
+ * that had the last word on each variable, which is how a caller can tell that an address and
+ * the key sent to it were set by two different files. With `cwd` null only the user and managed
+ * files are read: that is the box's own answer, before any workspace has its say. A file that
+ * is missing or mid-edit contributes nothing. A workspace file that cannot be read at all drops
+ * the workspace's files from the answer and keeps the box's. Nothing here throws: the callers
+ * ask "do the settings route Claude Code somewhere", and no answer is "no".
+ */
+export async function settingsEnvAt(
+  userPath: string,
+  cwd: string | null,
+): Promise<{
+  env: Record<string, string>;
+  from: Record<string, string>;
+  /** The `autoCompactWindow` key of the highest file that sets one: a window someone chose. */
+  autoCompactWindow?: number;
+}> {
+  const env: Record<string, string> = {};
+  const from: Record<string, string> = {};
+  let autoCompactWindow: number | undefined;
+  // `settingsTexts` refuses the whole read when one workspace file cannot be read. Here that
+  // would hide the box's own files as well, the router's address among them, so the fallback is
+  // the box's answer without the workspace, and nothing only when that fails too.
+  const texts = await settingsTexts({}, userPath, cwd)
+    .catch(() => settingsTexts({}, userPath, null))
+    .catch(() => []);
+  // `settingsTexts` answers highest precedence first; assigning lowest first lets each scope
+  // overwrite the ones it outranks.
+  for (const { scope, text } of texts.toReversed()) {
+    const value = parseSettingsText(text).value;
+    if (typeof value?.autoCompactWindow === "number") autoCompactWindow = value.autoCompactWindow;
+    const block = value?.env;
+    if (!isJsonObject(block)) continue;
+    for (const [k, v] of Object.entries(block))
+      if (typeof v === "string") {
+        env[k] = v;
+        from[k] = scope;
+      }
+  }
+  return autoCompactWindow === undefined ? { env, from } : { env, from, autoCompactWindow };
 }
 
 /**
@@ -1149,14 +1252,20 @@ export async function readPickerSettings(path: string): Promise<PickerSettings |
   const allowed = value.availableModels;
   const cap = value.maxEffortLevel;
   const modelSettings = value.modelSettings;
+  const named: Record<string, string> = {};
+  if (isJsonObject(value.env))
+    for (const [k, v] of Object.entries(value.env)) if (typeof v === "string") named[k] = v;
+  const aliasNames = aliasNamesIn(named);
   if (
     !Array.isArray(allowed) &&
     !isJsonObject(picker) &&
     !isEffortLevel(cap) &&
-    !isJsonObject(modelSettings)
+    !isJsonObject(modelSettings) &&
+    Object.keys(aliasNames).length === 0
   )
     return undefined;
   const out: PickerSettings = { options: [], replaceBuiltInOptions: false };
+  if (Object.keys(aliasNames).length > 0) out.aliasNames = aliasNames;
   if (Array.isArray(allowed))
     out.availableModels = allowed.filter((m): m is string => typeof m === "string");
   if (isJsonObject(picker)) {
@@ -1363,8 +1472,10 @@ export interface RouteCtx {
   mcp: SessionRouteOptions["mcp"];
   memoryDirAt: (box: MountBox, cwd: string) => Promise<string>;
   models: SessionRouteOptions["models"];
+  offeredModels: SessionRouteOptions["offeredModels"];
   pickerModels: SessionRouteOptions["pickerModels"];
   modelsUpdated: SessionRouteOptions["modelsUpdated"];
+  setCustomModels: SessionRouteOptions["setCustomModels"];
   mtimeOf: typeof mtimeOf;
   notOnBox: (url: URL, what: string, cwd?: string | null) => string | undefined;
   onLoginStatus: SessionRouteOptions["onLoginStatus"];
@@ -2057,16 +2168,27 @@ export interface SessionRouteOptions {
   };
   /** The model catalog for advisor model selection. */
   models?: () => Promise<Array<{ id: string; name: string }>>;
-  /** The Settings card's Models block: every mount with its rows, hidden ones included. */
+  /** Every model one mount can still name, whatever its picker leaves out right now: what a
+   *  remembered model is judged against (`ClaudeCodeAdapter.offeredModels`). */
+  offeredModels?: (provider?: string) => Promise<Array<{ id: string; name: string }>>;
+  /** The Settings card's Models block: every mount with its rows, hidden ones included, and
+   *  where the mount's traffic goes. */
   pickerModels?: () => Promise<
     Array<{
       provider: string;
       host: string | null;
-      models: Array<{ id: string; name: string; hidden: boolean; locked: boolean }>;
+      models: PickerRow[];
+      custom: CustomModel[];
+      route: Route;
     }>
   >;
   /** Announces a changed picker to dsh, after a hints write that hid or showed a model. */
   modelsUpdated?: () => void;
+  /** Replaces the models added in Settings for one mount; `error` is the sentence to show. */
+  setCustomModels?: (
+    provider: string,
+    models: readonly CustomModel[],
+  ) => Promise<{ models: CustomModel[] } | { error: string }>;
   /** The provider id this machine's Claude mounts under; a restored session is put on it. */
   providerId?: string;
   /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
@@ -2188,8 +2310,10 @@ export function registerSessionRoutes(
     starters,
     setStarter,
     models,
+    offeredModels,
     pickerModels,
     modelsUpdated,
+    setCustomModels,
     providerId,
     reloadPlugins,
     reloadSkills,
@@ -2359,7 +2483,11 @@ export function registerSessionRoutes(
     async (folded) => {
       const saved = (await loadWorkspaceModels(STATE_DIR)).get(cwd);
       const wanted = lastModelOf(folded) ?? saved?.model;
-      const offered = models ? (await models()).map((m) => m.id) : undefined;
+      // Against the workspace's own mount and everything it can name: the advisor list this
+      // used to read knows no added model and no second mount's rows, so a workspace last run
+      // on either came back with no model at all.
+      const list = offeredModels ? () => offeredModels(saved?.provider) : models;
+      const offered = list ? (await list()).map((m) => m.id) : undefined;
       return {
         provider: saved?.provider ?? (workspaceAt(cwd) ? undefined : (providerId ?? "claude-code")),
         model: wanted && offered ? livingModelId(wanted, offered) : undefined,
@@ -2602,8 +2730,10 @@ export function registerSessionRoutes(
       mcp,
       memoryDirAt,
       models,
+      offeredModels,
       pickerModels,
       modelsUpdated,
+      setCustomModels,
       mtimeOf,
       notOnBox,
       onLoginStatus,
@@ -2752,6 +2882,15 @@ export function registerSessionRoutes(
                         : updateHints(hintsPath, Object.fromEntries(drop.map((k) => [k, false])));
                     })
                     .catch((e: unknown) => log("warn", `box removal, hints: ${errorText(e)}`));
+                  // And the models added for it in Settings, for the same reason.
+                  for (const b of before.filter((x) => gone.has(x.host)))
+                    await saveCustomModels(
+                      dirname(sshBoxesPath),
+                      sshBoxProviderId(b.name),
+                      [],
+                    ).catch((e: unknown) =>
+                      log("warn", `box removal, added models: ${errorText(e)}`),
+                    );
                 }
                 if (remoteWorkspacesPath && gone.size > 0) {
                   const rwPath = remoteWorkspacesPath;

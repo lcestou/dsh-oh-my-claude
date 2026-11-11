@@ -1,7 +1,7 @@
 import { type FinishReason, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { type ContextSource } from "../context-sources.js";
 import { type Agent, type JsonValue, type ResolvedAgent } from "../dsh.js";
-import { type ClaudeEvent, type ClaudeProcessSpec, type RelayEvent, type WorkspaceDiff } from "../process.js";
+import { type ClaudeEvent, type ClaudeProcessSpec, type SettingsKey, type RelayEvent, type WorkspaceDiff } from "../process.js";
 import { type FsBox } from "../remote-fs.js";
 import { type LiveMode, type Translator } from "../translator.js";
 import { type LooseMessage } from "./prompt.js";
@@ -23,6 +23,14 @@ export interface TurnRecord {
      *  the same process after a dsh restart knows where to count from. Absent on older records. */
     costTotal?: number;
     apiTotal?: number;
+    /** The result frame carried no `total_cost_usd`, so `costUsd` and `apiMs` above are stand-in
+     *  zeros and not totals. Set by the translator, read and removed before the record is kept. */
+    noTotals?: true;
+    /** The host this turn's requests went to when that was a router or gateway and not Anthropic.
+     *  The CLI prices every turn at Claude's API rates whatever answered it, so `costUsd` on such
+     *  a turn is a figure for a bill nobody gets (a local model's turn was recorded at $0.08,
+     *  2026-11-10). Readers that add up money leave these turns out; time and tokens still count. */
+    via?: string;
 }
 /** dsh splicing messages into a session's inbox mid-turn; the steers this adapter forwards live. */
 export type SpliceEvent = {
@@ -84,9 +92,20 @@ export interface ResultFrame {
  *  API's 401 once a stored token has been revoked. The one test both the error text and the login
  *  card key on, so they cannot disagree about what counts. */
 export declare function isLoginFailure(result: ResultFrame): boolean;
-/** On an error result it builds the message a person sees: it names the box the turn ran on and,
- *  for a 5xx, appends the incident the status page reports so the failure reads as the provider's. */
-export declare function finishReason(result: ResultFrame, hostLabel?: string): FinishReason;
+/**
+ * On an error result it builds the message a person sees: it names the box the turn ran on and,
+ * for a 5xx, appends the incident the status page reports so the failure reads as the provider's.
+ * `routerOnly` is the turn's model by name when only a router answers for it and the box is not
+ * behind one: Anthropic refuses the id, and the CLI's "it may not exist or you may not have
+ * access" sends the reader looking for a typo or a plan limit, so the refusal says what is
+ * missing. Any other failure on that model keeps the CLI's own words. `settingsKey` is set when
+ * the key the turn sent came from a settings file and not from the Claude login: a 401 then
+ * names the endpoint that refused it and says logging in will not help, where the login text
+ * would send the reader to do exactly that. `via` is the router or gateway the turn went to
+ * (`TurnRecord.via`): an error status it answers with is its own, often in its own words and
+ * language, and reads as Claude failing unless the failure says who is speaking.
+ */
+export declare function finishReason(result: ResultFrame, hostLabel?: string, routerOnly?: string, settingsKey?: SettingsKey, via?: string): FinishReason;
 /**
  * Incremental translator from Claude Code stream-json lines to dsh StreamChunks.
  * Prefers partial `stream_event`s; falls back to whole `assistant` messages when no partials arrived.
