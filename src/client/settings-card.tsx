@@ -243,6 +243,9 @@ export function StarterCard({
       .catch(() => {}); // no store yet: the card simply does not appear
   });
 
+  // The session on screen now, for a save that answers after the card moved to another one.
+  const shownSession = useRef(sessionId);
+  shownSession.current = sessionId;
   // The card says what the store did, not what the click did: a save that never reached the route
   // has to say so, or the opener is quietly gone by the next tab.
   const save = (text: string) => {
@@ -256,7 +259,8 @@ export function StarterCard({
     })
       .then((r) => {
         // A read sent while the save was out may have answered with the opener from before it.
-        if (r.ok) {
+        // Not after a switch to another session: this card then shows that session's opener.
+        if (r.ok && shownSession.current === sessionId) {
           wrote();
           setStarter({ session: text, fallback: text });
         }
