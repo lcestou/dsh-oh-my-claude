@@ -57,7 +57,7 @@ export function leavesQueue(m: LooseMessage, rows: CommandRows): boolean {
  *  that moves the setting leaves edited rows where they are. A `describe` that throws is the
  *  caller's to catch. */
 export function busyEnterOf(read: LocaleSettingsReader | undefined): "queue" | "steer" {
-  for (const entry of read?.describe?.() ?? []) {
+  for (const entry of read?.describe?.({ redactSecrets: true }) ?? []) {
     // SAFETY: the descriptor's value is the entry's live config; for dsh's conversation plugin
     // that is `{ busyEnter }`, and any other entry reads as undefined through the optional chain.
     const value = entry.value as { busyEnter?: unknown } | undefined;

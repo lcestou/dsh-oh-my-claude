@@ -4,8 +4,10 @@
  * dsh without it reads as English rather than throwing.
  */
 export interface LocaleSettingsReader {
+    /** `redactSecrets` is the name dsh-settings reads; it ignores any other, and then answers
+     *  with every plugin's secret fields in the clear. */
     describe?(options?: {
-        redact?: boolean;
+        redactSecrets?: boolean;
     }): readonly {
         ns?: unknown;
         value?: unknown;

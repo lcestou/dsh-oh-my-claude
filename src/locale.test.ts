@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { busyEnterOf } from "./adapter/lane.js";
 import { readFileSync } from "node:fs";
 import { bindServerLocale, serverIsChinese, serverText } from "./locale.js";
 import { HEADER_MARK, formatToolCall, formatToolResult, resetClock } from "./translator.js";
@@ -103,5 +104,24 @@ for (const lang of ["en", "zh"]) {
     "/btw 只能在 Claude Code 会话中使用。此会话使用的是 lutechi-llm；请先选择一个 Claude 模型。",
   );
   dispose();
+  // dsh's settings service hides secret fields only when asked with `redactSecrets`; any other
+  // option name is ignored and every plugin's secrets come back in the clear. This stand-in does the
+  // same, so the two readers must ask with the name dsh reads.
+  {
+    let leaked = 0;
+    const dshLike = {
+      describe: (options?: { redactSecrets?: boolean }) => {
+        if (options?.redactSecrets !== true) leaked++;
+        return [
+          { ns: "locale", value: { preference: "zh-CN" } },
+          { ns: "ui-conversation", value: { busyEnter: "steer" } },
+        ];
+      },
+    };
+    assert.equal(serverIsChinese(dshLike), true);
+    assert.equal(busyEnterOf(dshLike), "steer");
+    assert.equal(leaked, 0, "both reads asked dsh to hide secrets");
+  }
+
   console.log("claude-only zh ok");
 }
