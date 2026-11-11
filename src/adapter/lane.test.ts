@@ -175,6 +175,21 @@ function setup(pending: LooseMessage[], busyEnter: string | undefined, status = 
   }
 }
 
+// A steer that throws after the row left the queue puts the row back: it is never lost.
+{
+  const plain = row("q1", "plain words");
+  const { adapter, moves, edited } = setup([plain], "steer");
+  const agent = (await adapter.agentFor("s1"))?.agent;
+  assert.ok(agent);
+  agent.steer = () => {
+    throw new Error("turn just ended");
+  };
+  adapter.commandRows.add("q1");
+  await edited(plain);
+  assert.deepEqual(moves.removed, ["q1"]);
+  assert.deepEqual(moves.queued, ["q1"], "back in the queue");
+}
+
 /** Put one typed steer on hold, as the steer card's Edit does, and save it with new words. */
 async function saveHeld(text: string, bridged: string[]) {
   const { adapter, moves } = setup([], "steer");
