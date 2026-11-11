@@ -303,7 +303,7 @@ export function apply(ctx: ClientCtx) {
 
   function Section(props: { close?: () => void }) {
     useLocale();
-    const { boxes, setBoxes, error } = useBoxList();
+    const { boxes, setBoxes, error, loaded } = useBoxList();
     const [openBoxes, setOpenBoxes] = useState(true);
     const [openSessions, setOpenSessions] = useState(false);
     const [openChangelog, setOpenChangelog] = useState(false);
@@ -368,6 +368,7 @@ export function apply(ctx: ClientCtx) {
             ctx={ctx}
             boxes={boxes}
             setBoxes={setBoxes}
+            loaded={loaded}
             open={openBoxes}
             onToggle={() => setOpenBoxes((v) => !v)}
           />

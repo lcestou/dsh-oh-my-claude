@@ -6,7 +6,7 @@ import { BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT, SETTINGS_EVENT } from
 import { SCOPE_LABELS, SETTINGS_SCOPES, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
 import { LiveNote } from "./live-note.js";
-import { newestWins } from "./events.js";
+import { useViewRead } from "./view-read.js";
 import { ConfirmButton } from "./tune.js";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -582,43 +582,38 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
 export function useBoxList() {
   const [boxes, setShown] = useState<BoxData[]>([]);
   const [error, setError] = useState("");
-  const [order] = useState(newestWins);
+  const [loaded, setLoaded] = useState(false);
+  const wrote = useViewRead("boxes", (fresh) => {
+    fetch(`${ROUTE}/boxes`)
+      .then((r) => readJson<{ boxes?: BoxData[] }>(r))
+      .then((b) => {
+        if (!fresh()) return;
+        setError("");
+        setLoaded(true);
+        setShown(b.boxes ?? []);
+      })
+      .catch((e: Error) => {
+        if (fresh()) setError(e.message);
+      });
+  });
   /** The card's setter: a saved list counts as newer than any read already in flight. */
   const setBoxes = useCallback(
     (next: React.SetStateAction<BoxData[]>) => {
-      order.pushed();
+      wrote();
       setShown(next);
     },
-    [order],
+    [wrote],
   );
-  useEffect(() => {
-    const load = () => {
-      const fresh = order.ask();
-      return fetch(`${ROUTE}/boxes`)
-        .then((r) => readJson<{ boxes?: BoxData[] }>(r))
-        .then((b) => {
-          if (!fresh()) return;
-          setError("");
-          setShown(b.boxes ?? []);
-        })
-        .catch((e: Error) => {
-          if (fresh()) setError(e.message);
-        });
-    };
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void load();
-    };
-    void load();
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [order]);
-  return { boxes, setBoxes, error };
+  return { boxes, setBoxes, error, loaded };
 }
 
 interface BoxesProps {
   ctx: ClientCtx;
   boxes: BoxData[];
   setBoxes: React.Dispatch<React.SetStateAction<BoxData[]>>;
+  /** False until the saved list has been read once. A save before that would be built on an empty
+   *  list and replace every saved box, so the card refuses it. */
+  loaded: boolean;
   open: boolean;
   onToggle: () => void;
 }
@@ -940,7 +935,7 @@ export function LoginSteps({
 }
 
 /** The Boxes card: this box first, then any added machines, each probed and addable from here. */
-export function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
+export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle }: BoxesProps) {
   useLocale();
   const [probe, setProbe] = useState<Record<string, ProbeEntry>>({});
   const [self, setSelf] = useState<{ plugin?: string } | null>(null);
@@ -1092,6 +1087,10 @@ export function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   useEffect(refresh, [boxes.map((b) => b.url).join("|"), ssh.map((b) => b.host).join("|")]);
 
   const saveDsh = (next: BoxData[]) => {
+    if (!loaded) {
+      setError(t("main.boxes.notRead"));
+      return Promise.resolve();
+    }
     setBusy(true);
     setError("");
     return fetch(`${ROUTE}/boxes`, {
