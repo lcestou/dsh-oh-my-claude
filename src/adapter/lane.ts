@@ -5,7 +5,7 @@
 // text, so a queued `/skill` rewritten into plain words stayed in the queue, and the only way to
 // steer it was to copy the text, delete the row and send it again (owner, 2026-11-11). The adapter
 // uses what is here to move such a row, and to queue a steer that was edited into a command.
-import type { LocaleSettingsReader } from "../locale.js";
+import { type LocaleSettingsReader, serverText } from "../locale.js";
 import { type LooseMessage, textOf } from "./prompt.js";
 
 /** How many queued command rows are remembered. A row leaves when it is moved; one that ran or was
@@ -65,3 +65,9 @@ export function busyEnterOf(read: LocaleSettingsReader | undefined): "queue" | "
   }
   return "queue";
 }
+
+/** What a bridged command's handler tells the person who typed it. The handler only queues the
+ *  line, so while a turn runs the receipt says queued: "sent" stayed in the chat after the row was
+ *  edited or removed from the queue, for a line Claude never got. `sent` is the idle wording. */
+export const lineReceipt = (line: string, status: string | undefined, sent: string): string =>
+  status === "running" ? serverText("bridgeQueued", { line }) : sent;

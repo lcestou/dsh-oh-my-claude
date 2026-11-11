@@ -14,7 +14,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
-- A Claude command or skill typed while a turn runs waits in dsh's queue for the turn to end. Edit that row so it no longer starts with `/name` and it now goes into the running turn as a steer, when dsh's "Send behavior while busy" setting is Steer; before, it stayed queued and the only way to steer it was to delete the row and type it again. With the setting on Queue it stays queued. A steer edited into a Claude command or skill line now waits in the queue for the end of the turn.
+- A Claude command or skill typed while a turn runs waits in dsh's queue for the turn to end. Edit that row so it no longer starts with `/name` and it now goes into the running turn as a steer, when dsh's "Send behavior while busy" setting is Steer; before, it stayed queued and the only way to steer it was to delete the row and type it again. With the setting on Queue it stays queued. A steer edited into a Claude command or skill line now waits in the queue for the end of the turn. The note a command leaves in the chat says it is queued when a turn is running; it said "sent to Claude Code" for a line that was still waiting and could be edited or removed.
 - The spark button beside the composer no longer shows an orange dot on a new session whose workspace has Claude transcripts to restore. It looked like an unread-message mark, and it came back in every new session for the same transcripts. The panel still opens on Restore there. Thanks to @chopstick1009 (#264).
 - The limit that resets every five hours is called the "5-hour limit" where a turn reports hitting it, the name Claude Code has used since 2.1.312. It read "session limit".
 

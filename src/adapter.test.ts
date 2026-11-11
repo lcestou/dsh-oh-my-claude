@@ -4852,6 +4852,16 @@ console.log("approval outcomes ok");
   });
   assert.deepEqual(sent, ["/compact"], "sent to Claude as the next user message");
   assert.equal(ok.kind, "success");
+  assert.equal(ok.text, "/compact sent to Claude Code");
+  // Typed while a turn runs it has only been queued, and the receipt says so.
+  const midTurn = await handler({
+    agent: { ...agent, status: "running" },
+    rawInput: "",
+    attachments: [],
+    signal: new AbortController().signal,
+  });
+  assert.equal(midTurn.text, "/compact is queued for Claude Code and goes when this turn ends");
+  sent.pop();
   const refused = await handler({
     agent,
     rawInput: " now",

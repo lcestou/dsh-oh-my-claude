@@ -9,7 +9,7 @@ import type { PluginContext } from "../dsh.js";
 import { tempDir } from "../test-tmp.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
-import { busyEnterOf, CommandRows, commandNameOf, leavesQueue } from "./lane.js";
+import { busyEnterOf, CommandRows, commandNameOf, leavesQueue, lineReceipt } from "./lane.js";
 import type { LooseMessage } from "./prompt.js";
 
 /** A person's pending message with one text block. */
@@ -204,5 +204,14 @@ for (const text of ["look at the readme too", "/nosuch thing", "/btw what is thi
   assert.deepEqual(moves.steered, ["m1"], text);
   assert.deepEqual(moves.queued, [], text);
 }
+
+// The receipt says queued while a turn runs, since the line has only been queued, and keeps the
+// idle wording otherwise.
+assert.equal(
+  lineReceipt("/unslop x", "running", "sent"),
+  "/unslop x is queued for Claude Code and goes when this turn ends",
+);
+assert.equal(lineReceipt("/unslop x", "idle", "sent"), "sent");
+assert.equal(lineReceipt("/unslop x", undefined, "sent"), "sent");
 
 console.log("lane ok");

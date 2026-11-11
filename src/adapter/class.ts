@@ -315,7 +315,7 @@ import {
   steerKey,
   textOf,
 } from "./prompt.js";
-import { busyEnterOf, CommandRows, commandNameOf, leavesQueue } from "./lane.js";
+import { busyEnterOf, CommandRows, commandNameOf, leavesQueue, lineReceipt } from "./lane.js";
 import {
   accessModeOf,
   approvalsDisabled,
@@ -1806,7 +1806,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
                         source: { kind: "user" },
                       }),
                     );
-                    return { kind: "success", text: serverText("compactSent") };
+                    return {
+                      kind: "success",
+                      text: lineReceipt("/compact", target.status, serverText("compactSent")),
+                    };
                   }
                   const compaction = child.get("compaction");
                   if (!compaction) return { kind: "error", text: serverText("compactUnavailable") };
@@ -1942,11 +1945,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             target.followup(queued);
             // Remembered so an edit that turns the row into plain text can steer it.
             this.commandRows.add(queued.id);
+            const receipt = lineReceipt(line, target.status, `${line} sent to Claude Code`);
             return {
               kind: "success",
-              text: renamed
-                ? `${line} sent to Claude Code; dsh session renamed to ${title}`
-                : `${line} sent to Claude Code`,
+              text: renamed ? `${receipt}; dsh session renamed to ${title}` : receipt,
             };
           },
         });

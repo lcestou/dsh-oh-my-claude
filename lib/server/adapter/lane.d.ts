@@ -1,4 +1,4 @@
-import type { LocaleSettingsReader } from "../locale.js";
+import { type LocaleSettingsReader } from "../locale.js";
 import { type LooseMessage } from "./prompt.js";
 /** The name a pending line opens with when it is a command or skill line (`/name arguments`), read
  *  the way dsh's composer tells a command draft from plain text: leading space ignored, then a
@@ -24,3 +24,7 @@ export declare function leavesQueue(m: LooseMessage, rows: CommandRows): boolean
  *  that moves the setting leaves edited rows where they are. A `describe` that throws is the
  *  caller's to catch. */
 export declare function busyEnterOf(read: LocaleSettingsReader | undefined): "queue" | "steer";
+/** What a bridged command's handler tells the person who typed it. The handler only queues the
+ *  line, so while a turn runs the receipt says queued: "sent" stayed in the chat after the row was
+ *  edited or removed from the queue, for a line Claude never got. `sent` is the idle wording. */
+export declare const lineReceipt: (line: string, status: string | undefined, sent: string) => string;
