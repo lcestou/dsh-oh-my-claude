@@ -622,6 +622,8 @@ export class Translator {
   routerOnly: string | undefined;
   /** Set when this turn's key came from a settings file: see `finishReason`. */
   settingsKey: SettingsKey | undefined;
+  /** The router this turn goes to, so its refusals are named as the router's: see `finishReason`. */
+  via: string | undefined;
   /** The suffix for a 5xx retry line, from the adapter's cache of Anthropic's status page. */
   statusNote: ((httpStatus: number) => string) | undefined;
   relay: boolean; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
@@ -769,6 +771,7 @@ export class Translator {
     hostLabel,
     routerOnly,
     settingsKey,
+    via,
     statusNote,
   }: {
     toolActivity?: boolean;
@@ -802,6 +805,8 @@ export class Translator {
     routerOnly?: string;
     /** Set when this turn's key came from a settings file, so a 401 is not about the login. */
     settingsKey?: SettingsKey;
+    /** The router or gateway this turn goes to, when it is not Anthropic. */
+    via?: string;
     /** What to append to a 5xx retry line from the Anthropic status page cache. */
     statusNote?: (httpStatus: number) => string;
   } = {}) {
@@ -815,6 +820,7 @@ export class Translator {
     this.hostLabel = hostLabel;
     this.routerOnly = routerOnly;
     this.settingsKey = settingsKey;
+    this.via = via;
     this.statusNote = statusNote;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
     this.dshIds = dshIds ?? new Set(); // tool_use ids of dsh tools called over the MCP bridge
@@ -1402,7 +1408,7 @@ export class Translator {
             ? { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } }
             : this.limitFailure
               ? { kind: "error", failure: this.limitFailure }
-              : finishReason(event, this.hostLabel, this.routerOnly, this.settingsKey),
+              : finishReason(event, this.hostLabel, this.routerOnly, this.settingsKey, this.via),
         });
         return events;
       }

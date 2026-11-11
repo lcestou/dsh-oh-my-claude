@@ -98,9 +98,11 @@ export declare function isLoginFailure(result: ResultFrame): boolean;
  * missing. Any other failure on that model keeps the CLI's own words. `settingsKey` is set when
  * the key the turn sent came from a settings file and not from the Claude login: a 401 then
  * names the endpoint that refused it and says logging in will not help, where the login text
- * would send the reader to do exactly that.
+ * would send the reader to do exactly that. `via` is the router or gateway the turn went to
+ * (`TurnRecord.via`): an error status it answers with is its own, often in its own words and
+ * language, and reads as Claude failing unless the failure says who is speaking.
  */
-export declare function finishReason(result: ResultFrame, hostLabel?: string, routerOnly?: string, settingsKey?: SettingsKey): FinishReason;
+export declare function finishReason(result: ResultFrame, hostLabel?: string, routerOnly?: string, settingsKey?: SettingsKey, via?: string): FinishReason;
 /**
  * Incremental translator from Claude Code stream-json lines to dsh StreamChunks.
  * Prefers partial `stream_event`s; falls back to whole `assistant` messages when no partials arrived.

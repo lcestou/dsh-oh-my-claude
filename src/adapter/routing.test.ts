@@ -336,6 +336,33 @@ assert.match(
   );
 }
 
+// A router's own refusal says it is the router's. The frame is CC Switch 4.0.29 with routing on
+// and a provider that has no address (2026-11-10), in the app's own language.
+{
+  const fromRouter = {
+    is_error: true,
+    api_error_status: 400,
+    result: "API Error: 400 配置错误: Claude Provider 缺少 base_url 配置",
+  };
+  const said = failure(finishReason(fromRouter, "b", undefined, undefined, "127.0.0.1:15721"));
+  assert.match(said, /^The router at 127\.0\.0\.1:15721 refused this turn: API Error: 400/);
+  assert.match(said, /缺少 base_url/, "the router's own words are kept");
+  assert.match(failure(finishReason(fromRouter, "b")), /^API Error: 400/, "no router, no claim");
+  // A failure with no status is not the router speaking.
+  assert.match(
+    failure(
+      finishReason(
+        { is_error: true, result: "Prompt is too long" },
+        "b",
+        undefined,
+        undefined,
+        "h",
+      ),
+    ),
+    /^Prompt is too long/,
+  );
+}
+
 // The settings a session really runs with: the user's file, then the workspace's own, each
 // variable remembering which file had the last word. The case below is the one that sent a
 // router's key to the wrong endpoint: the box's file names the router and its key, and the

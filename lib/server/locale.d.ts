@@ -72,6 +72,7 @@ declare const EN: {
     readonly taskCompleted: "completed";
     readonly modelNeedsCliUpdate: "Newer than the installed Claude Code; update the CLI to unlock it.";
     readonly keyRefused: "{host} refused the key Claude Code sent ({detail}). That key is set in a settings file's env, as a router or gateway does, and is not your Claude login, so logging in again will not help. Check that the router or gateway is running and is the one this address belongs to.";
+    readonly routerRefused: "The router at {host} refused this turn: {detail}. That is the router's own answer, not Claude's. Check which provider it is set to send to, or switch its routing off to go back to Claude.";
     readonly keyRefusedSplit: "The address comes from {address} and the key from {key}. A workspace's own settings outrank the box's, so the two no longer belong together: remove ANTHROPIC_BASE_URL from one of them, or open the session in another workspace.";
     readonly settingsScopeUser: "the box's settings.json";
     readonly settingsScopeProject: "this workspace's .claude/settings.json";

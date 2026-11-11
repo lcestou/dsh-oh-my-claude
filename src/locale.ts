@@ -100,6 +100,8 @@ const EN = {
   modelNeedsCliUpdate: "Newer than the installed Claude Code; update the CLI to unlock it.",
   keyRefused:
     "{host} refused the key Claude Code sent ({detail}). That key is set in a settings file's env, as a router or gateway does, and is not your Claude login, so logging in again will not help. Check that the router or gateway is running and is the one this address belongs to.",
+  routerRefused:
+    "The router at {host} refused this turn: {detail}. That is the router's own answer, not Claude's. Check which provider it is set to send to, or switch its routing off to go back to Claude.",
   keyRefusedSplit:
     "The address comes from {address} and the key from {key}. A workspace's own settings outrank the box's, so the two no longer belong together: remove ANTHROPIC_BASE_URL from one of them, or open the session in another workspace.",
   settingsScopeUser: "the box's settings.json",
@@ -242,6 +244,8 @@ const ZH = {
   modelNeedsCliUpdate: "比已安装的 Claude Code 更新；更新 CLI 后即可使用。",
   keyRefused:
     "{host} 拒绝了 Claude Code 发送的密钥（{detail}）。该密钥来自某个设置文件的 env（由路由或网关写入），不是你的 Claude 登录，重新登录没有用。请确认路由或网关正在运行，并且这个地址确实属于它。",
+  routerRefused:
+    "{host} 上的路由拒绝了这一轮：{detail}。这是路由自己的回答，不是 Claude 的。请检查它当前转发到哪个供应商，或关闭路由以回到 Claude。",
   keyRefusedSplit:
     "地址来自{address}，密钥来自{key}。工作区自己的设置优先于主机的设置，所以两者已不再配套：请从其中一处移除 ANTHROPIC_BASE_URL，或在其他工作区打开会话。",
   settingsScopeUser: "主机的 settings.json",
