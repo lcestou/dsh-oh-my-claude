@@ -192,7 +192,7 @@ export const Config = z.object({
   toolsInline: z
     .boolean()
     .description(
-      "Render tool calls as inline text (true) or as dsh's native tool rows (false). Unset: rows on dsh 0.1.7 and later, where the text streams live between the cards and the rows survive a reload; inline before that. The switch in Settings > Oh My Claude overrides this per box.",
+      "Render tool calls as inline text (true) or as dsh's native tool rows (false). Unset: rows once the startup check finds the running dsh loads them back, inline until then. The switch in Settings > Oh My Claude overrides this per box.",
     ),
   hookRows: z
     .boolean()

@@ -6,6 +6,7 @@ import { BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT, SETTINGS_EVENT } from
 import { SCOPE_LABELS, SETTINGS_SCOPES, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
 import { LiveNote } from "./live-note.js";
+import { newestWins } from "./events.js";
 import { ConfirmButton } from "./tune.js";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -564,6 +565,51 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
       </div>
     </Card>
   );
+}
+
+/**
+ * The dsh box list for the Settings section, with the setter its Boxes card saves through and the
+ * last read's error ("" when it worked). Reads on mount and again each time the tab comes back into
+ * view: a box added or removed in another tab or on another device is not pushed, and BOXES_EVENT
+ * follows the ssh box list, not this one. A failed read keeps the list on screen. Emptying it (the
+ * list starts empty, so a failed first read still shows none) made the next add PUT a one-box list
+ * over every saved box. A read that started before the card's last save is dropped for the same
+ * reason: it answers with the list before that save.
+ */
+export function useBoxList() {
+  const [boxes, setShown] = useState<BoxData[]>([]);
+  const [error, setError] = useState("");
+  const [order] = useState(newestWins);
+  /** The card's setter: a saved list counts as newer than any read already in flight. */
+  const setBoxes = useCallback(
+    (next: React.SetStateAction<BoxData[]>) => {
+      order.pushed();
+      setShown(next);
+    },
+    [order],
+  );
+  useEffect(() => {
+    const load = () => {
+      const fresh = order.ask();
+      return fetch(`${ROUTE}/boxes`)
+        .then((r) => readJson<{ boxes?: BoxData[] }>(r))
+        .then((b) => {
+          if (!fresh()) return;
+          setError("");
+          setShown(b.boxes ?? []);
+        })
+        .catch((e: Error) => {
+          if (fresh()) setError(e.message);
+        });
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    void load();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [order]);
+  return { boxes, setBoxes, error };
 }
 
 interface BoxesProps {

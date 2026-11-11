@@ -6,8 +6,6 @@
 import { NewSessionDefaultRow } from "./new-session-default.js";
 import { installLocale, t, useLocale } from "./i18n.js";
 import { useEffect, useState } from "react";
-import type { SetStateAction } from "react";
-import { newestWins } from "./events.js";
 import {
   ROUTE,
   fmtCost,
@@ -48,7 +46,7 @@ import {
   watchTurnStatus,
   claudeRunningTitles,
 } from "./turn-status.js";
-import { BoxData, Boxes, Card } from "./boxes.js";
+import { Boxes, Card, useBoxList } from "./boxes.js";
 import { Sessions } from "./sessions-tab.js";
 import { CostLine } from "./cost.js";
 import {
@@ -305,46 +303,11 @@ export function apply(ctx: ClientCtx) {
 
   function Section(props: { close?: () => void }) {
     useLocale();
-    const [boxes, setBoxes] = useState<BoxData[]>([]);
+    const { boxes, setBoxes, error } = useBoxList();
     const [openBoxes, setOpenBoxes] = useState(true);
     const [openSessions, setOpenSessions] = useState(false);
     const [openChangelog, setOpenChangelog] = useState(false);
     const [openReport, setOpenReport] = useState(false);
-    const [error, setError] = useState("");
-    // This tab's Boxes card writes the list through `setBoxes`. A box added or removed in another
-    // tab or device is not pushed, so read again when this tab comes back into view, the way the
-    // picker does. BOXES_EVENT is not enough: it follows the ssh box list, not this one.
-    // A re-read that started before the Boxes card's last save answers with the list before that
-    // save; showing it would drop the new box, and the next save would PUT the shorter list.
-    const [order] = useState(newestWins);
-    /** The Boxes card's setter: a saved list counts as newer than any read already in flight. */
-    const savedBoxes = (next: SetStateAction<BoxData[]>) => {
-      order.pushed();
-      setBoxes(next);
-    };
-    useEffect(() => {
-      const load = () => {
-        const fresh = order.ask();
-        return fetch(`${ROUTE}/boxes`)
-          .then((r) => readJson<{ boxes?: BoxData[] }>(r))
-          .then((b) => {
-            if (!fresh()) return;
-            setError("");
-            setBoxes(b.boxes ?? []);
-          })
-          .catch((e: Error) => {
-            // A failed read keeps what is shown. Emptying it (the list starts empty, so a failed
-            // first read still shows none) made the next add PUT a one-box list over every saved box.
-            if (fresh()) setError(e.message);
-          });
-      };
-      const onVisible = () => {
-        if (document.visibilityState === "visible") void load();
-      };
-      void load();
-      document.addEventListener("visibilitychange", onVisible);
-      return () => document.removeEventListener("visibilitychange", onVisible);
-    }, []);
     return (
       <div data-omc-settings="">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -404,7 +367,7 @@ export function apply(ctx: ClientCtx) {
           <Boxes
             ctx={ctx}
             boxes={boxes}
-            setBoxes={savedBoxes}
+            setBoxes={setBoxes}
             open={openBoxes}
             onToggle={() => setOpenBoxes((v) => !v)}
           />

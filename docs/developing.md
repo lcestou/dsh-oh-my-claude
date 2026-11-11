@@ -8,7 +8,7 @@ Install from a checkout instead of npm: `dsh plugin --profile web add link:/path
 
 ## Where the code lives
 
-The server entry is `src/adapter.ts`, with its helper modules under `src/adapter/`: types, config, catalog, asides, transcript-watch, prompt, cli, cli-compaction, claude-only, skill-line, spawn-mode, turn, class (the ClaudeCodeAdapter class, whole), and ssh-boxes. The HTTP routes are route groups under `src/routes/` (controls, files, settings, status, tasks, transcripts), dispatched from `src/sessions.ts`, which also keeps the box routes (SSH boxes, remote workspaces, Tailscale and WireGuard status). The client entry is `src/client/index.tsx`: its imports, the session spinners and `apply()`. Each feature it mounts has a file beside it (the cost line, the context meter, the turn status, the Settings card, the dock and its cards, the selection popover, the Run button and the rest), and the panel's tab switch is `src/client/panel.tsx` with one file per tab under `src/client/panel/`. Tests sit beside the modules they test and the suite runs them recursively.
+The server entry is `src/adapter.ts`, with its helper modules under `src/adapter/`: types, config, catalog, asides, transcript-watch, prompt, cli, cli-compaction, claude-only, custom-models, routing, skill-line, spawn-mode, turn, class (the ClaudeCodeAdapter class, whole), and ssh-boxes. The HTTP routes are route groups under `src/routes/` (controls, files, settings, status, tasks, transcripts), dispatched from `src/sessions.ts`, which also keeps the box routes (SSH boxes, remote workspaces, Tailscale and WireGuard status). The client entry is `src/client/index.tsx`: its imports, the session spinners and `apply()`. Each feature it mounts has a file beside it (the cost line, the context meter, the turn status, the Settings card, the dock and its cards, the selection popover, the Run button and the rest), and the panel's tab switch is `src/client/panel.tsx` with one file per tab under `src/client/panel/`. Tests sit beside the modules they test and the suite runs them recursively.
 
 Both entries keep the exports they had before the code moved into these files, re-exported from the module that owns each symbol, so tests and tools import them as they always did. The entries only import and mount: new behaviour goes in a module beside the others, and `bun run validate` fails the gate when `src/adapter.ts` or `src/client/index.tsx` passes 800 lines.
 
@@ -16,7 +16,7 @@ Both entries keep the exports they had before the code moved into these files, r
 
 Two kinds of coupling, and only one of them is safe.
 
-**Named slots fail loudly.** dsh exposes 83 of them and this plugin mounts into eleven. If dsh
+**Named slots fail loudly.** dsh exposes 83 of them and this plugin mounts into twelve. If dsh
 renames one, the plugin does not load and says which service it waited for: ugly, immediate, and
 nothing is half-broken. Prefer a slot wherever one exists. dsh publishes no slot reference, so the
 list is derived from the installed bundles: grep dsh's `dsh-client-ui-*` packages for
