@@ -393,6 +393,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     }): Promise<TurnPrep>;
     /** Claude slash commands already registered as dsh commands, name → disposer. */
     readonly bridged: Map<string, () => void>;
+    /** Moves hides stored before the key named a box onto this mount's key, once: see
+     *  `carriedHides`. Runs at start on the default mount; a store with none is left untouched,
+     *  and a failed read or write leaves it for the next start. */
+    carryHides(path?: string): Promise<void>;
+    /** Whether the turn last prepared on this mount was proven to go to a router (`TurnPrep.via`).
+     *  Read where a local Claude's environment is built, beside `proxyFirstParty` and with the same
+     *  limit: one value per mount, so two workspaces whose settings route differently share it. */
+    routedNow: boolean;
     /** Pending rows the command bridge queued, so one edited into plain text can leave the queue. */
     readonly commandRows: CommandRows;
     /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */

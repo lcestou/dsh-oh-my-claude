@@ -28,6 +28,7 @@ import {
   accountIdentity,
   forgetIdentity,
   readHints,
+  updateHints,
   type PickerRow,
   readPickerSettings,
   settingsEnvAt,
@@ -267,6 +268,7 @@ import {
   proxyBaseUrl,
   resolveModelInfo,
   windowKey,
+  carriedHides,
   hintHiddenModels,
   hintRouterWindows,
   withCustomModels,
@@ -528,6 +530,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.settingsNs = `llm-${this.providerId}`;
     this.stateDir = stateDir(this.providerId);
     this.cliSeed = this.seedCliModels();
+    if (this.providerId === "claude-code") void this.carryHides();
     // With the switch on the CLI runs against the mirror, so `claudeHome`, the path every read in
     // this plugin resolves against, is the mirror too: its settings and login are the real files,
     // read through their links, and only `projects/` is the plugin's own. It needs `stateDir`,
@@ -1565,6 +1568,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         via = routedTo;
       }
     }
+    this.routedNow = via !== undefined;
     const turns = selectTurns(options.messages, session?.resuming ?? false, this.providerId);
     let prompt = buildPrompt(turns, drops);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
@@ -1677,6 +1681,27 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Claude slash commands already registered as dsh commands, name → disposer. */
   readonly bridged = new Map<string, () => void>();
+  /** Moves hides stored before the key named a box onto this mount's key, once: see
+   *  `carriedHides`. Runs at start on the default mount; a store with none is left untouched,
+   *  and a failed read or write leaves it for the next start. */
+  async carryHides(path = join(STATE_DIR, "hints.json")): Promise<void> {
+    try {
+      const patch = carriedHides(await readHints(path));
+      if (Object.keys(patch).length === 0) return;
+      await updateHints(path, patch);
+      this.log(
+        "info",
+        `carried ${Object.keys(patch).length / 2} model hides over to this box's keys`,
+      );
+    } catch (error) {
+      this.log("warn", `model hides not carried over: ${errorText(error)}`);
+    }
+  }
+
+  /** Whether the turn last prepared on this mount was proven to go to a router (`TurnPrep.via`).
+   *  Read where a local Claude's environment is built, beside `proxyFirstParty` and with the same
+   *  limit: one value per mount, so two workspaces whose settings route differently share it. */
+  routedNow = false;
   /** Pending rows the command bridge queued, so one edited into plain text can leave the queue. */
   readonly commandRows = new CommandRows();
   /** Sessions already warned that `toolsInline: false` is ignored on a versioned session format. */
@@ -3267,7 +3292,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // reports is the one it was given, for whatever model a router put behind the id. Banked
     // under that id, a local model's 256k became Claude Sonnet 5's window once the router was
     // switched off (2026-11-10).
-    if (proc.spec?.window === undefined) {
+    // Nor for a turn that went through a router on a Claude id with no stated size (a session
+    // kept from before the router came on, or Claude's own rows listed beside it): the CLI's
+    // figure there is the router's, and it would be remembered as that Claude model's.
+    if (proc.spec?.window === undefined && proc.prep?.via === undefined) {
       noteLiveWindow(proc.spec?.model, usage.maxTokens);
       noteLiveWindow(usage.model, usage.maxTokens);
     }
@@ -3780,7 +3808,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (this.config.configDir || this.config.ownTranscripts)
       over.CLAUDE_CONFIG_DIR = this.claudeHome;
     const token = this.providerId === "claude-code" ? readSshToken(STATE_DIR, THIS_BOX) : undefined;
-    if (token) over.CLAUDE_CODE_OAUTH_TOKEN = token;
+    // Not to a router: the token is the Claude account's, and an endpoint that is not Anthropic
+    // has no business holding it. The CLI falls back to whatever the router's settings give it.
+    if (token && !this.routedNow) over.CLAUDE_CODE_OAUTH_TOKEN = token;
     // The bridge key for the `${KEY_ENV}` the `--mcp-config` argument names. Every local spawn
     // gets it, bridged or not: one that passes no bridge never reads it.
     if (this.mcp) over[KEY_ENV] = this.mcp.key;
@@ -4288,6 +4318,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         model: prep.spec.model,
         temporary: prep.spec.temporary,
         origin: wsHeader?.origin,
+        via: prep.via,
       })
     ) {
       // One file write per change, not per turn: a long session on one model writes once.
@@ -6097,6 +6128,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const provider = this.sessionProvider(sessionId);
     if (provider !== undefined && provider !== this.providerId) {
       await trace(log, `limit wait ${sessionId}: session now on ${provider}, notice dropped`);
+      return;
+    }
+    // The box may have been switched to a router meanwhile. The wake's turn would run there, and
+    // a local model would get the "continue" meant for Claude; the wait is dropped, not re-armed,
+    // since nothing says when the router goes off again.
+    if ((await this.route().catch((): Route => ({ state: "unknown" }))).state === "routed") {
+      await trace(log, `limit wait ${sessionId}: box is routed now, notice dropped`);
+      this.clearLimitWait(sessionId);
       return;
     }
     const reply = await probe(fetch, this.config.configDir ? this.claudeHome : undefined);

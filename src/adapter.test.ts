@@ -3423,6 +3423,7 @@ console.log("ok");
       claudeHome: "/nowhere",
       processes: new Map(),
       sessionProvider: () => provider,
+      route: async () => ({ state: "direct" }),
       armLimitWait: (id: string, at: number) => calls.push(`arm ${id} ${at}`),
       wake: async (id: string, _proc: unknown, text: string) => {
         calls.push(`wake ${id} ${text === LIMIT_TEXT ? "limit" : "?"}`);
