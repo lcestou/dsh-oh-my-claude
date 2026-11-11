@@ -5,8 +5,9 @@
 import { useEffect, useState } from "react";
 
 import type { ClaudeUpdateState } from "../claude-update.js";
-import { BOXES_EVENT } from "./picker.js";
+import { BOXES_EVENT, SETTINGS_EVENT } from "./picker.js";
 import { btn, errText, meta, nested, readJson, ROUTE, select, T } from "./shared.js";
+import { LiveNote } from "./live-note.js";
 import { Switch } from "./switch.js";
 import { onBox, read, readTunables, updateSettings } from "./tune.js";
 import { t, useLocale } from "./i18n.js";
@@ -48,6 +49,15 @@ const FOLD = {
  *  option. A browser without it sizes by the longest option. */
 const pick = { ...select, flex: "0 0 auto", fieldSizing: "content", minWidth: 0 } as const;
 
+/** The local row. Its name is left empty and drawn at render with `boxLabel`, so a language switch
+ *  renames it; a translated name stored here stayed in the language it was read in. */
+const LOCAL_BOX: UpdateBox = { name: "", host: "" };
+
+/** The name a box is shown under: "This box" in the active language for the local row (host ""), or
+ *  when no box is chosen yet, and the saved name for an ssh box. */
+const boxLabel = (b: UpdateBox | undefined): string =>
+  b === undefined || b.host === "" ? t("updates.thisBox") : b.name;
+
 /**
  * The rows under the Claude Code updates switch. Reads the box list (and rereads it when the Boxes
  * card saves), then the chosen box's updater state and its settings.json for the channel. The box
@@ -56,7 +66,7 @@ const pick = { ...select, flex: "0 0 auto", fieldSizing: "content", minWidth: 0 
  */
 export function ClaudeUpdateDetails() {
   useLocale();
-  const [boxes, setBoxes] = useState<UpdateBox[]>([{ name: t("updates.thisBox"), host: "" }]);
+  const [boxes, setBoxes] = useState<UpdateBox[]>([LOCAL_BOX]);
   const [host, setHost] = useState("");
   const [upd, setUpd] = useState<UpdateReply | null>(null);
   const [channel, setChannel] = useState<string | undefined>(undefined);
@@ -71,7 +81,7 @@ export function ClaudeUpdateDetails() {
     const load = () =>
       fetch(`${ROUTE}/ssh-boxes`)
         .then((r) => readJson<{ boxes?: UpdateBox[] }>(r))
-        .then((b) => setBoxes([{ name: t("updates.thisBox"), host: "" }, ...(b.boxes ?? [])]))
+        .then((b) => setBoxes([LOCAL_BOX, ...(b.boxes ?? [])]))
         .catch(() => {});
     void load();
     window.addEventListener(BOXES_EVENT, load);
@@ -91,14 +101,20 @@ export function ClaudeUpdateDetails() {
       .then((r) => readJson<UpdateReply>(r))
       .then((s) => live && setUpd(s))
       .catch((e: Error) => live && setErr(e.message));
-    read(provider)
-      .then((f) => {
-        if (!live) return;
-        setChannel(readTunables(f.text).autoUpdatesChannel);
-      })
-      .catch(() => live && setChannel(undefined));
+    /** The channel as the box's settings.json holds it now. */
+    const readChannel = () =>
+      read(provider)
+        .then((f) => {
+          if (!live) return;
+          setChannel(readTunables(f.text).autoUpdatesChannel);
+        })
+        .catch(() => live && setChannel(undefined));
+    void readChannel();
+    // The settings editor on the same page writes the same file, so a channel set there shows here.
+    window.addEventListener(SETTINGS_EVENT, readChannel);
     return () => {
       live = false;
+      window.removeEventListener(SETTINGS_EVENT, readChannel);
     };
   }, [host, provider]);
 
@@ -160,6 +176,7 @@ export function ClaudeUpdateDetails() {
         }),
       );
       setChannel(next);
+      window.dispatchEvent(new Event(SETTINGS_EVENT));
       // The updater reads the channel before each check; ask for one so the card follows.
       setUpd(await readJson<UpdateReply>(await fetch(url("&now=1"))));
     } catch (e) {
@@ -179,7 +196,7 @@ export function ClaudeUpdateDetails() {
           ? t("updates.channelLatest")
           : t("updates.channelDefault");
   const summary = [
-    boxes.length > 1 ? (box?.name ?? t("updates.thisBox")) : null,
+    boxes.length > 1 ? boxLabel(box) : null,
     channelName,
     upd?.auto ? t("updates.installsOnItsOwn") : t("updates.byTheCard"),
     t("updates.runs", { n: upd?.log.length ?? 0 }),
@@ -220,7 +237,7 @@ export function ClaudeUpdateDetails() {
           >
             {boxes.map((b) => (
               <option key={b.host} value={b.host}>
-                {b.name}
+                {boxLabel(b)}
               </option>
             ))}
           </select>
@@ -295,7 +312,12 @@ export function ClaudeUpdateDetails() {
           </div>
         </>
       )}
-      {err ? <span style={errText}>{err}</span> : null}
+      <LiveNote text={checkLine} />
+      {err ? (
+        <span role="alert" style={errText}>
+          {err}
+        </span>
+      ) : null}
     </div>
   );
 }

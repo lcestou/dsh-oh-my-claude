@@ -46,7 +46,7 @@ import {
   watchTurnStatus,
   claudeRunningTitles,
 } from "./turn-status.js";
-import { BoxData, Boxes, Card } from "./boxes.js";
+import { Boxes, Card, useBoxList } from "./boxes.js";
 import { Sessions } from "./sessions-tab.js";
 import { CostLine } from "./cost.js";
 import {
@@ -303,21 +303,11 @@ export function apply(ctx: ClientCtx) {
 
   function Section(props: { close?: () => void }) {
     useLocale();
-    const [boxes, setBoxes] = useState<BoxData[]>([]);
+    const { boxes, setBoxes, error } = useBoxList();
     const [openBoxes, setOpenBoxes] = useState(true);
     const [openSessions, setOpenSessions] = useState(false);
     const [openChangelog, setOpenChangelog] = useState(false);
     const [openReport, setOpenReport] = useState(false);
-    const [error, setError] = useState("");
-    useEffect(() => {
-      fetch(`${ROUTE}/boxes`)
-        .then((r) => readJson<{ boxes?: BoxData[] }>(r))
-        .then((b) => setBoxes(b.boxes ?? []))
-        .catch((e: Error) => {
-          setError(e.message);
-          setBoxes([]);
-        });
-    }, []);
     return (
       <div data-omc-settings="">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>

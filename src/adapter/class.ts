@@ -329,6 +329,7 @@ import {
   modeForAccess,
   NATIVE_TOOL_MAP,
   permissionModeFor,
+  defaultModesFor,
   probeCli,
   renameTitle,
   rowsSupported,
@@ -2014,6 +2015,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       override,
       accessMode,
       ceiling,
+      defaultModes: defaultModesFor(this.config),
       allowed,
       liveMode: proc?.alive ? proc.liveMode : null,
     };

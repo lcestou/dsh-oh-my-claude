@@ -1,7 +1,7 @@
 // Offline self-check: DSH_OMC_STATE_DIR=$(mktemp -d /tmp/omc-test.XXXXXX) bun src/client/events.test.ts.
 // The stream itself needs a browser (EventSource); this pins the routing and the fallback period.
 import assert from "node:assert/strict";
-import { KINDS, SLOW_MS, dispatch, pollEvery, streamUp, subscribe } from "./events.js";
+import { KINDS, SLOW_MS, dispatch, newestWins, pollEvery, streamUp, subscribe } from "./events.js";
 
 {
   const got: Array<[string | null, number | null]> = [];
@@ -40,4 +40,15 @@ import { KINDS, SLOW_MS, dispatch, pollEvery, streamUp, subscribe } from "./even
   assert.ok(KINDS.includes("ping"), "the heartbeat is an event the listener hears");
 }
 
-console.log("client events: dispatch, subscribe, pollEvery ok");
+// Newest wins: a read sent before an event and answered after it is stale; one sent after is not.
+{
+  const order = newestWins();
+  const before = order.ask();
+  assert.equal(before(), true, "no event yet: the read applies");
+  order.pushed();
+  assert.equal(before(), false, "an event after the read was sent makes its answer stale");
+  const after = order.ask();
+  assert.equal(after(), true, "a read sent after the event applies");
+}
+
+console.log("client events: dispatch, subscribe, pollEvery, newestWins ok");

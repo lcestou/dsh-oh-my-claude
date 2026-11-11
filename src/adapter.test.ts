@@ -19,6 +19,7 @@ import {
   buildArgs,
   dshToolsGuidance,
   permissionModeFor,
+  defaultModesFor,
   isStaleResume,
   probeCli,
   boxFor,
@@ -1202,6 +1203,18 @@ assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
   assert.equal(infoRo.accessMode, "read-only");
   assert.equal(infoRo.ceiling, "plan");
   assert.deepEqual(infoRo.allowed, ["plan"]);
+  // With no override each shield gives dsh's mapping; a pinned mode gives the pin on every shield.
+  // The Access menu clears a stored override only for a pick equal to these.
+  assert.deepEqual(infoRo.defaultModes, {
+    "read-only": "plan",
+    "workspace-write": "acceptEdits",
+    "danger-full-access": "bypassPermissions",
+  });
+  assert.deepEqual(defaultModesFor(new Config({ permissionMode: "auto" })), {
+    "read-only": "auto",
+    "workspace-write": "auto",
+    "danger-full-access": "auto",
+  });
 
   {
     const r = await a.setPermissionMode("s", "bypassPermissions");

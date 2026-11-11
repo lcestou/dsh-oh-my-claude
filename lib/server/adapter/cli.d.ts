@@ -12,6 +12,11 @@ export declare function accessModeOf(messages: LooseMessage[] | undefined): stri
 export declare function approvalsDisabled(messages: LooseMessage[] | undefined): boolean;
 /** The CLI's permission mode for a turn: the configured one, or the one dsh's access mode maps to. */
 export declare function permissionModeFor(config: Schemastery.TypeT<typeof Config>, accessMode: string | undefined): string;
+/** The mode a session with no override runs in on each of dsh's three shields, keyed by access
+ *  mode. Under `dsh` this is the shield mapping; under a pinned mode every shield gives the pin. The
+ *  panel compares a pick against the shield the pick lands on, so a pick equal to it can clear the
+ *  override instead of storing one. */
+export declare function defaultModesFor(config: Schemastery.TypeT<typeof Config>): Record<string, string>;
 /** Probe whether this target supports raw tool rows once and cache the answer, so repeated callers share one ssh probe instead of one per session. */
 export declare const rowsSupported: () => Promise<RowsSupport>;
 /** Forget what was probed on `host` ("" for this box): after `claude update` there, the flag set

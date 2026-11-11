@@ -54,6 +54,16 @@ export function permissionModeFor(
   return modeForAccess(accessMode ?? "") ?? "acceptEdits";
 }
 
+/** The mode a session with no override runs in on each of dsh's three shields, keyed by access
+ *  mode. Under `dsh` this is the shield mapping; under a pinned mode every shield gives the pin. The
+ *  panel compares a pick against the shield the pick lands on, so a pick equal to it can clear the
+ *  override instead of storing one. */
+export function defaultModesFor(config: Schemastery.TypeT<typeof Config>): Record<string, string> {
+  return Object.fromEntries(
+    Object.keys(MODE_FOR_ACCESS).map((access) => [access, permissionModeFor(config, access)]),
+  );
+}
+
 // ---------------------------------------------------------------------------
 // CLI probe: Claude Code auto-updates itself, so flags are checked against `claude --help` once per
 // process and anything missing is left out. Unknown = assume supported (probe failed, older CLI).

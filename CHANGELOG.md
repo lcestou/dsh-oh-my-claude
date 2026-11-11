@@ -32,6 +32,18 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - An answer to a question Claude asks is no longer refused by Claude Code 2.1.321 and later when Claude had set an away timeout on that question.
 - A turn whose result carried no cost figure no longer makes the next turn's cost read as the whole session's.
 - A subagent Claude starts in the same step as `open_session` no longer has its result shown twice when the new session is slow to open. The step also no longer pauses a second and a half before the subagent starts.
+- The Sessions card in Settings says "1 prompt" for a session with a single prompt, not "1 prompts".
+- Screen readers now read out the outcome of a save or check in Settings: the settings editor's "Saved at" line and a refused save, the starter's Saved note, Check now in Claude updates, and a failed tool rows or terminal sync switch.
+- The update pill beside the Oh My Claude heading in Settings goes away as soon as you turn the Update notice switch off, and comes back when you turn it on again, without reopening Settings.
+- After a save in the settings.json editor in Settings, the CLAUDE.md row and the Claude updates channel show the new values at once. A channel picked in Claude updates, or a change from the Tune tab, now shows in the settings.json editor too, unless an edit is open there.
+- Switching a Claude session to a non-Claude model after picking a permission mode from the shield no longer leaves a Claude mode name on dsh's own access control.
+- Spinner verbs changed in the settings.json editor in Settings show on the next working line, without reloading the tab.
+- In the Tune tab, pressing Enter to pick a candidate in a Chinese or other IME no longer adds a half-typed permission rule or saves a half-typed text setting.
+- The "This box" choice in Claude updates follows a switch of dsh's language right away.
+- A dsh box added or removed from Settings in another tab or on another device shows in this tab's Boxes and Sessions cards once you come back to it, without reopening Settings.
+- With `permissionMode` set to a fixed mode, picking Plan on Read Only, Accept edits on Workspace Write or Bypass on Full access in the access menu no longer snaps back to the configured mode, and clicking the Auto row a session is already in no longer widens dsh's access to Full access. The default `dsh` setting works as before. Thanks to @namastex888 and @automagik-genie, whose Omni fork exposed it.
+- Changing the scope in the settings.json editor twice in quick succession can no longer show the previous scope's file under the new scope.
+- A dismissed or answered aside no longer comes back for up to half a minute when a background check lands just after it closed, and an approval prompt can no longer raise a second desktop notification the same way.
 - In plan mode Claude could run dsh's shell, start subagents and use dsh's other tools that change things, without being asked, although plan mode promises nothing changes. Those calls are now refused and Claude is told to finish the plan and leave plan mode first. Tools that only read, such as listing jobs or reading a session's replies, still work in plan mode.
 
 ## [1.6.1] - 2026-11-09

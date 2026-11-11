@@ -32,7 +32,8 @@ import { livingModelId } from "../model-ids.js";
 import { ConfirmButton } from "./tune.js";
 import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { COMPACT_AT, COMPACT_AT_CHOICES, compactThreshold } from "./nudge.js";
-import { BOXES_EVENT } from "./picker.js";
+import { BOXES_EVENT, SETTINGS_EVENT } from "./picker.js";
+import { LiveNote } from "./live-note.js";
 import { CustomModelsEditor, type CustomModelEntry, putCustomModels } from "./custom-models.js";
 import { SizeSelect } from "./model-size.js";
 import { type BoxRoute, RouteLine, routeNote } from "./route-line.js";
@@ -230,6 +231,9 @@ export function StarterCard({
   const [starter, setStarter] = useState<StarterReply | null>(null);
   const [note, setNote] = useState("");
 
+  // Read once per session: this card is the only control in the tab that writes the starter, and it
+  // updates its own state on save. A save from a second tab on the same session is not pushed and
+  // shows here when the card remounts.
   useEffect(() => {
     let live = true;
     fetch(`${ROUTE}/starter?session=${encodeURIComponent(sessionId)}`)
@@ -354,6 +358,8 @@ export function StarterCard({
             </span>
           </button>
         </Slide>
+        {/* The chip's label swaps by visibility, which a screen reader does not hear change. */}
+        <LiveNote text={note} />
         <Slide open={opener !== ""}>
           <ConfirmButton
             label={t("main.starter.forget")}
@@ -697,8 +703,13 @@ function useClaudeMd(ctx: ClientCtx): ClaudeMdState | null {
       if (live) setState(reply);
     };
     void run().catch(() => {});
+    // The settings editor and the Claude updates card on the same page write the files this answer
+    // is worked out from (`CLAUDE_CODE_DISABLE_CLAUDE_MDS` in `env`), so read again after either.
+    const again = () => void run().catch(() => {});
+    window.addEventListener(SETTINGS_EVENT, again);
     return () => {
       live = false;
+      window.removeEventListener(SETTINGS_EVENT, again);
     };
   }, [cwd, provider]);
   return state;
@@ -1221,6 +1232,8 @@ export function ToolRowsSwitch() {
   useLocale();
   const [info, setInfo] = useState<ToolModeInfo | null>(null);
   const [err, setErr] = useState("");
+  // Read once on mount: this switch is the only control in the tab that writes the tool mode, and it
+  // takes the route's answer as its new state. A change from another tab shows when Settings reopens.
   useEffect(() => {
     let live = true;
     fetch(`${ROUTE}/tool-mode`)
@@ -1269,6 +1282,8 @@ export function ToolRowsSwitch() {
               ? t("tune.rowsLocked", { reason: info?.rows.reason ?? "" })
               : t("main.settingsUi.toolRowsDesc")}
         </div>
+        {/* Only the outcome is read out: a live description line repeated itself on every open. */}
+        <LiveNote text={err} />
       </div>
       <Switch
         on={info?.mode === "rows"}
@@ -1924,6 +1939,8 @@ export function TerminalSyncSwitch() {
   useLocale();
   const [on, setOn] = useState<boolean | null>(null);
   const [err, setErr] = useState("");
+  // Read once on mount: this switch is the only control in the tab that writes terminal sync, and it
+  // takes the route's answer as its new state. A change from another tab shows when Settings reopens.
   useEffect(() => {
     let live = true;
     fetch(`${ROUTE}/terminal-sync`)
@@ -1969,6 +1986,8 @@ export function TerminalSyncSwitch() {
         <div style={{ color: T.faint, fontSize: 12 }}>
           {err || t("main.settingsUi.terminalDesc")}
         </div>
+        {/* Only the outcome is read out: a live description line repeated itself on every open. */}
+        <LiveNote text={err} />
       </div>
       <Switch
         on={on ?? false}

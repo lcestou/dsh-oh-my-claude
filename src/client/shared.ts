@@ -583,10 +583,16 @@ export const isClaudeSession = (ctx: ClientCtx, id: string): boolean =>
  */
 let gone = false;
 const goneWatchers = new Set<() => void>();
-/** Run `fn` once the context this bundle holds is disposed; immediately if it already is. */
-export const whenContextGone = (fn: () => void): void => {
+/** Run `fn` once the context this bundle holds is disposed; immediately if it already is. Returns
+ *  an unregister: a caller that stops on its own (a turn row dsh unmounted) calls it so the Set
+ *  does not keep `fn` and everything it closes over alive until the bundle retires. Module-level
+ *  callers that register once can ignore it. */
+export const whenContextGone = (fn: () => void): (() => void) => {
   if (gone) fn();
   else goneWatchers.add(fn);
+  return () => {
+    goneWatchers.delete(fn);
+  };
 };
 /** Mark this bundle disposed and run the watchers registered through `whenContextGone` once, so
  *  loops bound to the dead context stop reading it. Exported so `apply` can hang it on dsh's own

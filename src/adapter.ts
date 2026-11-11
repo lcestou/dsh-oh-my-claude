@@ -109,6 +109,7 @@ export {
   mcpToolsByServer,
   NATIVE_TOOL_MAP,
   permissionModeFor,
+  defaultModesFor,
   probeCli,
   renameTitle,
   supports,

@@ -15,6 +15,7 @@ import {
   DOCK_CARD,
 } from "./shared.js";
 import {
+  newestWins,
   pollEvery,
   subscribe,
   type AsideItem,
@@ -163,7 +164,10 @@ export function AsideBubble({
     // no way to get it back"). The card only mounts for the open composer's session and its data is
     // this session's own server-persisted asides, so an unconditional per-session poll is correct.
     let alive = true;
+    // A read sent before an aside was dismissed can answer after the event that dropped it.
+    const order = newestWins();
     const fetchItems = async () => {
+      const fresh = order.ask();
       try {
         // `provider` is the mount the model picker names, so the update card reports the Claude
         // Code that was chosen rather than whichever box this session's turns happen to run on.
@@ -188,11 +192,16 @@ export function AsideBubble({
             }
           | { error: string };
         if ("error" in body) return;
-        if (alive) {
+        // The fields the stream also carries are taken only if no event landed meanwhile;
+        // `claudeUpdate` is the read's alone, so it is always taken.
+        const current = alive && fresh();
+        if (current) {
           const nextNeed = body.loginNeeded ?? null;
           setNeed((cur) => (sameNeed(cur, nextNeed) ? cur : nextNeed));
           // The text alone: a fresh object on every poll would re-render the dock each time.
           setSuggestion(body.suggestion?.text ?? null);
+        }
+        if (alive) {
           // The card names a box's Claude Code, so it belongs to a session that runs on Claude
           // Code; the route answers it for any session it is asked about, and a local-model
           // session drew it too (owner, 2026-09-23). Read here, on every poll, rather than once:
@@ -210,9 +219,9 @@ export function AsideBubble({
         // A fresh array every three seconds re-rendered the dock in every conversation forever,
         // answer or no answer; only a list that actually moved is worth a render.
         const next = body.items ?? [];
-        if (alive && JSON.stringify(next) !== JSON.stringify(itemsRef.current)) setItems(next);
+        if (current && JSON.stringify(next) !== JSON.stringify(itemsRef.current)) setItems(next);
         const nextSteers = body.steers ?? { waiting: [], held: [] };
-        if (alive && JSON.stringify(nextSteers) !== JSON.stringify(steersRef.current))
+        if (current && JSON.stringify(nextSteers) !== JSON.stringify(steersRef.current))
           setSteers(nextSteers);
       } catch {
         // network error: keep the last items on screen
@@ -226,6 +235,7 @@ export function AsideBubble({
     // and every three at rest. Self-scheduling so the rate follows the turn without a restart.
     const offAsides = subscribe("asides", (session, data) => {
       if (session !== sessionId || !alive) return;
+      order.pushed();
       setNeed((cur) => (sameNeed(cur, data.loginNeeded) ? cur : data.loginNeeded));
       setSuggestion(data.suggestion?.text ?? null);
       if (JSON.stringify(data.items) !== JSON.stringify(itemsRef.current)) setItems(data.items);

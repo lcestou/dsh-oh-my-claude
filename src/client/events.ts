@@ -115,6 +115,10 @@ export interface PermissionModeState {
   modes: string[];
   accessMode: string | null;
   ceiling: string;
+  /** The mode a session with no override runs in on each dsh access mode: dsh's mapping by
+   *  default, the pinned mode on every shield when the config pins one. Absent from a server
+   *  older than this client. */
+  defaultModes?: Record<string, string>;
   /** The mode the running process is in; null without a process. Differs from `mode` after a pick
    *  the CLI could not take live, until the next turn respawns. */
   liveMode?: string | null;
@@ -180,6 +184,26 @@ export function streamUp(now = Date.now()): boolean {
  *  rate for a running session (`fast`) or at rest (`slow`). */
 export function pollEvery(running: boolean, fast: number, slow: number): number {
   return streamUp() ? SLOW_MS : running ? fast : slow;
+}
+
+/**
+ * Order between pushed events and a fallback read of the same state. A read sent before the server
+ * moved but answered after the event that says so carries the older state, and applying it put a
+ * dismissed aside back on screen. Call `pushed()` on each event; take `ask()` when a read is sent,
+ * and apply its answer only while the returned check is true, which it stops being once any event
+ * arrives after the read was sent.
+ */
+export function newestWins() {
+  let seq = 0;
+  return {
+    pushed: () => {
+      seq++;
+    },
+    ask: () => {
+      const at = seq;
+      return () => at === seq;
+    },
+  };
 }
 
 /** Route one parsed message to its kind's listeners; exported for the test. */

@@ -12,8 +12,10 @@ import {
   revive,
   parseSkillCosts,
   resumeCommand,
+  retire,
   skillStateFromReply,
   sortSkillCosts,
+  whenContextGone,
 } from "./shared.js";
 
 assert.equal(maskEmail("someone@example.com"), "s******@example.com");
@@ -364,3 +366,19 @@ assert.deepEqual(
 );
 
 console.log("✓ All login mask checks pass");
+
+// A watcher whose owner stopped on its own unregisters, so the bundle's Set does not keep it (and the
+// dsh row it closes over) alive; a watcher still registered runs once on retirement.
+{
+  let kept = 0;
+  let dropped = 0;
+  whenContextGone(() => kept++);
+  const off = whenContextGone(() => dropped++);
+  off();
+  retire();
+  assert.equal(kept, 1, "registered watcher runs");
+  assert.equal(dropped, 0, "unregistered watcher does not");
+  retire();
+  assert.equal(kept, 1, "the Set was cleared");
+  revive();
+}

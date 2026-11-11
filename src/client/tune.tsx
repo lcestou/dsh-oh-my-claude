@@ -24,6 +24,7 @@ import {
 } from "../permissions.js";
 import { SCOPE_LABELS, type SettingsScopeInfo } from "./settings.js";
 import { t, useLocale } from "./i18n.js";
+import { SETTINGS_EVENT } from "./picker.js";
 
 /** What the usage route answers about extra usage. */
 interface UsageReply {
@@ -408,6 +409,7 @@ export function TuneBody({
       // reply as the new state left `text` undefined, every switch drawn from it read as off, and
       // the real value only appeared when another tab remounted the panel and fetched afresh.
       setFile(await read(provider));
+      window.dispatchEvent(new Event(SETTINGS_EVENT));
       return undefined;
     } catch (e) {
       return e instanceof Error ? e.message : String(e);
@@ -914,7 +916,14 @@ export function TuneBody({
                   disabled={busy}
                   placeholder={t("tune.claudeDefault")}
                   aria-label={t(hintKey)}
-                  onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                  // Not while an IME composes: that Enter picks a candidate, not the value. Safari
+                  // sends that Enter with isComposing false and keyCode 229.
+                  onKeyDown={(e) =>
+                    e.key === "Enter" &&
+                    !e.nativeEvent.isComposing &&
+                    e.keyCode !== 229 &&
+                    e.currentTarget.blur()
+                  }
                   onBlur={(e) => {
                     const typed = e.target.value;
                     if (typed !== (settings[key] ?? "")) void write(key, typed);
@@ -1143,7 +1152,15 @@ function PermissionsBlock({
           aria-label={t("tune.rule")}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && draft.trim()) void change("add", kind, draft);
+            // Not while an IME composes: that Enter picks a candidate, not the rule. Safari sends
+            // that Enter with isComposing false and keyCode 229.
+            if (
+              e.key === "Enter" &&
+              !e.nativeEvent.isComposing &&
+              e.keyCode !== 229 &&
+              draft.trim()
+            )
+              void change("add", kind, draft);
           }}
           placeholder="Bash(npm run:*)"
           disabled={busy}
