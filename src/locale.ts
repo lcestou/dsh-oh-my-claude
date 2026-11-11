@@ -13,12 +13,14 @@
  * dsh without it reads as English rather than throwing.
  */
 export interface LocaleSettingsReader {
-  describe?(options?: { redact?: boolean }): readonly { ns?: unknown; value?: unknown }[];
+  /** `redactSecrets` is the name dsh-settings reads; it ignores any other, and then answers
+   *  with every plugin's secret fields in the clear. */
+  describe?(options?: { redactSecrets?: boolean }): readonly { ns?: unknown; value?: unknown }[];
 }
 
 /** The stored language tag, or undefined when dsh has none or offers no read. */
 const preferenceOf = (read: LocaleSettingsReader): string | undefined => {
-  for (const entry of read.describe?.({ redact: true }) ?? []) {
+  for (const entry of read.describe?.({ redactSecrets: true }) ?? []) {
     if (entry.ns !== "locale") continue;
     // SAFETY: the descriptor's value is the entry's live config, which for dsh-client-locale is
     // `{ preference }`; anything else reads as no preference through the optional chain below.
