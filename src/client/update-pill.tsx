@@ -251,6 +251,7 @@ export function PluginUpdateBadge({ onOpen }: { onOpen?: () => void }) {
     // anything, and it sits a few rows below this pill. Re-read when that one flag flips, from
     // this tab or another; HINTS_EVENT fires after the write lands, so the read sees the new value.
     // Not on every hint: `/status` runs the box's CLI probes.
+    /** Reads the switch and asks for a fresh status only when it differs from the last one seen. */
     const onHints = () =>
       void loadHints().then((h) => {
         const now = h.updateCheckOff === true;

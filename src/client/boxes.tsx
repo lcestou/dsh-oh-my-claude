@@ -582,12 +582,14 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
 export function useBoxList() {
   const [boxes, setShown] = useState<BoxData[]>([]);
   const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
   const wrote = useViewRead("boxes", (fresh) => {
     fetch(`${ROUTE}/boxes`)
       .then((r) => readJson<{ boxes?: BoxData[] }>(r))
       .then((b) => {
         if (!fresh()) return;
         setError("");
+        setLoaded(true);
         setShown(b.boxes ?? []);
       })
       .catch((e: Error) => {
@@ -602,13 +604,16 @@ export function useBoxList() {
     },
     [wrote],
   );
-  return { boxes, setBoxes, error };
+  return { boxes, setBoxes, error, loaded };
 }
 
 interface BoxesProps {
   ctx: ClientCtx;
   boxes: BoxData[];
   setBoxes: React.Dispatch<React.SetStateAction<BoxData[]>>;
+  /** False until the saved list has been read once. A save before that would be built on an empty
+   *  list and replace every saved box, so the card refuses it. */
+  loaded: boolean;
   open: boolean;
   onToggle: () => void;
 }
@@ -930,7 +935,7 @@ export function LoginSteps({
 }
 
 /** The Boxes card: this box first, then any added machines, each probed and addable from here. */
-export function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
+export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle }: BoxesProps) {
   useLocale();
   const [probe, setProbe] = useState<Record<string, ProbeEntry>>({});
   const [self, setSelf] = useState<{ plugin?: string } | null>(null);
@@ -1082,6 +1087,10 @@ export function Boxes({ ctx, boxes, setBoxes, open, onToggle }: BoxesProps) {
   useEffect(refresh, [boxes.map((b) => b.url).join("|"), ssh.map((b) => b.host).join("|")]);
 
   const saveDsh = (next: BoxData[]) => {
+    if (!loaded) {
+      setError(t("main.boxes.notRead"));
+      return Promise.resolve();
+    }
     setBusy(true);
     setError("");
     return fetch(`${ROUTE}/boxes`, {

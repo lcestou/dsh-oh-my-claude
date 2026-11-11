@@ -108,6 +108,8 @@ export const en = {
   // Boxes card
   "main.boxes.title": "Boxes",
   "main.boxes.noneSaved": "none saved",
+  "main.boxes.notRead":
+    "The saved box list could not be read, so nothing was saved. Reload the tab and try again.",
   "main.boxes.reachable": "{n} reachable",
   "main.boxes.summary": "{total} saved · {status}",
   "main.boxes.cardSummary":
@@ -714,6 +716,7 @@ export const zh = {
   "main.login.submit": "提交",
   "main.boxes.title": "主机",
   "main.boxes.noneSaved": "未保存",
+  "main.boxes.notRead": "未能读取已保存的主机列表，因此没有保存。请刷新页面后重试。",
   "main.boxes.reachable": "{n} 个可连接",
   "main.boxes.summary": "已保存 {total} 个 · {status}",
   "main.boxes.cardSummary":

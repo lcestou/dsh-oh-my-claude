@@ -1029,8 +1029,8 @@ export function watchTurnStatus(ctx: ClientCtx) {
   };
   window.addEventListener(SETTINGS_EVENT, dropSpinner);
   whenContextGone(() => window.removeEventListener(SETTINGS_EVENT, dropSpinner));
-  // A write from another tab, another device or the CLI is not pushed, so the read is also dropped
-  // when this tab comes back into view.
+  /** A write from another tab, another device or the CLI is not pushed, so the read is also
+   *  dropped when this tab comes back into view. */
   const dropOnReturn = () => {
     if (document.visibilityState === "visible") dropSpinner();
   };

@@ -255,6 +255,11 @@ export function StarterCard({
       body: JSON.stringify({ session: sessionId, text }),
     })
       .then((r) => {
+        // A read sent while the save was out may have answered with the opener from before it.
+        if (r.ok) {
+          wrote();
+          setStarter({ session: text, fallback: text });
+        }
         setNote(r.ok ? t("main.starter.saved") : t("main.starter.saveFailed"));
       })
       .catch(() => {

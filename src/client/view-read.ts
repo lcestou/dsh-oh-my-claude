@@ -18,10 +18,12 @@ export function useViewRead(key: string, read: (fresh: () => boolean) => void): 
   latest.current = read;
   useEffect(() => {
     let live = true;
+    /** One read, handed a check that goes false on unmount or once the row wrote after it. */
     const run = () => {
       const asked = order.ask();
       latest.current(() => live && asked());
     };
+    /** Reads again when the tab is shown, not when it is hidden. */
     const onVisible = () => {
       if (document.visibilityState === "visible") run();
     };
