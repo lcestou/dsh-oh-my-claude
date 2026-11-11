@@ -329,6 +329,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         realHome: adapter.realClaudeHome,
         command: adapter.config.command,
         boxFor: usageBoxFor,
+        /** Whether that provider's box, or the default one, sends its traffic to a router. An
+         *  unknown route (an ssh box, a cloud provider flag) counts as not routed. */
         routed: (providerId) =>
           ((providerId && g[ADAPTER_CURRENT]?.get(providerId)) || adapter)
             .route()
