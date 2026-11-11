@@ -421,6 +421,12 @@ assert.deepEqual(
   ),
   { loggedIn: true, authMethod: "claude.ai", email: "a@b", projectsDirectory: "/p" },
 );
+// CLI 2.1.318 names the day the stored sign-in ends; a date that does not parse is left out.
+assert.equal(
+  authFromStatus('{"loggedIn":true,"loginExpiresAt":"2026-12-09T21:08:22.003Z"}').loginEndsAt,
+  Date.parse("2026-12-09T21:08:22.003Z"),
+);
+assert.equal(authFromStatus('{"loggedIn":true,"loginExpiresAt":"soon"}').loginEndsAt, undefined);
 assert.equal(authFromStatus('{"loggedIn":false}').loggedIn, false);
 assert.equal(authFromStatus("Not logged in").loggedIn, false);
 assert.equal(authFromStatus("Logged in as x").loggedIn, true);

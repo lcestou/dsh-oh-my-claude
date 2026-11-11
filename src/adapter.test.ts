@@ -5377,6 +5377,19 @@ console.log("keeper-mode ok");
   await wait(400);
   assert.equal(killed, 2, "the longer deadline still kills");
   assert.equal(proc.idleKilledAfterMs, 200, "the kill records the deadline it used");
+  // An approval, a question or a plan review left open: the silence is the person's, not the
+  // CLI's. Stepping away past the deadline used to kill Claude with the dialog; it waits now, with
+  // no countdown row, and the watchdog is back once the dialog is answered.
+  idleAdapter.awaitingInput.set("s4", { kind: "approval", id: "r1", since: Date.now() });
+  injected.length = 0;
+  idleAdapter.armIdle("s4", proc, true, 200);
+  await wait(500);
+  assert.equal(killed, 2, "nothing is killed while a dialog waits for an answer");
+  assert.deepEqual(injected, [], "and no idle warning is drawn over it");
+  assert.ok((idleAdapter.idleDeadlineMap.get("s4") ?? 0) > Date.now(), "the watchdog stays armed");
+  idleAdapter.awaitingInput.delete("s4");
+  await wait(400);
+  assert.equal(killed, 3, "answered, a silent process is killed as before");
   console.log("idle-watchdog ok");
 }
 

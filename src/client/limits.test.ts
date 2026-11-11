@@ -1,7 +1,7 @@
 // Offline self-check: bun src/client/limits.test.ts.
 import assert from "node:assert/strict";
 
-import { bindsModel, limitFor, worstLimit } from "./limits.js";
+import { bindsModel, limitFor, loginEndSoon, worstLimit } from "./limits.js";
 
 const fable = {
   label: "Fable weekly",
@@ -57,6 +57,16 @@ assert.equal(
   assert.equal(limitFor({ ok: true, windows, routed: true }, "claude-opus-5"), undefined);
   assert.equal(limitFor({ ok: true, windows, routed: true }, "claude-fable-5-1"), undefined);
   assert.equal(limitFor({ ok: false }, "claude-opus-5"), undefined);
+}
+
+// A login's end date is said only when it is close: two weeks out or already past.
+{
+  const now = Date.parse("2026-11-11T12:00:00Z");
+  const day = 86_400_000;
+  assert.equal(loginEndSoon(now + 28 * day, now), undefined, "four weeks out: nothing");
+  assert.equal(loginEndSoon(now + 14 * day, now), now + 14 * day, "two weeks out: shown");
+  assert.equal(loginEndSoon(now - day, now), now - day, "already ended: shown");
+  assert.equal(loginEndSoon(undefined, now), undefined, "the CLI gave no date");
 }
 
 console.log("limits ok");

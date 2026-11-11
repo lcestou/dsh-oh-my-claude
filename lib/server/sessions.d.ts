@@ -283,6 +283,9 @@ export interface AuthStatus {
     authMethod: string | null;
     email?: string | null;
     projectsDirectory?: string | null;
+    /** When the stored claude.ai sign-in ends, in epoch ms (`loginExpiresAt`, CLI 2.1.318). Absent
+     *  on an older CLI, an API-key login, or a date that does not parse. */
+    loginEndsAt?: number;
 }
 /** The login half of `claude auth status` output, tolerant of an older CLI printing prose. */
 export declare function authFromStatus(text: string): AuthStatus;
@@ -291,6 +294,8 @@ export interface AccountIdentity {
     host: string;
     email: string | null;
     loggedIn: boolean;
+    /** When this login ends, when the CLI says (`AuthStatus.loginEndsAt`). */
+    loginEndsAt?: number;
 }
 /** A panel login or logout changed who a box is: the next ask reads the CLI again. */
 export declare function forgetIdentity(): void;

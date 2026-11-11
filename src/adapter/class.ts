@@ -5197,7 +5197,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /**
    * Arm the idle watchdog for a stream: `proc` is killed after `timeoutMs` of silence, which
-   * defaults to the configured one. Every event re-arms. Shortly before the kill (60 s, or half the
+   * defaults to the configured one. Every event re-arms. Not while an approval, a question or a
+   * plan review is open for the session (`awaitingInput`, keyed like the main stream): that
+   * silence is the person's, and stepping away for an hour killed Claude along with the dialog. Shortly before the kill (60 s, or half the
    * timeout when it is under 120 s) a warning event is queued on the process so the turn loop draws
    * a countdown row; `warn: false` skips that for the aux stream, whose loop has no reasoning lane.
    */
@@ -5211,6 +5213,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.idleKillTimers.set(
       key,
       setTimeout(() => {
+        // A dialog is waiting on a person: the CLI is silent because it was asked to wait.
+        // Another full timeout, and so on until the dialog is answered or the turn is stopped.
+        if (this.awaitingInput.has(key)) return this.armIdle(key, proc, warn, timeoutMs);
         this.idleDeadlineMap.set(key, null);
         this.publishIdle(key);
         proc.idleKilled = true;
@@ -5222,6 +5227,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.idleWarnTimers.set(
       key,
       setTimeout(() => {
+        if (this.awaitingInput.has(key)) return; // no countdown over a dialog that is not timed
         proc.inject({
           type: "idle_warning",
           silentSeconds: Math.round((timeoutMs - warnMs) / 1000),

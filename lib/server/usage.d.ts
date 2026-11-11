@@ -36,6 +36,8 @@ export type UsageReply = {
     credits?: UsageCredits;
     host?: string;
     email?: string | null;
+    /** When the login these windows belong to ends, epoch ms, when the CLI reports it. */
+    loginEndsAt?: number;
     /** The box's Claude Code talks to a router, not to Anthropic: the windows are still the
      *  login's, but the session's turns do not spend them, so the client warns about none. */
     routed?: true;
@@ -140,6 +142,7 @@ export declare function parseBreakdownCache(text: string): Record<string, {
 export declare function registerUsageRoute(ctx: PluginContext, log: (level: string, msg: string) => void, identity: (home?: string, sshHost?: string) => Promise<{
     host: string;
     email: string | null;
+    loginEndsAt?: number;
 }>, options?: {
     home?: string;
     /** The account's real config dir for the default box: /usage reads its transcripts, not the mirror. */
