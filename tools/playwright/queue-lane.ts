@@ -4,8 +4,10 @@
 //   1. types `/<skill> …`, which the command bridge queues; edits that row in dsh's queue dock into
 //      plain text and expects it to leave the dock and show on the plugin's steer card;
 //   2. edits that steer on the card into `/<skill> …` and expects it back in the queue dock.
-// Costs one short Claude turn. Point PLAYWRIGHT_ROOT at any project with Playwright installed; arg 1
-// is the dsh launch token. Run it against a scratch dsh: it opens a session and leaves it behind.
+// The queue dock and the composer are dsh's own, so this check selects them by dsh's hooks and
+// labels (both languages); nothing of the plugin's stands in for them. Costs one short Claude turn.
+// Point PLAYWRIGHT_ROOT at any project with Playwright installed; arg 1 is the dsh launch token.
+// Run it against a scratch dsh: it opens a session and leaves it behind.
 import { dshUrl, launch } from "./pw.js";
 
 const token = process.argv[2];

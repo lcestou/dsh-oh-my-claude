@@ -209,7 +209,7 @@ for (const text of ["look at the readme too", "/nosuch thing", "/btw what is thi
 // idle wording otherwise.
 assert.equal(
   lineReceipt("/unslop x", "running", "sent"),
-  "/unslop x is queued for Claude Code and goes when this turn ends",
+  "/unslop x added to the queue, for when this turn ends",
 );
 assert.equal(lineReceipt("/unslop x", "idle", "sent"), "sent");
 assert.equal(lineReceipt("/unslop x", undefined, "sent"), "sent");

@@ -67,7 +67,9 @@ export function busyEnterOf(read: LocaleSettingsReader | undefined): "queue" | "
 }
 
 /** What a bridged command's handler tells the person who typed it. The handler only queues the
- *  line, so while a turn runs the receipt says queued: "sent" stayed in the chat after the row was
- *  edited or removed from the queue, for a line Claude never got. `sent` is the idle wording. */
+ *  line, so while a turn runs the receipt says it was added to the queue: "sent" stayed in the chat
+ *  after the row was edited or removed, for a line Claude never got. dsh writes the receipt once
+ *  and it cannot be changed later, so it states what happened then and promises nothing about the
+ *  row. `status` is the agent's from before the line was queued; `sent` is the idle wording. */
 export const lineReceipt = (line: string, status: string | undefined, sent: string): string =>
   status === "running" ? serverText("bridgeQueued", { line }) : sent;

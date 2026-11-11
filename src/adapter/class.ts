@@ -1800,6 +1800,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
                     return { kind: "error", text: serverText("compactNoArgs") };
                   if (this.notClaude(target, "compact") === undefined) {
                     this.compactQueued.add(target.id);
+                    // Before the line is queued: an idle session's turn starts inside `followup`.
+                    const status = target.status;
+                    // Not remembered in `commandRows`: `compactQueued` already expects this row
+                    // to run as `/compact`, so an edit into plain text leaves it in the queue.
                     target.followup(
                       createUserMessage({
                         content: [{ type: "text", text: "/compact" }],
@@ -1808,7 +1812,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
                     );
                     return {
                       kind: "success",
-                      text: lineReceipt("/compact", target.status, serverText("compactSent")),
+                      text: lineReceipt("/compact", status, serverText("compactSent")),
                     };
                   }
                   const compaction = child.get("compaction");
@@ -1942,10 +1946,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
               content: [{ type: "text", text: line }, ...attachments],
               source: { kind: "user" },
             });
+            // Read before the line is queued: on an idle session `followup` starts the turn at
+            // once, and the receipt would call a line that is already running queued.
+            const status = target.status;
             target.followup(queued);
             // Remembered so an edit that turns the row into plain text can steer it.
             this.commandRows.add(queued.id);
-            const receipt = lineReceipt(line, target.status, `${line} sent to Claude Code`);
+            const receipt = lineReceipt(line, status, `${line} sent to Claude Code`);
             return {
               kind: "success",
               text: renamed ? `${receipt}; dsh session renamed to ${title}` : receipt,
@@ -2396,8 +2403,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * to end: with dsh's busy-Enter preference on steer, where plain text typed mid-turn steers, the
    * row is taken out of the queue and steered, which is what the dock's own Steer button does.
    * With the preference on queue, or unreadable, the row stays. Runs after dsh's own splice has
-   * returned, since moving the row inside its event would re-enter the inbox. Never throws: a
-   * failure leaves the row queued, where it was.
+   * returned, since moving the row inside its event would re-enter the inbox. A failure while
+   * moving it is logged and leaves the row queued, where it was.
    */
   private editedInQueue(sessionId: string, inserted: readonly LooseMessage[]): void {
     for (const m of inserted) {

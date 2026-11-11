@@ -589,8 +589,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * to end: with dsh's busy-Enter preference on steer, where plain text typed mid-turn steers, the
      * row is taken out of the queue and steered, which is what the dock's own Steer button does.
      * With the preference on queue, or unreadable, the row stays. Runs after dsh's own splice has
-     * returned, since moving the row inside its event would re-enter the inbox. Never throws: a
-     * failure leaves the row queued, where it was.
+     * returned, since moving the row inside its event would re-enter the inbox. A failure while
+     * moving it is logged and leaves the row queued, where it was.
      */
     private editedInQueue;
     /**

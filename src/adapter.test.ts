@@ -4860,8 +4860,22 @@ console.log("approval outcomes ok");
     attachments: [],
     signal: new AbortController().signal,
   });
-  assert.equal(midTurn.text, "/compact is queued for Claude Code and goes when this turn ends");
+  assert.equal(midTurn.text, "/compact added to the queue, for when this turn ends");
   sent.pop();
+  // On an idle session `followup` starts the turn at once: the receipt reads the status from
+  // before it, so a line that is already running is not called queued.
+  const waking = { ...agent, status: "idle" };
+  waking.followup = () => {
+    waking.status = "running";
+    return 0;
+  };
+  const woke = await handler({
+    agent: waking,
+    rawInput: "",
+    attachments: [],
+    signal: new AbortController().signal,
+  });
+  assert.equal(woke.text, "/compact sent to Claude Code");
   const refused = await handler({
     agent,
     rawInput: " now",
