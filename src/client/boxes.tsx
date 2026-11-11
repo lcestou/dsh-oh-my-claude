@@ -6,7 +6,7 @@ import { BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT, SETTINGS_EVENT } from
 import { SCOPE_LABELS, SETTINGS_SCOPES, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
 import { LiveNote } from "./live-note.js";
-import { newestWins } from "./events.js";
+import { useViewRead } from "./view-read.js";
 import { ConfirmButton } from "./tune.js";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -582,36 +582,26 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
 export function useBoxList() {
   const [boxes, setShown] = useState<BoxData[]>([]);
   const [error, setError] = useState("");
-  const [order] = useState(newestWins);
+  const wrote = useViewRead("boxes", (fresh) => {
+    fetch(`${ROUTE}/boxes`)
+      .then((r) => readJson<{ boxes?: BoxData[] }>(r))
+      .then((b) => {
+        if (!fresh()) return;
+        setError("");
+        setShown(b.boxes ?? []);
+      })
+      .catch((e: Error) => {
+        if (fresh()) setError(e.message);
+      });
+  });
   /** The card's setter: a saved list counts as newer than any read already in flight. */
   const setBoxes = useCallback(
     (next: React.SetStateAction<BoxData[]>) => {
-      order.pushed();
+      wrote();
       setShown(next);
     },
-    [order],
+    [wrote],
   );
-  useEffect(() => {
-    const load = () => {
-      const fresh = order.ask();
-      return fetch(`${ROUTE}/boxes`)
-        .then((r) => readJson<{ boxes?: BoxData[] }>(r))
-        .then((b) => {
-          if (!fresh()) return;
-          setError("");
-          setShown(b.boxes ?? []);
-        })
-        .catch((e: Error) => {
-          if (fresh()) setError(e.message);
-        });
-    };
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void load();
-    };
-    void load();
-    document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [order]);
   return { boxes, setBoxes, error };
 }
 

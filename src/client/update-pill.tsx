@@ -226,6 +226,11 @@ const loadStatus = (): Promise<PillStatus> => {
   return p;
 };
 
+/** The Update notice switch as the pill last saw it. Kept across mounts, beside the shared status
+ *  answer it decides: a flip made from another tab while Settings was closed here is then seen on
+ *  the next open, and the shared answer from before the flip is not shown. */
+let switchOff: boolean | undefined;
+
 /** The pill beside the Settings heading, or nothing while the plugin is current. `onOpen` runs
  *  after the pill opened the Plugins page: Settings passes its own close. */
 export function PluginUpdateBadge({ onOpen }: { onOpen?: () => void }) {
@@ -246,12 +251,11 @@ export function PluginUpdateBadge({ onOpen }: { onOpen?: () => void }) {
     // anything, and it sits a few rows below this pill. Re-read when that one flag flips, from
     // this tab or another; HINTS_EVENT fires after the write lands, so the read sees the new value.
     // Not on every hint: `/status` runs the box's CLI probes.
-    let off: boolean | undefined;
     const onHints = () =>
       void loadHints().then((h) => {
         const now = h.updateCheckOff === true;
-        if (off !== undefined && now !== off) load(true);
-        off = now;
+        if (switchOff !== undefined && now !== switchOff) load(true);
+        switchOff = now;
       });
     onHints();
     window.addEventListener(HINTS_EVENT, onHints);

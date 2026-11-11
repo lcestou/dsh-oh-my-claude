@@ -34,6 +34,7 @@ import { ClaudeUpdateDetails } from "./claude-updates.js";
 import { COMPACT_AT, COMPACT_AT_CHOICES, compactThreshold } from "./nudge.js";
 import { BOXES_EVENT, SETTINGS_EVENT } from "./picker.js";
 import { LiveNote } from "./live-note.js";
+import { useViewRead } from "./view-read.js";
 import { CustomModelsEditor, type CustomModelEntry, putCustomModels } from "./custom-models.js";
 import { SizeSelect } from "./model-size.js";
 import { type BoxRoute, RouteLine, routeNote } from "./route-line.js";
@@ -231,25 +232,21 @@ export function StarterCard({
   const [starter, setStarter] = useState<StarterReply | null>(null);
   const [note, setNote] = useState("");
 
-  // Read once per session: this card is the only control in the tab that writes the starter, and it
-  // updates its own state on save. A save from a second tab on the same session is not pushed and
-  // shows here when the card remounts.
-  useEffect(() => {
-    let live = true;
+  // Nothing pushes the starter, so it is read again when the tab comes back into view: a save from
+  // a second tab on the same session shows then.
+  const wrote = useViewRead(sessionId, (fresh) => {
     fetch(`${ROUTE}/starter?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<StarterReply>(r))
       .then((b) => {
-        if (live) setStarter(b);
+        if (fresh()) setStarter(b);
       })
       .catch(() => {}); // no store yet: the card simply does not appear
-    return () => {
-      live = false;
-    };
-  }, [sessionId]);
+  });
 
   // The card says what the store did, not what the click did: a save that never reached the route
   // has to say so, or the opener is quietly gone by the next tab.
   const save = (text: string) => {
+    wrote();
     setStarter({ session: text, fallback: text });
     setNote(t("main.settings.saving"));
     void fetch(`${ROUTE}/starter`, {
@@ -1232,31 +1229,27 @@ export function ToolRowsSwitch() {
   useLocale();
   const [info, setInfo] = useState<ToolModeInfo | null>(null);
   const [err, setErr] = useState("");
-  // Read once on mount: this switch is the only control in the tab that writes the tool mode, and it
-  // takes the route's answer as its new state. A change from another tab shows when Settings reopens.
-  useEffect(() => {
-    let live = true;
+  // Nothing pushes the tool mode, so it is read again when the tab comes back into view: a flip
+  // from another tab or device shows then.
+  const wrote = useViewRead("tool-mode", (fresh) => {
     fetch(`${ROUTE}/tool-mode`)
       .then((r) => readJson<ToolModeInfo>(r))
-      .then((b) => live && setInfo(b))
-      .catch(() => live && setErr(t("tune.errToolMode")));
-    return () => {
-      live = false;
-    };
-  }, []);
+      .then((b) => fresh() && setInfo(b))
+      .catch(() => fresh() && setErr(t("tune.errToolMode")));
+  });
   const locked = info?.rows.ok === false;
   const pick = async (mode: ToolMode) => {
     setErr("");
     try {
-      setInfo(
-        await readJson<ToolModeInfo>(
-          await fetch(`${ROUTE}/tool-mode`, {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ mode }),
-          }),
-        ),
+      const answer = await readJson<ToolModeInfo>(
+        await fetch(`${ROUTE}/tool-mode`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ mode }),
+        }),
       );
+      wrote();
+      setInfo(answer);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -1939,18 +1932,14 @@ export function TerminalSyncSwitch() {
   useLocale();
   const [on, setOn] = useState<boolean | null>(null);
   const [err, setErr] = useState("");
-  // Read once on mount: this switch is the only control in the tab that writes terminal sync, and it
-  // takes the route's answer as its new state. A change from another tab shows when Settings reopens.
-  useEffect(() => {
-    let live = true;
+  // Nothing pushes terminal sync, so it is read again when the tab comes back into view: a flip
+  // from another tab or device shows then.
+  const wrote = useViewRead("terminal-sync", (fresh) => {
     fetch(`${ROUTE}/terminal-sync`)
       .then((r) => readJson<{ enabled: boolean }>(r))
-      .then((b) => live && setOn(b.enabled))
-      .catch(() => live && setErr(t("main.settingsUi.terminalReadErr")));
-    return () => {
-      live = false;
-    };
-  }, []);
+      .then((b) => fresh() && setOn(b.enabled))
+      .catch(() => fresh() && setErr(t("main.settingsUi.terminalReadErr")));
+  });
   const toggle = async (next: boolean) => {
     setErr("");
     try {
@@ -1961,6 +1950,7 @@ export function TerminalSyncSwitch() {
           body: JSON.stringify({ enabled: next }),
         }),
       );
+      wrote();
       setOn(b.enabled);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

@@ -1029,6 +1029,13 @@ export function watchTurnStatus(ctx: ClientCtx) {
   };
   window.addEventListener(SETTINGS_EVENT, dropSpinner);
   whenContextGone(() => window.removeEventListener(SETTINGS_EVENT, dropSpinner));
+  // A write from another tab, another device or the CLI is not pushed, so the read is also dropped
+  // when this tab comes back into view.
+  const dropOnReturn = () => {
+    if (document.visibilityState === "visible") dropSpinner();
+  };
+  document.addEventListener("visibilitychange", dropOnReturn);
+  whenContextGone(() => document.removeEventListener("visibilitychange", dropOnReturn));
   /** The newest process group on the page, read once per scan pass rather than once per
    *  candidate: a streaming turn dirties the page many times a frame, and each candidate group
    *  asking for itself made the scan quadratic in the length of the conversation. */

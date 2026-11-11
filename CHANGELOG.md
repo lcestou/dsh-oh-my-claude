@@ -45,6 +45,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - Changing the scope in the settings.json editor twice in quick succession can no longer show the previous scope's file under the new scope.
 - A dismissed or answered aside no longer comes back for up to half a minute when a background check lands just after it closed, and an approval prompt can no longer raise a second desktop notification the same way.
 - In plan mode Claude could run dsh's shell, start subagents and use dsh's other tools that change things, without being asked, although plan mode promises nothing changes. Those calls are now refused and Claude is told to finish the plan and leave plan mode first. Tools that only read, such as listing jobs or reading a session's replies, still work in plan mode.
+- The Native tool rows and Terminal sync switches and the session starter in Settings show a change made in another tab or on another device once you come back to the tab, without reopening Settings. Spinner verbs edited outside the tab are picked up the same way, and the update pill no longer shows an offer from before the Update notice switch was flipped in another tab.
 
 ## [1.6.1] - 2026-11-09
 
