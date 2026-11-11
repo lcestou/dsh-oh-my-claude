@@ -6754,7 +6754,7 @@ console.log("interrupt-on-abort ok");
   // The listing follows where the mount's traffic goes. The route is read from the mount's own
   // settings.json, which outranks whatever this test process has exported, so both cases below
   // hold on a box with a proxy in its environment.
-  const home = await mkdtemp(joinPath(tmpdir(), "omc-route-home-"));
+  const home = tempDir("omc-route-home-");
   try {
     const settings = joinPath(home, "settings.json");
     const mount = (providerId: string) => {
