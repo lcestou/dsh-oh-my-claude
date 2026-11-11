@@ -1,4 +1,4 @@
-// Plan-mode gate for the MCP bridge. Every bridged tool carries `readOnlyHint: true` so Claude Code
+// Plan-mode gate for the MCP bridge. The dsh tools it relays carry `readOnlyHint: true` so Claude Code
 // runs parallel calls side by side, and Claude Code's plan mode runs a read-only-hinted MCP tool
 // without asking (probed on CLI 2.1.322). Without this gate a session in plan mode could run dsh's
 // shell or start subagents while Claude is meant to be only planning. The bridge asks `planRefuses`
@@ -27,6 +27,8 @@ export const PLAN_REFUSAL =
  * - `todo_write`, `present`, `create_goal`, `update_goal`: change dsh's session state; Claude's
  *   own TodoWrite covers a to-do list while planning.
  * - `interrupt_agent`, `send_message`, `job_kill`: act on running work.
+ * - `load_workspace_dependencies`: reads where a runtime is, but can also install one under dsh's
+ *   home when dsh is configured with a root for it.
  */
 export const PLAN_SAFE_TOOLS: ReadonlySet<string> = new Set([
   "ask_user_question",
@@ -40,7 +42,6 @@ export const PLAN_SAFE_TOOLS: ReadonlySet<string> = new Set([
   "list_mcp_resource_templates",
   "list_mcp_resources",
   "list_subagent_models",
-  "load_workspace_dependencies",
   "read_image",
   "read_mcp_resource",
   "schedule_list",

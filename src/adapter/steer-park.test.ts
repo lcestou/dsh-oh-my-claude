@@ -86,12 +86,14 @@ async function step(queue: unknown[]) {
   return { left: queue.length, parked: proc.parked };
 }
 
+/** An assistant `tool_use` block as the CLI streams it, with empty input. */
 const call = (id: string, name: string) => ({
   type: "tool_use",
   id,
   name,
   input: {},
 });
+/** The user frame carrying the result for call `id`; `parent` set marks a subagent's inner result. */
 const result = (id: string, parent: string | null = null) => ({
   type: "user",
   parent_tool_use_id: parent,
