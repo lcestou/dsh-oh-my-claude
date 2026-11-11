@@ -68,6 +68,9 @@ export type UsageReply =
       credits?: UsageCredits;
       host?: string;
       email?: string | null;
+      /** The box's Claude Code talks to a router, not to Anthropic: the windows are still the
+       *  login's, but the session's turns do not spend them, so the client warns about none. */
+      routed?: true;
     }
   | {
       ok: false;
@@ -476,6 +479,10 @@ export function registerUsageRoute(
     boxFor?: (
       providerId: string,
     ) => { home: string; sshHost?: string; realHome?: string; command?: string } | undefined;
+    /** Whether a provider's box sends its traffic to a router; no id asks about the default box.
+     *  Asked on every request and never cached with the windows, since routing is switched on
+     *  and off under a login whose usage stays the same. */
+    routed?: (providerId?: string) => Promise<boolean>;
   },
 ) {
   const defaultHome = options?.home;
@@ -619,11 +626,15 @@ export function registerUsageRoute(
                 return send(200, { ...reply, ...who });
               }
               // The usage belongs to that box's login; say so, the browser hops between boxes.
-              const [reply, who] = await Promise.all([
+              const [reply, who, routed] = await Promise.all([
                 read(force, realHome, box.sshHost),
                 identity(box.home, box.sshHost),
+                options?.routed?.(provider ?? undefined).catch(() => false) ?? false,
               ]);
-              return send(200, { ...reply, ...who });
+              return send(
+                200,
+                reply.ok && routed ? { ...reply, ...who, routed: true } : { ...reply, ...who },
+              );
             } catch (e) {
               log("warn", `usage route failed: ${errorText(e)}`);
               return send(500, { error: errorText(e) });

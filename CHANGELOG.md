@@ -14,6 +14,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- The spark button beside the composer no longer shows an orange dot on a new session whose workspace has Claude transcripts to restore. It looked like an unread-message mark, and it came back in every new session for the same transcripts. The panel still opens on Restore there. Thanks to @chopstick1009 (#264).
 - The limit that resets every five hours is called the "5-hour limit" where a turn reports hitting it, the name Claude Code has used since 2.1.312. It read "session limit".
 
 ### Fixed
@@ -45,6 +46,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - Changing the scope in the settings.json editor twice in quick succession can no longer show the previous scope's file under the new scope.
 - A dismissed or answered aside no longer comes back for up to half a minute when a background check lands just after it closed, and an approval prompt can no longer raise a second desktop notification the same way.
 - In plan mode Claude could run dsh's shell, start subagents and use dsh's other tools that change things, without being asked, although plan mode promises nothing changes. Those calls are now refused and Claude is told to finish the plan and leave plan mode first. Tools that only read, such as listing jobs or reading a session's replies, still work in plan mode.
+- While a router such as CC Switch is switched on, the context ring no longer turns amber or red and no limit notice shows above the composer for a plan limit that is close or reached. Routed turns do not spend the plan, and the warning named a Claude model the session was not using. The plan windows still show when you open the ring.
 - The Native tool rows and Terminal sync switches in Settings, and the starter above a new session's composer, show a change made in another tab or on another device once you come back to the tab. Spinner verbs edited outside the tab are picked up the same way, and the update pill no longer shows an offer from before the Update notice switch was flipped in another tab.
 - Adding a dsh box in Settings while the saved box list could not be read no longer replaces every saved box with the new one. The card says the list was not read and saves nothing.
 

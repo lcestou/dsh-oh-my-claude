@@ -14,7 +14,7 @@ import {
   maskEmail,
   type ClientCtx,
 } from "./shared.js";
-import { type LimitLevel, worstLimit } from "./limits.js";
+import { type LimitLevel, limitFor } from "./limits.js";
 import { paceOf, WINDOW_MS } from "./pace.js";
 import { sparkNode } from "./spark.js";
 import { HINTS_EVENT, loadHints } from "./hints.js";
@@ -53,6 +53,8 @@ export type UsageReply =
       credits?: UsageCredits;
       host?: string;
       email?: string | null;
+      /** The box's Claude Code talks to a router: its turns do not spend these windows. */
+      routed?: true;
     }
   | { ok: false; error: string; windows?: undefined; host?: string; email?: string | null };
 /** "m*****@example.com on <host>" or whichever half is known; the usage is this box's login. */
@@ -652,10 +654,7 @@ export function watchContextMeter(ctx: ClientCtx) {
       void Promise.all([loadHints(), loadUsage(activeClaudeProvider(ctx))]).then(
         ([hints, usage]) => {
           const off = hints.limitWarningsOff === true || hints.limitRingOff === true;
-          ringLevel =
-            off || !usage.ok
-              ? undefined
-              : worstLimit(usage.windows, sessionModelOf(ctx, sid))?.level;
+          ringLevel = off ? undefined : limitFor(usage, sessionModelOf(ctx, sid))?.level;
           paintRing();
         },
       );

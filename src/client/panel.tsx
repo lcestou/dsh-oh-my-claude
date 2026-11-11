@@ -56,16 +56,16 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   const panelRef = useRef<HTMLDivElement>(null);
   const narrow = useNarrow();
   const [tab, setTab] = useState(lastTab);
-  // A blank session with transcripts to restore: the panel opens on Restore, the disc carries a
-  // dot until the panel has been opened once here, and the very first time on this box the disc
-  // pulses a few times. The dot and the default tab need no memory; the pulse is remembered on
-  // the box through the hints store, so it fires once and never again after an update.
+  // A blank session with transcripts to restore: the panel opens on Restore, and the very first
+  // time on this box the disc pulses a few times. The default tab needs no memory; the pulse is
+  // remembered on the box through the hints store, so it fires once and never again after an
+  // update. The disc carried a dot here until #264 (@chopstick1009): it read as an unread-message
+  // mark on what is a feature menu, and it came back in every new session for the same transcripts.
   const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
   const transcripts = useTranscripts(entry?.blank === false ? undefined : entry?.cwd);
   const restorable = (transcripts ?? []).filter((s) => !isOwnedActive(s)).length;
   // Still on its way for this workspace: the open-click treats that as restorable, see panelOpenTab.
   const transcriptsUnknown = transcripts === undefined;
-  const [seenRestore, setSeenRestore] = useState(false);
   const [pulse, setPulse] = useState(false);
   // A first-run pointer at the spark, for a box that has never used the plugin. The box counts as
   // used once either hint is set, so nobody upgrading sees it: the restore pulse has fired on every
@@ -171,7 +171,6 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   const openFrom = useRef<(detail: OpenPanelDetail) => void>(() => {});
   openFrom.current = (detail) => {
     if (!isMine) return;
-    setSeenRestore(true);
     dropTip();
     setTab(detail.tab);
     setRewindLatest(detail.rewindLatest === true);
@@ -310,7 +309,6 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               close();
               return;
             }
-            setSeenRestore(true);
             dropTip();
             setTab(panelOpenTab({ blank, restorable, unknown: transcriptsUnknown, lastTab }));
             const host = rootRef.current?.closest<HTMLElement>("[data-composer-card]") ?? null;
@@ -321,22 +319,6 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
           }}
         >
           <Spark size={15} color="currentColor" />
-          {blank && restorable > 0 && !seenRestore && !open && (
-            <span
-              data-omc-restore-badge=""
-              aria-hidden="true"
-              style={{
-                position: "absolute",
-                top: 2,
-                right: 2,
-                width: 7,
-                height: 7,
-                borderRadius: 999,
-                background: PANEL_ACCENT,
-                boxShadow: "0 0 0 2px var(--dsw-specific-input-major, #fff)",
-              }}
-            />
-          )}
         </button>
       </Tooltip>
       {tip && !open && (

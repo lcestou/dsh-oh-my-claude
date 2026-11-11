@@ -1,7 +1,7 @@
 // Offline self-check: bun src/client/limits.test.ts.
 import assert from "node:assert/strict";
 
-import { bindsModel, worstLimit } from "./limits.js";
+import { bindsModel, limitFor, worstLimit } from "./limits.js";
 
 const fable = {
   label: "Fable weekly",
@@ -47,6 +47,16 @@ assert.equal(
   const late = { ...weekly, severity: "critical", resetsAt: 99 };
   assert.equal(worstLimit([soon, late], "claude-opus-5")?.window, late);
   assert.equal(worstLimit([late, soon], "claude-opus-5")?.window, late, "order does not decide");
+}
+
+// A usage answer becomes a warning only for a session whose turns spend the plan: a failed answer
+// gives none, and neither does a box whose Claude Code talks to a router.
+{
+  const windows = [weekly, session, fable];
+  assert.equal(limitFor({ ok: true, windows }, "claude-opus-5")?.window.label, "5-hour");
+  assert.equal(limitFor({ ok: true, windows, routed: true }, "claude-opus-5"), undefined);
+  assert.equal(limitFor({ ok: true, windows, routed: true }, "claude-fable-5-1"), undefined);
+  assert.equal(limitFor({ ok: false }, "claude-opus-5"), undefined);
 }
 
 console.log("limits ok");

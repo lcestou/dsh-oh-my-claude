@@ -36,6 +36,9 @@ export type UsageReply = {
     credits?: UsageCredits;
     host?: string;
     email?: string | null;
+    /** The box's Claude Code talks to a router, not to Anthropic: the windows are still the
+     *  login's, but the session's turns do not spend them, so the client warns about none. */
+    routed?: true;
 } | {
     ok: false;
     error: string;
@@ -150,4 +153,8 @@ export declare function registerUsageRoute(ctx: PluginContext, log: (level: stri
         realHome?: string;
         command?: string;
     } | undefined;
+    /** Whether a provider's box sends its traffic to a router; no id asks about the default box.
+     *  Asked on every request and never cached with the windows, since routing is switched on
+     *  and off under a login whose usage stays the same. */
+    routed?: (providerId?: string) => Promise<boolean>;
 }): void;
