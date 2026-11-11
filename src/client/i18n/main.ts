@@ -587,6 +587,8 @@ export const en = {
   // Cost dialog detail rows
   "main.cost.lastTurn": "Last turn",
   "main.cost.turns": "Turns",
+  "main.cost.routedTurn": "not priced (through {host})",
+  "main.cost.routedTurns": "Turns through a router (not priced)",
   "main.cost.wallTime": "Wall time",
   "main.cost.apiTime": "API time",
   "main.cost.input": "Input",
@@ -1156,6 +1158,8 @@ export const zh = {
   "main.selection.askFailed": "问题未能发送，请重试。",
   "main.cost.lastTurn": "上一轮",
   "main.cost.turns": "轮数",
+  "main.cost.routedTurn": "不计价（经由 {host}）",
+  "main.cost.routedTurns": "经由路由的轮数（不计价）",
   "main.cost.wallTime": "总耗时",
   "main.cost.apiTime": "API 耗时",
   "main.cost.input": "输入",

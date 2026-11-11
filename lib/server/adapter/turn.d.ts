@@ -23,6 +23,11 @@ export interface TurnRecord {
      *  the same process after a dsh restart knows where to count from. Absent on older records. */
     costTotal?: number;
     apiTotal?: number;
+    /** The host this turn's requests went to when that was a router or gateway and not Anthropic.
+     *  The CLI prices every turn at Claude's API rates whatever answered it, so `costUsd` on such
+     *  a turn is a figure for a bill nobody gets (a local model's turn was recorded at $0.08,
+     *  2026-11-10). Readers that add up money leave these turns out; time and tokens still count. */
+    via?: string;
 }
 /** dsh splicing messages into a session's inbox mid-turn; the steers this adapter forwards live. */
 export type SpliceEvent = {

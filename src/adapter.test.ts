@@ -6668,6 +6668,12 @@ console.log("interrupt-on-abort ok");
     );
     const direct = mount("claude-code-route-direct").built;
     assert.deepEqual(await direct.route(), { state: "direct" });
+    assert.equal(
+      (await direct.prepare({ messages: messageList([{ role: "user", content: "hi" }]) } as never))
+        .via,
+      undefined,
+      "a turn that reaches Anthropic is not tagged",
+    );
     assert.equal((await ids(direct, "claude-code-route-direct")).includes("router-only"), false);
     const row = (await direct.pickerModels()).find((m) => m.id === "router-only");
     assert.deepEqual([row?.off, row?.hidden], [true, false], "out for the route, not switched off");
@@ -6754,6 +6760,9 @@ console.log("interrupt-on-abort ok");
       (await routed.listModels("claude-code-route-routed")).find((m) => m.name === "Local Qwen")
         ?.id ?? "";
     assert.equal((await routed.prepare(on(routedId))).spec.window, 200_000);
+    // The turn is tagged with the router that will answer it, which is what keeps its record
+    // out of the money: the CLI prices it at Claude's rates whoever answers.
+    assert.equal((await routed.prepare(on(routedId))).via, "router.test:15721");
     const hintsFile = joinPath(stateDir("claude-code"), "hints.json");
     await writeFile(
       hintsFile,

@@ -1542,8 +1542,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Read for this workspace, not for the mount: its own settings files can set another address.
     const here = this.config.sshHost || remoteWorkspaceFor(cwd) ? undefined : cwd;
     const inForce = routeEnvIn(await this.claudeEnv(here)).baseUrl;
-    this.proxyFirstParty = wantsFirstParty(hints, await detectFirstParty(inForce));
+    const forwards = await detectFirstParty(inForce);
+    this.proxyFirstParty = wantsFirstParty(hints, forwards);
     const settingsKey = here === undefined ? undefined : await this.settingsKey(here);
+    // Answered by something that is not Anthropic: the turn is tagged, so its record is kept
+    // apart from Claude's in everything that adds up money (`TurnRecord.via`). Only when the
+    // endpoint said so; one that did not answer, and one the owner vouched for, are not tagged.
+    const routedTo = proxyBaseUrl(inForce);
+    let via: string | undefined;
+    if (here !== undefined && routedTo && forwards === false && firstPartyMode(hints) !== "on") {
+      try {
+        via = new URL(routedTo).host;
+      } catch {
+        via = routedTo;
+      }
+    }
     const turns = selectTurns(options.messages, session?.resuming ?? false, this.providerId);
     let prompt = buildPrompt(turns, drops);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
@@ -1651,6 +1664,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       drops,
       sizes,
       settingsKey,
+      via,
     };
   }
 
@@ -2828,7 +2842,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       count: 0,
     };
     for (const t of turns) {
-      total.costUsd += t.costUsd;
+      // A routed turn's figure is the CLI pricing somebody else's model at Claude's rates.
+      if (t.via === undefined) total.costUsd += t.costUsd;
       total.durationMs += t.durationMs;
       total.input += t.input;
       total.output += t.output;
@@ -5523,6 +5538,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         proc.apiMsSoFar = apiMsSoFar;
         summary.costTotal = costSoFar;
         summary.apiTotal = apiMsSoFar;
+        if (prep.via !== undefined) summary.via = prep.via;
         const buf = this.turnBuffer.get(options.sessionId) ?? [];
         buf.push(summary);
         if (buf.length > TURN_RING) buf.shift();

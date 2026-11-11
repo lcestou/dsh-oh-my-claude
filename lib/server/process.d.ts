@@ -668,6 +668,9 @@ export interface TurnPrep {
     /** Set when this turn's key comes from a settings file's `env`, not from the Claude login:
      *  see `ClaudeCodeAdapter.settingsKey`. */
     settingsKey?: SettingsKey;
+    /** The host this turn's requests go to when it is not Anthropic and does not forward there:
+     *  see `TurnRecord.via`. */
+    via?: string;
 }
 /** Where a turn's request goes when its key was set by a settings file, and, when the address
  *  and the key were set by two different files, a sentence saying which. */
