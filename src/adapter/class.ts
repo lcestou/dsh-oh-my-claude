@@ -3195,8 +3195,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // asks for a window by the id it stored, which is the spec's, while the CLI answers with its
     // own name for the model. `retarget` writes the new spec on a `set_model`, so a model switched
     // mid-session banks under the model it switched to, and the ring follows on the next turn.
-    noteLiveWindow(proc.spec?.model, usage.maxTokens);
-    noteLiveWindow(usage.model, usage.maxTokens);
+    // Not for a process that was told its window (`ClaudeProcessSpec.window`): the figure it
+    // reports is the one it was given, for whatever model a router put behind the id. Banked
+    // under that id, a local model's 256k became Claude Sonnet 5's window once the router was
+    // switched off (2026-11-10).
+    if (proc.spec?.window === undefined) {
+      noteLiveWindow(proc.spec?.model, usage.maxTokens);
+      noteLiveWindow(usage.model, usage.maxTokens);
+    }
     // The CLI's guess, when it is one: below the table's window for this model, from one of the
     // two sources the demotion produces (`auto` for Fable, `model-default` for Opus 5 and Sonnet
     // 5; `settings` and `env` are a window the user chose), while this box's base URL is a proxy

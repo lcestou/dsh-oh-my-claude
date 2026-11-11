@@ -9,6 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   hintRouterWindows,
   KNOWN_MODELS,
+  noteLiveWindow,
   mergeCatalog,
   resolveModelInfo,
   withCustomModels,
@@ -191,6 +192,28 @@ assert.equal(
   1_000_000,
   "Claude's own Sonnet keeps its window",
 );
+// A stated size is what dsh's ring is told, whatever a session reported for that id before: a
+// window banked from an earlier run must not hide a size just changed in Settings.
+{
+  noteLiveWindow("claude-sonnet-5", 512_000);
+  const stated = mergeCatalog(
+    cli,
+    KNOWN_MODELS,
+    offAnthropic && { ...offAnthropic, routerWindows: { sonnet: 128_000 } },
+  );
+  assert.equal(
+    resolveModelInfo("claude-code", "claude-sonnet-5", stated).context?.contextWindow,
+    128_000,
+    "the row's stated size, not the banked one",
+  );
+  // A row of Claude's own still takes what a session reported.
+  assert.equal(
+    resolveModelInfo("claude-code", "claude-sonnet-5", mergeCatalog(cli, KNOWN_MODELS, picker))
+      .context?.contextWindow,
+    512_000,
+  );
+}
+
 // The real size of what the router sends an alias to is set in Settings and kept by alias. The
 // row reports it and is marked as one whose window has to be told to the CLI; a row of Claude's
 // own and an added model with no stated size are not.
