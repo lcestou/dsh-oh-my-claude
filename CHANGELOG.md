@@ -14,6 +14,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- The spark button beside the composer no longer shows an orange dot on a new session whose workspace has Claude transcripts to restore. It looked like an unread-message mark, and it came back in every new session for the same transcripts. The panel still opens on Restore there. Thanks to @chopstick1009 (#264).
 - The limit that resets every five hours is called the "5-hour limit" where a turn reports hitting it, the name Claude Code has used since 2.1.312. It read "session limit".
 
 ### Fixed
