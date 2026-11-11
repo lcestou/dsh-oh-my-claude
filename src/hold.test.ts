@@ -204,6 +204,26 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
   assert.equal((await h.done).exitCode, 0);
 }
 
+// ssh hands over Buffers cut at any byte: a character split across two of them reaches dsh whole,
+// and the offset moves by the bytes the file holds, so the next attach starts on a line boundary.
+{
+  const { run, sshes } = fakeRunner();
+  const offsets: number[] = [];
+  const lines: string[] = [];
+  const h = holdHandle(run, "utf8-1", 0, (o) => offsets.push(o));
+  h.stdout.on("data", (d) => lines.push(String(d)));
+  sshes[0]!.out.write(`${READY}\n`);
+  const line = '{"text":"café ✓"}';
+  const bytes = Buffer.from(`${line}\n`, "utf8");
+  const cut = bytes.indexOf(0xc3) + 1; // between the two bytes of "é"
+  sshes[0]!.out.write(bytes.subarray(0, cut));
+  sshes[0]!.out.write(bytes.subarray(cut));
+  await tick();
+  assert.deepEqual(lines, [`${line}\n`], "the line reaches dsh as the CLI wrote it");
+  assert.deepEqual(offsets, [bytes.length]);
+  h.terminate();
+}
+
 // A far dir that is gone ends the handle at once, as a failure, with no reattach loop.
 {
   const { run, sshes } = fakeRunner();

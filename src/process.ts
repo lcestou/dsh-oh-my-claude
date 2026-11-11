@@ -1753,8 +1753,10 @@ export async function spawnKeeper(
   launch: (argv: string[]) => void,
 ): Promise<SubprocessHandle> {
   const paths = keeperPaths(dir);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(paths.spec, JSON.stringify(spec));
+  // Owner-only: the spec holds the child's whole environment, a login token and the bridge key
+  // among it, and the socket beside it takes stdin lines from whoever can open it.
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  writeFileSync(paths.spec, JSON.stringify(spec), { mode: 0o600 });
   // A respawn reuses the session's directory while the previous keeper still listens for up to
   // 3 s after its Claude died. Left in place, that socket is what attachKeeper connects to first,
   // binding the new handle to the dying process (2026-09-06 21:27: "claude exited 143" on a model
@@ -1833,6 +1835,12 @@ export class ClaudeProcess {
   args: string[];
   cwd: string;
   busy: boolean;
+  /** A turn has taken this process and has not marked it `busy` yet: the spawn's own waits (the
+   *  initialize reply, up to 15 s) come first. The spawn cap skips it meanwhile. Without this a
+   *  second session starting in that gap evicted the newborn as the longest-idle process, and its
+   *  turn ended as "claude exited 143: no output" (2026-11-10, eleven subagents started at once
+   *  against a cap of four). */
+  claimed = false;
   lastUsed: number;
   stderr: string;
   stray: string;

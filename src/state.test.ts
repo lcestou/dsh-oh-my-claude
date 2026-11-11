@@ -38,6 +38,8 @@ import {
   saveContextSizes,
   trace,
   authHeaders,
+  markBusy,
+  takeInterrupted,
 } from "./state.js";
 
 const dir = await mkdtemp(join(tmpdir(), "omc-state-"));
@@ -590,4 +592,17 @@ console.log("state.test: ok");
   if (apiKey !== undefined) process.env.ANTHROPIC_API_KEY = apiKey;
   await rm(home, { recursive: true, force: true });
   console.log("auth headers ok");
+}
+{
+  // A write that fails rejects for its own caller only: the next mark still runs. A directory
+  // where the file should be makes the rename throw.
+  const dir = await mkdtemp(join(tmpdir(), "omc-busy-"));
+  const path = join(dir, "busy.json");
+  await mkdir(path);
+  await assert.rejects(markBusy("a", true, path));
+  await rm(path, { recursive: true });
+  await markBusy("b", true, path);
+  assert.deepEqual(await takeInterrupted(path), ["b"], "the mark after a failed write is kept");
+  await rm(dir, { recursive: true, force: true });
+  console.log("busy chain ok");
 }

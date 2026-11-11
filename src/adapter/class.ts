@@ -36,6 +36,7 @@ import { hub, type OmcEvent } from "../events.js";
 import { managedDir } from "../instructions.js";
 import { readUsage, stillLimitedUntil } from "../usage.js";
 import { MCP_PATH, type McpBridge } from "../mcp.js";
+import { KEY_ENV } from "../mcp-config.js";
 import {
   type ClaudeEvent,
   ClaudeProcess,
@@ -1594,7 +1595,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.mcp && options.sessionId && !options.purpose && this.config.dshTools && !targetHost
         ? {
             url: `${this.mcp.base}${MCP_PATH}/${options.sessionId}`,
-            key: this.mcp.key,
             tools: this.mcp.toolsFor?.(options.sessionId),
           }
         : undefined;
@@ -3368,6 +3368,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (options === undefined) return undefined;
     try {
       const { proc } = await this.acquire(options);
+      // No turn follows a revive, so nothing else would hand the process back to the spawn cap.
+      if (proc) proc.claimed = false;
       return proc ?? undefined;
     } catch (error) {
       this.log("warn", `revive ${sessionId}: ${errorText(error)}`);
@@ -3711,6 +3713,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       over.CLAUDE_CONFIG_DIR = this.claudeHome;
     const token = this.providerId === "claude-code" ? readSshToken(STATE_DIR, THIS_BOX) : undefined;
     if (token) over.CLAUDE_CODE_OAUTH_TOKEN = token;
+    // The bridge key for the `${KEY_ENV}` the `--mcp-config` argument names. Every local spawn
+    // gets it, bridged or not: one that passes no bridge never reads it.
+    if (this.mcp) over[KEY_ENV] = this.mcp.key;
     // Claude Code 2.1.274 believes a native-1M model holds 200,000 when ANTHROPIC_BASE_URL names
     // any host but api.anthropic.com, and with that guess it either caps the session there (Opus 5,
     // Sonnet 5) or stops compacting altogether (Fable). This is the CLI's own flag for "the proxy
@@ -4297,6 +4302,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.resuming = prep.session?.resuming ?? false;
       proc.onIdleResult = () => this.wake(options.sessionId, proc);
       this.hookProcess(proc, options.sessionId);
+      proc.claimed = true;
       this.processes.set(key2, proc);
       // Awaited: the write must precede the first prompt's (see sendInitialize).
       await this.sendInitialize(proc);
@@ -4314,6 +4320,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // without writing its totals. One file read on a path that runs once per process.
       if (proc.resuming) await this.seedTotals(proc, options.sessionId, prep.cwd, prep.session?.id);
     }
+    // A reused process is as exposed as a new one until its turn marks it busy; the fresh
+    // `lastUsed` keeps the idle reaper off it for the same stretch.
+    proc.claimed = true;
+    proc.lastUsed = Date.now();
     return { prep, proc };
   }
 
@@ -4905,7 +4915,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.reapIdle();
     const idle = [...this.processes.entries()]
       .filter(([k]) => k.startsWith(`${this.providerId}:`))
-      .filter(([, p]) => isSettled(p))
+      .filter(([, p]) => isSettled(p) && !p.claimed)
       .toSorted((a, b) => a[1].lastUsed - b[1].lastUsed);
     while (this.ownProcessCount() >= this.config.maxProcesses && idle.length > 0) {
       const next = idle.shift();
@@ -5543,10 +5553,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         summary.costUsd = proc.totalsUnknown ? 0 : turnDelta(costSoFar, proc.costSoFar);
         summary.apiMs = proc.totalsUnknown ? 0 : turnDelta(apiMsSoFar, proc.apiMsSoFar);
         proc.totalsUnknown = false;
-        proc.costSoFar = costSoFar;
-        proc.apiMsSoFar = apiMsSoFar;
-        summary.costTotal = costSoFar;
-        summary.apiTotal = apiMsSoFar;
+        // A result frame without a figure reads as 0 here. Taken as the new total, it charged the
+        // whole session to the next turn, and a restart seeded from it did the same. A total that
+        // really is 0 (the CLI's counter after `/clear`) is a figure, and is taken.
+        if (summary.noTotals !== true) {
+          proc.costSoFar = costSoFar;
+          proc.apiMsSoFar = apiMsSoFar;
+        }
+        delete summary.noTotals;
+        summary.costTotal = proc.costSoFar;
+        summary.apiTotal = proc.apiMsSoFar;
         if (prep.via !== undefined) summary.via = prep.via;
         const buf = this.turnBuffer.get(options.sessionId) ?? [];
         buf.push(summary);
@@ -5603,13 +5619,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // there the idle watchdog already ends a hung process, and a kill here cost a respawn on
       // every model switch (2026-09-06 21:08: abort kind=none, kill at +5 s, "claude exited 143").
       if (!killAfterGrace(spawnMode)) return;
+      // `interruptOwed` and not this step's `tr.finished` alone: dsh can close the step before the
+      // CLI's answer arrives, and the answer then lands with no turn reading. The process had
+      // obeyed, yet it was killed here, and a prompt sent inside the grace died with it.
       const fallback = setTimeout(() => {
-        if (!tr.finished) proc.kill();
+        if (!tr.finished && proc.interruptOwed) proc.kill();
       }, INTERRUPT_GRACE_MS);
       fallback.unref?.();
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
     proc.busy = true;
+    proc.claimed = false;
     proc.lastUsed = Date.now();
     this.clearLimitWait(options.sessionId); // a prompt (or our own notice) supersedes the wait
     markBusy(options.sessionId, true, join(this.stateDir, "busy.json")).catch((e) =>
@@ -5698,7 +5718,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // park from inside the batch left through its "turn ended under us" exit, which rejected the
       // relayed calls although nothing had ended. dsh draws the steer when it opens the next step,
       // and that step drops this flag.
-      if (proc.steerPending && event.type === "user" && pending.size === 0 && !relaying) {
+      // Nor while a call of the message is still out: the CLI takes the steer
+      // only once the whole batch has answered. A park on the first of two results closed the
+      // slower call with a placeholder row, left a dsh call of the same message to run without
+      // its card, and a nested agent's inner result parked the step under the agent itself.
+      if (
+        proc.steerPending &&
+        event.type === "user" &&
+        pending.size === 0 &&
+        !relaying &&
+        !tr.callsOutstanding()
+      ) {
         // Tool results are in; the CLI injects the forwarded steer next. End the dsh step here
         // so dsh draws the steer now, then resume this same Claude turn on the next call. The CLI
         // takes its whole queue at one tool result (probed 2026-09-22), so no steer stays editable.
@@ -6528,7 +6558,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (!questions || !ask) return denyResult(toolUseId, "dsh could not present this question");
       try {
         const response = await this.ctx.userQuestions.ask({ questions, agent, signal });
-        return allowResult(toolUseId, { ...input, answers: answersFor(questions, response) });
+        // Claude Code 2.1.321 denies a host's answer that sets `afkTimeoutMs`, a field Claude may
+        // put on the call itself; echoed back untouched it would refuse the person's answer.
+        const updated = {
+          ...input,
+          answers: answersFor(questions, response),
+          afkTimeoutMs: undefined,
+        };
+        return allowResult(toolUseId, updated);
       } catch (error) {
         return denyResult(toolUseId, `question cancelled: ${errorText(error)}`);
       }

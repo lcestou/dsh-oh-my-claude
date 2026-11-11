@@ -169,7 +169,7 @@ for (const host of ["", ...(hostArgs.length > 0 ? hostArgs : await knownHosts())
     flags,
     session: { id: "00000000-0000-4000-8000-000000000000", resuming: false },
     system: "check",
-    mcp: { url: "http://127.0.0.1:1/mcp", key: "k" },
+    mcp: { url: "http://127.0.0.1:1/mcp" },
   });
   const unknown = argv.filter((a) => a.startsWith("--") && !flags.has(a));
   if (unknown.length > 0) {

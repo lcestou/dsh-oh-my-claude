@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -231,6 +231,7 @@ const fakeHost = (gated: boolean) => ({
 });
 // Plain dsh web: no gate service, so the URL is the web server's and no listener or port file
 // appears. This is every install that is not Desktop, and it must not move.
+chmodSync(tmp, 0o755); // as a umask of 022 leaves a state dir the stores made
 // SAFETY: host double above carries the services registerMcpBridge needs
 const plain = await registerMcpBridge(fakeHost(false) as never, {
   log: () => {},
@@ -240,6 +241,9 @@ const plain = await registerMcpBridge(fakeHost(false) as never, {
 assert.equal(plain.via, "webserver", "a host without the gate keeps the web server route");
 assert.equal(plain.base, "http://127.0.0.1:43120", "and the web server's own port");
 assert.equal(existsSync(join(tmp, "mcp-port")), false, "and starts no listener of its own");
+// The key's folder is the state dir, with tokens and keeper files in it: closed to other users.
+if (process.platform !== "win32")
+  assert.equal(statSync(tmp).mode & 0o777, 0o700, "the state dir is the owner's alone");
 for (const fn of cleanups) fn();
 cleanups.length = 0;
 const fakeCtx = fakeHost(true);

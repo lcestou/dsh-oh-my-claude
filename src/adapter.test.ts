@@ -551,7 +551,6 @@ const bridged = buildArgs({
   session: { id: "u", resuming: false },
   mcp: {
     url: "http://x/mcp/u",
-    key: "k",
     tools: [
       bridgedTool("subagent", "provider", "model"),
       bridgedTool("list_subagent_models"),
@@ -563,6 +562,16 @@ const bridged = buildArgs({
   },
 } as any);
 const bridgedSystem = bridged[bridged.indexOf("--append-system-prompt") + 1]!;
+// The command line names the variable the key arrives in, never the key: `ps` shows argv to
+// every local user.
+assert.deepEqual(JSON.parse(bridged[bridged.indexOf("--mcp-config") + 1]!).mcpServers.dsh.headers, {
+  "x-dsh-oh-my-claude-key": "${DSH_OMC_MCP_KEY}",
+});
+{
+  const keyed = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  (keyed as any).mcp = { base: "http://x", key: "secret" };
+  assert.equal(keyed.localEnvOverride()?.DSH_OMC_MCP_KEY, "secret", "the key rides in the env");
+}
 assert.ok(bridgedSystem.startsWith("sys\n\n"), "dsh system prompt comes first");
 assert.ok(bridgedSystem.includes("never the built-in Agent/Task tool"));
 assert.ok(bridgedSystem.includes("mcp__dsh__list_subagent_models"));
@@ -964,7 +973,11 @@ const limited = limitedTr.translate({ type: "result", is_error: false });
 // SAFETY: a held limit failure always produces a finish chunk with error reason
 const limitedFirst = limited.at(-1);
 assert.ok(limitedFirst && "reason" in limitedFirst && limitedFirst.reason.kind === "error");
-assert.equal(failureOf(chunkOf(limitedFirst, "finish").reason).code, "RATE_LIMIT");
+assert.equal(
+  failureOf(chunkOf(limitedFirst, "finish").reason).code,
+  "PROVIDER_ERROR",
+  "no reset ahead: not a code dsh retries, its retry reopens the step with nothing to send",
+);
 // SAFETY: result error always produces a finish chunk with error reason
 const resultChunk = new Translator()
   .translate({ type: "result", is_error: true, result: "boom" })
@@ -1543,7 +1556,7 @@ const soon = Math.floor(Date.now() / 1000) + 120;
   });
   assert.equal(
     t.translate({ type: "result", is_error: false }).at(-1).reason.failure.message,
-    `You've hit your session limit · resets ${resetClock(soon * 1000)} · continuing automatically when it resets`,
+    `You've hit your 5-hour limit · resets ${resetClock(soon * 1000)} · continuing automatically when it resets`,
   );
   assert.equal(t.limitResetAt, soon * 1000);
   const past = new Translator({ continueAfterLimit: true }) as any;
@@ -1552,6 +1565,20 @@ const soon = Math.floor(Date.now() / 1000) + 120;
     rate_limit_info: { status: "rejected", resetsAt: 1 },
   });
   assert.equal(past.limitResetAt, undefined);
+  // The API throttling requests is a rejection with no reset and an error result: the turn
+  // reports the CLI's sentence, not a plan limit.
+  const throttled = new Translator() as any;
+  throttled.translate({ type: "rate_limit_event", rate_limit_info: { status: "rejected" } });
+  const gaveUp = throttled
+    .translate({
+      type: "result",
+      is_error: true,
+      api_error_status: 429,
+      result: "API Error: Server is temporarily limiting requests (not your usage limit)",
+    })
+    .at(-1).reason.failure;
+  assert.equal(gaveUp.code, "PROVIDER_ERROR");
+  assert.match(gaveUp.message, /not your usage limit/);
   // Extra usage covering the overflow: the CLI shows no limit, neither does the turn.
   const covered = new Translator() as any;
   assert.deepEqual(
@@ -2214,10 +2241,15 @@ console.log("ok");
   const parked = fake({ relays: new Map([["c1", {}]]) });
   const steered = fake({ parked: "steer" });
   const idle = fake({});
+  // Spawned for a turn that is still waiting on the initialize reply: not busy yet, so it is the
+  // one settled process left for the cap to take once the idle one is gone.
+  const starting = fake({ claimed: true, lastUsed: Date.now() });
   adapter.processes.set(registryKey("claude-code", "a"), parked);
   adapter.processes.set(registryKey("claude-code", "b"), steered);
   adapter.processes.set(registryKey("claude-code", "c"), idle);
+  adapter.processes.set(registryKey("claude-code", "d"), starting);
   adapter.evict();
+  assert.equal(starting.killed, 0, "a process a turn just took is not evicted before it is busy");
   assert.equal(parked.killed, 0, "a process waiting on dsh's tool result is not idle");
   assert.equal(steered.killed, 0, "a process parked for a steer is not idle");
   assert.equal(idle.killed, 1, "a truly idle process past processIdleMs is culled");
@@ -2351,6 +2383,21 @@ console.log("ok");
     "keep <= 0 keeps everything",
   );
   assert.equal(forkTranscriptText(src, "OLD", "NEW", 9).split("\n").filter(Boolean).length, 5);
+  // A skill body is a user row nobody typed (`isMeta`), and so is a task notice
+  // (`promptSource: "system"`): neither is a prompt to cut at.
+  const row = (v: object) => JSON.stringify({ sessionId: "OLD", ...v });
+  const withMeta = [
+    row({ type: "user", message: { role: "user", content: "first" } }),
+    row({ type: "user", isMeta: true, message: { role: "user", content: "# Skill body" } }),
+    row({ type: "user", promptSource: "system", message: { role: "user", content: "notice" } }),
+    row({ type: "assistant", message: { role: "assistant", content: [] } }),
+    row({ type: "user", message: { role: "user", content: "second" } }),
+  ].join("\n");
+  assert.equal(
+    forkTranscriptText(withMeta, "OLD", "NEW", 1).split("\n").filter(Boolean).length,
+    4,
+    "a fork at turn 1 keeps all of turn 1",
+  );
   const msgs = messageList([
     { role: "user", source: { kind: "user" }, content: [] },
     { role: "assistant", content: [] },
@@ -9971,7 +10018,10 @@ console.log("approval beside relay ok");
   );
   a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
   (a as any).mcp = { base: "http://127.0.0.1:1", key: "k", via: "webserver", toolsFor: () => [] };
-  const input = { questions: [{ question: "Pick a colour?", options: [{ label: "Blue" }] }] };
+  const input = {
+    questions: [{ question: "Pick a colour?", options: [{ label: "Blue" }] }],
+    afkTimeoutMs: 60_000,
+  };
   const queue: Array<unknown> = [
     {
       type: "assistant",
@@ -10054,6 +10104,11 @@ console.log("approval beside relay ok");
     "the person's pick reaches Claude: the question is not cancelled by the relay",
   );
   assert.equal(chunks.at(-1)?.reason?.kind, "tool-calls");
+  assert.ok(
+    written.some((line) => line.includes('"answers"')) &&
+      !written.some((line) => line.includes("afkTimeoutMs")),
+    "the answer does not echo afkTimeoutMs, which Claude Code 2.1.321 refuses from a host",
+  );
   console.log("question beside relay ok");
 }
 

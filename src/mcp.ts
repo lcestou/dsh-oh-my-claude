@@ -11,7 +11,7 @@
 // gate and keeps the web server route alone, whose port is the one dsh was started on. The web
 // server route is registered either way, and is the fallback when the listener cannot start.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
 import type { AddressInfo } from "node:net";
@@ -585,13 +585,19 @@ const asRpc = (body: Record<string, JsonValue>): JsonRpcRequest => ({
  * file, so the key survives a restart.
  */
 function stableKey(file: string): string {
+  // The key's folder is the plugin's state dir, which also holds saved boxes, login tokens and
+  // keeper files. It is made wherever a store first writes, at whatever mode the umask gives, so
+  // it is closed to other users here, on the one path every start takes.
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    chmodSync(dirname(file), 0o700);
+  } catch {}
   try {
     const k = readFileSync(file, "utf8").trim();
     if (/^[0-9a-f-]{36}$/.test(k)) return k;
   } catch {}
   const k = randomUUID();
   try {
-    mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, k, { mode: 0o600 });
   } catch {}
   return k;

@@ -641,6 +641,8 @@ export class Translator {
   autoDenied: string[]; // tool calls Claude Code refused because a non-interactive run cannot ask
   toolPending: boolean; // a tool_use block closed and its result has not arrived yet
   private calls = new Set<string>(); // tool_use ids of the streamed message not yet echoed as results
+  private streaming = false; // a top-level message is between its message_start and message_stop
+  private wholeId: string | undefined; // the message whose whole frames are filling `calls`
   private tokened = false; // the step's first-token marker has gone out
   private nested = false; // the frame in hand belongs to a nested agent: its modes are not the line's
   /** A compaction announced and not yet closed, so its 30-second heartbeat prints one line, not six.
@@ -1378,6 +1380,7 @@ export class Translator {
             cacheRead: event.usage?.cache_read_input_tokens ?? 0,
             cacheWrite: event.usage?.cache_creation_input_tokens ?? 0,
           };
+          if (!Number.isFinite(totalCost)) record.noTotals = true;
           // The frame names the calls a rule refused without ever naming the rule: `tool_name`,
           // `tool_use_id` and `tool_input`, nothing else. Only the rule-shaped label is kept, since
           // the record is written to disk and a tool input carries file contents and secrets.
@@ -1386,14 +1389,14 @@ export class Translator {
           const denied = (event as { permission_denials?: unknown }).permission_denials;
           if (Array.isArray(denied)) {
             const labels = new Set<string>();
-            // SAFETY: each member is used only through `??`, so a frame of another shape yields the
-            // bare tool name rather than throwing.
-            const calls = denied as {
+            // SAFETY: each member is used only through `?.` and `??`, so a frame of another shape,
+            // a null member included, yields the bare tool name rather than throwing.
+            const calls = denied as ({
               tool_name?: string;
               tool_input?: Record<string, JsonValue>;
-            }[];
+            } | null)[];
             for (const call of calls)
-              labels.add(suggestRule(call.tool_name ?? "", call.tool_input ?? {}));
+              labels.add(suggestRule(call?.tool_name ?? "", call?.tool_input ?? {}));
             if (labels.size > 0) record.denials = [...labels];
           }
           this.onResult?.(record);
@@ -1402,12 +1405,20 @@ export class Translator {
         // emits anything "after terminal finish", and this frame is what closes the final step of
         // every turn. The adapter's own call after this one then finds nothing left to spend.
         events.push(...this.takeStepUsage());
+        // A rejection that named no reset, on a turn the CLI itself ended as an error, is the API
+        // throttling requests and not a plan window: the result carries the CLI's own sentence
+        // ("Server is temporarily limiting requests (not your usage limit)"), and that is what the
+        // turn reports. Seen 2026-11-10 with eleven Opus subagents started at once.
+        const limit =
+          this.limitFailure?.providerRetryAfterMs === undefined && event.is_error
+            ? undefined
+            : this.limitFailure;
         events.push({
           type: "finish",
           reason: this.aborting
             ? { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } }
-            : this.limitFailure
-              ? { kind: "error", failure: this.limitFailure }
+            : limit
+              ? { kind: "error", failure: limit }
               : finishReason(event, this.hostLabel, this.routerOnly, this.settingsKey, this.via),
         });
         return events;
@@ -1447,9 +1458,12 @@ export class Translator {
             : "";
         const waiting =
           resetMs > 0 && this.continueAfterLimit ? ` · ${serverText("continuingAtReset")}` : "";
+        // dsh retries a RATE_LIMIT within half a second unless it is told how long to wait. With no
+        // reset ahead there is nothing to tell it, and the retry reopens a step whose prompt Claude
+        // already has: the turn then died as "no user message" and hid this failure.
         const failure: LlmFailure & { providerRetryAfterMs?: number } = {
           message: `${serverText("hitLimit", { name })}${clock}${waiting}`,
-          code: "RATE_LIMIT",
+          code: resetMs > 0 ? "RATE_LIMIT" : "PROVIDER_ERROR",
         };
         if (resetMs > 0) failure.providerRetryAfterMs = resetMs;
         this.limitFailure = failure;
@@ -1511,6 +1525,7 @@ export class Translator {
         if (!this.nested) {
           this.setToolPending(false);
           this.calls.clear();
+          this.streaming = true;
         }
         // One whitespace token at the step's first message_start, the response's first byte. dsh
         // times a step's first token off the first non-empty delta in its stream, and this plugin
@@ -1632,7 +1647,10 @@ export class Translator {
         }
         // The CLI's line goes to `tool-use` at message_stop whatever the message held; the belt in
         // setToolPending covers a relay step that exits before this frame is read.
-        if (ev?.type === "message_stop" && !this.nested) this.onProgress?.({ mode: "tool-use" });
+        if (ev?.type === "message_stop" && !this.nested) {
+          this.streaming = false;
+          this.onProgress?.({ mode: "tool-use" });
+        }
         if (!BENIGN_PARTIALS.has(ev?.type)) this.noteUnknown("stream event", ev?.type);
         return [];
     }
@@ -1726,11 +1744,19 @@ export class Translator {
     // whether credits still apply. Only the id that was actually streamed is an echo.
     if (this.sawPartial && (id === undefined || id === this.streamedId)) return [];
     const events: StreamChunk[] = [];
+    // A message that never streamed keeps the same call set the streamed path builds at
+    // `message_start` and at each tool block, so `callsOutstanding` holds without partials too.
+    // The CLI sends such a message one frame per block under one id, so only a new id starts over.
+    if (id === undefined || id !== this.wholeId) {
+      this.calls.clear();
+      this.wholeId = id;
+    }
     for (const b of content) {
       if (b.type === "text" && b.text) events.push(...this.wholeBlock("text", b.text));
       else if (b.type === "thinking" && b.thinking)
         events.push(...this.wholeBlock("reasoning", b.thinking));
       else if (b.type === "tool_use") {
+        if (b.id) this.calls.add(b.id);
         const toolName = b.name ?? "";
         const dsh = toolName.startsWith("mcp__dsh__");
         if (dsh) {
@@ -1872,6 +1898,16 @@ export class Translator {
     if (!entry) return [];
     this.thinking = undefined;
     return this.endBlock(entry.block);
+  }
+
+  /** Whether a top-level call of the current message has not echoed its result yet, or the
+   *  message is still streaming and may open another call. Unlike `toolPending`, which follows
+   *  the last block that closed, this holds from the message's start to its last call's result:
+   *  the CLI runs a call as soon as its block closes, so a quick one can answer before the next
+   *  block has even begun. A fresh step's translator knows only what it saw itself: a call issued
+   *  in an earlier step of the same message is not counted. */
+  callsOutstanding(): boolean {
+    return this.calls.size > 0 || this.streaming;
   }
 
   /** Close the elapsed-time block a slow call opened, whichever way its result is drawn. */

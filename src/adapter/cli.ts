@@ -3,7 +3,7 @@
 import { execFile } from "node:child_process";
 import { type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { JsonValue, ToolSchema } from "../dsh.js";
-import { KEY_HEADER } from "../mcp-config.js";
+import { KEY_ENV, KEY_HEADER } from "../mcp-config.js";
 import { shq, sshArgs, userTurnLine } from "../process.js";
 import { probeRawToolRows, type RowsSupport } from "../rows-probe.js";
 import { Config } from "./config.js";
@@ -300,7 +300,7 @@ export function buildArgs({
   flags?: Set<string> | null;
   promptText?: string;
   /** The bridge for this session, with the dsh tools it will list (see `dshToolsGuidance`). */
-  mcp?: { url: string; key: string; tools?: readonly ToolSchema[] | undefined } | undefined;
+  mcp?: { url: string; tools?: readonly ToolSchema[] | undefined } | undefined;
   /** /temporary: keep no Claude transcript for this session. */
   temporary?: boolean;
   /** Optional permission mode override; if provided, used instead of computing from config. */
@@ -357,7 +357,8 @@ export function buildArgs({
     args.push(session.resuming ? "--resume" : "--session-id", session.id);
   }
   if (mcp && supports(flags, "--mcp-config")) {
-    const dsh = { type: "http", url: mcp.url, headers: { [KEY_HEADER]: mcp.key } };
+    // The key itself travels in the environment (`localEnvOverride`); see KEY_ENV.
+    const dsh = { type: "http", url: mcp.url, headers: { [KEY_HEADER]: `\${${KEY_ENV}}` } };
     args.push("--mcp-config", JSON.stringify({ mcpServers: { dsh } }));
   }
   return args;
