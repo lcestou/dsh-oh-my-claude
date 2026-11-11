@@ -175,6 +175,8 @@ export declare class Translator {
     autoDenied: string[];
     toolPending: boolean;
     private calls;
+    private streaming;
+    private wholeId;
     private tokened;
     private nested;
     /** A compaction announced and not yet closed, so its 30-second heartbeat prints one line, not six.
@@ -379,6 +381,13 @@ export declare class Translator {
     private closeThinking;
     /** Close the counter: the thinking block it stood in for is over, or the turn is. */
     endThinking(): StreamChunk[];
+    /** Whether a top-level call of the current message has not echoed its result yet, or the
+     *  message is still streaming and may open another call. Unlike `toolPending`, which follows
+     *  the last block that closed, this holds from the message's start to its last call's result:
+     *  the CLI runs a call as soon as its block closes, so a quick one can answer before the next
+     *  block has even begun. A fresh step's translator knows only what it saw itself: a call issued
+     *  in an earlier step of the same message is not counted. */
+    callsOutstanding(): boolean;
     /** Close the elapsed-time block a slow call opened, whichever way its result is drawn. */
     endHeartbeat(toolUseId: string): StreamChunk[];
     /** Render the tool_result blocks of a user event into StreamChunks, or [] when tool activity is

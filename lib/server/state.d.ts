@@ -27,7 +27,9 @@ export declare function writeJson(file: string, value: unknown, opts?: {
 }): Promise<void>;
 /** Record (or clear) that a session's turn is running; serialized read-modify-write. */
 export declare function markBusy(id: string, on: boolean, path?: string): Promise<void>;
-/** Sessions whose turn the previous dsh process left unfinished; cleared on read. */
+/** Sessions whose turn the previous dsh process left unfinished; cleared on read. Queued behind
+ *  `markBusy`'s writes: read and cleared on its own, it could empty the file between a mark's read
+ *  and its write, or wipe a mark a turn had just made. */
 export declare function takeInterrupted(path?: string): Promise<string[]>;
 /** A `model/selection` no request has run on yet: the newest selection after the last
  *  `request/header`, if any. dsh treats a pick as spent once a request runs (its

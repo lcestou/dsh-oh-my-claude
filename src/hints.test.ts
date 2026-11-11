@@ -1,10 +1,10 @@
 import { strict as assert } from "node:assert";
-import { mkdtemp, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readHints, updateHints } from "./sessions.js";
+import { tempDir } from "./test-tmp.js";
 
-const dir = await mkdtemp(join(tmpdir(), "omc-hints-"));
+const dir = tempDir("omc-hints-");
 const path = join(dir, "hints.json");
 
 // Every patch lands, whatever order the requests arrive in. Fired together, these used to read the

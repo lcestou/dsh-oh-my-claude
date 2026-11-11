@@ -273,6 +273,11 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       // the offer has to reach that mount's live turn (see ownerFor).
       relay: (sessionId, toolName, args, signal) =>
         adapter.ownerFor(sessionId).relay(sessionId, toolName, args, signal),
+      // The live process's mode, else the one its next spawn would get.
+      mode: (sessionId) => {
+        const info = adapter.ownerFor(sessionId).permissionModeInfo(sessionId);
+        return info.liveMode ?? info.mode;
+      },
     }).then(
       (mcp) => {
         adapter.mcp = mcp;

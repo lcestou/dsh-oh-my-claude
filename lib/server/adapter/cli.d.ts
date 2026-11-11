@@ -80,7 +80,6 @@ export declare function buildArgs({ model, reasoningEffort, system, purpose, con
     /** The bridge for this session, with the dsh tools it will list (see `dshToolsGuidance`). */
     mcp?: {
         url: string;
-        key: string;
         tools?: readonly ToolSchema[] | undefined;
     } | undefined;
     /** /temporary: keep no Claude transcript for this session. */

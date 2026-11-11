@@ -11,7 +11,7 @@
 //
 //   DSH_OMC_STATE_DIR=$(mktemp -d) bun tools/effort-switch-check.ts [model]
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ClaudeCodeAdapter, Config } from "../src/adapter.js";
@@ -140,6 +140,7 @@ try {
   check("back to the model's default", !cleared, `adapter asked for a relaunch: ${!cleared}`);
 } finally {
   child.kill();
+  rmSync(cwd, { recursive: true, force: true });
 }
 console.log(failed === 0 ? "all checks passed" : `${failed} check(s) failed`);
 process.exit(failed === 0 ? 0 : 1);

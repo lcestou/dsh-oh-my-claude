@@ -1,9 +1,9 @@
 // Offline self-check: bun src/instructions.test.ts. No CLI, no network.
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, mkdir } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { importsIn, instructionCandidates, listInstructions, managedDir } from "./instructions.js";
+import { tempDir } from "./test-tmp.js";
 
 // The paths the walk is warmed with, in load order: managed, user, then every ancestor root-first.
 // One that drifts out of this list is one the walk waits a whole ssh round trip for.
@@ -49,7 +49,7 @@ import { importsIn, instructionCandidates, listInstructions, managedDir } from "
 }
 
 {
-  const dir = await mkdtemp(join(tmpdir(), "omc-instructions-"));
+  const dir = tempDir("omc-instructions-");
 
   // Build a minimal hierarchy:
   // dir/
@@ -136,7 +136,7 @@ import { importsIn, instructionCandidates, listInstructions, managedDir } from "
 
 {
   // Test that missing files are skipped.
-  const dir = await mkdtemp(join(tmpdir(), "omc-instructions-missing-"));
+  const dir = tempDir("omc-instructions-missing-");
   const projectDir = join(dir, "project");
   const userDot = join(dir, "user");
 
@@ -156,7 +156,7 @@ import { importsIn, instructionCandidates, listInstructions, managedDir } from "
 
 {
   // Test @ import with relative paths.
-  const dir = await mkdtemp(join(tmpdir(), "omc-instructions-import-"));
+  const dir = tempDir("omc-instructions-import-");
   const projectDir = join(dir, "project");
   const userDot = join(dir, "user");
 
@@ -178,7 +178,7 @@ import { importsIn, instructionCandidates, listInstructions, managedDir } from "
 
 {
   // Test depth limit: a chain of @imports with depth > 5 should stop.
-  const dir = await mkdtemp(join(tmpdir(), "omc-instructions-depth-"));
+  const dir = tempDir("omc-instructions-depth-");
   const projectDir = join(dir, "project");
   const userDot = join(dir, "user");
 
@@ -211,7 +211,7 @@ import { importsIn, instructionCandidates, listInstructions, managedDir } from "
 
 {
   // Test cycle detection: a cycle should not loop forever.
-  const dir = await mkdtemp(join(tmpdir(), "omc-instructions-cycle-"));
+  const dir = tempDir("omc-instructions-cycle-");
   const projectDir = join(dir, "project");
   const userDot = join(dir, "user");
 

@@ -1,10 +1,9 @@
 // Offline self-check: bun src/claude-home.test.ts. Real files under a temp dir, no CLI.
 import { strict as assert } from "node:assert";
 import { lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMirror, mirrorPlan } from "./claude-home.js";
+import { tempDir } from "./test-tmp.js";
 
 // The plan: everything the real home has gets a link, `projects` never does, and an entry that came
 // back as a real file is a repair rather than a second link.
@@ -22,7 +21,7 @@ assert.deepEqual(
   "a link that came back as a file is repaired, an intact one is left alone",
 );
 
-const tmp = await mkdtemp(join(tmpdir(), "dsh-claude-home-"));
+const tmp = tempDir("dsh-claude-home-");
 const real = join(tmp, "claude");
 const mirror = join(tmp, "mirror");
 mkdirSync(join(real, "projects"), { recursive: true });

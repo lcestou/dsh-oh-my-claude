@@ -77,15 +77,20 @@ export interface RpcEnv {
     prompt?: (args: Record<string, JsonValue>) => Promise<string>;
     wait?: (args: Record<string, JsonValue>) => Promise<string>;
     relay?: (name: string, args: Record<string, JsonValue>, signal: AbortSignal) => Promise<RelayResult | undefined> | undefined;
+    /** The session CLI's permission mode right now, read once per tools/call so a switch made after
+     *  spawn counts; undefined when unknown, which gates nothing. */
+    mode?: () => string | undefined;
     log?: (level: string, msg: string) => void;
 }
 /** One JSON-RPC request against the tools visible to `agent`. Returns null for notifications. */
-export declare function handleRpc(msg: JsonRpcRequest, { tools, agent, signal, version, open, prompt, wait, relay, log }: RpcEnv): Promise<JsonRpcReply | null>;
+export declare function handleRpc(msg: JsonRpcRequest, { tools, agent, signal, version, open, prompt, wait, relay, mode, log }: RpcEnv): Promise<JsonRpcReply | null>;
 /** What the adapter hands the bridge. */
 export interface BridgeOptions {
     log: (level: string, msg: string) => void;
     version: string;
     relay?: (sessionId: string, name: string, args: Record<string, JsonValue>, signal: AbortSignal) => Promise<RelayResult | undefined> | undefined;
+    /** The permission mode the session's CLI is in right now; feeds the plan-mode gate. */
+    mode?: (sessionId: string) => string | undefined;
     /** Path of a file holding the bridge key; created once, reused across restarts. */
     keyFile?: string;
     /** Path of a file holding the loopback listener's port, so a restart rebinds the same port and
@@ -113,4 +118,4 @@ export interface McpBridge {
  *  routes. Everywhere else they get the web server route as before, and no listener is started:
  *  a process that outlives a restart can only reconnect to the URL it was started with, and the
  *  web port is the one address that is fixed by configuration. */
-export declare function registerMcpBridge(ctx: PluginContext, { log, version, relay, keyFile, portFile }: BridgeOptions): Promise<McpBridge>;
+export declare function registerMcpBridge(ctx: PluginContext, { log, version, relay, mode, keyFile, portFile }: BridgeOptions): Promise<McpBridge>;

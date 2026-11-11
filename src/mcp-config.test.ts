@@ -1,9 +1,9 @@
 // Offline checks for the configured-MCP listing: bun src/mcp-config.test.ts.
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { configuredFrom, listConfiguredMcp } from "./mcp-config.js";
+import { tempDir } from "./test-tmp.js";
 
 {
   const claudeJson = JSON.stringify({
@@ -37,7 +37,7 @@ import { configuredFrom, listConfiguredMcp } from "./mcp-config.js";
 // A session in a subdirectory of a repository: local servers are filed under the repository's
 // root, not the session's directory, and the root's `.mcp.json` counts beside the session's own.
 {
-  const tmp = await mkdtemp(join(tmpdir(), "omc-mcp-config-"));
+  const tmp = tempDir("omc-mcp-config-");
   const root = join(tmp, "repo");
   const sub = join(root, "packages", "app");
   await mkdir(join(root, ".git"), { recursive: true });

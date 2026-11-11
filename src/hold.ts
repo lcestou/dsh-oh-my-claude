@@ -18,6 +18,7 @@
  */
 import { createHash } from "node:crypto";
 import { PassThrough, Writable } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import {
   CHILD_ENV,
   forwardedEnv,
@@ -201,8 +202,11 @@ export function holdHandle(
     // hold and shown as an event the CLI never wrote. A fragment stays here, uncounted; the next
     // attach re-reads it whole from the last full line's offset.
     let rest = "";
+    // A character's bytes can arrive split across two chunks; decoded chunk by chunk each half
+    // became U+FFFD, and the three bytes counted for it pushed `offset` past what the file holds.
+    const decoder = new StringDecoder("utf8");
     ssh.stdout.on("data", (chunk: Buffer | string) => {
-      rest += String(chunk);
+      rest += typeof chunk === "string" ? chunk : decoder.write(chunk);
       let nl = rest.indexOf("\n");
       while (nl !== -1) {
         const raw = rest.slice(0, nl);

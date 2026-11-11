@@ -823,18 +823,31 @@ export type WaitingSteer = {
     boundary: true;
 });
 /**
+ * The permission mode a CLI stdout line reports, else undefined. The CLI writes
+ * `{"type":"system","subtype":"status","permissionMode":…}` whenever its mode changes, including a
+ * change it makes itself (EnterPlanMode, an approved ExitPlanMode), the only way the plugin learns
+ * of those (CLI 2.1.322). Lines without the key are not parsed, so the hot path stays cheap.
+ */
+export declare function statusMode(line: string): string | undefined;
+/**
  * A running Claude Code process bound to one dsh session. `spec` is what the process was spawned
  * with (cwd, model, effort, permission mode, session flags); a turn whose spec differs replaces it.
  */
 export declare class ClaudeProcess {
     spec: ClaudeProcessSpec;
     /** The permission mode the CLI is running in right now: `spec.mode` at spawn, then whatever the
-     *  last accepted `set_permission_mode` set. `spec.mode` stays the launch mode on purpose, since
+     *  last accepted `set_permission_mode` or the CLI's own status frame set. `spec.mode` stays the launch mode on purpose, since
      *  the CLI takes a live switch to bypassPermissions only from a process launched in it. */
     liveMode: string;
     args: string[];
     cwd: string;
     busy: boolean;
+    /** A turn has taken this process and has not marked it `busy` yet: the spawn's own waits (the
+     *  initialize reply, up to 15 s) come first. The spawn cap skips it meanwhile. Without this a
+     *  second session starting in that gap evicted the newborn as the longest-idle process, and its
+     *  turn ended as "claude exited 143: no output" (2026-11-10, eleven subagents started at once
+     *  against a cap of four). */
+    claimed: boolean;
     lastUsed: number;
     stderr: string;
     stray: string;
