@@ -13,6 +13,20 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
 
 // sshInvocation builds `ssh -o BatchMode=yes -o ConnectTimeout=10 <host> <script>`, carrying the
 // remote cwd and CHILD_ENV, with every piece single-quoted so a path with a space cannot break out.
+// What rides to a box beyond the usual env: the panel login, and a stated window under both names
+// the CLI reads. A turn for a router there is built without the login.
+{
+  /** The far script for one spawn with `far` added to its environment. */
+  const script = (far: Parameters<typeof sshInvocation>[4]) =>
+    sshInvocation("nova", "claude", ["-p"], "/w", far).args.at(-1) ?? "";
+  const direct = script({ token: "tok", window: undefined });
+  assert.match(direct, /CLAUDE_CODE_OAUTH_TOKEN='tok'/);
+  assert.doesNotMatch(direct, /CLAUDE_CODE_MAX_CONTEXT_TOKENS|CLAUDE_CODE_AUTO_COMPACT_WINDOW/);
+  const routed = script({ token: undefined, window: 128_000 });
+  assert.doesNotMatch(routed, /CLAUDE_CODE_OAUTH_TOKEN/);
+  assert.match(routed, /CLAUDE_CODE_MAX_CONTEXT_TOKENS='128000'/);
+  assert.match(routed, /CLAUDE_CODE_AUTO_COMPACT_WINDOW='128000'/);
+}
 {
   const inv = sshInvocation("nova", "claude", ["-p", "--input-format", "stream-json"], "/home/u/w");
   assert.equal(inv.command, "ssh");
@@ -96,16 +110,32 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
 
 // validateRemoteWorkspaceInput accepts a clean {name, host, absolute path} and rejects the bad ways.
 {
-  const ok = validateRemoteWorkspaceInput({ name: "Foo", host: "nova", remoteCwd: "/home/u/foo" });
-  assert.deepEqual(ok.value, { name: "Foo", host: "nova", remoteCwd: "/home/u/foo" });
+  const ok = validateRemoteWorkspaceInput({
+    name: "Foo",
+    host: "nova",
+    remoteCwd: "/home/u/foo",
+  });
+  assert.deepEqual(ok.value, {
+    name: "Foo",
+    host: "nova",
+    remoteCwd: "/home/u/foo",
+  });
   assert.match(validateRemoteWorkspaceInput({ host: "h", remoteCwd: "/x" }).error ?? "", /name/);
   assert.match(
-    validateRemoteWorkspaceInput({ name: "x", host: "bad host", remoteCwd: "/x" }).error ?? "",
+    validateRemoteWorkspaceInput({
+      name: "x",
+      host: "bad host",
+      remoteCwd: "/x",
+    }).error ?? "",
     /ssh host/,
   );
   // A relative path is refused: a quoted `cd` cannot resolve it and `~` never expands.
   assert.match(
-    validateRemoteWorkspaceInput({ name: "x", host: "h", remoteCwd: "rel/path" }).error ?? "",
+    validateRemoteWorkspaceInput({
+      name: "x",
+      host: "h",
+      remoteCwd: "rel/path",
+    }).error ?? "",
     /absolute/,
   );
   assert.match(
@@ -114,7 +144,11 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
   );
   // A newline cannot break out of the single-quoted remote path.
   assert.match(
-    validateRemoteWorkspaceInput({ name: "x", host: "h", remoteCwd: "/a\nrm -rf /" }).error ?? "",
+    validateRemoteWorkspaceInput({
+      name: "x",
+      host: "h",
+      remoteCwd: "/a\nrm -rf /",
+    }).error ?? "",
     /invalid/,
   );
 }
