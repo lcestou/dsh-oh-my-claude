@@ -748,3 +748,26 @@ console.log("translator plugin-warnings ok");
     "a summary equal to the step draws once",
   );
 }
+
+// A user frame whose content is a string is text the CLI wrote itself, not a tool result. The two
+// here are the ones 2.1.322 sends at the end of `/compact`; read as blocks they threw
+// "content.filter is not a function" and the turn was drawn as failed (#273).
+{
+  const t = new Translator();
+  const call = {
+    type: "assistant" as const,
+    message: { content: [{ type: "tool_use" as const, id: "tu1", name: "Read", input: {} }] },
+  };
+  Array.from(t.translate(call));
+  assert.equal(t.callsOutstanding(), true);
+  for (const content of [
+    "This session is being continued from a previous conversation that ran out of context.",
+    "<local-command-stdout>Compacted </local-command-stdout>",
+  ])
+    assert.deepEqual([...t.translate({ type: "user", message: { content } })], []);
+  assert.equal(t.callsOutstanding(), true, "CLI text answers no call");
+  const result = { type: "tool_result" as const, tool_use_id: "tu1", content: "file text" };
+  const drawn = [...t.translate({ type: "user", message: { content: [result] } })];
+  assert.ok(drawn.length > 0, "a real tool result is still drawn");
+  assert.equal(t.callsOutstanding(), false);
+}

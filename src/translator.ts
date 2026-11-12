@@ -1324,12 +1324,16 @@ export class Translator {
           event.parent_tool_use_id,
           event.message?.id,
         );
-      case "user":
+      case "user": {
+        // Text the CLI wrote itself carries no tool result: nothing to draw, and no call answered.
+        const content = event.message?.content ?? [];
+        if (!Array.isArray(content)) return [];
         return this.toolResults(
-          event.message?.content ?? [],
+          content,
           event.parent_tool_use_id,
           event.tool_use_result?.handbackReport?.text,
         );
+      }
       case "result": {
         this.finished = true;
         const events: StreamChunk[] = [];
