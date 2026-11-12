@@ -7,17 +7,24 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 
+import type { PluginContext } from "../dsh.js";
+import { sshTokenPath } from "../ssh-login.js";
+import { STATE_DIR, stateDir } from "../state.js";
 import { tempDir } from "../test-tmp.js";
 import {
   askBoxRoute,
   type BoxRunner,
   boxRouteKnown,
   boxRouteOf,
+  boxProbeScript,
   boxRouteState,
   forgetBoxRoutes,
   parseBoxEnv,
   parseBoxProbe,
 } from "./box-route.js";
+import { ClaudeCodeAdapter } from "./class.js";
+import { probeCli } from "./cli.js";
+import { Config } from "./config.js";
 
 const MARK = "\n<<omc-box-route>>\n";
 
@@ -33,7 +40,9 @@ const MARK = "\n<<omc-box-route>>\n";
         ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "GLM 4.6",
       },
     }),
-    JSON.stringify({ env: { ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Managed Name" } }),
+    JSON.stringify({
+      env: { ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Managed Name" },
+    }),
     "",
   ].join(MARK);
   const read = parseBoxEnv(out);
@@ -54,6 +63,19 @@ assert.equal(
 assert.deepEqual(parseBoxEnv(["", "", "", ""].join(MARK))?.env.baseUrl, undefined);
 assert.equal(parseBoxEnv(["", "{}"].join(MARK)), undefined);
 assert.equal(parseBoxEnv(""), undefined);
+
+// A settings file caught mid-edit says nothing, and the other layers still count.
+assert.equal(
+  parseBoxEnv(["ANTHROPIC_BASE_URL=http://shell:1", '{"env": {"ANTHROPIC_BASE', "", ""].join(MARK))
+    ?.env.baseUrl,
+  "http://shell:1",
+);
+// An address is quoted whole for the far shell, whatever it holds.
+assert.ok(
+  boxProbeScript("http://h/'; rm -rf ~; '").endsWith(
+    `'http://h/'\\''; rm -rf ~; '\\''/v1/messages'`,
+  ),
+);
 
 // The probe: Anthropic's request id in the header, a router's own body, nothing at all.
 assert.equal(
@@ -94,7 +116,10 @@ const shellAt =
   writeFileSync(
     join(home, ".claude", "settings.json"),
     JSON.stringify({
-      env: { ANTHROPIC_BASE_URL: `http://${host}`, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "GLM 4.6" },
+      env: {
+        ANTHROPIC_BASE_URL: `http://${host}`,
+        ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "GLM 4.6",
+      },
     }),
   );
   const routed = await askBoxRoute("box", shellAt(home));
@@ -107,7 +132,11 @@ const shellAt =
     curl = false;
   }
   // Without curl the endpoint cannot be asked from the box, and the state stays unknown.
-  if (routed) assert.deepEqual(boxRouteState(routed), { state: curl ? "routed" : "unknown", host });
+  if (routed)
+    assert.deepEqual(boxRouteState(routed), {
+      state: curl ? "routed" : "unknown",
+      host,
+    });
   server.close();
 
   // A box with no settings file talks straight to Anthropic.
@@ -144,3 +173,100 @@ const shellAt =
   );
   assert.equal(dead, 1, "an unreachable box is asked once per interval");
 }
+
+// A mount on a routed box: its menu, its turn and what its spawn is handed all follow the box's
+// answer. A second box with no router, in the same process, is left as it was.
+{
+  forgetBoxRoutes();
+  const answers: Record<string, string[]> = {
+    nova: [
+      "",
+      JSON.stringify({
+        env: {
+          ANTHROPIC_BASE_URL: "http://127.0.0.1:15721",
+          ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-4.6",
+          ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "GLM 4.6",
+        },
+      }),
+      "",
+      "",
+    ],
+    vega: ["", "", "", ""],
+  };
+  const far: BoxRunner = async (host, script) =>
+    script.startsWith("curl")
+      ? 'HTTP/1.1 401 Unauthorized\r\n\r\n{"detail":"unauthorized"}'
+      : (answers[host] ?? []).join(MARK);
+  const lineup = (routed: boolean) => [
+    {
+      value: "sonnet",
+      resolvedModel: routed ? "glm-4.6" : "claude-sonnet-5-5",
+      displayName: routed ? "GLM 4.6" : "Sonnet",
+      efforts: [],
+    },
+    {
+      value: "haiku",
+      resolvedModel: "claude-haiku-5-5",
+      displayName: "Haiku",
+      efforts: [],
+    },
+  ];
+  /** A panel login in the shape the store accepts. */
+  const loginOf = (host: string) => `sk-ant-oat01-${host}-${"a".repeat(50)}`;
+  // SAFETY: partial fake; a listing and a turn's preparation read the event hook and nothing else
+  const ctx = { on() {} } as unknown as PluginContext;
+  /** A mount for `host` whose box has answered, with its lineup and a panel login on file. */
+  const mountOn = async (host: string, routed: boolean) => {
+    await boxRouteOf(host, far);
+    // The far binary's flags, answered here so no ssh leaves the suite.
+    await probeCli(
+      (_cmd, args, _opts, cb) =>
+        cb(null, (args.at(-1) ?? "").includes("--help") ? "  --input-format <f>\n" : "2.1.322\n"),
+      "claude",
+      host,
+    );
+    const providerId = `claude-code-${host}`;
+    mkdirSync(stateDir(providerId), { recursive: true });
+    writeFileSync(join(stateDir(providerId), "cli-models.json"), JSON.stringify(lineup(routed)));
+    const token = sshTokenPath(STATE_DIR, host);
+    mkdirSync(join(token, ".."), { recursive: true });
+    writeFileSync(token, loginOf(host));
+    // SAFETY: the cases below read private members of the mount
+    return new ClaudeCodeAdapter(
+      ctx,
+      Config({ providerId, sshHost: host, dshTools: false, spawn: "node" }),
+    ) as any;
+  };
+
+  const nova = await mountOn("nova", true);
+  assert.deepEqual(await nova.route(), {
+    state: "routed",
+    host: "127.0.0.1:15721",
+  });
+  const names = (await nova.listModels("claude-code-nova")).map((m: { name: string }) => m.name);
+  assert.ok(names.includes("GLM 4.6"), "the box's router names its row");
+  assert.ok(!names.some((n: string) => /Haiku/.test(n)), "Claude's own rows are set aside there");
+  const turn = await nova.prepare({
+    messages: [{ role: "user", content: "hi" }],
+    model: "sonnet",
+  });
+  assert.equal(turn.via, "127.0.0.1:15721", "the turn is recorded as the router's");
+  assert.equal(turn.spec.routed, true);
+  assert.equal(turn.spec.window, 200_000, "the window for a router's row rides to the box");
+  assert.deepEqual(nova.farEnv("nova", turn.spec.routed, turn.spec.window), {
+    token: undefined,
+    window: 200_000,
+  });
+
+  const vega = await mountOn("vega", false);
+  assert.deepEqual(await vega.route(), { state: "direct" });
+  const plain = await vega.prepare({
+    messages: [{ role: "user", content: "hi" }],
+    model: "sonnet",
+  });
+  assert.equal(plain.via, undefined);
+  assert.equal(plain.spec.routed, undefined);
+  assert.equal(plain.spec.window, undefined);
+  assert.equal(vega.farEnv("vega", plain.spec.routed, plain.spec.window).token, loginOf("vega"));
+}
+console.log("box route ok");
