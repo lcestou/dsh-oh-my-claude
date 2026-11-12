@@ -69,6 +69,12 @@ assert.deepEqual(ran, [], "nothing refused reached a tool");
 assert.deepEqual(await call("job_list"), { text: "ran job_list", isError: false });
 assert.equal((await call("wait_session")).text, "waited");
 
+// dsh 0.2.2-rc.2 tools: reading the user's terminal is allowed, the office writers are not.
+for (const name of ["user_terminal_list", "user_terminal_read"])
+  assert.equal(planRefuses(name, "plan"), false, name);
+for (const name of ["office_convert", "office_recalculate", "office_render"])
+  assert.equal(planRefuses(name, "plan"), true, name);
+
 // Out of plan again: bash runs.
 mode = "acceptEdits";
 assert.equal((await call("bash")).text, "ran bash");

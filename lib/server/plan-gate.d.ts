@@ -13,11 +13,17 @@ export declare const PLAN_REFUSAL = "plan mode: this tool can change files or st
  * - `ask_user_question`, `exit_plan_mode`: ask the user; the plan review is how plan mode ends.
  * - `wait_session`, `wait_agent`, `job_output`: wait for and read work already running.
  * - `cordis_inspect_query`: runs a query its provider declares read-only.
+ * - `user_terminal_list`, `user_terminal_read` (dsh 0.2.2-rc.2, read in its source 2026-11-11): list
+ *   and read the screen of a terminal the user runs in the side panel; both descriptions say "Runs nothing".
  * Refused although they write no files:
  * - `working_directory`: also changes the session's directory (`cd`), not only reads it.
  * - `todo_write`, `present`, `create_goal`, `update_goal`: change dsh's session state; Claude's
  *   own TodoWrite covers a to-do list while planning.
  * - `interrupt_agent`, `send_message`, `job_kill`: act on running work.
+ * - `office_convert`, `office_recalculate` (dsh 0.2.2-rc.2): write a converted or recalculated file.
+ * - `office_render` (dsh 0.2.2-rc.2): dsh marks it a read, and it writes no workspace file, only page
+ *   images into the session's attachment store. Left off the list all the same: it parses the
+ *   document in the dsh host process, outside the shell sandbox, and nobody has asked for it.
  * - `load_workspace_dependencies`: reads where a runtime is, but can also install one under dsh's
  *   home when dsh is configured with a root for it.
  */

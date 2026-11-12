@@ -9,6 +9,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 ### Changed
 
 - A router on an ssh box is that box's own. Each box is now asked where its Claude Code sends its requests, so CC Switch on this PC has no say over a box's model menu, and a router on a box gets what a local one gets: its names in the menu with Claude's rows set aside, its turns kept out of the Claude cost totals, the panel login kept from it, and the window set in Settings sent along. A box needs `curl` for the plugin to tell a router from a proxy that forwards to Anthropic.
+- In plan mode Claude can list and read the terminals you run in dsh's side panel, which dsh 0.2.2-rc.2 adds as `user_terminal_list` and `user_terminal_read`. Both only read, so they join the tools plan mode allows. dsh ships the terminal panel in `@deepseek-ai/dsh-experimental-terminal-bundle`, so the two tools exist only on a profile that mounts it.
 
 ### Fixed
 
