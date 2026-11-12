@@ -4,9 +4,9 @@ import { type AliasNames } from "../sessions.js";
 /**
  * `direct`: the CLI talks to Anthropic, straight or through a proxy that forwards (headroom).
  * `routed`: its base URL is an endpoint that answers and is not Anthropic, a router such as CC
- * Switch or a gateway. `unknown`: this process cannot tell, so nothing is hidden: an ssh box,
- * whose loopback is not this one's; a Bedrock, Vertex or Foundry setup, where the CLI ignores
- * the base URL; an endpoint that does not answer.
+ * Switch or a gateway. `unknown`: this process cannot tell, so nothing is hidden: an ssh box
+ * that has not answered for itself yet (`box-route.ts`); a Bedrock, Vertex or Foundry setup,
+ * where the CLI ignores the base URL; an endpoint that does not answer.
  */
 export type RouteState = "direct" | "routed" | "unknown";
 /** A mount's state, with the endpoint's host when a base URL is in force (for the Settings line). */
@@ -43,10 +43,10 @@ export declare const routeSignature: (env: RouteEnv) => string;
  * The state of one mount. `known` answers whether a base URL reaches Anthropic from what is
  * already kept, without waiting (`firstPartyKnown`); `forwards` is the Settings control "Proxy
  * reaches Anthropic" set to on, which outranks the endpoint's own answer as it does for the
- * CLI's flag. An ssh mount and a cloud setup are `unknown` before any URL is looked at.
+ * CLI's flag. A cloud setup is `unknown` before any URL is looked at. An ssh box passes its own
+ * env and the answer its own probe gave (`boxRouteState`).
  */
 export declare function routeOf(env: RouteEnv, mount: {
-    ssh: boolean;
     forwards: boolean;
 }, known: (baseUrl: string) => FirstPartyProbe): Route;
 /** The text key for a scope name; one this file does not know reads as the box's own file. */

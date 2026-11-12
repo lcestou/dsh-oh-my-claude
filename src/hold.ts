@@ -21,11 +21,13 @@ import { PassThrough, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import {
   CHILD_ENV,
+  farEnvPairs,
   forwardedEnv,
   nodeSpawner,
   shq,
   sshArgs,
   type ClaudeProcessSpec,
+  type FarEnv,
   type SubprocessHandle,
 } from "./process.js";
 
@@ -78,12 +80,11 @@ export function holdStartScript(
   cwd: string,
   command: string,
   args: string[],
-  token?: string,
+  far?: FarEnv,
   base: NodeJS.ProcessEnv = process.env,
 ): string {
   // The privacy switches set here travel too: the far shell has none of this box's environment.
-  const envPairs = [...forwardedEnv(base), ...Object.entries(CHILD_ENV)];
-  if (token) envPairs.push(["CLAUDE_CODE_OAUTH_TOKEN", token]);
+  const envPairs = [...forwardedEnv(base), ...Object.entries(CHILD_ENV), ...farEnvPairs(far)];
   const env = envPairs.map(([key, val]) => `${key}=${shq(val)}`).join(" ");
   const cli = [command, ...args].map(shq).join(" ");
   // The inner script is single-quoted for the far shell, so it takes the dir as its `$0`.

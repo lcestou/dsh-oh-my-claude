@@ -7,7 +7,8 @@ import { watch } from "node:fs";
 import { dirname } from "node:path";
 import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { Spawner, SubprocessHandle, CliModel, WaitingSteer } from "../process.js";
+import type { FarEnv, Spawner, SubprocessHandle, CliModel, WaitingSteer } from "../process.js";
+import { boxRouteKnown, boxRouteOf, boxRouteState } from "./box-route.js";
 import { numberOf, type PluginLoadError } from "../plugins.js";
 import {
   LlmAdapter,
@@ -800,7 +801,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * The environment the CLI of this mount runs with, as far as this process can know it: dsh's
    * own, then the `env` of the mount's settings.json, then the managed file's, each outranking
    * the one before as it does for the CLI (measured on 2.1.322: a base URL in settings.json wins
-   * over an exported one). Empty for an ssh box, whose files and shell are not this one's.
+   * over an exported one). Empty for an ssh box, whose files and shell are not this one's: its
+   * routing is asked on the box instead (`box-route.ts`).
    * Without `cwd` it is the mount's own answer, which is what the listing follows, since a
    * model menu is per mount. With `cwd` the workspace's project and local settings files are
    * merged in as well, which is what a turn there really runs with: a workspace file outranks
@@ -900,20 +902,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * in the constructor because dsh builds adapters it never lists from.
    */
   async route(): Promise<Route> {
-    const env = routeEnvIn(await this.claudeEnv());
-    if (!this.config.sshHost) {
-      if (this.routeSeen === undefined)
-        void this.routeFirstSeen(routeSignature(env)).catch(() => {});
-      // The real home: with the mirror on, `claudeHome` holds links, and a link's target
-      // changing is not an event in the directory that holds the link.
-      for (const dir of [this.realClaudeHome, managedDir()])
-        watchSettingsIn(dir, this.providerId, () => void this.settingsMoved());
+    // An ssh box answers for itself (`box-route.ts`), and is `unknown` until it has: its files
+    // cannot be watched from here, so its answer is asked again as it ages instead.
+    if (this.config.sshHost) {
+      const box = boxRouteKnown(this.config.sshHost, () => void this.routeChanged());
+      return box ? boxRouteState(box) : { state: "unknown" };
     }
+    const env = routeEnvIn(await this.claudeEnv());
+    if (this.routeSeen === undefined) void this.routeFirstSeen(routeSignature(env)).catch(() => {});
+    // The real home: with the mirror on, `claudeHome` holds links, and a link's target
+    // changing is not an event in the directory that holds the link.
+    for (const dir of [this.realClaudeHome, managedDir()])
+      watchSettingsIn(dir, this.providerId, () => void this.settingsMoved());
     const hints = await readHints(join(STATE_DIR, "hints.json"));
-    return routeOf(
-      env,
-      { ssh: Boolean(this.config.sshHost), forwards: firstPartyMode(hints) === "on" },
-      (baseUrl) => firstPartyKnown(baseUrl, () => void this.routeChanged()),
+    return routeOf(env, { forwards: firstPartyMode(hints) === "on" }, (baseUrl) =>
+      firstPartyKnown(baseUrl, () => void this.routeChanged()),
     );
   }
 
@@ -952,6 +955,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       env.CLAUDE_CODE_MAX_CONTEXT_TOKENS !== undefined
     )
       return undefined;
+    return this.rowWindow(model);
+  }
+
+  /** The window this mount's row for `model` states, when it is one the plugin sized (a
+   *  router's alias, an added model with a size), else undefined. The allowlist and the "replace
+   *  the built-in rows" switch are left out: a session on a model they hide still has its row. */
+  private async rowWindow(model: string | undefined): Promise<number | undefined> {
+    if (!model) return undefined;
     const picker = await this.pickerSettings();
     const rows = picker && { ...picker, availableModels: undefined, replaceBuiltInOptions: false };
     const row = (await catalogNow(this.cliModels, rows)).find((m) => m.id === model);
@@ -997,8 +1008,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   private async pickerSettings() {
     const fromFile = await readPickerSettings(join(this.claudeHome, "settings.json"));
     // The alias names from every layer of the mount's env: they work exported in the shell dsh
-    // started from and in the managed file as well as in settings.json.
-    const { aliasNames, aliasModels } = routeEnvIn(await this.claudeEnv());
+    // started from and in the managed file as well as in settings.json. An ssh box's are its
+    // own, as it last answered, and the ones in this box's file name this box's router.
+    const far = this.config.sshHost
+      ? boxRouteKnown(this.config.sshHost, () => void this.routeChanged())
+      : undefined;
+    if (this.config.sshHost && fromFile) delete fromFile.aliasNames;
+    const { aliasNames, aliasModels } = this.config.sshHost
+      ? (far?.env ?? { aliasNames: {}, aliasModels: {} })
+      : routeEnvIn(await this.claudeEnv());
     const named =
       Object.keys(aliasNames).length + Object.keys(aliasModels).length === 0
         ? fromFile
@@ -1568,6 +1586,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         via = routedTo;
       }
     }
+    // A turn on a box is tagged by that box's own answer: its settings and its loopback, asked
+    // there. A box that could not be read, or whose endpoint did not answer, tags nothing.
+    const far = targetHost === undefined ? undefined : await boxRouteOf(targetHost);
+    const farRoute = far && boxRouteState(far);
+    if (farRoute?.state === "routed") via = farRoute.host;
     const turns = selectTurns(options.messages, session?.resuming ?? false, this.providerId);
     let prompt = buildPrompt(turns, drops);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
@@ -1649,10 +1672,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       !remoteWorkspaceFor(cwd)
     )
       spec.route = inForce;
-    // `via` is set only for a local turn, so this never rides to a box.
+    // On a box it is what keeps the panel login out of a router's hands there (`farEnv`).
     if (via !== undefined) spec.routed = true;
     // And for a window the plugin or the user has to state: see `ClaudeProcessSpec.window`.
-    const sized = here === undefined ? undefined : await this.sizedWindow(model, here);
+    // On an ssh box's own mount the rows are that box's, so its window rides there too, unless
+    // the box states one itself. Not for a remote workspace under this box's mount, whose rows
+    // are this box's and say nothing about the far model.
+    let sized: number | undefined;
+    if (here !== undefined) sized = await this.sizedWindow(model, here);
+    else if (this.config.sshHost && far && !far.ownWindow) sized = await this.rowWindow(model);
     if (sized !== undefined) spec.window = sized;
     // Keeper or child joins the spec the same way: a flip of the Settings switch replaces each
     // running process on its session's next turn, never during one. The switch lives in the
@@ -3848,6 +3876,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return Object.keys(over).length === 0 ? undefined : over;
   }
 
+  /** What a `claude` started on `host` is handed: the box's panel login, withheld from a turn
+   *  proven to go to a router there (as `localEnvOverride` does here), and the spec's window. */
+  private farEnv(host: string, routed: boolean | undefined, window: number | undefined): FarEnv {
+    return { token: routed ? undefined : readSshToken(STATE_DIR, host), window };
+  }
+
   /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
   keeperEnv(firstParty?: boolean, window?: number, routed?: boolean) {
     return childEnv(process.env, this.localEnvOverride(firstParty, window, routed));
@@ -3924,7 +3958,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
     if (this.keeperOwner) record.owner = this.keeperOwner;
     const started = new Promise<SubprocessHandle>((resolve, reject) => {
-      const s = run(holdStartScript(holdId, cwd, command, args, readSshToken(STATE_DIR, host)));
+      const s = run(
+        holdStartScript(holdId, cwd, command, args, this.farEnv(host, spec.routed, spec.window)),
+      );
       let out = "";
       let err = "";
       s.stdin.end();
@@ -4232,7 +4268,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // A remote-workspace cwd is a local placeholder here; redirect it to the box's real path.
     if (this.config.sshHost) {
       const host = this.config.sshHost;
-      return sshSpawner(host, (cwd) => remoteCwdFor(host, cwd), readSshToken(STATE_DIR, host));
+      return sshSpawner(host, (cwd) => remoteCwdFor(host, cwd), this.farEnv(host, routed, window));
     }
     const base = child === "dsh" && this.subprocess ? seamSpawner(this.subprocess) : nodeSpawner;
     if (child === "dsh" && !this.subprocess && !this.warnedNoSeam) {
@@ -4250,7 +4286,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return (command: string, args: string[], cwd: string) => {
       const ws = remoteWorkspaceFor(cwd);
       if (ws)
-        return sshSpawner(ws.host, () => ws.remoteCwd, readSshToken(STATE_DIR, ws.host))(
+        return sshSpawner(ws.host, () => ws.remoteCwd, this.farEnv(ws.host, routed, window))(
           // The far box's own binary, by the configured name: see `commandFor`.
           this.configuredCommand,
           args,

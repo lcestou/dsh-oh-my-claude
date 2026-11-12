@@ -31,6 +31,8 @@ export type FirstPartyProbe = boolean | undefined;
  * strong evidence: a gateway that fronts another provider mints its own error shape.
  */
 export declare const readsAsAnthropic: (body: ProbeBody, requestIdHeader: string) => boolean;
+/** `https://host/path/` and `https://host/path` both take one `/v1/messages`. */
+export declare const messagesUrl: (baseUrl: string) => string;
 /**
  * Ask one base URL whether it reaches Anthropic.
  *

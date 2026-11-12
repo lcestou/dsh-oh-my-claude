@@ -381,6 +381,23 @@ export declare function isSshHost(host: string): boolean;
  * session without one, and is skipped when it does not fit.
  */
 export declare function controlSocketDir(runtime: string | undefined, state: string, make: (dir: string) => void): string | undefined;
+/** What the plugin adds to one far `claude`'s environment, beyond what every child gets. */
+export interface FarEnv {
+    /** The box's panel login. Left out for a turn that goes to a router: the token is the Claude
+     *  account's, and an endpoint that is not Anthropic has no business holding it. */
+    token?: string | undefined;
+    /** A context window the plugin has to state (`ClaudeProcessSpec.window`). */
+    window?: number | undefined;
+}
+/**
+ * `far` as environment pairs for the remote command line. A fresh per-box token from `claude
+ * setup-token` is delivered as CLAUDE_CODE_OAUTH_TOKEN, not a stored login, so it must be handed
+ * to the far claude at spawn. ponytail: it rides in the remote env argv like the rest of
+ * CHILD_ENV, so it shows in the box's own `ps`; acceptable on a single-user box, tighten with a
+ * remote env file if a box is shared. The window goes out under both names the CLI listens to,
+ * as it does for a local spawn (`localEnvOverride`).
+ */
+export declare function farEnvPairs(far?: FarEnv): [string, string][];
 /**
  * The local `ssh` argv that runs `command args` on `host` in `cwd`. The remote shell inherits none
  * of this box's environment or working directory, so the command carries both: `cd` into `cwd`, then
@@ -389,7 +406,7 @@ export declare function controlSocketDir(runtime: string | undefined, state: str
  * rather than let `cd` fail the whole spawn. A remote workspace redirects `cwd` to its real remote
  * path before it reaches here (see `sshSpawner`), so that fallback is only for a plain local path.
  */
-export declare function sshInvocation(host: string, command: string, args: string[], cwd: string, token?: string, base?: NodeJS.ProcessEnv): {
+export declare function sshInvocation(host: string, command: string, args: string[], cwd: string, far?: FarEnv, base?: NodeJS.ProcessEnv): {
     command: string;
     args: string[];
 };
@@ -399,7 +416,7 @@ export declare function sshInvocation(host: string, command: string, args: strin
  * the translator, approvals and control requests are untouched. The remote uses its own `~/.claude`
  * login; the dsh MCP bridge points at this box's port and does not reach it, so `dshTools` is best off.
  */
-export declare const sshSpawner: (host: string, resolveCwd?: (cwd: string) => string, token?: string) => Spawner;
+export declare const sshSpawner: (host: string, resolveCwd?: (cwd: string) => string, far?: FarEnv) => Spawner;
 /** stdin line for one user turn. `session_id` empty and `parent_tool_use_id` null match what the SDK
  *  writes. `uuid` names the line for a later `cancel_async_message`; the CLI keeps it as the message's id. */
 export declare function userTurnLine(content: unknown, uuid?: string): string;

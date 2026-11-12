@@ -1219,26 +1219,35 @@ export function aliasNamesIn(
  * the workspace's files from the answer and keeps the box's. Nothing here throws: the callers
  * ask "do the settings route Claude Code somewhere", and no answer is "no".
  */
-export async function settingsEnvAt(
-  userPath: string,
-  cwd: string | null,
-): Promise<{
-  env: Record<string, string>;
-  from: Record<string, string>;
-  /** The `autoCompactWindow` key of the highest file that sets one: a window someone chose. */
-  autoCompactWindow?: number;
-}> {
-  const env: Record<string, string> = {};
-  const from: Record<string, string> = {};
-  let autoCompactWindow: number | undefined;
+export async function settingsEnvAt(userPath: string, cwd: string | null): Promise<SettingsEnv> {
   // `settingsTexts` refuses the whole read when one workspace file cannot be read. Here that
   // would hide the box's own files as well, the router's address among them, so the fallback is
   // the box's answer without the workspace, and nothing only when that fails too.
   const texts = await settingsTexts({}, userPath, cwd)
     .catch(() => settingsTexts({}, userPath, null))
     .catch(() => []);
-  // `settingsTexts` answers highest precedence first; assigning lowest first lets each scope
-  // overwrite the ones it outranks.
+  return settingsEnvIn(texts);
+}
+
+/** What a stack of settings files gives the CLI's environment. */
+export interface SettingsEnv {
+  env: Record<string, string>;
+  /** The scope that had the last word on each variable. */
+  from: Record<string, string>;
+  /** The `autoCompactWindow` key of the highest file that sets one: a window someone chose. */
+  autoCompactWindow?: number;
+}
+
+/**
+ * Merge the `env` blocks of settings texts given highest precedence first, as `settingsTexts`
+ * answers them (and as an ssh box's files are read in `box-route.ts`). A text that does not
+ * parse, or has no `env`, contributes nothing; only string values count.
+ */
+export function settingsEnvIn(texts: ReadonlyArray<{ scope: string; text: string }>): SettingsEnv {
+  const env: Record<string, string> = {};
+  const from: Record<string, string> = {};
+  let autoCompactWindow: number | undefined;
+  // Assigning lowest first lets each scope overwrite the ones it outranks.
   for (const { scope, text } of texts.toReversed()) {
     const value = parseSettingsText(text).value;
     if (typeof value?.autoCompactWindow === "number") autoCompactWindow = value.autoCompactWindow;

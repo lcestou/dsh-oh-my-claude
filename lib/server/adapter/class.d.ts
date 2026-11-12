@@ -163,7 +163,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * The environment the CLI of this mount runs with, as far as this process can know it: dsh's
      * own, then the `env` of the mount's settings.json, then the managed file's, each outranking
      * the one before as it does for the CLI (measured on 2.1.322: a base URL in settings.json wins
-     * over an exported one). Empty for an ssh box, whose files and shell are not this one's.
+     * over an exported one). Empty for an ssh box, whose files and shell are not this one's: its
+     * routing is asked on the box instead (`box-route.ts`).
      * Without `cwd` it is the mount's own answer, which is what the listing follows, since a
      * model menu is per mount. With `cwd` the workspace's project and local settings files are
      * merged in as well, which is what a turn there really runs with: a workspace file outranks
@@ -226,6 +227,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * it here would overrule that choice.
      */
     private sizedWindow;
+    /** The window this mount's row for `model` states, when it is one the plugin sized (a
+     *  router's alias, an added model with a size), else undefined. The allowlist and the "replace
+     *  the built-in rows" switch are left out: a session on a model they hide still has its row. */
+    private rowWindow;
     /** What a listing is filtered by: the state, and this mount's "also list Claude's own models"
      *  switch (`routedClaude:<provider>` in the hints store). */
     private routeFilter;
@@ -1004,6 +1009,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * keeps its own login, which is what a second instance is for.
      */
     localEnvOverride(firstParty?: boolean, window?: number, routed?: boolean): Record<string, string> | undefined;
+    /** What a `claude` started on `host` is handed: the box's panel login, withheld from a turn
+     *  proven to go to a router there (as `localEnvOverride` does here), and the spec's window. */
+    private farEnv;
     /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
     keeperEnv(firstParty?: boolean, window?: number, routed?: boolean): Record<string, string>;
     /** Spawner for one session: keeper mode needs the session to place and name the keeper. A spec

@@ -30,12 +30,17 @@ assert.equal(
 // The start script: far dir under $HOME, FIFO, setsid'd inner sh that holds the FIFO read-write,
 // the exit code recorded, the pid file, and the cli plus its env single-quoted for the far shell.
 {
-  const s = holdStartScript("abc-1", "/srv/app", "claude", ["-p", "--add-dir", "/a b'c"], "tok");
+  const s = holdStartScript("abc-1", "/srv/app", "claude", ["-p", "--add-dir", "/a b'c"], {
+    token: "tok",
+    window: 128_000,
+  });
   assert.match(
     s,
     /^d="\$HOME"\/\.local\/state\/dsh-oh-my-claude\/hold\/'abc-1'; mkdir -p "\$d" && mkfifo "\$d"\/in \|\| exit 70; /,
   );
   assert.match(s, /cd '\/srv\/app' 2>\/dev\/null \|\| cd "\$HOME"; /);
+  assert.match(s, /CLAUDE_CODE_AUTO_COMPACT_WINDOW=\S*128000/, "a stated window rides to the box");
+  assert.match(s, /CLAUDE_CODE_MAX_CONTEXT_TOKENS=\S*128000/);
   assert.match(
     s,
     /setsid sh -c '.*' "\$d" 1>>"\$d"\/out\.log 2>>"\$d"\/err\.log & echo \$! >"\$d"\/pid; /,
