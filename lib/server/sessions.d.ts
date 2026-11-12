@@ -423,12 +423,24 @@ export declare function aliasNamesIn(env: Record<string, string | undefined>, su
  * the workspace's files from the answer and keeps the box's. Nothing here throws: the callers
  * ask "do the settings route Claude Code somewhere", and no answer is "no".
  */
-export declare function settingsEnvAt(userPath: string, cwd: string | null): Promise<{
+export declare function settingsEnvAt(userPath: string, cwd: string | null): Promise<SettingsEnv>;
+/** What a stack of settings files gives the CLI's environment. */
+export interface SettingsEnv {
     env: Record<string, string>;
+    /** The scope that had the last word on each variable. */
     from: Record<string, string>;
     /** The `autoCompactWindow` key of the highest file that sets one: a window someone chose. */
     autoCompactWindow?: number;
-}>;
+}
+/**
+ * Merge the `env` blocks of settings texts given highest precedence first, as `settingsTexts`
+ * answers them (and as an ssh box's files are read in `box-route.ts`). A text that does not
+ * parse, or has no `env`, contributes nothing; only string values count.
+ */
+export declare function settingsEnvIn(texts: ReadonlyArray<{
+    scope: string;
+    text: string;
+}>): SettingsEnv;
 /**
  * Read what settings.json says about the picker. Anything the CLI would ignore is dropped here,
  * and a file that is missing, unreadable or silent on both keys reads as undefined, so a settings

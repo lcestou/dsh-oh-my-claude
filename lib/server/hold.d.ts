@@ -1,4 +1,4 @@
-import { type ClaudeProcessSpec, type SubprocessHandle } from "./process.js";
+import { type ClaudeProcessSpec, type FarEnv, type SubprocessHandle } from "./process.js";
 /** First line of an attach: everything before it is a login shell's banner, not the CLI. */
 export declare const READY = "OMC-HOLD-READY";
 /** Last line of an attach that saw the CLI end; the rest of the line is its exit code. */
@@ -32,7 +32,7 @@ export declare function holdName(providerId: string, sessionId: string, stamp?: 
  * so `setsid` execs rather than forks and `$!` is the leader itself. The inner `sh` holds the FIFO
  * open read-write for the CLI and records the exit code after it.
  */
-export declare function holdStartScript(name: string, cwd: string, command: string, args: string[], token?: string, base?: NodeJS.ProcessEnv): string;
+export declare function holdStartScript(name: string, cwd: string, command: string, args: string[], far?: FarEnv, base?: NodeJS.ProcessEnv): string;
 /**
  * Attach: stdin into the FIFO, the log out from `offset`. `tail --pid` ends when the leader does,
  * after one last read, so the final `result` frame is never left in the file. The `cat` is killed

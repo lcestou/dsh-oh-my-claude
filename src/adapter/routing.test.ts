@@ -64,7 +64,7 @@ assert.notEqual(
 );
 
 // The state. `known` stands in for the kept probe answer.
-const local = { ssh: false, forwards: false };
+const local = { forwards: false };
 const says = (answer: boolean | undefined) => () => answer;
 const never = () => assert.fail("no endpoint is asked when no URL is in force");
 assert.deepEqual(routeOf(routeEnvIn({}), local, never), { state: "direct" });
@@ -88,11 +88,10 @@ assert.deepEqual(
   "an endpoint that does not answer is not known to be anything",
 );
 assert.deepEqual(
-  routeOf(routedEnv, { ssh: false, forwards: true }, never),
+  routeOf(routedEnv, { forwards: true }, never),
   { state: "direct", host: "127.0.0.1:15721" },
   "the Proxy reaches Anthropic switch outranks the endpoint",
 );
-assert.deepEqual(routeOf(routedEnv, { ssh: true, forwards: false }, never), { state: "unknown" });
 assert.deepEqual(
   routeOf(routeEnvIn({ ...ccSwitch, CLAUDE_CODE_USE_BEDROCK: "1" }), local, never),
   { state: "unknown" },

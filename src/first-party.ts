@@ -46,7 +46,8 @@ export const readsAsAnthropic = (body: ProbeBody, requestIdHeader: string): bool
 };
 
 /** `https://host/path/` and `https://host/path` both take one `/v1/messages`. */
-const messagesUrl = (baseUrl: string): string => `${baseUrl.replace(/\/+$/, "")}/v1/messages`;
+export const messagesUrl = (baseUrl: string): string =>
+  `${baseUrl.replace(/\/+$/, "")}/v1/messages`;
 
 /**
  * Ask one base URL whether it reaches Anthropic.

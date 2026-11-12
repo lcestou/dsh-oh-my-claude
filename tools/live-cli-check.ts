@@ -71,7 +71,7 @@ function runTurn(
   timeoutMs = 180000,
 ): Promise<TurnOutcome> {
   const inv = host
-    ? sshInvocation(host, "claude", argv, process.cwd(), readSshToken(STATE_DIR, host))
+    ? sshInvocation(host, "claude", argv, process.cwd(), { token: readSshToken(STATE_DIR, host) })
     : { command: "claude", args: argv };
   return new Promise<TurnOutcome>((resolve) => {
     const child = spawn(inv.command, inv.args, { stdio: ["pipe", "pipe", "pipe"] });
