@@ -24,7 +24,7 @@ Every key the plugin reads, with its default. All keys are optional; a fresh ins
 | `toolsInline` | unset | `true` renders tool activity as inline text, `false` as dsh's own `tool/call` rows. Unset: rows once the startup probe finds the running dsh loads them back, inline until then. The Settings switch "Native tool rows" overrides this once set. Rows are only written where they load back: a format-0 session log (dsh before 0.1.5), or a dsh whose loader takes a `tool/call` no assistant message advertised, which the plugin probes at startup (dsh 0.1.5-rc.1 does; its format migration did not). |
 | `hookRows` | `true` | Show Claude Code hook starts and results as reasoning lines (adds `--include-hook-events`). |
 | `resume` | `true` | Keep one Claude Code session per dsh session. |
-| `idleTimeoutMs` | `1800000` | Kill the child when no stream event arrives for this long; surfaces as `IDLE_TIMEOUT`. |
+| `idleTimeoutMs` | `1800000` | Kill the child when no stream event arrives for this long; surfaces as `IDLE_TIMEOUT`. A tool call in flight gets twice as long, and nothing is killed while an approval, a question or a plan review waits for your answer. |
 | `toolTextLimit` | `600` | Characters of a tool result kept in its session row. |
 | `debug` | `false` | Log the spawn arguments (prompt redacted) and cwd per call. |
 | `approvals` | `true` | Relay Claude Code permission prompts and AskUserQuestion to dsh dialogs. |

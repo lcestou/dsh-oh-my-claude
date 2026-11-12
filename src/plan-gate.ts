@@ -29,8 +29,10 @@ export const PLAN_REFUSAL =
  * - `todo_write`, `present`, `create_goal`, `update_goal`: change dsh's session state; Claude's
  *   own TodoWrite covers a to-do list while planning.
  * - `interrupt_agent`, `send_message`, `job_kill`: act on running work.
- * - `office_convert`, `office_recalculate`, `office_render` (dsh 0.2.2-rc.2): write converted or
- *   rendered files.
+ * - `office_convert`, `office_recalculate` (dsh 0.2.2-rc.2): write a converted or recalculated file.
+ * - `office_render` (dsh 0.2.2-rc.2): dsh marks it a read, and it writes no workspace file, only page
+ *   images into the session's attachment store. Left off the list all the same: it parses the
+ *   document in the dsh host process, outside the shell sandbox, and nobody has asked for it.
  * - `load_workspace_dependencies`: reads where a runtime is, but can also install one under dsh's
  *   home when dsh is configured with a root for it.
  */
