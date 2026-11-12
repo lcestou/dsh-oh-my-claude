@@ -155,5 +155,19 @@ const block = (index: number, id: string) => [
   ]);
   assert.deepEqual(nested, { left: 0, parked: "steer" }, "parks at the Agent's own result");
 }
+{
+  // Text the CLI wrote itself (here what `/compact` ends with) is a user frame with no tool
+  // result in it: the step reads on to the turn's end instead of parking there (#273).
+  const cliText = await step([
+    {
+      type: "user",
+      message: {
+        content: "<local-command-stdout>Compacted </local-command-stdout>",
+      },
+    },
+    { type: "result", subtype: "success", is_error: false, result: "" },
+  ]);
+  assert.deepEqual(cliText, { left: 0, parked: undefined }, "the CLI's own text is no boundary");
+}
 rmSync(stateDir, { recursive: true, force: true });
 console.log("steer park ok");
