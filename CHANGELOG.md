@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-11-12
+
+dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.2; built and tested on 0.2.2-rc.2.
+
 ### Changed
 
 - A router on an ssh box is that box's own. Each box is now asked where its Claude Code sends its requests, so CC Switch on this PC has no say over a box's model menu, and a router on a box gets what a local one gets: its names in the menu with Claude's rows set aside, its turns kept out of the Claude cost totals, the panel login kept from it, and the window set in Settings sent along. A box needs `curl` for the plugin to tell a router from a proxy that forwards to Anthropic.
