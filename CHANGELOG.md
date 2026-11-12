@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- `/compact` typed in a Claude session no longer ends with "This turn failed: content.filter is not a function". The compaction itself went through; the line Claude Code writes when it finishes was read as a tool result. Thanks to @huananhuxu-debug (#273)
+
 ## [1.6.2] - 2026-11-11
 
 dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.1; built and tested on 0.2.2-rc.1.

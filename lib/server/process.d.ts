@@ -200,8 +200,10 @@ export type ClaudeEvent = {
     parent_tool_use_id?: string | null;
 } | {
     type: "user";
+    /** Blocks for a tool result. A plain string for text the CLI wrote itself: a slash
+     *  command's output (`<local-command-stdout>`), the summary that follows a compaction. */
     message?: {
-        content?: ClaudeContentBlock[];
+        content?: string | ClaudeContentBlock[];
     };
     parent_tool_use_id?: string | null;
     /** What the CLI records beside a tool result. `handbackReport` holds a subagent's report
