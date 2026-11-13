@@ -98,18 +98,25 @@ export interface SessionStore {
     fork(source: Session | SessionId, boundary?: number, childSessionId?: SessionId): Session;
     on?(event: string, cb: (...args: unknown[]) => void): void;
 }
+/** A model route as dsh-agent's `AgentModel` records it and dsh-llm's call config carries it. */
+export interface ModelRoute {
+    provider: string;
+    model: string;
+    reasoningEffort?: string;
+}
 /** Mirrors: @deepseek-ai/dsh-agent/lib/types/types.d.ts */
 export interface Agent {
     readonly id: SessionId;
     readonly session?: Session;
     /** dsh-agent's `AgentModel`: `select` replaces the next step's route for this agent alone and
-     *  validates nothing. Optional because the mirror also types agents built some other way. */
+     *  validates nothing. A selection without an effort drops the effort, so the model's default
+     *  applies, and one equal to the recorded route appends nothing. `current` is the route the next
+     *  step takes: the newest selection, else the last request's, else the agent's options, and
+     *  undefined when none names a model. Optional because the mirror also types agents built some
+     *  other way. */
     readonly model?: {
-        select(selection: {
-            provider: string;
-            model: string;
-            reasoningEffort?: string;
-        }): void;
+        select(selection: ModelRoute): void;
+        current(): ModelRoute | undefined;
     };
     ctx?: PluginContext;
     followup(message: Message): void;
@@ -463,6 +470,19 @@ export interface PluginContext {
             name: string;
             bytes: number;
         }) => string;
+        /** Every provider dsh has registered. dsh's own model switch refuses one not listed here. */
+        listProviders(): ReadonlyArray<{
+            id: string;
+        }>;
+        /** The models dsh's picker offers for one provider; rejects when the provider cannot list. */
+        listModels(provider: string): Promise<ReadonlyArray<{
+            id: string;
+        }>>;
+        /** Checks a route's request controls against its model and rejects with dsh's own message when
+         *  the model lacks the effort asked for; resolves the route, with any default it fills in. An
+         *  adapter may describe any model id, so an unknown model can pass here: dsh's own switch checks
+         *  `listModels` first, and so does the bridge. */
+        resolveCallConfig(config: ModelRoute, signal?: AbortSignal): Promise<ModelRoute>;
     };
     logger: {
         [level: string]: ((msg: string) => void) | undefined;

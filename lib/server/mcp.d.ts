@@ -22,6 +22,8 @@ interface OpenSessionArgs {
 }
 /** The host services openSession needs; all are injected before the bridge mounts. */
 type OpenHost = Required<Pick<PluginContext, "sessions" | "workspaceRegistry" | "sessionController">>;
+/** The host services promptSession needs: the controller, and dsh's model list to check a switch. */
+type PromptHost = Pick<OpenHost, "sessionController"> & Pick<PluginContext, "llm">;
 /**
  * Creates and initializes a new top-level dsh session with an initial prompt.
  * Used by the MCP bridge to fan out sessions from Claude Code to dsh. A provider is applied only
@@ -36,9 +38,9 @@ export declare function openSession(ctx: OpenHost, agent: Agent, args: OpenSessi
  * it are this message's, plus any the session's running turn finishes meanwhile; reading it does
  * not wake a cold session, and an unknown id fails there with dsh's own "not found". dsh's `prompt`
  * resolves the session itself, so a cold one resumes only for a message that is really sent, and
- * keeps its route.
+ * keeps its route unless the call names one, which `switchRoute` sets first.
  */
-export declare function promptSession(ctx: Pick<OpenHost, "sessionController">, agent: Agent, args: Record<string, JsonValue>, signal: AbortSignal): Promise<string>;
+export declare function promptSession(ctx: PromptHost, agent: Agent, args: Record<string, JsonValue>, signal: AbortSignal): Promise<string>;
 /**
  * Waits on a session through dsh's own `sessionController.wait` and renders its text replies,
  * oldest first, under a status line that ends with the cursor to pass next time. The output is

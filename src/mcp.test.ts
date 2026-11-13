@@ -740,3 +740,165 @@ console.log("mcp ok");
   assert.match(logLines[0] ?? "", /prompt_session failed: Error: session "gone" not found\n\s+at /);
   console.log("prompt-session ok");
 }
+
+// prompt_session switches the target's model (#278): on the target's own agent, after the cursor
+// and before the message, filled from the current route where the call leaves a part out, and only
+// once dsh's checks pass. A refused route selects nothing and sends nothing.
+{
+  const calls: string[] = [];
+  const selected: unknown[] = [];
+  type Route = { provider: string; model: string; reasoningEffort?: string };
+  let current: Route | undefined;
+  // The fake follows its own select, as dsh's projection does, so each call sees the last one's route.
+  const target = {
+    model: {
+      select: (r: Route) => void (calls.push("select"), selected.push(r), (current = r)),
+      current: () => current,
+    },
+  };
+  // SAFETY: a stand-in for the controller and llm methods prompt_session reads
+  const host = {
+    sessionController: {
+      state: async () => (calls.push("state"), { cursor: 41 }),
+      resolveAgent: async () => (calls.push("resolve"), { agent: target }),
+      prompt: async () => void calls.push("prompt"),
+    },
+    llm: {
+      listProviders: () => [{ id: "openai-codex" }, { id: "claude-code" }],
+      listModels: async (p: string) =>
+        p === "openai-codex"
+          ? [{ id: "gpt-a" }, { id: "gpt-b" }, { id: "gpt-broken" }]
+          : [{ id: "claude-opus-5-5" }],
+      resolveCallConfig: async (c: Route) => {
+        if (c.model === "gpt-b" && c.reasoningEffort === "xhigh")
+          throw Object.assign(
+            new Error('model "gpt-b" does not support reasoning effort "xhigh"'),
+            {
+              code: "UNSUPPORTED_REASONING_EFFORT",
+            },
+          );
+        if (c.model === "gpt-broken")
+          throw Object.assign(new Error("adapter down"), { code: "PROVIDER_ERROR" });
+        return c;
+      },
+    },
+  } as unknown as Parameters<typeof promptSession>[0];
+  // SAFETY: the calling agent's session is s1
+  const caller = { id: "a", session: { id: "s1" } } as unknown as Agent;
+  const signal = new AbortController().signal;
+  /** One prompt_session call into s2 with the route arguments given. */
+  const send = (route: Record<string, string>) =>
+    promptSession(host, caller, { sessionId: "s2", prompt: "next step", ...route }, signal);
+  const line = (on: string) => `sent to session s2 (queue) on ${on}; afterSeq 41`;
+
+  current = { provider: "openai-codex", model: "gpt-a", reasoningEffort: "medium" };
+  assert.equal(
+    await send({ provider: "claude-code", model: "claude-opus-5-5", reasoningEffort: "high" }),
+    line("claude-code/claude-opus-5-5 at high effort"),
+  );
+  assert.deepEqual(
+    calls,
+    ["state", "resolve", "select", "prompt"],
+    "cursor first, then the agent, route before the message",
+  );
+  assert.equal(
+    await send({ model: "claude-opus-5-5" }),
+    line("claude-code/claude-opus-5-5 at high effort"),
+    "the same model named again keeps its effort",
+  );
+  assert.equal(
+    await send({ reasoningEffort: "low" }),
+    line("claude-code/claude-opus-5-5 at low effort"),
+    "an effort alone keeps the session's model",
+  );
+  assert.equal(
+    await send({ provider: "openai-codex", model: "gpt-b" }),
+    line("openai-codex/gpt-b"),
+    "a different model without an effort runs at its own default",
+  );
+  assert.equal(
+    await send({ model: "gpt-a", provider: "", reasoningEffort: "" }),
+    line("openai-codex/gpt-a"),
+    "a model alone keeps the provider, and empty strings count as not given",
+  );
+  current = { provider: "openai-codex", model: "gpt-hidden" };
+  assert.equal(
+    await send({ reasoningEffort: "high" }),
+    line("openai-codex/gpt-hidden at high effort"),
+    "a model dsh does not list still takes an effort while the session stays on it",
+  );
+  assert.deepEqual(selected, [
+    { provider: "claude-code", model: "claude-opus-5-5", reasoningEffort: "high" },
+    { provider: "claude-code", model: "claude-opus-5-5", reasoningEffort: "high" },
+    { provider: "claude-code", model: "claude-opus-5-5", reasoningEffort: "low" },
+    { provider: "openai-codex", model: "gpt-b" },
+    { provider: "openai-codex", model: "gpt-a" },
+    { provider: "openai-codex", model: "gpt-hidden", reasoningEffort: "high" },
+  ]);
+
+  calls.length = 0;
+  await assert.rejects(
+    send({ provider: "openai-codex", model: "gpt-z" }),
+    /^Error: openai-codex\/gpt-z is not a model dsh offers; nothing was sent$/,
+  );
+  await assert.rejects(
+    send({ provider: "nobody", model: "gpt-a" }),
+    /nobody\/gpt-a is not a model dsh offers/,
+  );
+  await assert.rejects(
+    send({ model: "claude-opus-5-5" }),
+    /openai-codex\/claude-opus-5-5 is not a model dsh offers; name its provider if it is another provider's model; nothing was sent$/,
+    "a model alone is looked up under the session's provider, and the refusal says so",
+  );
+  await assert.rejects(
+    send({ model: "gpt-b", reasoningEffort: "xhigh" }),
+    /does not support reasoning effort "xhigh"; nothing was sent$/,
+  );
+  await assert.rejects(
+    send({ model: "gpt-broken" }),
+    /^Error: adapter down$/,
+    "a failure that is not the caller's goes back as itself",
+  );
+  await assert.rejects(send({ provider: "claude-code" }), /needs a model with a provider/);
+  await assert.rejects(
+    promptSession(host, caller, { sessionId: "s2", prompt: "x", reasoningEffort: 5 }, signal),
+    /prompt_session reasoningEffort must be a string/,
+    "a wrong type is refused, never sent on the old route",
+  );
+  current = undefined;
+  await assert.rejects(send({ reasoningEffort: "high" }), /has no model yet/);
+  assert.deepEqual(
+    calls.filter((c) => c !== "state" && c !== "resolve"),
+    [],
+    "a refused route selects nothing and sends nothing",
+  );
+  // Through the bridge: the caller's mistake is answered without a log line, any other failure is
+  // logged as well.
+  const logged: string[] = [];
+  current = { provider: "openai-codex", model: "gpt-a" };
+  // SAFETY: the shared test env with this host's prompt_session and a log that records
+  const rpc = {
+    ...env,
+    prompt: (a: Record<string, never>) => promptSession(host, caller, a, signal),
+    log: (_level: string, msg: string) => void logged.push(msg),
+  } as unknown as Parameters<typeof handleRpc>[1];
+  /** One tools/call of prompt_session into s2 through handleRpc; answers whether it failed. */
+  const call = async (model: string) =>
+    // SAFETY: tools/call always returns a response
+    (
+      (await handleRpc(
+        {
+          jsonrpc: "2.0",
+          id: 90,
+          method: "tools/call",
+          params: { name: "prompt_session", arguments: { sessionId: "s2", prompt: "x", model } },
+        },
+        rpc,
+      )) as { result: { isError?: boolean } }
+    ).result.isError === true;
+  assert.equal(await call("gpt-z"), true);
+  assert.deepEqual(logged, [], "an unknown model is the caller's mistake: no log line");
+  assert.equal(await call("gpt-broken"), true);
+  assert.equal(logged.length, 1, "an adapter failure is logged");
+  console.log("prompt-session-route ok");
+}
