@@ -860,6 +860,11 @@ console.log("mcp ok");
     "a failure that is not the caller's goes back as itself",
   );
   await assert.rejects(send({ provider: "claude-code" }), /needs a model with a provider/);
+  await assert.rejects(
+    promptSession(host, caller, { sessionId: "s2", prompt: "x", reasoningEffort: 5 }, signal),
+    /prompt_session reasoningEffort must be a string/,
+    "a wrong type is refused, never sent on the old route",
+  );
   current = undefined;
   await assert.rejects(send({ reasoningEffort: "high" }), /has no model yet/);
   assert.deepEqual(

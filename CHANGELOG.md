@@ -8,7 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
-- `prompt_session` can switch the target session's model and thinking level before it sends the message, with optional `provider`, `model` and `reasoningEffort`. A long job can move to a stronger model for a hard step and back to a lighter one after, without opening a new session and losing its context. The session stays on the new model until it is switched again. Only that session changes: the default for new sessions stays as it was. A model dsh does not list, or an effort the model does not take, is refused before anything is sent. Thanks to @huananhuxu-debug (#278)
+- `prompt_session` can switch the target session's model and thinking level before it sends the message, with optional `provider`, `model` and `reasoningEffort`. A long job can move to a stronger model for a hard step and back to a lighter one after, without opening a new session and losing its context. The session stays on the new model until it is switched again. Only that session changes: the default for new sessions stays as it was. Switching to a model dsh does not list, or to an effort the model does not take, is refused before anything is sent. Thanks to @huananhuxu-debug (#278)
 
 ## [1.6.3] - 2026-11-12
 

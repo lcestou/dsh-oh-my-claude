@@ -105,7 +105,7 @@ const OPEN_SESSION: ToolSchema = {
 const PROMPT_SESSION: ToolSchema = {
   name: "prompt_session",
   description:
-    "Send a follow-up message into an existing dsh session, e.g. one open_session returned. A cold session resumes and keeps its own context. mode queue (default) runs it after the current turn; steer injects it into the running turn. provider, model and reasoningEffort are optional and switch that session's model before the message is sent, for that session only. The switch applies from the session's next step, so a turn it is already running continues on the new model, and the session stays on it until switched again. A model without a provider keeps the session's provider; reasoningEffort alone keeps its model; a different model without reasoningEffort runs at that model's default effort, while the same model keeps its effort. A provider, model or effort dsh does not offer is refused and nothing is sent. Without the three the session keeps its own model. The message arrives under a line naming this session as its sender. Returns at once with a cursor, and the model when one was set: pass the cursor to wait_session as afterSeq to read only the replies that come after this message.",
+    "Send a follow-up message into an existing dsh session, e.g. one open_session returned. A cold session resumes and keeps its own context. mode queue (default) runs it after the current turn; steer injects it into the running turn. provider, model and reasoningEffort are optional and switch that session's model before the message is sent, for that session only. The switch applies from the session's next step, so a turn it is already running continues on the new model, and the session stays on it until switched again. A model without a provider keeps the session's provider; reasoningEffort alone keeps its model; a different model without reasoningEffort runs at that model's default effort, while the same model keeps its effort. Switching to a provider or model dsh does not list, or to an effort the model does not take, is refused and nothing is sent; a session already on an unlisted model keeps it. Without the three the session keeps its own model. The message arrives under a line naming this session as its sender. Returns at once with a cursor, and the model when one was set: pass the cursor to wait_session as afterSeq to read only the replies that come after this message.",
   parameters: {
     type: "object",
     properties: {
@@ -299,6 +299,11 @@ async function switchRoute(
   args: Record<string, JsonValue>,
   signal: AbortSignal,
 ): Promise<ModelRoute | undefined> {
+  // A wrong type is refused rather than dropped: dropped, the message would go out on the old
+  // route while the caller believes it switched. A JSON null reads as "not given", as elsewhere.
+  for (const key of ["provider", "model", "reasoningEffort"] as const)
+    if (args[key] != null && typeof args[key] !== "string")
+      throw new BadCall(`prompt_session ${key} must be a string`);
   const provider = str(args.provider) || undefined;
   const model = str(args.model) || undefined;
   const reasoningEffort = str(args.reasoningEffort) || undefined;
