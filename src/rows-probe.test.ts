@@ -2,7 +2,7 @@
 // the plugin at startup; here the log it sends is checked, and the answer when no dsh is around.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { probeRawToolRows, rawRowsLog } from "./rows-probe.js";
@@ -68,6 +68,28 @@ import { tempDir } from "./test-tmp.js";
   );
   assert.equal(out.stdout.trim(), "4", `Node read the catalog through a # folder: ${out.stderr}`);
   await rm(dirname(root), { recursive: true, force: true });
+}
+
+{
+  // A global npm install starts dsh as `<prefix>/bin/dsh`, a link into the package's own folder.
+  // The catalog sits under the link's target, not above the link: the search has to follow it, or
+  // the probe misses the catalog and every native tool call is drawn as inline text.
+  const base = tempDir("omc-link-");
+  const pkg = join(base, "lib", "node_modules", "dsh");
+  const lib = join(pkg, "node_modules", "@deepseek-ai", "dsh-session-format-catalog", "lib");
+  await mkdir(lib, { recursive: true });
+  await mkdir(join(pkg, "lib"), { recursive: true });
+  await mkdir(join(base, "bin"), { recursive: true });
+  await writeFile(join(pkg, "lib", "cli.js"), "");
+  await writeFile(join(lib, "..", "package.json"), '{"type":"module"}');
+  await writeFile(
+    join(lib, "index.js"),
+    "export const sessionFormatCatalog = { currentVersion: 4, createRestore: () => ({ decodeRow() {}, finish() {} }) };",
+  );
+  await symlink(join(pkg, "lib", "cli.js"), join(base, "bin", "dsh"));
+  const linked = await probeRawToolRows(join(base, "bin", "dsh"));
+  assert.deepEqual(linked, { ok: true, reason: "" }, "the probe follows the bin link to dsh");
+  await rm(base, { recursive: true, force: true });
 }
 
 console.log("rows-probe.test: ok");
