@@ -846,6 +846,11 @@ console.log("mcp ok");
     /nobody\/gpt-a is not a model dsh offers/,
   );
   await assert.rejects(
+    send({ model: "claude-opus-5-5" }),
+    /openai-codex\/claude-opus-5-5 is not a model dsh offers; name its provider if it is another provider's model; nothing was sent$/,
+    "a model alone is looked up under the session's provider, and the refusal says so",
+  );
+  await assert.rejects(
     send({ model: "gpt-b", reasoningEffort: "xhigh" }),
     /does not support reasoning effort "xhigh"; nothing was sent$/,
   );

@@ -322,7 +322,7 @@ async function switchRoute(
       (await ctx.llm.listModels(route.provider)).some((m) => m.id === route.model));
   if (!offered)
     throw new BadCall(
-      `${route.provider}/${route.model} is not a model dsh offers; nothing was sent`,
+      `${route.provider}/${route.model} is not a model dsh offers${provider ? "" : "; name its provider if it is another provider's model"}; nothing was sent`,
     );
   try {
     await ctx.llm.resolveCallConfig(route, signal);
