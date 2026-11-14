@@ -1473,6 +1473,10 @@ export interface ClaudeProcessSpec {
    *  `--system-prompt`. Absent otherwise, so every other spec keys as before; a prompt dsh changed
    *  changes the key, and the session's next turn starts a process that reads the new one. */
   system?: string;
+  /** A digest of the bridged dsh tools (names, parameter schemas, deferral) under
+   *  `followToolSet`. Claude Code lists an MCP server's tools once, at start, so a changed set
+   *  changes the key and the session's next turn starts a process that lists it again. */
+  tools?: string;
 }
 
 /** What the caller wants to know when a Claude process ends, live or after a restart. */

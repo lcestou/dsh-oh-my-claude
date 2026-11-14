@@ -1,6 +1,6 @@
 import { type FinishReason, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { type ContextSource } from "../context-sources.js";
-import { type Agent, type JsonValue, type ResolvedAgent } from "../dsh.js";
+import { type Agent, type JsonValue, type ResolvedAgent, type ToolSchema } from "../dsh.js";
 import { type ClaudeEvent, type ClaudeProcessSpec, type SettingsKey, type RelayEvent, type WorkspaceDiff } from "../process.js";
 import { type FsBox } from "../remote-fs.js";
 import { type LiveMode, type Translator } from "../translator.js";
@@ -262,6 +262,13 @@ export declare function userPromptCount(messages: LooseMessage[] | undefined): n
 export declare function relayBlocks(tr: Translator, call: RelayEvent): IterableIterator<StreamChunk>;
 /** A process spec as a string, so two specs compare by content when deciding to reuse a process. */
 export declare const specKey: (spec: ClaudeProcessSpec) => string;
+/**
+ * A short digest of the tools the bridge lists: each name with its parameter schema and whether
+ * dsh defers it, in name order. Descriptions are left out on purpose: a tool may word its
+ * description from live state, and a description that changed every turn would restart Claude
+ * every turn, while a name or a schema changes only when the tool itself does.
+ */
+export declare function toolSetDigest(tools: readonly ToolSchema[]): string;
 /** Whether a todo list still has work on it. A list of nothing but completed items is finished,
  *  and a finished list is not worth painting over a fresh message. */
 export declare function hasPendingTodo(todos: JsonValue[]): boolean;

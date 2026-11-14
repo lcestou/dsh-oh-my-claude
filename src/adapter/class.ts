@@ -376,6 +376,7 @@ import {
   RESUME_DELAY_MS,
   sideQuestionsIn,
   specKey,
+  toolSetDigest,
   type SpliceEvent,
   stepContextFor,
   STREAM_MAX_MS,
@@ -1678,6 +1679,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Hashed: the spec is saved beside a keeper, and the prompt has no business on disk there.
     if (dshSystem !== undefined)
       spec.system = createHash("sha256").update(dshSystem).digest("hex").slice(0, 16);
+    if (this.config.followToolSet && mcpBridge?.tools) spec.tools = toolSetDigest(mcpBridge.tools);
     // An environment is fixed at spawn, so the switch joins the spec: a session already running
     // when it flips is replaced on its next turn and resumes with the window the switch gives.
     // Local spawns only; the flag does not ride to a box, whose own environment decides.

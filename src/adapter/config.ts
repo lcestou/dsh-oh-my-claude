@@ -81,6 +81,7 @@ export type Config = {
   disallowedTools: string[];
   builtinTools: string[];
   toolLoading: "claude" | "dsh";
+  followToolSet: boolean;
   addDirs: string[];
   pluginDirs: string[];
   pluginUrls: string[];
@@ -179,6 +180,12 @@ export const Config = z.object({
     .default("claude")
     .description(
       "Which bridged dsh tools Claude sees up front. 'claude': Claude Code decides, and it defers every MCP tool behind its ToolSearch. 'dsh': the tools dsh loads up front for a native model are marked for Claude Code to load up front too (the MCP _meta key anthropic/alwaysLoad); only the ones dsh defers stay behind ToolSearch",
+    ),
+  followToolSet: z
+    .boolean()
+    .default(false)
+    .description(
+      "Start a new Claude process (resuming the same conversation) before a session's next turn when the dsh tools the bridge offers it changed: a tool added or removed by a plugin, an MCP server or a dsh update, or a changed parameter schema or deferral. Claude Code lists a server's tools once, when it starts, so without this a new tool shows up only after the process happens to restart",
     ),
   addDirs: z.array(z.string()).default([]).description("Extra --add-dir directories"),
   pluginDirs: z
