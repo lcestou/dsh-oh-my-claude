@@ -12,6 +12,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- Claude sees the image when it calls a dsh tool that returns one, such as `read_image`, over the bridge. Only the text of a relayed result went back, so Claude got a line about an image it never saw. The images in dsh's result now follow the text as MCP image content.
 - Claude's tool calls show as tool rows again on a dsh installed with `npm install -g`. That install starts dsh through the `bin/dsh` link, and the plugin's check for dsh's session format looked for dsh next to the link instead of next to the file it points at. The check failed, and every tool call was drawn as plain text in the reply. Thanks to @soffits (#280)
 
 ## [1.6.3] - 2026-11-12

@@ -17,6 +17,7 @@ import {
   type ClaudeProcessSpec,
   type SettingsKey,
   type RelayEvent,
+  type RelayResult,
   type WorkspaceDiff,
 } from "../process.js";
 import { type FsBox } from "../remote-fs.js";
@@ -272,15 +273,21 @@ export function abortKind(signal: AbortSignal | undefined): string | undefined {
 export function toolResultFor(
   messages: LooseMessage[] | undefined,
   id: string,
-): { text: string; isError?: boolean } | undefined {
+): RelayResult | undefined {
   const list = messages ?? [];
   for (let i = list.length - 1; i >= 0; i--) {
     const m = list[i];
     if (!m) continue;
     // The result is a message of its own, `role: "tool"`, with the call id on it and the text in
-    // its blocks.
-    if (m.role === "tool" && m.toolCallId === id)
-      return { text: textOf(m.content), isError: m.isError === true };
+    // its blocks. Its images are named here and loaded by the caller, which holds the store.
+    if (m.role === "tool" && m.toolCallId === id) {
+      const result: RelayResult = { text: textOf(m.content), isError: m.isError === true };
+      const refs = Array.isArray(m.content)
+        ? m.content.flatMap((b) => (b.type === "image" && b.attachment ? [b.attachment] : []))
+        : [];
+      if (refs.length > 0) result.refs = refs;
+      return result;
+    }
   }
   return undefined;
 }

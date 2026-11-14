@@ -481,9 +481,11 @@ export interface JsonRpcRequest {
   params?: Record<string, JsonValue>;
 }
 
-/** A tools/call result: text content, flagged when the tool failed. */
+/** A tools/call result: text content, any images after it, flagged when the tool failed. */
 interface CallResult {
-  content: Array<{ type: "text"; text: string }>;
+  content: Array<
+    { type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+  >;
   isError?: boolean;
 }
 
@@ -612,6 +614,8 @@ export async function handleRpc(
           const result: CallResult = {
             content: [{ type: "text", text: relayed.text }],
           };
+          for (const image of relayed.images ?? [])
+            result.content.push({ type: "image", data: image.data, mimeType: image.mediaType });
           if (relayed.isError) result.isError = true;
           return reply(result);
         }
