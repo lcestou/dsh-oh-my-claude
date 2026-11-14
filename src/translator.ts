@@ -603,6 +603,9 @@ export interface FallbackRecord {
   content?: string;
 }
 
+/** The failure code a refused reply ends the turn with under `refusalAsFailure`. */
+export const REFUSAL_CODE = "REFUSAL";
+
 /** Turns one CLI process's stream-json events into dsh stream chunks, and keeps the per-turn state
  *  that needs: open blocks, streamed ids, tool rows, usage and the result summary. */
 export class Translator {
@@ -615,6 +618,11 @@ export class Translator {
   limitResetAt: number | undefined;
   /** A limit's failure, held back until the CLI's own message and result frame have gone by. */
   limitFailure: (LlmFailure & { providerRetryAfterMs?: number }) | undefined;
+  /** Report a refused reply as a failure (`refusalAsFailure`), not as the turn's normal end. */
+  refusalAsFailure: boolean;
+  /** The turn's refusal, once the CLI reported one with no fallback: a `model_refusal_no_fallback`
+   *  frame, or a top-level reply or result that stopped with `refusal`. */
+  refusal: LlmFailure | undefined;
   /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
   timeZone: string | undefined;
   hostLabel: string | undefined;
@@ -753,6 +761,7 @@ export class Translator {
   constructor({
     toolActivity = true,
     continueAfterLimit = false,
+    refusalAsFailure = false,
     timeZone,
     toolTextLimit = TOOL_TEXT_LIMIT,
     relay = false,
@@ -778,6 +787,7 @@ export class Translator {
   }: {
     toolActivity?: boolean;
     continueAfterLimit?: boolean;
+    refusalAsFailure?: boolean;
     timeZone?: string;
     toolTextLimit?: number;
     relay?: boolean;
@@ -818,6 +828,8 @@ export class Translator {
     this.continueAfterLimit = continueAfterLimit;
     this.limitResetAt = undefined;
     this.limitFailure = undefined;
+    this.refusalAsFailure = refusalAsFailure;
+    this.refusal = undefined;
     this.timeZone = timeZone;
     this.hostLabel = hostLabel;
     this.routerOnly = routerOnly;
@@ -909,6 +921,20 @@ export class Translator {
             : { type: "reasoning", text: block.text },
       },
     ];
+  }
+
+  /**
+   * Record the turn's refusal, the first one that arrives: the system frame carries the category and
+   * the CLI's sentence, and the error frame and the result that follow say only `refusal`. The code
+   * is the one dsh-fallback-models switches models on, so a fallback chain can answer instead.
+   */
+  noteRefusal(category: string, said: string): void {
+    if (this.refusal) return;
+    const why = category ? ` (${category})` : "";
+    this.refusal = {
+      message: `Claude declined to answer${why}${said ? `: ${said}` : ""}`,
+      code: REFUSAL_CODE,
+    };
   }
 
   /** Emit a whole block at once, block-start then delta then block-end, for text that arrives in one
@@ -1193,6 +1219,7 @@ export class Translator {
           const from = event.original_model ?? "";
           const cat = (event.api_refusal_category ?? "").trim();
           const said = (event.content ?? event.api_refusal_explanation ?? "").trim();
+          this.noteRefusal(cat, said);
           this.onModel?.({
             kind: "model_refusal_no_fallback",
             from,
@@ -1319,6 +1346,9 @@ export class Translator {
           (event.parent_tool_use_id ?? undefined) !== undefined,
         );
       case "assistant":
+        // A subagent's refusal is its own; only the conversation's own reply ends the turn.
+        if (event.message?.stop_reason === "refusal" && !event.parent_tool_use_id)
+          this.noteRefusal("", "");
         return this.assistant(
           event.message?.content ?? [],
           event.parent_tool_use_id,
@@ -1427,13 +1457,17 @@ export class Translator {
           this.limitFailure?.providerRetryAfterMs === undefined && event.is_error
             ? undefined
             : this.limitFailure;
+        if (event.stop_reason === "refusal") this.noteRefusal("", "");
+        const refused = this.refusalAsFailure ? this.refusal : undefined;
         events.push({
           type: "finish",
           reason: this.aborting
             ? { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } }
             : limit
               ? { kind: "error", failure: limit }
-              : finishReason(event, this.hostLabel, this.routerOnly, this.settingsKey, this.via),
+              : refused
+                ? { kind: "error", failure: refused }
+                : finishReason(event, this.hostLabel, this.routerOnly, this.settingsKey, this.via),
         });
         return events;
       }
