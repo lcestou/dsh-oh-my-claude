@@ -41,6 +41,8 @@ export declare function probeCli(exec?: ExecLike, command?: string, host?: strin
  * (probe failed) to assume support.
  */
 export declare const supports: (flags: Set<string> | null | undefined, flag: string) => boolean;
+/** True once a CLI refused `flag`: the guard for a flag the help probe cannot see. */
+export declare const deniedOnly: (flag: string) => boolean;
 /** Text mode when the CLI lacks --input-format: prompt goes positional, images are dropped. */
 export declare const usesStdin: (flags: Set<string> | null | undefined) => boolean;
 /**
@@ -57,8 +59,12 @@ export declare const usesStdin: (flags: Set<string> | null | undefined) => boole
  *
  * With `tools` undefined (no live agent to ask) only the opening sentence is sent: the bridge
  * answers that session with nothing either.
+ *
+ * `builtins` is the CLI's `--tools` list. Once it is narrower than `default`, dsh's own tools stand
+ * in for the missing ones, and the text says so: dsh's instructions name its tools bare (`bash`,
+ * `read`), and the bridge can only offer them as `mcp__dsh__bash`, `mcp__dsh__read`.
  */
-export declare function dshToolsGuidance(tools?: readonly ToolSchema[]): string;
+export declare function dshToolsGuidance(tools?: readonly ToolSchema[], builtins?: readonly string[]): string;
 /**
  * The argument list for one `claude -p` spawn: every flag this plugin sends, in one place.
  *
@@ -72,7 +78,10 @@ export declare function dshToolsGuidance(tools?: readonly ToolSchema[]): string;
  * of its own, and never carries a permission mode, allowed tools, budget or resume. Everything
  * after that early return applies only to a real conversation turn.
  */
-export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, permissionMode, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
+export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, permissionMode, dshSystem, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
+    /** dsh's own system prompt (`dshSystemPrompt`), passed only under `systemPrompt: dsh`. It
+     *  replaces Claude Code's prompt rather than following it. */
+    dshSystem?: string | undefined;
     model: string | undefined;
     config: Schemastery.TypeT<typeof Config>;
     session?: {
@@ -96,7 +105,9 @@ export declare function buildArgs({ model, reasoningEffort, system, purpose, con
 export declare function buildInput(prompt: string, images: Array<{
     mediaType: string;
     data: string;
-}>, uuid?: string): string;
+}>, uuid?: string, 
+/** Send it as written (`verbatimPrompts`); never for a line that is a command for the CLI. */
+composed?: boolean): string;
 /** Names from the CLI's init frame that dsh's command grammar accepts (lowercase, `[a-z0-9_-]`), deduped. */
 export declare function commandNames(value: JsonValue | undefined): string[];
 /**

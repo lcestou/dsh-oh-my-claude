@@ -279,6 +279,9 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         const info = adapter.ownerFor(sessionId).permissionModeInfo(sessionId);
         return info.liveMode ?? info.mode;
       },
+      // Which file tools the session's CLI has of its own, from the mount that runs it.
+      builtins: (sessionId) => adapter.ownerFor(sessionId).config.builtinTools,
+      dshLoading: (sessionId) => adapter.ownerFor(sessionId).config.toolLoading === "dsh",
     }).then(
       (mcp) => {
         adapter.mcp = mcp;
@@ -317,6 +320,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         configDir: other.claudeHome,
         command: other.config.command,
         sshHost: other.config.sshHost,
+        systemPrompt: other.config.systemPrompt,
       };
     };
     registerUsageRoute(

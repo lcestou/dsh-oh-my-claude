@@ -36,6 +36,9 @@ export type Config = {
     customModels: CustomModel[];
     allowedTools: string[];
     disallowedTools: string[];
+    builtinTools: string[];
+    toolLoading: "claude" | "dsh";
+    followToolSet: boolean;
     addDirs: string[];
     pluginDirs: string[];
     pluginUrls: string[];
@@ -50,6 +53,11 @@ export type Config = {
     toolTextLimit: number;
     dshTools: boolean;
     refusalAsFailure: boolean;
+    systemPrompt: "claude" | "dsh";
+    verbatimPrompts: boolean;
+    isolate: boolean;
+    replayToolTextLimit: number;
+    thinkingDisplay: "" | "summarized" | "highlights" | "omitted";
     fastMode: boolean;
     commandBridge: boolean;
     redactSecrets: boolean;
@@ -96,6 +104,9 @@ export declare const Config: z<Schemastery.ObjectS<{
     }>[]>;
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
+    builtinTools: z<string[], string[]>;
+    toolLoading: z<"claude" | "dsh", "claude" | "dsh">;
+    followToolSet: z<boolean, boolean>;
     addDirs: z<string[], string[]>;
     pluginDirs: z<string[], string[]>;
     pluginUrls: z<string[], string[]>;
@@ -108,7 +119,12 @@ export declare const Config: z<Schemastery.ObjectS<{
     resume: z<boolean, boolean>;
     idleTimeoutMs: z<number, number>;
     toolTextLimit: z<number, number>;
+    thinkingDisplay: z<"" | "highlights" | "omitted" | "summarized", "" | "highlights" | "omitted" | "summarized">;
+    replayToolTextLimit: z<number, number>;
     dshTools: z<boolean, boolean>;
+    systemPrompt: z<"claude" | "dsh", "claude" | "dsh">;
+    verbatimPrompts: z<boolean, boolean>;
+    isolate: z<boolean, boolean>;
     fastMode: z<boolean, boolean>;
     commandBridge: z<boolean, boolean>;
     redactSecrets: z<boolean, boolean>;
@@ -143,6 +159,9 @@ export declare const Config: z<Schemastery.ObjectS<{
     }>[]>;
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
+    builtinTools: z<string[], string[]>;
+    toolLoading: z<"claude" | "dsh", "claude" | "dsh">;
+    followToolSet: z<boolean, boolean>;
     addDirs: z<string[], string[]>;
     pluginDirs: z<string[], string[]>;
     pluginUrls: z<string[], string[]>;
@@ -155,7 +174,12 @@ export declare const Config: z<Schemastery.ObjectS<{
     resume: z<boolean, boolean>;
     idleTimeoutMs: z<number, number>;
     toolTextLimit: z<number, number>;
+    thinkingDisplay: z<"" | "highlights" | "omitted" | "summarized", "" | "highlights" | "omitted" | "summarized">;
+    replayToolTextLimit: z<number, number>;
     dshTools: z<boolean, boolean>;
+    systemPrompt: z<"claude" | "dsh", "claude" | "dsh">;
+    verbatimPrompts: z<boolean, boolean>;
+    isolate: z<boolean, boolean>;
     fastMode: z<boolean, boolean>;
     commandBridge: z<boolean, boolean>;
     redactSecrets: z<boolean, boolean>;

@@ -79,9 +79,34 @@ export const steerKey = (m: LooseMessage): string | undefined =>
   m.role === "user" && m.source?.kind !== "tool" ? (m.source?.rpcId ?? m.id) : undefined;
 
 /** A message the prompt builder treats as conversation: a user message that is not a tool result,
- * and every assistant message. */
-const isTurn = (m: LooseMessage) =>
-  (m.role === "user" && m.source?.kind !== "tool") || m.role === "assistant";
+ * and every assistant message. With `developer` set, dsh's developer messages that carry text (a
+ * system update the loop wrote mid-session) count too: the `dsh` system prompt mode forwards
+ * everything dsh would show a native model, and these are part of it. */
+const isTurn = (m: LooseMessage, developer = false) =>
+  (m.role === "user" && m.source?.kind !== "tool") ||
+  m.role === "assistant" ||
+  (developer && m.role === "developer" && textOf(m.content).trim() !== "");
+
+/**
+ * dsh's system prompt for a loop-built request: the text of the latest run of system-role
+ * messages, after a one-shot caller's `system`. A loop-built request leads with one system
+ * message, and a prompt that changed during the session is a later system message holding the
+ * whole new text, so the latest run is the prompt in force. Undefined when neither has text.
+ */
+export function dshSystemPrompt(
+  messages: readonly LooseMessage[] | undefined,
+  system?: string,
+): string | undefined {
+  const all = messages ?? [];
+  let end = all.length - 1;
+  while (end >= 0 && all[end]?.role !== "system") end--;
+  let start = end;
+  while (start > 0 && all[start - 1]?.role === "system") start--;
+  const parts = [system ?? ""];
+  for (let i = start; i >= 0 && i <= end; i++) parts.push(textOf(all[i]?.content));
+  const text = parts.filter((p) => p.trim() !== "").join("\n\n");
+  return text === "" ? undefined : text;
+}
 
 /** A tool result, in either form dsh has written one (a `role: "tool"` message, or a user message
  *  from a tool), with the id of the call it answers. */
@@ -107,11 +132,13 @@ const toolCallsOf = (m: LooseMessage): { id: string; name: string; input: string
  * without that its transcript skipped from its own last reply to the new prompt. A tool result
  * rides along only when the call it answers is in the same slice: another model's tool use is
  * transcript Claude never saw, while Claude's own results already sit in its session.
+ * `developer` keeps dsh's developer messages with text (see `isTurn`).
  */
 export function selectTurns(
   messages: LooseMessage[] | undefined,
   resuming: boolean,
   own?: string,
+  developer = false,
 ): LooseMessage[] {
   const all = messages ?? [];
   let start = 0;
@@ -129,16 +156,16 @@ export function selectTurns(
   const calls = new Set(slice.flatMap((m) => toolCallsOf(m).map((c) => c.id)));
   return slice.filter((m) => {
     const callId = resultCallId(m);
-    return callId === undefined ? isTurn(m) : calls.has(callId);
+    return callId === undefined ? isTurn(m, developer) : calls.has(callId);
   });
 }
 
 /** The most of one tool's input or output another model's transcript carries into the prompt. */
 export const TOOL_TEXT_CAP = 2000;
-/** `text`, or its first TOOL_TEXT_CAP characters and how many more there were. */
-const capped = (text: string) =>
-  text.length > TOOL_TEXT_CAP
-    ? `${text.slice(0, TOOL_TEXT_CAP)}… (${text.length - TOOL_TEXT_CAP} more characters)`
+/** `text`, or its first `cap` characters and how many more there were; whole when `cap` is 0. */
+const capped = (text: string, cap: number) =>
+  cap > 0 && text.length > cap
+    ? `${text.slice(0, cap)}… (${text.length - cap} more characters)`
     : text;
 
 /** dsh's instruction bundle repeats files Claude Code already loads on its own (`CLAUDE.md` in the
@@ -160,6 +187,17 @@ export function withoutNativeInstructions(text: string): string {
   return kept.join("").trimEnd() + (close ? close[0] : "");
 }
 
+/** What Claude Code adds of its own that dsh's turn may carry a copy of: the CLAUDE.md files it
+ *  loads, and the body of a skill it expands from a `/name` line. Each `true` means the CLI adds it,
+ *  so dsh's copy is left out; `isolate` turns CLAUDE.md loading off and `verbatimPrompts` turns
+ *  slash expansion off, and then dsh's copy is the only one and stays. */
+export interface NativeCopies {
+  claudeMd: boolean;
+  skills: boolean;
+}
+/** Claude Code as it runs by default: it adds both. */
+export const CLI_COPIES: NativeCopies = { claudeMd: true, skills: true };
+
 /** Which withheld block a message is, if any. The chat row mask classifies the same sources from
  *  the client side, so the rule itself lives in `context-sources.ts` and both read it there. */
 export const contextSourceOf = (m: LooseMessage): ContextSource | undefined =>
@@ -170,7 +208,10 @@ export const contextSourceOf = (m: LooseMessage): ContextSource | undefined =>
  *  `instructions` counts what survives the CLAUDE.md filter and `claudemd` counts what the filter
  *  took, so the two together are the bundle dsh handed over. A key is absent when this turn carried
  *  nothing of that kind, which is not the same as zero and must not be flattened into one. */
-export function contextSizes(turns: LooseMessage[]): ContextSizes {
+export function contextSizes(
+  turns: LooseMessage[],
+  copies: NativeCopies = CLI_COPIES,
+): ContextSizes {
   const sizes: ContextSizes = {};
   const add = (key: ContextSizeKey, n: number) => {
     sizes[key] = (sizes[key] ?? 0) + n;
@@ -183,7 +224,7 @@ export function contextSizes(turns: LooseMessage[]): ContextSizes {
       add(source, text.length);
       continue;
     }
-    const kept = withoutNativeInstructions(text);
+    const kept = copies.claudeMd ? withoutNativeInstructions(text) : text;
     add("instructions", kept.length);
     add("claudemd", text.length - kept.length);
   }
@@ -208,12 +249,17 @@ const cliCommands = (): string[] | undefined =>
 export const promptTextOf = (
   m: LooseMessage,
   drops: ReadonlySet<ContextSource> = new Set(),
+  copies: NativeCopies = CLI_COPIES,
 ): string => {
   const source = contextSourceOf(m);
   if (source !== undefined && drops.has(source)) return "";
-  if (m.source?.kind === "skill-invocation" && cliCommands()?.includes(m.source?.name ?? ""))
+  if (
+    copies.skills &&
+    m.source?.kind === "skill-invocation" &&
+    cliCommands()?.includes(m.source?.name ?? "")
+  )
     return "";
-  return m.source?.kind === "agent-instructions"
+  return m.source?.kind === "agent-instructions" && copies.claudeMd
     ? withoutNativeInstructions(textOf(m.content))
     : textOf(m.content);
 };
@@ -221,7 +267,12 @@ export const promptTextOf = (
 /** The turn's parts, with withheld blocks removed. An assistant message lists the tool calls it
  *  made and a tool result is labelled with the tool it came from, so a turn another model worked
  *  with tools reads as what happened, not as a bare reply. */
-const partsOf = (turns: LooseMessage[], drops: ReadonlySet<ContextSource>) => {
+const partsOf = (
+  turns: LooseMessage[],
+  drops: ReadonlySet<ContextSource>,
+  cap: number,
+  copies: NativeCopies,
+) => {
   const names = new Map(turns.flatMap((m) => toolCallsOf(m).map((c) => [c.id, c.name] as const)));
   return turns
     .map((m) => {
@@ -229,11 +280,13 @@ const partsOf = (turns: LooseMessage[], drops: ReadonlySet<ContextSource>) => {
       if (callId !== undefined)
         return {
           role: "tool",
-          text: `${names.get(callId) ?? "tool"} returned:\n${capped(textOf(m.content))}`,
+          text: `${names.get(callId) ?? "tool"} returned:\n${capped(textOf(m.content), cap)}`,
         };
-      const text = promptTextOf(m, drops);
-      const calls = toolCallsOf(m).map((c) => `(called ${c.name} ${capped(c.input)})`);
-      return { role: m.role, text: [text, ...calls].filter(Boolean).join("\n") };
+      const text = promptTextOf(m, drops, copies);
+      const calls = toolCallsOf(m).map((c) => `(called ${c.name} ${capped(c.input, cap)})`);
+      // A native model reads a developer message as an in-history system message.
+      const role = m.role === "developer" ? "system" : m.role;
+      return { role, text: [text, ...calls].filter(Boolean).join("\n") };
     })
     .filter((t) => t.text !== "");
 };
@@ -247,8 +300,11 @@ const partsOf = (turns: LooseMessage[], drops: ReadonlySet<ContextSource>) => {
 export function buildPrompt(
   turns: LooseMessage[],
   drops: ReadonlySet<ContextSource> = new Set(),
+  /** Characters of one tool input or output kept (`replayToolTextLimit`); 0 keeps them whole. */
+  cap: number = TOOL_TEXT_CAP,
+  copies: NativeCopies = CLI_COPIES,
 ): string {
-  const filtered = partsOf(turns, drops);
+  const filtered = partsOf(turns, drops, cap, copies);
   // A turn dsh opened with nothing but a withheld block would leave no prompt at all, and the CLI
   // needs one, so that turn goes out with an empty drop set: failing a turn is a worse answer than
   // sending the block it was about. The live case is the runtime snapshot, which re-sends itself
@@ -256,7 +312,7 @@ export function buildPrompt(
   // `withoutNativeInstructions` still applies on this path, and should: dropping dsh's duplicate of
   // a CLAUDE.md the CLI loads itself is not one of the switches, it is what the adapter has always
   // done, and re-sending the copy here would double the file rather than rescue the turn.
-  const parts = filtered.length > 0 ? filtered : partsOf(turns, new Set());
+  const parts = filtered.length > 0 ? filtered : partsOf(turns, new Set(), cap, copies);
   if (!parts.some((t) => t.role === "user")) {
     // Attachment-only turn: the user sent an image (or other non-text block) with no typed
     // text. Images ride along separately via imageRefs, but Claude still needs a non-empty

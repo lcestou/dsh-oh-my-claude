@@ -101,6 +101,10 @@ export function statusRoutes(c: RouteCtx): RouteHandler {
       onLoginStatus?.(provider, status.loggedIn);
       return json(res, 200, status);
     }
+    // Whose system prompt a mount sends, for the chat's row mask: dsh's own "System prompt" row is
+    // a true receipt only on a mount that passes it on. A config fact, so no CLI is asked.
+    if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/system-prompt`)
+      return json(res, 200, { mode: boxOf(url).systemPrompt ?? "claude" });
     if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/models`) {
       // `?all=1` is the Settings card's read: every mount's rows with their hide state, not the cut.
       const list = url.searchParams.get("all") === "1" ? pickerModels : models;

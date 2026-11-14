@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { JsonValue, ToolSchema } from "../dsh.js";
 import { KEY_ENV, KEY_HEADER } from "../mcp-config.js";
+import { ISOLATED_SETTINGS } from "./isolate.js";
 import { CHILD_ENV, shq, sshArgs, userTurnLine } from "../process.js";
 import { probeRawToolRows, type RowsSupport } from "../rows-probe.js";
 import { Config } from "./config.js";
@@ -101,8 +102,11 @@ const GUARDED_FLAGS = [
   "--forward-subagent-text",
   "--include-hook-events",
   "--effort",
+  "--thinking-display",
   "--settings",
   "--append-system-prompt",
+  "--system-prompt",
+  "--system-prompt-snapshot",
   "--no-session-persistence",
   "--permission-mode",
   "--permission-prompt-tool",
@@ -113,6 +117,8 @@ const GUARDED_FLAGS = [
   "--session-id",
   "--resume",
   "--mcp-config",
+  "--setting-sources",
+  "--strict-mcp-config",
 ];
 /** The flag in `error: unknown option '--x'`, however the CLI wrapped the line. */
 export function unknownFlagIn(text: string): string | undefined {
@@ -125,6 +131,7 @@ export function denyCliFlag(command: string, host: string | undefined, flag: str
   const set = deniedFlags.get(key) ?? new Set<string>();
   if (set.has(flag)) return false;
   set.add(flag);
+  hiddenDenied.add(flag);
   deniedFlags.set(key, set);
   return true;
 }
@@ -181,6 +188,11 @@ export function probeCli(exec: ExecLike = execFile as ExecLike, command = "claud
 export const supports = (flags: Set<string> | null | undefined, flag: string) =>
   !flags || flags.has(flag);
 
+/** Flags some CLI refused (`denyCliFlag`), for flags `--help` does not list. */
+const hiddenDenied = new Set<string>();
+/** True once a CLI refused `flag`: the guard for a flag the help probe cannot see. */
+export const deniedOnly = (flag: string): boolean => hiddenDenied.has(flag);
+
 /** Text mode when the CLI lacks --input-format: prompt goes positional, images are dropped. */
 export const usesStdin = (flags: Set<string> | null | undefined) =>
   supports(flags, "--input-format");
@@ -211,10 +223,24 @@ const listed = (items: string[]): string =>
  *
  * With `tools` undefined (no live agent to ask) only the opening sentence is sent: the bridge
  * answers that session with nothing either.
+ *
+ * `builtins` is the CLI's `--tools` list. Once it is narrower than `default`, dsh's own tools stand
+ * in for the missing ones, and the text says so: dsh's instructions name its tools bare (`bash`,
+ * `read`), and the bridge can only offer them as `mcp__dsh__bash`, `mcp__dsh__read`.
  */
-export function dshToolsGuidance(tools: readonly ToolSchema[] = []): string {
+export function dshToolsGuidance(
+  tools: readonly ToolSchema[] = [],
+  builtins: readonly string[] = ["default"],
+): string {
   const byName = new Map(tools.map((t) => [t.name, t]));
   const out = ["dsh tools are available as mcp__dsh__* over MCP."];
+  const allNative = builtins.includes("default");
+  const kept = new Set(builtins.flatMap((b) => b.split(",")).map((b) => b.trim()));
+  if (!allNative)
+    out.push(
+      "A tool that instructions or skills name without a prefix (bash, read, edit, glob, grep,",
+      "skill, subagent and the rest) is the mcp__dsh__ tool of that name.",
+    );
 
   const subagent = byName.get("subagent");
   const presets = tools.map((t) => t.name).filter((n) => /^(subagent|researcher)_/.test(n));
@@ -258,7 +284,13 @@ export function dshToolsGuidance(tools: readonly ToolSchema[] = []): string {
     out.push(`${bridgedName("wait_session")} reads a session's replies back.`);
 
   const shell = [byName.get("bash"), byName.get("pwsh")].find((t) => takes(t, "run_in_background"));
-  if (shell) {
+  const nativeShell = allNative || kept.has("Bash") || kept.has("PowerShell");
+  if (shell && !nativeShell) {
+    out.push(
+      `Every command goes through \`${bridgedName(shell.name)}\`; long-running ones with`,
+      "`run_in_background: true`, which dsh registers as a job whose finish notice arrives next turn.",
+    );
+  } else if (shell) {
     const jobs = [
       byName.has("job_output") ? `read output with \`${bridgedName("job_output")}\`` : "",
       byName.has("job_kill") ? `stop with \`${bridgedName("job_kill")}\`` : "",
@@ -302,7 +334,11 @@ export function buildArgs({
   mcp,
   temporary = false,
   permissionMode,
+  dshSystem,
 }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
+  /** dsh's own system prompt (`dshSystemPrompt`), passed only under `systemPrompt: dsh`. It
+   *  replaces Claude Code's prompt rather than following it. */
+  dshSystem?: string | undefined;
   model: string | undefined;
   config: Schemastery.TypeT<typeof Config>;
   session?: { id: string; resuming: boolean } | undefined;
@@ -326,12 +362,37 @@ export function buildArgs({
     args.push("--include-hook-events");
   if (model) args.push("--model", model);
   if (reasoningEffort && supports(flags, "--effort")) args.push("--effort", reasoningEffort);
+  // `--thinking-display` is real but hidden from `claude --help` (2.1.323), so the help probe never
+  // lists it. It is passed whenever configured; a CLI that refuses it is caught by the unknown-flag
+  // retry (`denyCliFlag`), which then drops it.
+  if (config.thinkingDisplay && !purpose && !deniedOnly("--thinking-display"))
+    args.push("--thinking-display", config.thinkingDisplay);
   // In -p mode /fast only works in a session launched with fast mode in --settings (fast-mode docs).
-  if (config.fastMode && supports(flags, "--settings"))
-    args.push("--settings", JSON.stringify({ fastMode: true }));
-  const appended = [system, mcp ? dshToolsGuidance(mcp.tools) : ""].filter(Boolean).join("\n\n");
-  if (appended && supports(flags, "--append-system-prompt")) {
-    args.push("--append-system-prompt", appended);
+  const settings: Record<string, JsonValue> = config.isolate ? { ...ISOLATED_SETTINGS } : {};
+  if (config.fastMode) settings.fastMode = true;
+  if (Object.keys(settings).length > 0 && supports(flags, "--settings"))
+    args.push("--settings", JSON.stringify(settings));
+  if (config.isolate) {
+    // None of the user's settings files (with their hooks, permission rules and MCP servers), and
+    // no MCP server but the bridge: Claude Code is the engine, and dsh is the rest. An empty list
+    // is how the CLI spells "no source"; a side call takes the same, so a title or a compaction
+    // runs no user hook either.
+    if (supports(flags, "--setting-sources")) args.push("--setting-sources", "");
+    if (supports(flags, "--strict-mcp-config")) args.push("--strict-mcp-config");
+  }
+  const guidance = mcp ? dshToolsGuidance(mcp.tools, config.builtinTools) : "";
+  if (dshSystem !== undefined && supports(flags, "--system-prompt")) {
+    // dsh's prompt stands in for Claude Code's, the tool guidance after it as it would follow
+    // Claude Code's. The CLI records a conversation's prompt on its first request and replays that
+    // record on every resume, so a prompt dsh changed would never arrive; the snapshot is off for
+    // that reason, and the prompt is the same text for the life of the process anyway.
+    args.push("--system-prompt", [dshSystem, guidance].filter(Boolean).join("\n\n"));
+    if (supports(flags, "--system-prompt-snapshot")) args.push("--system-prompt-snapshot", "off");
+  } else {
+    const appended = [system, guidance].filter(Boolean).join("\n\n");
+    if (appended && supports(flags, "--append-system-prompt")) {
+      args.push("--append-system-prompt", appended);
+    }
   }
   if (purpose) {
     // Auxiliary calls (title, compaction): one turn, no tools, no session of their own. Without
@@ -350,7 +411,8 @@ export function buildArgs({
     args.push("--permission-prompt-tool", "stdio");
   }
   // "default" is what the Agent SDK passes; without it the CLI keeps AskUserQuestion out of -p runs.
-  if (supports(flags, "--tools")) args.push("--tools", "default");
+  // A shorter list keeps only those built-ins, and the bridge offers dsh's file tools in their place.
+  if (supports(flags, "--tools")) args.push("--tools", config.builtinTools.join(","));
   if (config.allowedTools.length > 0) args.push("--allowedTools", ...config.allowedTools);
   if (config.disallowedTools.length > 0) args.push("--disallowedTools", ...config.disallowedTools);
   for (const d of config.addDirs) args.push("--add-dir", d);
@@ -388,6 +450,8 @@ export function buildInput(
   prompt: string,
   images: Array<{ mediaType: string; data: string }>,
   uuid?: string,
+  /** Send it as written (`verbatimPrompts`); never for a line that is a command for the CLI. */
+  composed = false,
 ): string {
   const content: Array<{
     type: string;
@@ -401,7 +465,7 @@ export function buildInput(
       source: { type: "base64", media_type: img.mediaType, data: img.data },
     });
   }
-  return userTurnLine(content, uuid);
+  return userTurnLine(content, uuid, composed);
 }
 
 // ---------------------------------------------------------------------------
