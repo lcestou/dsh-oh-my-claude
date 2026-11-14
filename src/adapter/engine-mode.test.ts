@@ -8,7 +8,14 @@ import type { PluginContext } from "../dsh.js";
 import { STATE_DIR } from "../state.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
-import { ENGINE_OPTIONS, engineOverlay, enginePresets, engineSkipKey } from "./engine-mode.js";
+import {
+  ENGINE_OPTIONS,
+  engineOverlay,
+  enginePresets,
+  engineSendsDshPrompt,
+  engineSkipKey,
+  presetOfSession,
+} from "./engine-mode.js";
 import { engineDigest } from "./isolate.js";
 
 const base = new Config({});
@@ -78,6 +85,35 @@ assert.deepEqual(
   assert.equal(assistant.thinkingDisplay, "summarized", "engine's skip does not reach it");
   assert.equal(engineSkipKey("isolate", "assistant"), "engineSkip:assistant:isolate");
 }
+
+// The chat's row mask: dsh's prompt goes out only for a ticked mode, with the switch on and the
+// mode's system-prompt box left in.
+assert.equal(engineSendsDshPrompt(on, "engine"), true);
+assert.equal(engineSendsDshPrompt({ "enginePreset:engine": true }, "engine"), false, "master off");
+assert.equal(engineSendsDshPrompt(on, "standard"), false);
+assert.equal(engineSendsDshPrompt(on, null), false);
+assert.equal(
+  engineSendsDshPrompt({ ...on, [engineSkipKey("systemPrompt", "engine")]: true }, "engine"),
+  false,
+  "the mode's own skip",
+);
+// A preset service that throws, or none, reads as no preset.
+// SAFETY: partial fakes; presetOfSession reads sessions.get and the preset service only
+assert.equal(
+  presetOfSession(
+    {
+      sessions: { get: () => ({}) },
+      get: () => ({
+        presetForSession: () => {
+          throw new Error("gone");
+        },
+      }),
+    } as unknown as PluginContext,
+    "s1",
+  ),
+  null,
+);
+assert.equal(presetOfSession(undefined, "s1"), null);
 
 assert.deepEqual(enginePresets({ "enginePreset:a": true, "enginePreset:b": true, other: true }), [
   "a",

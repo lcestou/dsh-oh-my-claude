@@ -40,7 +40,7 @@ import { readUsage, stillLimitedUntil } from "../usage.js";
 import { MCP_PATH, type McpBridge } from "../mcp.js";
 import { KEY_ENV } from "../mcp-config.js";
 import { ISOLATED_ENV, engineConfigFor, engineDigest } from "./isolate.js";
-import { engineOverlay } from "./engine-mode.js";
+import { engineOverlay, presetOfSession } from "./engine-mode.js";
 import {
   type ClaudeEvent,
   ClaudeProcess,
@@ -1894,15 +1894,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    */
   async sessionConfigOf(sessionId: string | undefined): Promise<ClaudeCodeAdapter["config"]> {
     if (!sessionId) return this.config;
-    let preset: string | null = null;
-    try {
-      const session = this.ctx?.sessions?.get?.(asSessionId(sessionId));
-      if (session) preset = this.ctx?.get?.("agentPresets")?.presetForSession(session) ?? null;
-    } catch {
-      preset = null;
-    }
     const hints = await readHints(join(STATE_DIR, "hints.json")).catch(() => ({}));
-    const cfg = engineOverlay(this.config, hints, preset);
+    const cfg = engineOverlay(this.config, hints, presetOfSession(this.ctx, sessionId));
     if (cfg === this.config) this.sessionConfigs.delete(sessionId);
     else this.sessionConfigs.set(sessionId, cfg);
     return cfg;

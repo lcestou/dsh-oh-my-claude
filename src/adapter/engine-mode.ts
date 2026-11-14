@@ -1,8 +1,10 @@
 // Engine mode per agent preset: sessions started under a preset the owner picked in Settings run
 // Claude Code as dsh's model engine (dsh's prompt and tools, none of the user's Claude settings),
 // and every other session keeps the plugin's config as it is. The choice is box-wide state in the
-// hints store; a session's preset is fixed once it has a message, so a session never changes mode
-// in the middle of a conversation. From @soffits's engine options (#286, #287).
+// hints store, read each turn. dsh fixes a session's preset once it has a message, so a session
+// moves in or out of engine mode only when its preset's tick changes, at its next turn. From
+// @soffits's engine options (#286, #287).
+import { asSessionId, type PluginContext } from "../dsh.js";
 import type { Config } from "./config.js";
 
 /** Hints-store key of the card's master switch. Off (absent), no session runs in engine mode, and
@@ -48,6 +50,36 @@ const ENGINE_VALUES: EngineKeys = {
   thinkingDisplay: "summarized",
 };
 
+/** Whether engine mode is on for a session under `preset`: the master switch and that preset's tick
+ *  both set. False for no preset, so a dsh without the preset service never runs engine mode. */
+function engineOn(
+  hints: Readonly<Record<string, boolean | number>>,
+  preset: string | null | undefined,
+): preset is string {
+  return !!preset && hints[ENGINE_ON_KEY] === true && hints[ENGINE_PRESET_PREFIX + preset] === true;
+}
+
+/** Whether engine mode sends dsh's system prompt for a session under `preset`: on for the preset,
+ *  and its `systemPrompt` box not cleared. The chat's row mask asks this, beside the mount's own
+ *  `systemPrompt`, to tell whether dsh's "System prompt" row reached Claude. */
+export function engineSendsDshPrompt(
+  hints: Readonly<Record<string, boolean | number>>,
+  preset: string | null | undefined,
+): boolean {
+  return engineOn(hints, preset) && hints[engineSkipKey("systemPrompt", preset)] !== true;
+}
+
+/** The agent preset `sessionId` runs under, from dsh's preset service; null when the session is not
+ *  loaded, this dsh mounts no preset service, or the lookup throws. */
+export function presetOfSession(ctx: PluginContext | undefined, sessionId: string): string | null {
+  try {
+    const session = ctx?.sessions?.get?.(asSessionId(sessionId));
+    return session ? (ctx?.get?.("agentPresets")?.presetForSession(session) ?? null) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The preset ids engine mode is on for, read off the hints store's `enginePreset:` keys. */
 export function enginePresets(hints: Readonly<Record<string, boolean | number>>): string[] {
   return Object.keys(hints)
@@ -67,8 +99,7 @@ export function engineOverlay<T extends EngineKeys>(
   hints: Readonly<Record<string, boolean | number>>,
   preset: string | null | undefined,
 ): T {
-  if (!preset || hints[ENGINE_ON_KEY] !== true || hints[ENGINE_PRESET_PREFIX + preset] !== true)
-    return config;
+  if (!engineOn(hints, preset)) return config;
   const skip = (k: EngineOption): boolean => hints[engineSkipKey(k, preset)] === true;
   const out = { ...config };
   // Written through the engine-keys view of the copy: the copy is a T, and T's own key types may be
