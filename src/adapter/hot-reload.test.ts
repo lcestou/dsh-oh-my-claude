@@ -376,6 +376,7 @@ const runStep = async (a: ClaudeCodeAdapter, sessionId: string, between: () => v
   for await (const chunk of gen) last = chunk;
   return { last, proc };
 };
+/** The session ids busy.json under `dir` lists; empty when the file is missing or unreadable. */
 const busyIn = (dir: string): string[] => {
   try {
     return JSON.parse(readFileSync(join(dir, "busy.json"), "utf8"));

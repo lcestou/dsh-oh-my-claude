@@ -6672,8 +6672,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // sessions service unavailable in this scope: fall through to the catalog
     }
     if (logVersion === 0) logVersion = (await currentLogVersion()) ?? 0;
-    if (text === RESTART_TEXT) {
-      // A notice from a previous boot may still sit in the durable inbox: do not stack another.
+    if (text === RESTART_TEXT || text === RELOAD_TEXT) {
+      // A notice from a previous boot or reload may still sit in the durable inbox: do not stack
+      // another (the old instance's idle wake and the new one's takeover can both reach here).
       try {
         const session = this.ctx?.sessions?.get?.(asSessionId(sessionId));
         if (
@@ -6681,6 +6682,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           hasPendingNotice(session.snapshotEvents(), "dsh-oh-my-claude", [
             RESTART_TEXT,
             RECONNECT_TEXT,
+            RELOAD_TEXT,
           ])
         ) {
           await trace(`wake ${sessionId}: restart notice already pending, not stacking another`);
