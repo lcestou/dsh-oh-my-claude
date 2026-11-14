@@ -3,7 +3,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { watch } from "node:fs";
+import { existsSync, watch } from "node:fs";
 import { dirname } from "node:path";
 import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -74,6 +74,7 @@ import {
   seamSpawner,
   sshSpawner,
   attachKeeper,
+  keeperHolder,
   launchKeeper,
   lazyHandle,
   pidAlive,
@@ -209,6 +210,12 @@ import {
   remoteWorkspaceFor,
 } from "./config.js";
 import { checkCustomModels, loadCustomModels, saveCustomModels } from "./custom-models.js";
+import {
+  contextActive,
+  mountedInstance,
+  RELOAD_RESUME_EVERY_MS,
+  RELOAD_RESUME_TRIES,
+} from "./reload.js";
 import {
   type Route,
   type RouteFilter,
@@ -369,6 +376,7 @@ import {
   RELAY_BATCH_MS,
   DIALOG_POLL_MS,
   relayBlocks,
+  RELOAD_TEXT,
   resolvedAgent,
   RESTART_TEXT,
   type ResultFrame,
@@ -397,7 +405,18 @@ import {
 
 /** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
 export class ClaudeCodeAdapter extends LlmAdapter {
-  ctx: PluginContext;
+  /** The context `apply` mounted this instance with. Read it through `ctx`. */
+  mountedCtx: PluginContext;
+  /** The context to reach dsh through: the mounted one while its scope is active. After a hot
+   *  reload disposed it, the context of the instance now mounted for this provider, since a step
+   *  that was streaming from this instance keeps running (see reload.ts) and its native rows,
+   *  dialogs, exit callbacks and event builders all go through here. Until a successor is mounted
+   *  it is the dead one, whose services throw. */
+  get ctx(): PluginContext {
+    if (contextActive(this.mountedCtx)) return this.mountedCtx;
+    const next = mountedInstance<ClaudeCodeAdapter>(this.providerId);
+    return next && next !== this ? next.ctx : this.mountedCtx;
+  }
   config: Schemastery.TypeT<typeof Config>;
   subprocess?: Pick<SubprocessRuntime, "spawn">;
   /** The tag on the keepers and holds this dsh starts and adopts (spawn-mode.ts `ownsKeeper`), read
@@ -498,7 +517,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Attach the mounted context and config, then load every persisted store (permission modes, tool modes, terminal sync, turn records, asides, starters and limit waits) so a resumed adapter reads as it left off. */
   constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>) {
     super();
-    this.ctx = ctx;
+    this.mountedCtx = ctx;
     // The probe answers `ok: false` with a reason rather than throwing, and the catch keeps the
     // inline fallback on any dsh where that stops being true.
     void rowsSupported()
@@ -4067,22 +4086,31 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /**
    * At boot, reattach to keepers whose Claude process is still alive (a dsh restart left them
    * running) and register them as this instance's processes. One with output waiting gets a
-   * drain turn so what Claude did during the gap shows up without anyone typing.
+   * drain turn so what Claude did during the gap shows up without anyone typing. `only` limits the
+   * pass to those keeper directories (a retry of ones left to another dsh). Returns the directories
+   * left because another live dsh holds them, and on a full pass looks at those again for a minute,
+   * in case the holder was a dsh still shutting down for a restart.
    */
-  async adoptKeepers() {
+  async adoptKeepers(only?: Set<string>): Promise<Set<string>> {
+    const left = new Set<string>();
     // In every mode, not only keeper: a keeper left from before the switch went off is still running
     // Claude, and adopting it lets its next turn respawn it as a child (the spec key differs) and the
     // idle reaper end it. Returning early here, as this did, left it running with nobody attached.
     const root = join(this.stateDir, "keepers");
     let dirs: string[] = [];
-    try {
-      dirs = (await readdir(root)).map((d) => join(root, d));
-    } catch {
-      return;
-    }
+    if (only) dirs = [...only].filter((dir) => existsSync(dir));
+    else
+      try {
+        dirs = (await readdir(root)).map((d) => join(root, d));
+      } catch {
+        return left;
+      }
     // Newest keeper first, so when a session has more than one alive (a respawn raced a
     // shutdown) the current one is adopted and the older one is retired below.
     dirs.sort((a, b) => (readKeeperInfo(b)?.startedAt ?? 0) - (readKeeperInfo(a)?.startedAt ?? 0));
+    // Sessions adopted by this pass. Only a keeper older than one of these is retired: a process
+    // already in the registry before the pass is a hot reload's, attached to its keeper right now.
+    const adoptedNow = new Set<string>();
     for (const dir of dirs) {
       const info = readKeeperInfo(dir);
       const spec = readKeeperSpec(dir);
@@ -4138,10 +4166,45 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         await writeJson(join(dir, "spec.json"), { ...spec, owner: this.keeperOwner }).catch(
           () => {},
         );
+      // Another live dsh process is attached to it: the server this profile runs, while this is a
+      // second process booting the same profile (`dsh web --help` does). The keeper takes whoever
+      // connects last, so attaching here cut the server's running turns off (2026-11-14 01:34).
+      // The owner tag cannot tell the two apart; the attached process can.
+      const holder = keeperHolder(dir);
+      if (holder !== undefined) {
+        this.foreignSessions.add(spec.sessionId);
+        left.add(dir);
+        if (!only)
+          await trace(
+            join(this.stateDir, "resume.log"),
+            `left keeper ${basename(dir)} for ${spec.sessionId}: dsh pid ${holder} is attached to it`,
+          );
+        continue;
+      }
+      // Its holder is gone since the pass that left it: the session is ours again.
+      if (only) this.foreignSessions.delete(spec.sessionId);
       const procSpec = spec.procSpec;
       const key2 = registryKey(this.providerId, spec.sessionId);
+      if (this.processes.has(key2) && !adoptedNow.has(spec.sessionId)) {
+        // A hot reload: the registry lives on globalThis, so the previous instance's process for
+        // this session is still registered and still reading this keeper, maybe mid-turn. Killing
+        // its Claude here as an "older keeper" ended the running turn (2026-11-12 23:43, a profile
+        // edit: "claude exited -1: no output"). A keeper nobody attaches to ends itself after
+        // `orphanMs`, so one that really is stale still goes.
+        await trace(
+          join(this.stateDir, "resume.log"),
+          `kept keeper ${basename(dir)} for ${spec.sessionId}: its process outlived a hot reload`,
+        );
+        // Its hooks still point at the instance that spawned it; this one is the live one now.
+        const kept = this.processes.get(key2);
+        if (kept) {
+          kept.onIdleResult = () => this.wake(spec.sessionId, kept);
+          this.hookProcess(kept, spec.sessionId);
+        }
+        continue;
+      }
       if (this.processes.has(key2)) {
-        // An older keeper for a session already adopted: nobody will attach to it again.
+        // An older keeper for a session adopted a moment ago: nobody will attach to it again.
         try {
           process.kill(info.claudePid, "SIGKILL");
         } catch {}
@@ -4171,6 +4234,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.onIdleResult = () => this.wake(spec.sessionId, proc);
       this.hookProcess(proc, spec.sessionId);
       this.processes.set(key2, proc);
+      adoptedNow.add(spec.sessionId);
       void this.sendInitialize(proc);
       await trace(
         join(this.stateDir, "resume.log"),
@@ -4185,18 +4249,100 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // keep looking for a minute and stop at the first wake that opened a turn.
       void this.drainAdopted(proc, spec.sessionId);
     }
+    if (!only && left.size > 0) void this.readoptLeft(left);
+    return left;
   }
 
-  /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn. A
+  /** Every `everyMs` for `tries` looks, adopt the keepers a boot pass left to another live dsh once
+   *  that dsh has exited: a restart whose old server was still shutting down when this one booted.
+   *  Stops when this instance's scope is disposed, so a short-lived second dsh (`dsh web --help`)
+   *  never comes back for them. Keepers whose holder outlives the minute stay theirs. */
+  async readoptLeft(left: Set<string>, everyMs = 5000, tries = 12): Promise<void> {
+    let pending = left;
+    for (let i = 0; i < tries && pending.size > 0; i++) {
+      await new Promise((r) => setTimeout(r, everyMs).unref());
+      if (!this.scopeActive()) return;
+      pending = await this.adoptKeepers(pending);
+    }
+  }
+
+  /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn, and the
+   *  answer says whether a turn took it (that wake, or a prompt that got there first). A
    *  `system` notice on its own is no reply and wakes nobody; the next turn reads it. The one
    *  notice that wakes is `task_notification`, a background task that finished while dsh was away. */
-  async drainAdopted(proc: ClaudeProcess, sessionId: string, everyMs = 2000, tries = 30) {
+  async drainAdopted(
+    proc: ClaudeProcess,
+    sessionId: string,
+    everyMs = 2000,
+    tries = 30,
+    text = RECONNECT_TEXT,
+  ): Promise<boolean> {
     for (let i = 0; i < tries && proc.alive; i++) {
       await new Promise((r) => setTimeout(r, everyMs));
-      if (proc.busy) return; // a prompt got there first; the turn drains the queue itself
+      if (proc.busy) return true; // a prompt got there first; the turn drains the queue itself
       if (!proc.hasTurnOutput()) continue;
-      if (await this.wake(sessionId, proc, RECONNECT_TEXT)) return;
+      if (await this.wake(sessionId, proc, text)) return true;
     }
+    return false;
+  }
+
+  /** Whether the scope `apply` mounted this instance in is still live; false once a hot reload or
+   *  a toggle disposed it, while a step it was streaming may still be running. */
+  scopeActive(): boolean {
+    // A profile config edit re-applies the plugin in the same fiber, so `uid` stays set and the
+    // context alone reads active: ask the registry too, which names the instance mounted last.
+    const now = mountedInstance<ClaudeCodeAdapter>(this.providerId);
+    return contextActive(this.mountedCtx) && (now === undefined || now === this);
+  }
+
+  /**
+   * A step streaming from this instance died after a hot reload replaced it (see the end of
+   * `turn`). Waits for an active instance to be mounted for this provider, a toggle can leave none
+   * for a while, and hands the session to it. Past the wait the busy mark stays for the next boot's
+   * nudge.
+   */
+  async resumeAfterReload(
+    sessionId: string,
+    everyMs = RELOAD_RESUME_EVERY_MS,
+    tries = RELOAD_RESUME_TRIES,
+  ): Promise<void> {
+    for (let i = 0; i < tries; i++) {
+      await new Promise((r) => setTimeout(r, everyMs));
+      const next = mountedInstance<ClaudeCodeAdapter>(this.providerId);
+      if (!next || next === this || !next.scopeActive()) continue;
+      return next.takeOverReloadedTurn(sessionId);
+    }
+    await trace(
+      join(this.stateDir, "resume.log"),
+      `reload ${sessionId}: no live instance mounted, left for the next boot`,
+    );
+  }
+
+  /**
+   * Resume a session whose step a hot reload cut short, on the instance that replaced the one it
+   * ran on. A Claude process still alive kept working into its queue (the keeper survives a
+   * reload), so it is drained the way an adopted keeper is; a dead one gets the reload notice, and
+   * that turn resumes Claude's session from its transcript. A turn already running (someone
+   * typed) needs nothing. The busy mark is left alone: the turn that follows sets and clears it.
+   */
+  async takeOverReloadedTurn(sessionId: string): Promise<void> {
+    const log = join(this.stateDir, "resume.log");
+    const proc = this.processes.get(registryKey(this.providerId, sessionId));
+    if (proc?.busy) {
+      await trace(log, `reload ${sessionId}: a turn already runs`);
+      return;
+    }
+    if (proc?.alive) {
+      await trace(log, `reload ${sessionId}: draining the live process`);
+      if (proc.hasTurnOutput() && (await this.wake(sessionId, proc, RELOAD_TEXT))) return;
+      if (await this.drainAdopted(proc, sessionId, undefined, undefined, RELOAD_TEXT)) return;
+      // A minute with nothing from Claude: the dead step had already read all it wrote, or it is
+      // quiet in a long tool. Either way the notice goes; the CLI queues it behind a turn it is in,
+      // and a process that died meanwhile is replaced by the notice's turn.
+      if (proc.busy) return;
+    }
+    const woke = await this.wake(sessionId, undefined, RELOAD_TEXT);
+    await trace(log, `reload ${sessionId}: ${woke ? "nudged" : "nothing here to wake"}`);
   }
 
   /**
@@ -6096,8 +6242,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // A dsh shutdown aborts the stream with a "disposed" reason. Clearing the busy mark then
       // leaves nothing for the boot resume to nudge (2026-09-05, third restart of the day), so the
       // mark stays for that one case and the next boot picks the session up.
+      // A hot reload replaced this instance while the step streamed and the step then died: no
+      // finished result, no Stop, no dsh shutdown. dsh does not abort that stream and does not
+      // know the turn was cut short, so nothing would resume it. The mark stays and the instance
+      // now mounted picks the session up (resumeAfterReload).
+      const orphaned =
+        outcome === "ended" && !tr.aborting && !options.signal?.aborted && !this.scopeActive();
       if (abortKind(options.signal) === "disposed") {
         void trace(`kept busy ${options.sessionId}: stream aborted by disposal`);
+      } else if (orphaned) {
+        void trace(
+          join(this.stateDir, "resume.log"),
+          `kept busy ${options.sessionId}: the step died after a hot reload replaced this instance`,
+        );
+        void this.resumeAfterReload(options.sessionId);
       } else {
         markBusy(options.sessionId, false, join(this.stateDir, "busy.json")).catch((e) =>
           this.log("warn", `busy.json: ${errorText(e)}`),
@@ -6122,6 +6280,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           void trace(
             join(this.stateDir, "resume.log"),
             `kept process for ${options.sessionId}: interrupted, awaiting the CLI's answer`,
+          );
+        } else if (orphaned && proc.alive) {
+          // The step died on this instance's dead scope, not on Claude, which is still working:
+          // its output is what the resume drains.
+          void trace(
+            join(this.stateDir, "resume.log"),
+            `kept process for ${options.sessionId}: alive past a hot reload`,
           );
         } else {
           proc.kill();
@@ -6507,8 +6672,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // sessions service unavailable in this scope: fall through to the catalog
     }
     if (logVersion === 0) logVersion = (await currentLogVersion()) ?? 0;
-    if (text === RESTART_TEXT) {
-      // A notice from a previous boot may still sit in the durable inbox: do not stack another.
+    if (text === RESTART_TEXT || text === RELOAD_TEXT) {
+      // A notice from a previous boot or reload may still sit in the durable inbox: do not stack
+      // another (the old instance's idle wake and the new one's takeover can both reach here).
       try {
         const session = this.ctx?.sessions?.get?.(asSessionId(sessionId));
         if (
@@ -6516,6 +6682,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           hasPendingNotice(session.snapshotEvents(), "dsh-oh-my-claude", [
             RESTART_TEXT,
             RECONNECT_TEXT,
+            RELOAD_TEXT,
           ])
         ) {
           await trace(`wake ${sessionId}: restart notice already pending, not stacking another`);

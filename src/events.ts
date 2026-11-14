@@ -105,7 +105,17 @@ export class EventHub {
       build,
       timer: setTimeout(() => {
         this.pending.delete(key);
-        this.publish(entry.build());
+        // A builder reads the adapter that queued it, which a hot reload can leave on a disposed
+        // scope whose services throw. Uncaught in this timer, that throw ended dsh itself
+        // (2026-11-12 23:43). Every kind is a current value, so the next event or the tab's
+        // fallback poll carries what this one would have.
+        let e: OmcEvent;
+        try {
+          e = entry.build();
+        } catch {
+          return;
+        }
+        this.publish(e);
       }, ms),
     };
     this.pending.set(key, entry);

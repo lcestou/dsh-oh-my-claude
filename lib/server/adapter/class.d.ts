@@ -24,7 +24,14 @@ import { CommandRows } from "./lane.js";
 import { type IdleTarget, type LiveTurn, type ResultFrame, type TurnRecord, type TurnsReply, type UltracodeState } from "./turn.js";
 /** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
 export declare class ClaudeCodeAdapter extends LlmAdapter {
-    ctx: PluginContext;
+    /** The context `apply` mounted this instance with. Read it through `ctx`. */
+    mountedCtx: PluginContext;
+    /** The context to reach dsh through: the mounted one while its scope is active. After a hot
+     *  reload disposed it, the context of the instance now mounted for this provider, since a step
+     *  that was streaming from this instance keeps running (see reload.ts) and its native rows,
+     *  dialogs, exit callbacks and event builders all go through here. Until a successor is mounted
+     *  it is the dead one, whose services throw. */
+    get ctx(): PluginContext;
     config: Schemastery.TypeT<typeof Config>;
     subprocess?: Pick<SubprocessRuntime, "spawn">;
     /** The tag on the keepers and holds this dsh starts and adopts (spawn-mode.ts `ownsKeeper`), read
@@ -1035,13 +1042,40 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /**
      * At boot, reattach to keepers whose Claude process is still alive (a dsh restart left them
      * running) and register them as this instance's processes. One with output waiting gets a
-     * drain turn so what Claude did during the gap shows up without anyone typing.
+     * drain turn so what Claude did during the gap shows up without anyone typing. `only` limits the
+     * pass to those keeper directories (a retry of ones left to another dsh). Returns the directories
+     * left because another live dsh holds them, and on a full pass looks at those again for a minute,
+     * in case the holder was a dsh still shutting down for a restart.
      */
-    adoptKeepers(): Promise<void>;
-    /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn. A
+    adoptKeepers(only?: Set<string>): Promise<Set<string>>;
+    /** Every `everyMs` for `tries` looks, adopt the keepers a boot pass left to another live dsh once
+     *  that dsh has exited: a restart whose old server was still shutting down when this one booted.
+     *  Stops when this instance's scope is disposed, so a short-lived second dsh (`dsh web --help`)
+     *  never comes back for them. Keepers whose holder outlives the minute stay theirs. */
+    readoptLeft(left: Set<string>, everyMs?: number, tries?: number): Promise<void>;
+    /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn, and the
+     *  answer says whether a turn took it (that wake, or a prompt that got there first). A
      *  `system` notice on its own is no reply and wakes nobody; the next turn reads it. The one
      *  notice that wakes is `task_notification`, a background task that finished while dsh was away. */
-    drainAdopted(proc: ClaudeProcess, sessionId: string, everyMs?: number, tries?: number): Promise<void>;
+    drainAdopted(proc: ClaudeProcess, sessionId: string, everyMs?: number, tries?: number, text?: string): Promise<boolean>;
+    /** Whether the scope `apply` mounted this instance in is still live; false once a hot reload or
+     *  a toggle disposed it, while a step it was streaming may still be running. */
+    scopeActive(): boolean;
+    /**
+     * A step streaming from this instance died after a hot reload replaced it (see the end of
+     * `turn`). Waits for an active instance to be mounted for this provider, a toggle can leave none
+     * for a while, and hands the session to it. Past the wait the busy mark stays for the next boot's
+     * nudge.
+     */
+    resumeAfterReload(sessionId: string, everyMs?: number, tries?: number): Promise<void>;
+    /**
+     * Resume a session whose step a hot reload cut short, on the instance that replaced the one it
+     * ran on. A Claude process still alive kept working into its queue (the keeper survives a
+     * reload), so it is drained the way an adopted keeper is; a dead one gets the reload notice, and
+     * that turn resumes Claude's session from its transcript. A turn already running (someone
+     * typed) needs nothing. The busy mark is left alone: the turn that follows sets and clears it.
+     */
+    takeOverReloadedTurn(sessionId: string): Promise<void>;
     /**
      * After a reattach, the surviving Claude still holds an MCP session against the previous dsh's
      * bridge. `mcp_reconnect` for the `dsh` server makes it open a fresh one; without it the first
