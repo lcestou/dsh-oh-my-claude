@@ -57,8 +57,12 @@ export declare const usesStdin: (flags: Set<string> | null | undefined) => boole
  *
  * With `tools` undefined (no live agent to ask) only the opening sentence is sent: the bridge
  * answers that session with nothing either.
+ *
+ * `builtins` is the CLI's `--tools` list. Once it is narrower than `default`, dsh's own tools stand
+ * in for the missing ones, and the text says so: dsh's instructions name its tools bare (`bash`,
+ * `read`), and the bridge can only offer them as `mcp__dsh__bash`, `mcp__dsh__read`.
  */
-export declare function dshToolsGuidance(tools?: readonly ToolSchema[]): string;
+export declare function dshToolsGuidance(tools?: readonly ToolSchema[], builtins?: readonly string[]): string;
 /**
  * The argument list for one `claude -p` spawn: every flag this plugin sends, in one place.
  *

@@ -1647,7 +1647,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       supports(cli.flags, dshSystem === undefined ? "--append-system-prompt" : "--system-prompt");
     const sizes: ContextSizes | undefined = options.purpose
       ? undefined
-      : { ...contextSizes(turns), tools: toolsSent ? dshToolsGuidance(mcpBridge.tools).length : 0 };
+      : {
+          ...contextSizes(turns),
+          tools: toolsSent ? dshToolsGuidance(mcpBridge.tools, this.config.builtinTools).length : 0,
+        };
     const args = buildArgs({
       ...options,
       model,

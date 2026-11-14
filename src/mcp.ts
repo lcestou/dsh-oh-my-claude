@@ -1,7 +1,8 @@
 // MCP bridge: exposes the dsh tools visible to a session's agent (subagents, jobs, skills, ...) to
 // the Claude Code process of that session over MCP Streamable HTTP, so a Claude parent can fan out
-// to dsh subagents and they show up under the session like any other child. Shell and file tools are
-// left out: Claude Code has its own. Guarded by a per-process key that only the adapter knows.
+// to dsh subagents and they show up under the session like any other child. File tools are left out
+// while Claude Code has its own (`builtinTools`). Guarded by a per-process key that only the adapter
+// knows.
 // This is an I/O boundary: JSON-RPC bodies are decoded here.
 //
 // On DSH Desktop the bridge listens on its own loopback port rather than only on dsh's web server:
@@ -54,6 +55,35 @@ export const HIDDEN = new Set([
   "run_code",
 ]);
 
+/** Each hidden dsh file tool and the Claude Code built-ins that stand in for it. A dsh tool is
+ *  left off the bridge only while one of its stand-ins is on, so a mount that switches Claude
+ *  Code's file tools off (`builtinTools`) gets dsh's own instead of none. `ls` goes with Glob, the
+ *  listing tool Claude Code still has. */
+const NATIVE_TWINS = {
+  read: ["Read"],
+  write: ["Write"],
+  edit: ["Edit", "MultiEdit"],
+  multi_edit: ["Edit", "MultiEdit"],
+  str_replace_editor: ["Edit", "MultiEdit"],
+  glob: ["Glob"],
+  grep: ["Grep"],
+  ls: ["LS", "Glob"],
+} satisfies Record<string, readonly string[]>;
+
+/**
+ * The dsh tools the bridge leaves out for a CLI started with these built-ins (the `--tools` list):
+ * all of `HIDDEN` for `default`, and otherwise only the file tools whose Claude Code stand-in is on.
+ * `run_code` stays out either way: it is dsh's executor transport, offered alone in code mode.
+ */
+export function hiddenFor(builtins: readonly string[]): ReadonlySet<string> {
+  if (builtins.includes("default")) return HIDDEN;
+  const on = new Set(builtins.flatMap((b) => b.split(",")).map((b) => b.trim()));
+  const hidden = new Set([RUN_CODE]);
+  for (const [tool, twins] of Object.entries(NATIVE_TWINS))
+    if (twins.some((t) => on.has(t))) hidden.add(tool);
+  return hidden;
+}
+
 /** dsh's code-mode tool: under a PTC preset it is the only tool the model may call directly. */
 export const RUN_CODE = "run_code";
 
@@ -66,11 +96,16 @@ export const codeModeTool = (agent: Agent): ToolSchema | undefined => {
 };
 
 /** The dsh tools the bridge offers `agent`: in code mode only `run_code`; otherwise what dsh shows
- *  that agent, minus the ones Claude Code has natively. `open_session` and its two siblings are the
- *  bridge's own, not dsh tools, so code mode leaves them alone; the callers that offer them add them. */
-const bridgedSchemas = (tools: DshToolsRegistry, agent: Agent): ToolSchema[] => {
+ *  that agent, minus the ones Claude Code has natively (`hidden`, see `hiddenFor`). `open_session`
+ *  and its two siblings are the bridge's own, not dsh tools, so code mode leaves them alone; the
+ *  callers that offer them add them. */
+const bridgedSchemas = (
+  tools: DshToolsRegistry,
+  agent: Agent,
+  hidden: ReadonlySet<string> = HIDDEN,
+): ToolSchema[] => {
   const runCode = codeModeTool(agent);
-  return runCode ? [runCode] : tools.schemas(agent).filter((t) => !HIDDEN.has(t.name));
+  return runCode ? [runCode] : tools.schemas(agent).filter((t) => !hidden.has(t.name));
 };
 
 /** Bridge-only tool: a new top-level dsh session (sidebar row), not a child of the caller. */
@@ -521,13 +556,15 @@ export interface RpcEnv {
   /** The session CLI's permission mode right now, read once per tools/call so a switch made after
    *  spawn counts; undefined when unknown, which gates nothing. */
   mode?: () => string | undefined;
+  /** The dsh tools left off for this session (`hiddenFor`); `HIDDEN` when not given. */
+  hidden?: ReadonlySet<string>;
   log?: (level: string, msg: string) => void;
 }
 
 /** One JSON-RPC request against the tools visible to `agent`. Returns null for notifications. */
 export async function handleRpc(
   msg: JsonRpcRequest,
-  { tools, agent, signal, version, open, prompt, wait, relay, mode, log }: RpcEnv,
+  { tools, agent, signal, version, open, prompt, wait, relay, mode, hidden = HIDDEN, log }: RpcEnv,
 ): Promise<JsonRpcReply | null> {
   // The bridge's own tools the host provided, by name; dsh never sees these.
   const own = new Map<string, (args: Record<string, JsonValue>) => Promise<string>>();
@@ -555,7 +592,7 @@ export async function handleRpc(
       return reply({});
     case "tools/list":
       return reply({
-        tools: bridgedSchemas(tools, agent)
+        tools: bridgedSchemas(tools, agent, hidden)
           // readOnlyHint is what Claude Code keys concurrency on: without it every MCP call runs
           // one after another, so parallel subagents would serialize. dsh's own permission
           // presets still govern what a child may do.
@@ -602,7 +639,7 @@ export async function handleRpc(
         );
       // run_code is dsh's executor transport, not a registered tool: only a live turn's relay can run it.
       if (codeMode && !relay) return errorReply(msg.id, `${RUN_CODE} needs a live dsh turn`);
-      const tool = codeMode || HIDDEN.has(name) ? undefined : tools.get(name, agent);
+      const tool = codeMode || hidden.has(name) ? undefined : tools.get(name, agent);
       if (!tool && !codeMode) return errorReply(msg.id, `unknown tool ${name}`);
       try {
         // A live Claude turn takes the call first: dsh then runs the tool itself and renders it
@@ -655,6 +692,9 @@ export interface BridgeOptions {
   ) => Promise<RelayResult | undefined> | undefined;
   /** The permission mode the session's CLI is in right now; feeds the plan-mode gate. */
   mode?: (sessionId: string) => string | undefined;
+  /** The Claude Code built-ins a session's CLI is started with (`builtinTools`), which decide the
+   *  dsh file tools the bridge leaves out (`hiddenFor`). Every one of them when not given. */
+  builtins?: (sessionId: string) => readonly string[];
   /** Path of a file holding the bridge key; created once, reused across restarts. */
   keyFile?: string;
   /** Path of a file holding the loopback listener's port, so a restart rebinds the same port and
@@ -788,7 +828,7 @@ async function startLoopback(
  *  web port is the one address that is fixed by configuration. */
 export function registerMcpBridge(
   ctx: PluginContext,
-  { log, version, relay, mode, keyFile, portFile }: BridgeOptions,
+  { log, version, relay, mode, builtins, keyFile, portFile }: BridgeOptions,
 ): Promise<McpBridge> {
   // SAFETY: the key symbol is this plugin's own key on globalThis, typed here once
   const g = globalThis as typeof globalThis & { [KEY_REGISTRY]?: string };
@@ -838,6 +878,7 @@ export function registerMcpBridge(
                   ? (name, args, signal) => relay(sessionId, name, args, signal)
                   : undefined,
                 mode: mode ? () => mode(sessionId) : undefined,
+                hidden: builtins ? hiddenFor(builtins(sessionId)) : HIDDEN,
                 log,
               });
               return out === null ? send(res, 202) : send(res, 200, out);
@@ -890,7 +931,8 @@ export function registerMcpBridge(
             toolsFor: (sessionId) => {
               try {
                 const agent = agents.get(asSessionId(sessionId));
-                return agent ? [...bridgedSchemas(tools, agent), ...OWN_TOOLS] : undefined;
+                const hidden = builtins ? hiddenFor(builtins(sessionId)) : HIDDEN;
+                return agent ? [...bridgedSchemas(tools, agent, hidden), ...OWN_TOOLS] : undefined;
               } catch {
                 return undefined;
               }

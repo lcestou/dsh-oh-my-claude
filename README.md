@@ -212,7 +212,7 @@ Mount the plugin twice with different `configDir` values for two logins. List ot
 
 ## Not covered
 
-- dsh's shell and file tools are not proxied (except `bash` for background jobs); Claude Code uses its own, under its own permission mode.
+- dsh's file tools are not proxied by default; Claude Code uses its own, under its own permission mode. `builtinTools` switches Claude Code's off and dsh's on in their place.
 - Claude Code sessions are not deleted when dsh sessions are.
 
 ## Bugs and feedback

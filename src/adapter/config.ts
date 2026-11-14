@@ -79,6 +79,7 @@ export type Config = {
   customModels: CustomModel[];
   allowedTools: string[];
   disallowedTools: string[];
+  builtinTools: string[];
   addDirs: string[];
   pluginDirs: string[];
   pluginUrls: string[];
@@ -166,6 +167,12 @@ export const Config = z.object({
     ),
   allowedTools: z.array(z.string()).default([]).description("Extra --allowedTools entries"),
   disallowedTools: z.array(z.string()).default([]).description("--disallowedTools entries"),
+  builtinTools: z
+    .array(z.string())
+    .default(["default"])
+    .description(
+      "Claude Code's own tools, passed as --tools: 'default' for all of them, or the names to keep (for example ToolSearch), or an empty list for none. A dsh file tool (read, write, edit, glob, grep, ls) whose Claude Code counterpart is left out is offered over the dsh bridge instead, so dsh runs it with its own cards, sandbox and approvals",
+    ),
   addDirs: z.array(z.string()).default([]).description("Extra --add-dir directories"),
   pluginDirs: z
     .array(z.string())

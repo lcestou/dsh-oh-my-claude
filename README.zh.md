@@ -212,7 +212,7 @@ DSH Web 和 DSH Desktop 使用各自的 dsh profile，因此只会重新接上�
 
 ## 不包含的内容
 
-- dsh 的 shell 和文件工具不经过代理（后台任务用的 `bash` 除外）；Claude Code 使用自己的工具，受它自己的权限模式约束。
+- 默认情况下 dsh 的文件工具不经过代理；Claude Code 使用自己的工具，受它自己的权限模式约束。`builtinTools` 可以关掉 Claude Code 自己的工具，改由 dsh 的工具代替。
 - 删除 dsh 会话时不会删除对应的 Claude Code 会话。
 
 ## 问题与反馈

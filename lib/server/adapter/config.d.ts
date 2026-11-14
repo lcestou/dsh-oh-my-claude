@@ -36,6 +36,7 @@ export type Config = {
     customModels: CustomModel[];
     allowedTools: string[];
     disallowedTools: string[];
+    builtinTools: string[];
     addDirs: string[];
     pluginDirs: string[];
     pluginUrls: string[];
@@ -96,6 +97,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     }>[]>;
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
+    builtinTools: z<string[], string[]>;
     addDirs: z<string[], string[]>;
     pluginDirs: z<string[], string[]>;
     pluginUrls: z<string[], string[]>;
@@ -143,6 +145,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     }>[]>;
     allowedTools: z<string[], string[]>;
     disallowedTools: z<string[], string[]>;
+    builtinTools: z<string[], string[]>;
     addDirs: z<string[], string[]>;
     pluginDirs: z<string[], string[]>;
     pluginUrls: z<string[], string[]>;

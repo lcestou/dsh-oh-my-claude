@@ -213,10 +213,24 @@ const listed = (items: string[]): string =>
  *
  * With `tools` undefined (no live agent to ask) only the opening sentence is sent: the bridge
  * answers that session with nothing either.
+ *
+ * `builtins` is the CLI's `--tools` list. Once it is narrower than `default`, dsh's own tools stand
+ * in for the missing ones, and the text says so: dsh's instructions name its tools bare (`bash`,
+ * `read`), and the bridge can only offer them as `mcp__dsh__bash`, `mcp__dsh__read`.
  */
-export function dshToolsGuidance(tools: readonly ToolSchema[] = []): string {
+export function dshToolsGuidance(
+  tools: readonly ToolSchema[] = [],
+  builtins: readonly string[] = ["default"],
+): string {
   const byName = new Map(tools.map((t) => [t.name, t]));
   const out = ["dsh tools are available as mcp__dsh__* over MCP."];
+  const allNative = builtins.includes("default");
+  const kept = new Set(builtins.flatMap((b) => b.split(",")).map((b) => b.trim()));
+  if (!allNative)
+    out.push(
+      "A tool that instructions or skills name without a prefix (bash, read, edit, glob, grep,",
+      "skill, subagent and the rest) is the mcp__dsh__ tool of that name.",
+    );
 
   const subagent = byName.get("subagent");
   const presets = tools.map((t) => t.name).filter((n) => /^(subagent|researcher)_/.test(n));
@@ -260,7 +274,13 @@ export function dshToolsGuidance(tools: readonly ToolSchema[] = []): string {
     out.push(`${bridgedName("wait_session")} reads a session's replies back.`);
 
   const shell = [byName.get("bash"), byName.get("pwsh")].find((t) => takes(t, "run_in_background"));
-  if (shell) {
+  const nativeShell = allNative || kept.has("Bash") || kept.has("PowerShell");
+  if (shell && !nativeShell) {
+    out.push(
+      `Every command goes through \`${bridgedName(shell.name)}\`; long-running ones with`,
+      "`run_in_background: true`, which dsh registers as a job whose finish notice arrives next turn.",
+    );
+  } else if (shell) {
     const jobs = [
       byName.has("job_output") ? `read output with \`${bridgedName("job_output")}\`` : "",
       byName.has("job_kill") ? `stop with \`${bridgedName("job_kill")}\`` : "",
@@ -335,7 +355,7 @@ export function buildArgs({
   // In -p mode /fast only works in a session launched with fast mode in --settings (fast-mode docs).
   if (config.fastMode && supports(flags, "--settings"))
     args.push("--settings", JSON.stringify({ fastMode: true }));
-  const guidance = mcp ? dshToolsGuidance(mcp.tools) : "";
+  const guidance = mcp ? dshToolsGuidance(mcp.tools, config.builtinTools) : "";
   if (dshSystem !== undefined && supports(flags, "--system-prompt")) {
     // dsh's prompt stands in for Claude Code's, the tool guidance after it as it would follow
     // Claude Code's. The CLI records a conversation's prompt on its first request and replays that
@@ -366,7 +386,8 @@ export function buildArgs({
     args.push("--permission-prompt-tool", "stdio");
   }
   // "default" is what the Agent SDK passes; without it the CLI keeps AskUserQuestion out of -p runs.
-  if (supports(flags, "--tools")) args.push("--tools", "default");
+  // A shorter list keeps only those built-ins, and the bridge offers dsh's file tools in their place.
+  if (supports(flags, "--tools")) args.push("--tools", config.builtinTools.join(","));
   if (config.allowedTools.length > 0) args.push("--allowedTools", ...config.allowedTools);
   if (config.disallowedTools.length > 0) args.push("--disallowedTools", ...config.disallowedTools);
   for (const d of config.addDirs) args.push("--add-dir", d);
