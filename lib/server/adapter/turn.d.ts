@@ -1,7 +1,7 @@
 import { type FinishReason, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { type ContextSource } from "../context-sources.js";
 import { type Agent, type JsonValue, type ResolvedAgent } from "../dsh.js";
-import { type ClaudeEvent, type ClaudeProcessSpec, type SettingsKey, type RelayEvent, type WorkspaceDiff } from "../process.js";
+import { type ClaudeEvent, type ClaudeProcessSpec, type SettingsKey, type RelayEvent, type RelayResult, type WorkspaceDiff } from "../process.js";
 import { type FsBox } from "../remote-fs.js";
 import { type LiveMode, type Translator } from "../translator.js";
 import { type LooseMessage } from "./prompt.js";
@@ -164,10 +164,7 @@ export declare function interruptOnAbort(kind: string | undefined, spawn: string
  * undefined for a plain abort, so a caller can tell a dispose from a user cancel. */
 export declare function abortKind(signal: AbortSignal | undefined): string | undefined;
 /** dsh's tool-result for a relayed call, searched from the newest message back. */
-export declare function toolResultFor(messages: LooseMessage[] | undefined, id: string): {
-    text: string;
-    isError?: boolean;
-} | undefined;
+export declare function toolResultFor(messages: LooseMessage[] | undefined, id: string): RelayResult | undefined;
 /** Messages dsh delivered after the last assistant step. */
 export declare function afterLastAssistant(messages: LooseMessage[] | undefined): LooseMessage[];
 /** The Agent inside what dsh's session controller answered for a cold resume: `{ agent }`, or

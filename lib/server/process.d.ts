@@ -1,4 +1,4 @@
-import type { AskUserQuestionItem, JsonValue, SubprocessRuntime } from "./dsh.js";
+import type { AskUserQuestionItem, ImageAttachmentRef, JsonValue, SubprocessRuntime } from "./dsh.js";
 import type { ContextSizes, ContextSource } from "./context-sources.js";
 export type { JsonValue } from "./dsh.js";
 /** Errors reach us as `unknown`; this is the one place they become text. */
@@ -280,6 +280,13 @@ export type ClaudeEvent = {
 export interface RelayResult {
     text: string;
     isError?: boolean;
+    /** The images in dsh's result (read_image answers with one), as dsh stored them. */
+    refs?: ImageAttachmentRef[];
+    /** Those images loaded for the MCP reply, which carries them as image content. */
+    images?: {
+        mediaType: string;
+        data: string;
+    }[];
 }
 /** A dsh tool call the MCP bridge parks on the live turn; settled when dsh returns its result. */
 export interface RelayEvent {
