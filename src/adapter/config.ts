@@ -256,7 +256,7 @@ export const Config = z.object({
     .min(0)
     .default(2000)
     .description(
-      "Characters of each tool call's input and each tool result kept when dsh's history is sent to Claude as text: a turn another model worked, or the whole conversation when a new Claude session starts (its transcript gone, a fork, a refusal under refusalAsFailure). 0 keeps them whole, so a Claude session rebuilt from dsh's log loses nothing",
+      "Characters of each tool call's input and each tool result kept when dsh's history is sent to Claude as text: a turn another model worked, or the whole conversation when a new Claude session starts (its transcript gone, a fork). 0 keeps them whole, so a Claude session rebuilt from dsh's log loses nothing",
     ),
   dshTools: z
     .boolean()
