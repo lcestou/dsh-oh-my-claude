@@ -1,6 +1,6 @@
 export { KEY_HEADER } from "./mcp-config.js";
 import type { RelayResult } from "./process.js";
-import type { Agent, DshToolsRegistry, JsonValue, PluginContext, ToolSchema } from "./dsh.js";
+import type { Agent, DshToolsRegistry, JsonValue, PluginContext, ToolSchema, WebServer } from "./dsh.js";
 /** HTTP endpoint path for the MCP bridge handler. */
 export declare const MCP_PATH = "/dsh-oh-my-claude/mcp";
 /** dsh tools Claude Code already has natively; proxying them would only confuse the model.
@@ -113,6 +113,12 @@ export interface McpBridge {
      *  or dsh refuses the listing; the bridge has nothing for that session either. */
     toolsFor: (sessionId: string) => ToolSchema[] | undefined;
 }
+/**
+ * Where a local Claude reaches the web server route. A server bound to every interface (no host, or
+ * a wildcard) answers on 127.0.0.1; one bound to a single address (`dsh web --host 172.25.0.3`, as
+ * in a container behind a reverse proxy) answers only there, so 127.0.0.1 would refuse the bridge.
+ */
+export declare function webServerBase(webServer: Pick<WebServer, "port" | "host">): string;
 /** Wires the MCP bridge up once the required services are injected, and keeps the bridge key
  *  stable across dsh restarts so a keeper-mode claude that outlived dsh still authenticates.
  *  Under DSH Desktop, new Claude processes are pointed at the bridge's own loopback listener,

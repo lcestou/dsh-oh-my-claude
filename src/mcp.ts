@@ -31,6 +31,7 @@ import type {
   ModelRoute,
   SessionId,
   ToolSchema,
+  WebServer,
 } from "./dsh.js";
 import { asSessionId } from "./dsh.js";
 import { resolvedAgent } from "./adapter/turn.js";
@@ -732,6 +733,22 @@ function writePortFile(file: string, port: number): void {
   } catch {}
 }
 
+/**
+ * Where a local Claude reaches the web server route. A server bound to every interface (no host, or
+ * a wildcard) answers on 127.0.0.1; one bound to a single address (`dsh web --host 172.25.0.3`, as
+ * in a container behind a reverse proxy) answers only there, so 127.0.0.1 would refuse the bridge.
+ */
+export function webServerBase(webServer: Pick<WebServer, "port" | "host">): string {
+  const host = webServer.host?.trim() ?? "";
+  const wildcard = host === "" || host === "0.0.0.0" || host === "::" || host === "[::]";
+  const addr = wildcard
+    ? "127.0.0.1"
+    : host.includes(":") && !host.startsWith("[")
+      ? `[${host}]`
+      : host;
+  return `http://${addr}:${webServer.port}`;
+}
+
 /** One listen attempt against 127.0.0.1. */
 function listenOnce(
   handler: (req: IncomingMessage, res: ServerResponse) => void,
@@ -888,7 +905,7 @@ export function registerMcpBridge(
             return;
           }
           resolve({
-            base: loopback?.url ?? `http://127.0.0.1:${webServer.port}`,
+            base: loopback?.url ?? webServerBase(webServer),
             via: loopback ? "loopback" : "webserver",
             key,
             toolsFor: (sessionId) => {
