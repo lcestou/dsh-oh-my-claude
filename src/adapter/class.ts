@@ -40,6 +40,7 @@ import { readUsage, stillLimitedUntil } from "../usage.js";
 import { MCP_PATH, type McpBridge } from "../mcp.js";
 import { KEY_ENV } from "../mcp-config.js";
 import { ISOLATED_ENV, engineConfigFor, engineDigest } from "./isolate.js";
+import { engineOverlay, presetOfSession } from "./engine-mode.js";
 import {
   type ClaudeEvent,
   ClaudeProcess,
@@ -1659,7 +1660,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const far = targetHost === undefined ? undefined : await boxRouteOf(targetHost);
     const farRoute = far && boxRouteState(far);
     if (farRoute?.state === "routed") via = farRoute.host;
-    const dshMode = this.config.systemPrompt === "dsh" && !options.purpose;
+    // Engine mode follows the session's agent preset (engine-mode.ts); a side call (title,
+    // compaction) keeps the plugin's own config.
+    const cfg = options.purpose ? this.config : await this.sessionConfigOf(options.sessionId);
+    const dshMode = cfg.systemPrompt === "dsh" && !options.purpose;
     const turns = selectTurns(
       options.messages,
       session?.resuming ?? false,
@@ -1672,11 +1676,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // the local child's env, and a box's claude keeps its own settings and CLAUDE.md, so neither
     // its flags nor the CLAUDE.md copy apply there. Mixed, a box's CLI read its CLAUDE.md while
     // dsh's copy was kept as well.
-    const engineConfig = engineConfigFor(this.config, targetHost);
+    const engineConfig = engineConfigFor(cfg, targetHost);
     // Claude Code loads no CLAUDE.md under `isolate` and expands no `/skill` line under
     // `verbatimPrompts`, so dsh's copies of those are then the only ones and are kept.
-    const copies = { claudeMd: !engineConfig.isolate, skills: !this.config.verbatimPrompts };
-    let prompt = buildPrompt(turns, drops, this.config.replayToolTextLimit, copies);
+    const copies = { claudeMd: !engineConfig.isolate, skills: !cfg.verbatimPrompts };
+    let prompt = buildPrompt(turns, drops, cfg.replayToolTextLimit, copies);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
     if (targetHost)
       prompt = await relayFileHandles(
@@ -1724,7 +1728,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       ? undefined
       : {
           ...contextSizes(turns, copies),
-          tools: toolsSent ? dshToolsGuidance(mcpBridge.tools, this.config.builtinTools).length : 0,
+          tools: toolsSent ? dshToolsGuidance(mcpBridge.tools, cfg.builtinTools).length : 0,
         };
     const args = buildArgs({
       ...options,
@@ -1753,9 +1757,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Hashed: the spec is saved beside a keeper, and the prompt has no business on disk there.
     if (dshSystem !== undefined)
       spec.system = createHash("sha256").update(dshSystem).digest("hex").slice(0, 16);
-    if (this.config.followToolSet && mcpBridge?.tools) spec.tools = toolSetDigest(mcpBridge.tools);
-    const engine = engineDigest(this.config);
+    if (cfg.followToolSet && mcpBridge?.tools) spec.tools = toolSetDigest(mcpBridge.tools);
+    const engine = engineDigest(engineConfig);
     if (engine !== undefined) spec.engine = engine;
+    // Its environment is fixed at spawn, so isolate rides on the spec the spawner reads.
+    if (engineConfig.isolate) spec.isolate = true;
     // An environment is fixed at spawn, so the switch joins the spec: a session already running
     // when it flips is replaced on its next turn and resumes with the window the switch gives.
     // Local spawns only; the flag does not ride to a box, whose own environment decides.
@@ -1870,10 +1876,35 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  until one arrives. Read by `composedFor`. */
   readonly sessionCommands = new Map<string, string[]>();
 
+  /** dsh session id → the config its last turn ran on, set by `prepare` when it is not the
+   *  plugin's own (engine mode). The bridge's tool list and the steer writers read it through
+   *  `configFor` between turns; absent means the plugin's own config. */
+  readonly sessionConfigs = new Map<string, ClaudeCodeAdapter["config"]>();
+
+  /** The config `sessionId`'s turns run on, as its last `prepare` worked it out; the plugin's own
+   *  config before a session's first turn, for a side call, and for a session not in engine mode. */
+  configFor(sessionId: string | undefined): ClaudeCodeAdapter["config"] {
+    return (sessionId ? this.sessionConfigs.get(sessionId) : undefined) ?? this.config;
+  }
+
+  /**
+   * Reads the session's agent preset and the hints store, records the config its turns run on and
+   * returns it (engine-mode.ts decides). A dsh without the preset service, a session it cannot
+   * find, a scope already disposed, or an unreadable hints store all read as engine mode off.
+   */
+  async sessionConfigOf(sessionId: string | undefined): Promise<ClaudeCodeAdapter["config"]> {
+    if (!sessionId) return this.config;
+    const hints = await readHints(join(STATE_DIR, "hints.json")).catch(() => ({}));
+    const cfg = engineOverlay(this.config, hints, presetOfSession(this.ctx, sessionId));
+    if (cfg === this.config) this.sessionConfigs.delete(sessionId);
+    else this.sessionConfigs.set(sessionId, cfg);
+    return cfg;
+  }
+
   /** Whether a stdin line for `sessionId` goes marked as written (`verbatimPrompts`): never for a
    *  slash line naming one of the CLI's commands, which the mark would stop it dispatching. */
   composedFor(sessionId: string | undefined, text: string): boolean {
-    if (!this.config.verbatimPrompts) return false;
+    if (!this.configFor(sessionId).verbatimPrompts) return false;
     return !isCliCommandLine(text, sessionId ? this.sessionCommands.get(sessionId) : undefined);
   }
   /** dsh session id → the plugins its last init frame said the CLI failed to load. Absent until an
@@ -3960,6 +3991,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     firstParty = this.proxyFirstParty,
     window?: number,
     routed = false,
+    isolate = this.config.isolate,
   ): Record<string, string> | undefined {
     const over: Record<string, string> = {};
     if (this.config.configDir || this.config.ownTranscripts)
@@ -3988,7 +4020,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       over.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(window);
       over.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(window);
     }
-    if (this.config.isolate) Object.assign(over, ISOLATED_ENV);
+    if (isolate) Object.assign(over, ISOLATED_ENV);
     return Object.keys(over).length === 0 ? undefined : over;
   }
 
@@ -3999,8 +4031,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
-  keeperEnv(firstParty?: boolean, window?: number, routed?: boolean) {
-    return childEnv(process.env, this.localEnvOverride(firstParty, window, routed));
+  keeperEnv(firstParty?: boolean, window?: number, routed?: boolean, isolate?: boolean) {
+    return childEnv(process.env, this.localEnvOverride(firstParty, window, routed, isolate));
   }
 
   /** Spawner for one session: keeper mode needs the session to place and name the keeper. A spec
@@ -4009,7 +4041,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   spawnerFor(sessionId: string | undefined, spec: ClaudeProcessSpec): Spawner {
     const firstParty = spec.firstParty === true;
     if (spec.child || !sessionId)
-      return this.spawner(firstParty, spec.child, spec.window, spec.routed === true);
+      return this.spawner(
+        firstParty,
+        spec.child,
+        spec.window,
+        spec.routed === true,
+        spec.isolate === true,
+      );
     const boxHost = this.config.sshHost;
     if (boxHost)
       return (command, args, cwd) =>
@@ -4034,7 +4072,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             command,
             args,
             cwd,
-            env: this.keeperEnv(firstParty, spec.window, spec.routed === true),
+            env: this.keeperEnv(
+              firstParty,
+              spec.window,
+              spec.routed === true,
+              spec.isolate === true,
+            ),
             sessionId,
             procSpec: spec,
             owner: this.keeperOwner,
@@ -4506,6 +4549,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     child: "node" | "dsh" = this.config.spawn === "dsh" ? "dsh" : "node",
     window?: number,
     routed = false,
+    isolate = this.config.isolate,
   ) {
     // A remote instance drives the far `claude` over SSH; no keeper, no seam, its own remote login.
     // A remote-workspace cwd is a local placeholder here; redirect it to the box's real path.
@@ -4523,7 +4567,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // Read per spawn, not once: a login made in the panel applies to the next session started.
     const local: Spawner = (command, args, cwd) =>
-      base(command, args, cwd, this.localEnvOverride(firstParty, window, routed));
+      base(command, args, cwd, this.localEnvOverride(firstParty, window, routed, isolate));
     // A remote-workspace cwd runs the far `claude` over SSH on its box, even when this provider is
     // local: otherwise the session sits in the empty local placeholder dir.
     return (command: string, args: string[], cwd: string) => {

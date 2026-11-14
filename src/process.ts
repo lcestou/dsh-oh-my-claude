@@ -1514,6 +1514,9 @@ export interface ClaudeProcessSpec {
    *  A keeper outlives a dsh restart, and a config change comes with one: without this the new
    *  config would reattach to a Claude started under the old. */
   engine?: string;
+  /** Set when the process runs under `isolate` (the config's, or engine mode's for the session's
+   *  preset): the spawner hands it isolate's environment, which is fixed at spawn like the rest. */
+  isolate?: true;
 }
 
 /** What the caller wants to know when a Claude process ends, live or after a restart. */
