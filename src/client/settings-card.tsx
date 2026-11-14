@@ -971,8 +971,11 @@ function useSystemPromptSent(
   sessionId: string | undefined,
   started: boolean,
 ): boolean {
-  const [sent, setSent] = useState(false);
+  // The answer is kept with the key it is for, so a tab that moves to another session never shows
+  // the last one's until its own read lands.
+  const [sent, setSent] = useState<{ key: string; value: boolean } | undefined>();
   const [reads, setReads] = useState(0);
+  const key = `${provider}\n${sessionId}`;
   useEffect(() => {
     const changed = () => {
       promptModes.clear();
@@ -984,7 +987,6 @@ function useSystemPromptSent(
   useEffect(() => {
     if (provider === undefined || sessionId === undefined || !started) return;
     let live = true;
-    const key = `${provider}\n${sessionId}`;
     let read = promptModes.get(key);
     if (read === undefined) {
       const q = `provider=${encodeURIComponent(provider)}&session=${encodeURIComponent(sessionId)}`;
@@ -997,12 +999,12 @@ function useSystemPromptSent(
         });
       promptModes.set(key, read);
     }
-    void read.then((v) => live && setSent(v));
+    void read.then((value) => live && setSent({ key, value }));
     return () => {
       live = false;
     };
-  }, [provider, sessionId, started, reads]);
-  return sent;
+  }, [provider, sessionId, key, started, reads]);
+  return sent?.key === key && sent.value;
 }
 
 /**

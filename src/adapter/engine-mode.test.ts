@@ -114,6 +114,28 @@ assert.equal(
   null,
 );
 assert.equal(presetOfSession(undefined, "s1"), null);
+assert.equal(
+  presetOfSession(
+    {
+      sessions: { get: (id: string) => (id === "s1" ? { id } : undefined) },
+      get: () => ({ presetForSession: () => "engine" }),
+    } as unknown as PluginContext,
+    "s1",
+  ),
+  "engine",
+  "a loaded session reads its preset",
+);
+assert.equal(
+  presetOfSession(
+    {
+      sessions: { get: () => undefined },
+      get: () => ({ presetForSession: () => "engine" }),
+    } as unknown as PluginContext,
+    "s1",
+  ),
+  null,
+  "a session not loaded has none",
+);
 
 assert.deepEqual(enginePresets({ "enginePreset:a": true, "enginePreset:b": true, other: true }), [
   "a",
