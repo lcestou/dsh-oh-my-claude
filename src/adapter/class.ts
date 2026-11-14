@@ -4195,6 +4195,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           join(this.stateDir, "resume.log"),
           `kept keeper ${basename(dir)} for ${spec.sessionId}: its process outlived a hot reload`,
         );
+        // Its hooks still point at the instance that spawned it; this one is the live one now.
+        const kept = this.processes.get(key2);
+        if (kept) {
+          kept.onIdleResult = () => this.wake(spec.sessionId, kept);
+          this.hookProcess(kept, spec.sessionId);
+        }
         continue;
       }
       if (this.processes.has(key2)) {
@@ -4283,7 +4289,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Whether the scope `apply` mounted this instance in is still live; false once a hot reload or
    *  a toggle disposed it, while a step it was streaming may still be running. */
   scopeActive(): boolean {
-    return contextActive(this.mountedCtx);
+    // A profile config edit re-applies the plugin in the same fiber, so `uid` stays set and the
+    // context alone reads active: ask the registry too, which names the instance mounted last.
+    const now = mountedInstance<ClaudeCodeAdapter>(this.providerId);
+    return contextActive(this.mountedCtx) && (now === undefined || now === this);
   }
 
   /**

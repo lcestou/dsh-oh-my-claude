@@ -78,8 +78,28 @@ function asId(id: string): Parameters<PluginContext["sessions"]["get"]>[0] {
   return id as unknown as Parameters<PluginContext["sessions"]["get"]>[0];
 }
 
+// A profile config edit re-applies the plugin in the same fiber: the context is shared and its
+// uid stays set, so only the registry tells the replaced instance it is no longer the live one.
+{
+  const shared = scoped(5);
+  const a = new ClaudeCodeAdapter(shared.ctx, Config({}));
+  mounts.set(a.providerId, a);
+  assert.equal(a.scopeActive(), true, "the mounted instance is active");
+  const b = new ClaudeCodeAdapter(shared.ctx, Config({}));
+  mounts.set(b.providerId, b);
+  assert.equal(a.scopeActive(), false, "replaced in the same scope: no longer active");
+  assert.equal(b.scopeActive(), true, "its successor is");
+  mounts.delete(b.providerId);
+}
+
 // A coalesced event whose builder throws is dropped; the hub keeps working.
 {
+  let escaped = false;
+  /** Records a throw that got out of the hub's timer, which in dsh's process ends the server. */
+  const onUncaught = (): void => {
+    escaped = true;
+  };
+  process.on("uncaughtException", onUncaught);
   const hub = new EventHub();
   const written: string[] = [];
   // SAFETY: partial ServerResponse; attach writes headers and text, publish reads writableNeedDrain,
@@ -109,6 +129,8 @@ function asId(id: string): Parameters<PluginContext["sessions"]["get"]>[0] {
     "the throw stayed in its timer and the next event went out",
   );
   assert.ok(!written.some((t) => t.startsWith("event: idle")), "the failed one sent nothing");
+  process.off("uncaughtException", onUncaught);
+  assert.ok(!escaped, "the builder's throw did not escape its timer");
   hub.close();
 }
 
