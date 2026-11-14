@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.6.4] - 2026-11-14
+
+dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.3; built and tested on 0.2.2-rc.3.
+
 ### Added
 
 - Run Claude as dsh's engine only for the dsh modes (agent presets) you tick in Settings. A session started in such a mode gets dsh's system prompt and tools, none of your Claude Code settings, prompts sent as written and thinking as summaries, and every other session stays as it is. Each mode has its own What it changes, so any change can be left out for one mode and kept for another. Thanks to @soffits (#286, #287)
