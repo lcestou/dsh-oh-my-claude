@@ -957,33 +957,54 @@ const NO_ROWS: readonly string[] = [];
 
 const ROW_MASK_STYLE_ID = "dsh-oh-my-claude-context-rows";
 
-/** Per mount, whether it passes dsh's system prompt on (`systemPrompt: dsh`). A config fact that
- *  holds until dsh reloads the plugin, so one read per mount per page is enough. */
+/** Per mount and session, whether its turns pass dsh's system prompt on: the mount's
+ *  `systemPrompt: dsh`, or engine mode for the session's dsh mode. Dropped on `HINTS_EVENT`, since a
+ *  mode ticked or cleared there moves its sessions in or out of engine mode. */
 const promptModes = new Map<string, Promise<boolean>>();
-/** Whether the mount `provider` sends dsh's system prompt to Claude; false until the answer lands,
- *  and false on a failed read, which keeps the row folded as it always was. */
-function useSystemPromptSent(provider: string | undefined): boolean {
-  const [sent, setSent] = useState(false);
+/** Whether session `sessionId` on mount `provider` sends dsh's system prompt to Claude; false until
+ *  the answer lands, and false on a failed read, which keeps the row folded as it always was.
+ *  Asked only once the session has rows (`started`): a blank session has no mode on the server
+ *  yet, so an earlier answer would be the mount's alone. Re-read when the hints store changes, so
+ *  ticking the session's mode for engine mode shows. */
+function useSystemPromptSent(
+  provider: string | undefined,
+  sessionId: string | undefined,
+  started: boolean,
+): boolean {
+  // The answer is kept with the key it is for, so a tab that moves to another session never shows
+  // the last one's until its own read lands.
+  const [sent, setSent] = useState<{ key: string; value: boolean } | undefined>();
+  const [reads, setReads] = useState(0);
+  const key = `${provider}\n${sessionId}`;
   useEffect(() => {
-    if (provider === undefined) return;
+    const changed = () => {
+      promptModes.clear();
+      setReads((n) => n + 1);
+    };
+    window.addEventListener(HINTS_EVENT, changed);
+    return () => window.removeEventListener(HINTS_EVENT, changed);
+  }, []);
+  useEffect(() => {
+    if (provider === undefined || sessionId === undefined || !started) return;
     let live = true;
-    let read = promptModes.get(provider);
+    let read = promptModes.get(key);
     if (read === undefined) {
-      read = fetch(`${ROUTE}/system-prompt?provider=${encodeURIComponent(provider)}`)
+      const q = `provider=${encodeURIComponent(provider)}&session=${encodeURIComponent(sessionId)}`;
+      read = fetch(`${ROUTE}/system-prompt?${q}`)
         .then((r) => readJson<{ mode?: string }>(r))
         .then((r) => r.mode === "dsh")
         .catch(() => {
-          promptModes.delete(provider);
+          promptModes.delete(key);
           return false;
         });
-      promptModes.set(provider, read);
+      promptModes.set(key, read);
     }
-    void read.then((v) => live && setSent(v));
+    void read.then((value) => live && setSent({ key, value }));
     return () => {
       live = false;
     };
-  }, [provider]);
-  return sent;
+  }, [provider, sessionId, key, started, reads]);
+  return sent?.key === key && sent.value;
 }
 
 /**
@@ -1014,7 +1035,7 @@ export function ContextRowMask({
   const nodes = useChat?.((chat) => chat.nodes);
   const mine = sessionId !== undefined && isClaudeSession(ctx, sessionId);
   const provider = sessionId === undefined ? undefined : claudeProviderOf(ctx, sessionId);
-  const promptSent = useSystemPromptSent(provider);
+  const promptSent = useSystemPromptSent(provider, sessionId, order.length > 0);
   // The node map is a new object on every streamed chunk, and the walk below visits every row in
   // the conversation, so keying the memo on the map made a long turn quadratic in the length of
   // the transcript. What decides a row's masking is its source kind, fixed when the row is made,

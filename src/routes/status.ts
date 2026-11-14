@@ -9,6 +9,7 @@ import { type RouteHandler, UNHANDLED } from "./context.js";
 import type { DiagnosticFile, MountBox, RouteCtx } from "../sessions.js";
 import { parseChangelog } from "../changelog.js";
 import { unknownEffortLevels } from "../adapter/catalog.js";
+import { engineSendsDshPrompt, presetOfSession } from "../adapter/engine-mode.js";
 import { errorText, shq, sshArgs } from "../process.js";
 import { buildReport, type PrivateValues, type ReportInput } from "../report.js";
 import { repairsSummary } from "../session-heal.js";
@@ -101,10 +102,32 @@ export function statusRoutes(c: RouteCtx): RouteHandler {
       onLoginStatus?.(provider, status.loggedIn);
       return json(res, 200, status);
     }
-    // Whose system prompt a mount sends, for the chat's row mask: dsh's own "System prompt" row is
-    // a true receipt only on a mount that passes it on. A config fact, so no CLI is asked.
-    if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/system-prompt`)
-      return json(res, 200, { mode: boxOf(url).systemPrompt ?? "claude" });
+    // The agent presets a session can start under, for the engine-mode card: id and display name,
+    // broken ones left out. An empty list when this dsh mounts no preset service.
+    if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/presets`) {
+      const registry = c.ctx.get?.("agentPresets");
+      if (!registry) return json(res, 200, { presets: [] });
+      try {
+        const listed = await registry.list();
+        const presets = listed
+          .filter((p) => !p.broken)
+          .map((p) => ({ id: p.id, name: p.name ?? p.id }));
+        return json(res, 200, { presets });
+      } catch (e) {
+        return json(res, 500, { error: errorText(e) });
+      }
+    }
+    // Whose system prompt a session's turns send, for the chat's row mask: dsh's own "System
+    // prompt" row is a true receipt only when it was passed on, by the mount's config or, for a
+    // session (`?session=`) in a mode ticked for engine mode, by that. No CLI is asked.
+    if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/system-prompt`) {
+      const own = boxOf(url).systemPrompt ?? "claude";
+      const session = url.searchParams.get("session");
+      if (own === "dsh" || !session) return json(res, 200, { mode: own });
+      const hints = await readHints(join(STATE_DIR, "hints.json")).catch(() => ({}));
+      const sent = engineSendsDshPrompt(hints, presetOfSession(c.ctx, session));
+      return json(res, 200, { mode: sent ? "dsh" : own });
+    }
     if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/models`) {
       // `?all=1` is the Settings card's read: every mount's rows with their hide state, not the cut.
       const list = url.searchParams.get("all") === "1" ? pickerModels : models;

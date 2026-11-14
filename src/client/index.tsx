@@ -74,6 +74,7 @@ import {
   WorkspaceModelMemory,
   WorkspaceModelSwitch,
 } from "./settings-card.js";
+import { EngineModeCard } from "./engine-card.js";
 import { ShortcutSwitches } from "./shortcut-switches.js";
 import { watchUiParts } from "./ui-parts.js";
 import { KeeperSwitch } from "./keeper-switch.js";
@@ -348,6 +349,7 @@ export function apply(ctx: ClientCtx) {
             a switch's question, not a number's. Terminal mirror stays last, on its own, because it
             is the one experiment here. */}
         <ContextSwitch ctx={ctx} />
+        <EngineModeCard />
         <ReturnRecapSwitch />
         <SpendGuardField />
         <ProxyFirstPartySwitch />
