@@ -49,6 +49,7 @@ export type Config = {
     idleTimeoutMs: number;
     toolTextLimit: number;
     dshTools: boolean;
+    refusalAsFailure: boolean;
     fastMode: boolean;
     commandBridge: boolean;
     redactSecrets: boolean;
@@ -113,6 +114,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     redactSecrets: z<boolean, boolean>;
     persistTodos: z<boolean, boolean>;
     cliCompaction: z<boolean, boolean>;
+    refusalAsFailure: z<boolean, boolean>;
     continueAfterLimit: z<boolean, boolean>;
     debug: z<boolean, boolean>;
     approvals: z<boolean, boolean>;
@@ -159,6 +161,7 @@ export declare const Config: z<Schemastery.ObjectS<{
     redactSecrets: z<boolean, boolean>;
     persistTodos: z<boolean, boolean>;
     cliCompaction: z<boolean, boolean>;
+    refusalAsFailure: z<boolean, boolean>;
     continueAfterLimit: z<boolean, boolean>;
     debug: z<boolean, boolean>;
     approvals: z<boolean, boolean>;

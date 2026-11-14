@@ -135,6 +135,8 @@ export interface FallbackRecord {
     at: number;
     content?: string;
 }
+/** The failure code a refused reply ends the turn with under `refusalAsFailure`. */
+export declare const REFUSAL_CODE = "REFUSAL";
 /** Turns one CLI process's stream-json events into dsh stream chunks, and keeps the per-turn state
  *  that needs: open blocks, streamed ids, tool rows, usage and the result summary. */
 export declare class Translator {
@@ -149,6 +151,11 @@ export declare class Translator {
     limitFailure: (LlmFailure & {
         providerRetryAfterMs?: number;
     }) | undefined;
+    /** Report a refused reply as a failure (`refusalAsFailure`), not as the turn's normal end. */
+    refusalAsFailure: boolean;
+    /** The turn's refusal, once the CLI reported one with no fallback: a `model_refusal_no_fallback`
+     *  frame, or a top-level reply or result that stopped with `refusal`. */
+    refusal: LlmFailure | undefined;
     /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
     timeZone: string | undefined;
     hostLabel: string | undefined;
@@ -264,9 +271,10 @@ export declare class Translator {
     private fireToolCall;
     /** Every option is optional: a bare Translator shows tool activity, relays nothing and reports
      *  to no callbacks, which is what a one-shot call wants. */
-    constructor({ toolActivity, continueAfterLimit, timeZone, toolTextLimit, relay, dshIds, dshNames, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, noteApiKey, onTask, onHookRun, hostLabel, routerOnly, settingsKey, via, statusNote, }?: {
+    constructor({ toolActivity, continueAfterLimit, refusalAsFailure, timeZone, toolTextLimit, relay, dshIds, dshNames, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, noteApiKey, onTask, onHookRun, hostLabel, routerOnly, settingsKey, via, statusNote, }?: {
         toolActivity?: boolean;
         continueAfterLimit?: boolean;
+        refusalAsFailure?: boolean;
         timeZone?: string;
         toolTextLimit?: number;
         relay?: boolean;
@@ -312,6 +320,12 @@ export declare class Translator {
     delta(block: TranslatorBlock, text: string): StreamChunk[];
     /** Close a block; one that never got text was never announced and closes silently. */
     endBlock(block: TranslatorBlock): StreamChunk[];
+    /**
+     * Record the turn's refusal, the first one that arrives: the system frame carries the category and
+     * the CLI's sentence, and the error frame and the result that follow say only `refusal`. The code
+     * is the one dsh-fallback-models switches models on, so a fallback chain can answer instead.
+     */
+    noteRefusal(category: string, said: string): void;
     /** Emit a whole block at once, block-start then delta then block-end, for text that arrives in one
      *  piece rather than streamed in fragments. */
     wholeBlock(blockType: string, text: string): StreamChunk[];

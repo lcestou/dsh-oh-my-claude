@@ -425,6 +425,8 @@ export interface ClaudeAssistantMessage {
   model?: string;
   role?: string;
   content?: ClaudeContentBlock[];
+  /** "refusal" on the CLI's error frame for a reply the model refused or a classifier stopped. */
+  stop_reason?: string | null;
 }
 
 /** One block of an assistant message; the translator draws a lane for each of these four. */
