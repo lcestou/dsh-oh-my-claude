@@ -131,6 +131,7 @@ export function denyCliFlag(command: string, host: string | undefined, flag: str
   const set = deniedFlags.get(key) ?? new Set<string>();
   if (set.has(flag)) return false;
   set.add(flag);
+  hiddenDenied.add(flag);
   deniedFlags.set(key, set);
   return true;
 }
@@ -186,6 +187,11 @@ export function probeCli(exec: ExecLike = execFile as ExecLike, command = "claud
  */
 export const supports = (flags: Set<string> | null | undefined, flag: string) =>
   !flags || flags.has(flag);
+
+/** Flags some CLI refused (`denyCliFlag`), for flags `--help` does not list. */
+const hiddenDenied = new Set<string>();
+/** True once a CLI refused `flag`: the guard for a flag the help probe cannot see. */
+export const deniedOnly = (flag: string): boolean => hiddenDenied.has(flag);
 
 /** Text mode when the CLI lacks --input-format: prompt goes positional, images are dropped. */
 export const usesStdin = (flags: Set<string> | null | undefined) =>
@@ -356,7 +362,10 @@ export function buildArgs({
     args.push("--include-hook-events");
   if (model) args.push("--model", model);
   if (reasoningEffort && supports(flags, "--effort")) args.push("--effort", reasoningEffort);
-  if (config.thinkingDisplay && !purpose && supports(flags, "--thinking-display"))
+  // `--thinking-display` is real but hidden from `claude --help` (2.1.323), so the help probe never
+  // lists it. It is passed whenever configured; a CLI that refuses it is caught by the unknown-flag
+  // retry (`denyCliFlag`), which then drops it.
+  if (config.thinkingDisplay && !purpose && !deniedOnly("--thinking-display"))
     args.push("--thinking-display", config.thinkingDisplay);
   // In -p mode /fast only works in a session launched with fast mode in --settings (fast-mode docs).
   const settings: Record<string, JsonValue> = config.isolate ? { ...ISOLATED_SETTINGS } : {};

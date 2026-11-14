@@ -41,6 +41,8 @@ export declare function probeCli(exec?: ExecLike, command?: string, host?: strin
  * (probe failed) to assume support.
  */
 export declare const supports: (flags: Set<string> | null | undefined, flag: string) => boolean;
+/** True once a CLI refused `flag`: the guard for a flag the help probe cannot see. */
+export declare const deniedOnly: (flag: string) => boolean;
 /** Text mode when the CLI lacks --input-format: prompt goes positional, images are dropped. */
 export declare const usesStdin: (flags: Set<string> | null | undefined) => boolean;
 /**

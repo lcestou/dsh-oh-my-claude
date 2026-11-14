@@ -3,7 +3,7 @@ import { buildArgs } from "./cli.js";
 import { Config } from "./config.js";
 import { engineDigest } from "./isolate.js";
 
-const flags = new Set(["--thinking-display", "--tools", "--effort"]);
+const flags = new Set(["--tools", "--effort"]); // as probed: --help hides --thinking-display
 const args = (thinkingDisplay: "" | "summarized", purpose?: "session-title") => {
   const opts: Parameters<typeof buildArgs>[0] = {
     model: "sonnet",
