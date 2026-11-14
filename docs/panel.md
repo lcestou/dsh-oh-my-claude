@@ -147,13 +147,13 @@ The settings are box-wide, in the same `hints.json` as the switches around them:
 
 ## Claude as dsh's engine
 
-Some people run dsh as their agent, with its own persona, skills and tools, and want Claude only as the model. The **Claude as dsh's engine** card, in Settings → Oh My Claude under dsh context, lists dsh's modes (its agent presets: Standard, Creator, and any you made). A session started in a mode you tick runs Claude Code as the model engine. Every other session runs as before, so your everyday sessions keep Claude Code's own prompt, tools and settings.
+Some people run dsh as their agent, with its own persona, skills and tools, and want Claude only as the model. The **Claude as dsh's engine** switch, in Settings → Oh My Claude under dsh context, is off by default. Turned on, it lists dsh's modes (its agent presets: Standard, Creator, and any you made). A session started in a mode you tick runs Claude Code as the model engine. Every other session runs as before, so your everyday sessions keep Claude Code's own prompt, tools and settings.
 
 In engine mode the session gets dsh's system prompt in place of Claude Code's, dsh's file and shell tools in place of Claude Code's own (served over the dsh tools bridge, so dsh draws their cards and asks its own approvals), those tools loaded up front instead of behind tool search, a restart of Claude when dsh's tool set changes, prompts sent as written, none of your Claude Code settings (settings files, hooks, MCP servers, CLAUDE.md), and thinking shown as summaries. Each ticked mode shows its own **What it changes** fold under it, with every change on, and clearing a box leaves that change out for that mode only, so two modes can run two different setups. These are the same switches as the `systemPrompt`, `builtinTools`, `toolLoading`, `followToolSet`, `verbatimPrompts`, `isolate` and `thinkingDisplay` keys in the plugin config ([configuration](configuration.md)); the card applies them to the ticked modes only, each with its own choice. Leaving out your Claude Code settings applies to sessions on this computer only; a session on an SSH box keeps that box's settings.
 
 dsh fixes a session's mode with its first message, so a session never changes between engine mode and the normal one partway through. Ticking or clearing a mode reaches that mode's sessions on their next turn, when Claude is started again with the new options and resumes the conversation.
 
-The settings are box-wide, in `hints.json`: `enginePreset:<mode id>` for each ticked mode, and `engineSkip:<mode id>:<option>` for each box cleared under that mode's What it changes.
+The settings are box-wide, in `hints.json`: `engineOn` for the switch (off keeps the ticks for when it comes back on), `enginePreset:<mode id>` for each ticked mode, and `engineSkip:<mode id>:<option>` for each box cleared under that mode's What it changes.
 
 ## Prompt starter
 

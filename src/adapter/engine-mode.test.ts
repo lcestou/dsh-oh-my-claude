@@ -12,8 +12,10 @@ import { ENGINE_OPTIONS, engineOverlay, enginePresets, engineSkipKey } from "./e
 import { engineDigest } from "./isolate.js";
 
 const base = new Config({});
-const on = { "enginePreset:engine": true } as const;
+const on = { engineOn: true, "enginePreset:engine": true } as const;
 
+// The master switch off: nothing applies, whatever is ticked under it.
+assert.equal(engineOverlay(base, { "enginePreset:engine": true }, "engine"), base, "master off");
 // Off for the session's preset, no preset, or none ticked: the very same object comes back.
 assert.equal(engineOverlay(base, {}, "engine"), base);
 assert.equal(engineOverlay(base, on, "standard"), base, "another preset keeps the config");
@@ -62,6 +64,7 @@ assert.deepEqual(
 // Each ticked mode has its own set: one mode's skip never reaches another.
 {
   const hints = {
+    engineOn: true,
     "enginePreset:engine": true,
     "enginePreset:assistant": true,
     [engineSkipKey("isolate", "assistant")]: true,
@@ -85,7 +88,10 @@ assert.deepEqual(enginePresets({ "enginePreset:a": true, "enginePreset:b": true,
 // hints store; a session in another mode keeps the plugin's own config, and the bridge's per-session
 // reads (`configFor`) follow what the last turn worked out.
 {
-  await writeFile(join(STATE_DIR, "hints.json"), JSON.stringify({ "enginePreset:engine": true }));
+  await writeFile(
+    join(STATE_DIR, "hints.json"),
+    JSON.stringify({ engineOn: true, "enginePreset:engine": true }),
+  );
   const presets: Record<string, string> = { s1: "engine", s2: "standard" };
   // SAFETY: partial fake; sessionConfigOf reads sessions.get and the preset service only
   const ctx = {
@@ -114,7 +120,10 @@ assert.deepEqual(enginePresets({ "enginePreset:a": true, "enginePreset:b": true,
     { on() {}, sessions: { get: () => ({}) }, get: () => undefined } as unknown as PluginContext,
     Config({}),
   );
-  await writeFile(join(STATE_DIR, "hints.json"), JSON.stringify({ "enginePreset:engine": true }));
+  await writeFile(
+    join(STATE_DIR, "hints.json"),
+    JSON.stringify({ engineOn: true, "enginePreset:engine": true }),
+  );
   assert.equal(await bare.sessionConfigOf("s1"), bare.config);
 }
 

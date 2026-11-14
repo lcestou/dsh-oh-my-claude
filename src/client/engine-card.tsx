@@ -4,8 +4,10 @@
 import { useEffect, useState } from "react";
 import { t, useLocale } from "./i18n.js";
 import { ROUTE, T, nested, readJson } from "./shared.js";
-import { useHintFlag } from "./hints.js";
+import { HINTS_EVENT, loadHints, useHintFlag } from "./hints.js";
+import { Switch } from "./switch.js";
 import {
+  ENGINE_ON_KEY,
   ENGINE_OPTIONS,
   ENGINE_PRESET_PREFIX,
   engineSkipKey,
@@ -113,8 +115,35 @@ function OptionBox({ option, preset }: { option: EngineOption; preset: string })
   );
 }
 
+/** The preset ids ticked in the hints store, kept current through `HINTS_EVENT`, which also
+ *  carries a tick made in another tab; empty until the first read lands. */
+function useTickedPresets(): Set<string> {
+  const [ticked, setTicked] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    let live = true;
+    /** Re-reads the store and keeps the ids whose `enginePreset:` key is on. */
+    const read = (): void =>
+      void loadHints().then((h) => {
+        if (!live) return;
+        const ids = Object.keys(h)
+          .filter((k) => k.startsWith(ENGINE_PRESET_PREFIX) && h[k] === true)
+          .map((k) => k.slice(ENGINE_PRESET_PREFIX.length));
+        setTicked(new Set(ids));
+      });
+    read();
+    window.addEventListener(HINTS_EVENT, read);
+    return () => {
+      live = false;
+      window.removeEventListener(HINTS_EVENT, read);
+    };
+  }, []);
+  return ticked;
+}
+
 /**
- * The engine-mode card. The preset list is read once per mount: presets change only when the dsh
+ * The engine-mode card: a master switch, off by default, and under it, only while it is on, the
+ * presets folded under one line that names the ticked ones, each with a tick. The preset list is
+ * read once per mount: presets change only when the dsh
  * profile is edited, which reloads the plugin, and Settings mounts the card afresh each time it
  * opens. The ticks are hints-store flags and follow a change made in another tab. Undefined
  * presets (the read failed, or this dsh has no preset service) show a one-line note.
@@ -132,33 +161,62 @@ export function EngineModeCard() {
       live = false;
     };
   }, []);
+  const [on, setOn] = useHintFlag(ENGINE_ON_KEY);
+  const ticked = useTickedPresets();
+  const tickedNames = (presets ?? [])
+    .filter((p) => ticked.has(p.id))
+    .map((p) => builtInName(p.id) ?? p.name);
   return (
-    <div data-omc-engine="" style={{ fontSize: 13, marginBottom: 12 }}>
-      <div>{t("main.settingsUi.engineTitle")}</div>
-      <div style={{ color: T.faint, fontSize: 12, marginBottom: 6 }}>
-        {t("main.settingsUi.engineDesc")}
-      </div>
-      <fieldset
+    <>
+      <div
+        data-omc-engine=""
         style={{
           display: "flex",
-          flexDirection: "column",
-          gap: 6,
-          border: 0,
-          margin: 0,
-          padding: "0 0 0 16px",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          fontSize: 13,
+          marginBottom: on ? 4 : 12,
         }}
       >
-        <legend style={{ color: T.muted, fontSize: 12, padding: 0, marginBottom: 4 }}>
-          {t("main.settingsUi.enginePresets")}
-        </legend>
-        {presets === undefined ? null : presets.length === 0 ? (
-          <span style={{ color: T.faint, fontSize: 12 }}>
-            {t("main.settingsUi.engineNoPresets")}
-          </span>
-        ) : (
-          presets.map((p) => <PresetBox key={p.id} preset={p} />)
-        )}
-      </fieldset>
-    </div>
+        <div>
+          <div>{t("main.settingsUi.engineTitle")}</div>
+          <div style={{ color: T.faint, fontSize: 12 }}>{t("main.settingsUi.engineDesc")}</div>
+        </div>
+        <Switch on={on} onChange={setOn} label={t("main.settingsUi.engineTitle")} />
+      </div>
+      {on && (
+        <details data-omc-engine-modes="" style={{ ...nested, margin: "0 0 12px", fontSize: 13 }}>
+          <summary style={{ cursor: "pointer", color: T.muted }}>
+            {tickedNames.length > 0
+              ? t("main.settingsUi.engineModesOn", {
+                  names: tickedNames.join(t("main.settingsUi.engineModesJoin")),
+                })
+              : t("main.settingsUi.engineModesNone")}
+          </summary>
+          <fieldset
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              border: 0,
+              margin: 0,
+              padding: "8px 0 0 16px",
+            }}
+          >
+            <legend style={{ color: T.muted, fontSize: 12, padding: 0, marginBottom: 4 }}>
+              {t("main.settingsUi.enginePresets")}
+            </legend>
+            {presets === undefined ? null : presets.length === 0 ? (
+              <span style={{ color: T.faint, fontSize: 12 }}>
+                {t("main.settingsUi.engineNoPresets")}
+              </span>
+            ) : (
+              presets.map((p) => <PresetBox key={p.id} preset={p} />)
+            )}
+          </fieldset>
+        </details>
+      )}
+    </>
   );
 }

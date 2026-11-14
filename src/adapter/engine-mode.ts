@@ -5,6 +5,9 @@
 // in the middle of a conversation. From @soffits's engine options (#286, #287).
 import type { Config } from "./config.js";
 
+/** Hints-store key of the card's master switch. Off (absent), no session runs in engine mode, and
+ *  the presets ticked under it are kept for when it is turned back on. */
+export const ENGINE_ON_KEY = "engineOn";
 /** Hints-store key that turns engine mode on for one preset: `enginePreset:<preset id>`. */
 export const ENGINE_PRESET_PREFIX = "enginePreset:";
 /** Hints-store prefix of the keys that leave one engine option out for one preset. */
@@ -53,8 +56,9 @@ export function enginePresets(hints: Readonly<Record<string, boolean | number>>)
 }
 
 /**
- * The config a session under `preset` runs on: the plugin's own `config` when engine mode is off
- * for that preset (or the session has none, or the preset service is missing), else a copy with
+ * The config a session under `preset` runs on: the plugin's own `config` when the master switch
+ * is off, when engine mode is off for that preset, or when the session has none (or the preset
+ * service is missing); else a copy with
  * every option the preset's own skips leave in set to its engine value. The same object comes back when
  * nothing applies, so a caller can tell the two apart by identity.
  */
@@ -63,7 +67,8 @@ export function engineOverlay<T extends EngineKeys>(
   hints: Readonly<Record<string, boolean | number>>,
   preset: string | null | undefined,
 ): T {
-  if (!preset || hints[ENGINE_PRESET_PREFIX + preset] !== true) return config;
+  if (!preset || hints[ENGINE_ON_KEY] !== true || hints[ENGINE_PRESET_PREFIX + preset] !== true)
+    return config;
   const skip = (k: EngineOption): boolean => hints[engineSkipKey(k, preset)] === true;
   const out = { ...config };
   // Written through the engine-keys view of the copy: the copy is a T, and T's own key types may be
