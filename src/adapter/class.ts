@@ -1547,12 +1547,23 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Moved aside, never deleted: for a session opened from a Claude Code transcript the id is the
     // person's own, and `claude --resume` and the panel's reseed still need that file.
     const stamp = Date.now();
-    await rename(join(dir, `${id}.jsonl`), join(dir, `${id}.jsonl.refused-${stamp}`)).catch(
-      () => {},
-    );
+    // A transcript that is not there (never written) is fine; one that would not move stays where
+    // the next turn will resume it, and the log says so rather than claiming it moved.
+    let stuck: string | undefined;
+    try {
+      await rename(join(dir, `${id}.jsonl`), join(dir, `${id}.jsonl.refused-${stamp}`));
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
+        stuck = errorText(error);
+    }
     await rename(join(dir, id), join(dir, `${id}.refused-${stamp}`)).catch(() => {});
     await rememberStarted(id, false).catch(() => {});
-    this.log("info", `claude session ${id} refused a reply; its transcript was moved aside`);
+    if (stuck)
+      this.log(
+        "warn",
+        `claude session ${id} refused a reply; its transcript did not move: ${stuck}`,
+      );
+    else this.log("info", `claude session ${id} refused a reply; its transcript was moved aside`);
   }
 
   /** Everything one turn needs: spawn args + spec for the long-lived process, and the stdin line for this turn. */
