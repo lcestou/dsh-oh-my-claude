@@ -380,6 +380,7 @@ import {
   STREAM_MAX_MS,
   STREAM_THRESHOLD_MS,
   TOOL_IDLE_FACTOR,
+  loadRelayImages,
   toolResultFor,
   TRANSCRIPT_SETTLE_MS,
   TURN_RING,
@@ -5195,7 +5196,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.publishAsides(cont.options.sessionId);
       const live = this.liveTurn.get(cont.options.sessionId);
       if (live) live.relay = undefined;
-      // An MCP tool result is text, so a steer carrying an image goes over stdin whole instead: the
+      // A steer's image is not part of dsh's tool result, so a steer carrying one goes over stdin whole instead: the
       // CLI injects it at its next tool call. Its key lands in `sent`, which keeps its words out of
       // the result below. Left to the result, the image was lost: the next prompt starts after
       // this step's own reply (`selectTurns`), so it never went anywhere. `relays` is already
@@ -5209,14 +5210,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const extra = stepContextFor(cont.options.messages, prep.drops, proc.sent); // steers and notices ride on the last result
       // An image in dsh's result (read_image) goes back as MCP image content; dropped, Claude
       // would read the text line about the image and never see it. On a box the bridge is off.
-      for (const result of cont.results) {
-        if (!result.refs) continue;
-        const loaded = await this.loadImages(result.refs, cont.options.signal);
-        result.images = loaded.flatMap((i) =>
-          i.data ? [{ mediaType: i.mediaType, data: i.data }] : [],
-        );
-        delete result.refs;
-      }
+      await loadRelayImages(cont.results, this.ctx.attachments, cont.options.signal, (msg) =>
+        this.log("warn", msg),
+      );
       relays.forEach((relay, i) => {
         const result = cont.results[i];
         if (!result) return; // cannot happen: results were built from relays.keys()

@@ -3,7 +3,7 @@
 import { strict as assert } from "node:assert";
 import { handleRpc } from "../mcp.js";
 import type { LooseMessage } from "./prompt.js";
-import { toolResultFor } from "./turn.js";
+import { loadRelayImages, toolResultFor } from "./turn.js";
 
 const ref = { attachmentId: "a1", mediaType: "image/png", bytes: 3, width: 1, height: 1 };
 const messages = [
@@ -44,5 +44,31 @@ assert.deepEqual(reply.result.content, [
   { type: "text", text: "Read image a.png" },
   { type: "image", data: "AAA", mimeType: "image/png" },
 ]);
+
+// Loading goes straight to the store, so a screenshot over 2000 px a side rides back too: the CLI
+// scales an MCP image itself, unlike a stdin one. An image the store cannot read is skipped and
+// reported, and the result keeps its text.
+{
+  const wide = { attachmentId: "w", mediaType: "image/png", bytes: 3, width: 2560, height: 1440 };
+  const lost = { attachmentId: "x", mediaType: "image/png", bytes: 3, width: 10, height: 10 };
+  const results = [
+    { text: "Read image w.png", refs: [wide, lost] },
+    { text: "plain" },
+  ] as unknown as Parameters<typeof loadRelayImages>[0];
+  const warned: string[] = [];
+  // SAFETY: a store double with only the read this path makes
+  const store = {
+    readImage: async (r: { attachmentId: string }) => {
+      if (r.attachmentId === "x") throw new Error("gone");
+      return { data: new Uint8Array([1, 2, 3]).buffer };
+    },
+  } as unknown as Parameters<typeof loadRelayImages>[1];
+  await loadRelayImages(results, store, undefined, (m) => void warned.push(m));
+  assert.deepEqual(results, [
+    { text: "Read image w.png", images: [{ mediaType: "image/png", data: "AQID" }] },
+    { text: "plain" },
+  ]);
+  assert.deepEqual(warned, ["relayed image x not loaded: gone"]);
+}
 
 console.log("relay-images: ok");

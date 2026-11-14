@@ -1,6 +1,6 @@
 import { type FinishReason, type StreamChunk } from "@deepseek-ai/dsh-llm";
 import { type ContextSource } from "../context-sources.js";
-import { type Agent, type JsonValue, type ResolvedAgent } from "../dsh.js";
+import { type Agent, type JsonValue, type PluginContext, type ResolvedAgent } from "../dsh.js";
 import { type ClaudeEvent, type ClaudeProcessSpec, type SettingsKey, type RelayEvent, type RelayResult, type WorkspaceDiff } from "../process.js";
 import { type FsBox } from "../remote-fs.js";
 import { type LiveMode, type Translator } from "../translator.js";
@@ -163,8 +163,18 @@ export declare function interruptOnAbort(kind: string | undefined, spawn: string
 /** The `kind` in an abort signal's `{ kind }` reason, which is disposed, aborted or cancelled, or
  * undefined for a plain abort, so a caller can tell a dispose from a user cancel. */
 export declare function abortKind(signal: AbortSignal | undefined): string | undefined;
-/** dsh's tool-result for a relayed call, searched from the newest message back. */
+/** dsh's tool-result for a relayed call, searched from the newest message back; its image blocks
+ *  come back as `refs` for the caller to load into `images`, absent when there are none. */
 export declare function toolResultFor(messages: LooseMessage[] | undefined, id: string): RelayResult | undefined;
+/**
+ * Loads each relayed result's image `refs` into `images` as base64 and drops `refs`. It reads
+ * straight from dsh's store, without the 2000 px rule a stdin image gets: that rule exists because
+ * a stdin image is not scaled, while the CLI scales and re-encodes an MCP image itself (2.1.325
+ * showed a 2560x1440 PNG at 2000x1125, and sent a 4 MB PNG as a 0.5 MB JPEG). An image the store
+ * cannot read is skipped and reported through `warn`, so the text still goes back; without a store
+ * every result goes back as text alone.
+ */
+export declare function loadRelayImages(results: RelayResult[], store: PluginContext["attachments"] | undefined, signal: AbortSignal | undefined, warn: (msg: string) => void): Promise<void>;
 /** Messages dsh delivered after the last assistant step. */
 export declare function afterLastAssistant(messages: LooseMessage[] | undefined): LooseMessage[];
 /** The Agent inside what dsh's session controller answered for a cold resume: `{ agent }`, or
