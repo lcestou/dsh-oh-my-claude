@@ -394,6 +394,10 @@ export const RECONNECT_TEXT =
 /** Sent when a usage limit that ended a turn has reset, so Claude picks the task back up. */
 export const LIMIT_TEXT =
   "[Oh My Claude] your usage limit has reset. Continue the task where the limit stopped you.";
+/** Sent after a hot reload of this plugin cut short the step that was streaming: Claude's process may
+ *  have kept going (its output is drained into the same turn) or may be gone. */
+export const RELOAD_TEXT =
+  "[Oh My Claude] the plugin reloaded while this turn was in progress and the step that was streaming ended early. If your Claude Code process kept running, what it did meanwhile is shown above. Pick up where the transcript stops and finish the task.";
 export const RESTART_TEXT =
   "[Oh My Claude] dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task. If this session has an active goal, dsh disarmed it on resume: call get_goal, then update_goal with action resume, so the goal rounds keep driving the work without anyone typing.";
 /** How long after boot to nudge interrupted sessions; dsh needs its sessions and agents loaded. */
