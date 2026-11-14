@@ -182,6 +182,102 @@ const exitsWithin = (exited: Promise<boolean>, ms: number) =>
   rmSync(adapter.stateDir, { recursive: true, force: true });
 }
 
+// A second dsh process booting the same profile (`dsh web --help` boots the web profile to print
+// its help) must not take the keepers the running server is attached to: the keeper serves whoever
+// connects last, and the server's turns died with "claude exited -1 while dsh ran its tool call"
+// (2026-11-14 01:34). A keeper whose last holder has exited, or is this process, is adopted as before.
+{
+  const four = scoped(4);
+  const adapter = new ClaudeCodeAdapter(four.ctx, Config({}));
+  adapter.stateDir = mkdtempSync(join(tmpdir(), "omc-second-dsh-"));
+  const keeper = (name: string, sessionId: string, claudePid: number, holder?: object) => {
+    const dir = join(adapter.stateDir, "keepers", name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "keeper.json"),
+      JSON.stringify({ pid: process.pid, claudePid, sessionId, startedAt: Date.now(), exit: null }),
+    );
+    writeFileSync(
+      join(dir, "spec.json"),
+      JSON.stringify({
+        command: "claude",
+        args: [],
+        cwd: "/tmp",
+        env: {},
+        sessionId,
+        procSpec: { cwd: "/tmp", effort: null, mode: "default", sessionId, temporary: false },
+      }),
+    );
+    if (holder) writeFileSync(join(dir, "holder.json"), JSON.stringify(holder));
+    return dir;
+  };
+  // The server that holds the keeper: another live process, with the command line /proc shows.
+  const server = fakeClaude();
+  const serverPid = server.child.pid ?? -1;
+  await new Promise((r) => setTimeout(r, 50));
+  let serverCmd = "";
+  try {
+    serverCmd = readFileSync(`/proc/${serverPid}/cmdline`, "utf8");
+  } catch {}
+  const held = fakeClaude();
+  const gone = fakeClaude();
+  const reused = fakeClaude();
+  const heldDir = keeper("3333333333333333-a", "s-held", held.child.pid ?? -1, {
+    pid: serverPid,
+    cmdline: serverCmd,
+  });
+  // A holder that has exited: a restart, the case adoption exists for.
+  keeper("4444444444444444-a", "s-gone", gone.child.pid ?? -1, { pid: 2 ** 22 + 7 });
+  // A holder pid now running something else, which the command line gives away.
+  if (serverCmd)
+    keeper("5555555555555555-a", "s-reused", reused.child.pid ?? -1, {
+      pid: serverPid,
+      cmdline: "node\0/usr/local/bin/dsh\0",
+    });
+  const left = await adapter.adoptKeepers();
+  assert.deepEqual([...left], [heldDir], "the pass reports the keeper it left");
+  assert.equal(
+    adapter.processes.has(registryKey("claude-code", "s-held")),
+    false,
+    "the server's keeper is not taken",
+  );
+  assert.ok(adapter.foreignSessions.has("s-held"), "and its boot nudge is the server's");
+  assert.ok(existsSync(heldDir), "its directory stays");
+  assert.equal(await exitsWithin(held.exited, 300), false, "and its Claude keeps running");
+  assert.ok(
+    adapter.processes.has(registryKey("claude-code", "s-gone")),
+    "a keeper whose holder exited is adopted",
+  );
+  if (serverCmd)
+    assert.ok(
+      adapter.processes.has(registryKey("claude-code", "s-reused")),
+      "and so is one whose holder pid was reused",
+    );
+  const log = readFileSync(join(adapter.stateDir, "resume.log"), "utf8");
+  assert.match(
+    log,
+    new RegExp(`left keeper 3333333333333333-a for s-held: dsh pid ${serverPid} is attached to it`),
+  );
+  // The holder was an old server still shutting down for a restart: once it exits, a later look
+  // adopts the keeper and the session is this instance's again.
+  server.child.kill("SIGKILL");
+  await server.exited;
+  await adapter.readoptLeft(left, 20, 100);
+  assert.ok(
+    adapter.processes.has(registryKey("claude-code", "s-held")),
+    "a left keeper is adopted once its holder has exited",
+  );
+  assert.ok(!adapter.foreignSessions.has("s-held"), "and its boot nudge is this instance's");
+  // The automatic retry stops with the scope.
+  four.fiber.uid = null;
+  for (const c of [held, gone, reused]) c.child.kill("SIGKILL");
+  for (const s of ["s-held", "s-gone", "s-reused"]) {
+    adapter.processes.get(registryKey("claude-code", s))?.kill();
+    adapter.processes.delete(registryKey("claude-code", s));
+  }
+  rmSync(adapter.stateDir, { recursive: true, force: true });
+}
+
 /** A fake process that streams one text delta and then, on `die()`, reads as exited. */
 const dyingProcess = () => {
   let finish: (v: null) => void = () => {};

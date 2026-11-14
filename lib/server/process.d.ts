@@ -780,9 +780,20 @@ export declare function readKeeperInfo(dir: string): KeeperInfo | undefined;
  *  (2026-09-17: a dsh-web restart logged the owner out of the desktop). */
 export declare const pidAlive: (pid: number) => boolean;
 /**
+ * The pid of another live process attached to the keeper in `dir`, or undefined when the last one
+ * to attach was this process, has exited, or left no record. A keeper takes whichever client
+ * connects last, so a second dsh booting the same profile (`dsh web --help` boots the whole web
+ * profile to print the app's help) attached to every live keeper, and the server's running turns
+ * died with "claude exited -1 while dsh ran its tool call" (2026-11-14 01:34). The recorded command
+ * line guards a pid the system handed to something else after that dsh exited; where /proc is
+ * missing, a live pid is enough.
+ */
+export declare function keeperHolder(dir: string): number | undefined;
+/**
  * Attach to a keeper's socket and present it as a SubprocessHandle: stdin lines become `in`
  * messages, `out`/`err` lines feed the readable sides, `exit` settles `done`, terminate sends
- * `kill`. Rejects when the socket does not answer within `timeoutMs`.
+ * `kill`. Rejects when the socket does not answer within `timeoutMs`. Records this process as the
+ * keeper's holder (see `keeperHolder`).
  */
 export declare function attachKeeper(dir: string, timeoutMs?: number): Promise<SubprocessHandle>;
 /**

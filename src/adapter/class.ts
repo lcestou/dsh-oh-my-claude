@@ -3,7 +3,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { watch } from "node:fs";
+import { existsSync, watch } from "node:fs";
 import { dirname } from "node:path";
 import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -74,6 +74,7 @@ import {
   seamSpawner,
   sshSpawner,
   attachKeeper,
+  keeperHolder,
   launchKeeper,
   lazyHandle,
   pidAlive,
@@ -4084,19 +4085,25 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /**
    * At boot, reattach to keepers whose Claude process is still alive (a dsh restart left them
    * running) and register them as this instance's processes. One with output waiting gets a
-   * drain turn so what Claude did during the gap shows up without anyone typing.
+   * drain turn so what Claude did during the gap shows up without anyone typing. `only` limits the
+   * pass to those keeper directories (a retry of ones left to another dsh). Returns the directories
+   * left because another live dsh holds them, and on a full pass looks at those again for a minute,
+   * in case the holder was a dsh still shutting down for a restart.
    */
-  async adoptKeepers() {
+  async adoptKeepers(only?: Set<string>): Promise<Set<string>> {
+    const left = new Set<string>();
     // In every mode, not only keeper: a keeper left from before the switch went off is still running
     // Claude, and adopting it lets its next turn respawn it as a child (the spec key differs) and the
     // idle reaper end it. Returning early here, as this did, left it running with nobody attached.
     const root = join(this.stateDir, "keepers");
     let dirs: string[] = [];
-    try {
-      dirs = (await readdir(root)).map((d) => join(root, d));
-    } catch {
-      return;
-    }
+    if (only) dirs = [...only].filter((dir) => existsSync(dir));
+    else
+      try {
+        dirs = (await readdir(root)).map((d) => join(root, d));
+      } catch {
+        return left;
+      }
     // Newest keeper first, so when a session has more than one alive (a respawn raced a
     // shutdown) the current one is adopted and the older one is retired below.
     dirs.sort((a, b) => (readKeeperInfo(b)?.startedAt ?? 0) - (readKeeperInfo(a)?.startedAt ?? 0));
@@ -4158,6 +4165,23 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         await writeJson(join(dir, "spec.json"), { ...spec, owner: this.keeperOwner }).catch(
           () => {},
         );
+      // Another live dsh process is attached to it: the server this profile runs, while this is a
+      // second process booting the same profile (`dsh web --help` does). The keeper takes whoever
+      // connects last, so attaching here cut the server's running turns off (2026-11-14 01:34).
+      // The owner tag cannot tell the two apart; the attached process can.
+      const holder = keeperHolder(dir);
+      if (holder !== undefined) {
+        this.foreignSessions.add(spec.sessionId);
+        left.add(dir);
+        if (!only)
+          await trace(
+            join(this.stateDir, "resume.log"),
+            `left keeper ${basename(dir)} for ${spec.sessionId}: dsh pid ${holder} is attached to it`,
+          );
+        continue;
+      }
+      // Its holder is gone since the pass that left it: the session is ours again.
+      if (only) this.foreignSessions.delete(spec.sessionId);
       const procSpec = spec.procSpec;
       const key2 = registryKey(this.providerId, spec.sessionId);
       if (this.processes.has(key2) && !adoptedNow.has(spec.sessionId)) {
@@ -4217,6 +4241,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // reply Claude wrote during the restart sat in the queue until the next typed prompt), so
       // keep looking for a minute and stop at the first wake that opened a turn.
       void this.drainAdopted(proc, spec.sessionId);
+    }
+    if (!only && left.size > 0) void this.readoptLeft(left);
+    return left;
+  }
+
+  /** Every `everyMs` for `tries` looks, adopt the keepers a boot pass left to another live dsh once
+   *  that dsh has exited: a restart whose old server was still shutting down when this one booted.
+   *  Stops when this instance's scope is disposed, so a short-lived second dsh (`dsh web --help`)
+   *  never comes back for them. Keepers whose holder outlives the minute stay theirs. */
+  async readoptLeft(left: Set<string>, everyMs = 5000, tries = 12): Promise<void> {
+    let pending = left;
+    for (let i = 0; i < tries && pending.size > 0; i++) {
+      await new Promise((r) => setTimeout(r, everyMs).unref());
+      if (!this.scopeActive()) return;
+      pending = await this.adoptKeepers(pending);
     }
   }
 

@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { attachKeeper, pidAlive, readKeeperInfo, spawnKeeper } from "./process.js";
+import { attachKeeper, keeperHolder, pidAlive, readKeeperInfo, spawnKeeper } from "./process.js";
 import { tempDir } from "./test-tmp.js";
 
 // A stand-in for claude: echoes each stdin line at once and again 300 ms later, exits on "quit".
@@ -49,6 +49,12 @@ await wait(500);
 assert.deepEqual(out1, ["echo:a", "late:a"], "attached client sees both lines");
 const info = readKeeperInfo(dir);
 assert.ok(info && pidAlive(info.pid), "keeper alive with info file");
+assert.equal(
+  JSON.parse(readFileSync(join(dir, "holder.json"), "utf8")).pid,
+  process.pid,
+  "an attach records the process that holds the keeper",
+);
+assert.equal(keeperHolder(dir), undefined, "which is no other process's keeper to this one");
 assert.equal(info.sessionId, "s-test");
 
 // A second attach replaces the first (what a restarted dsh does) and gets what came after.
