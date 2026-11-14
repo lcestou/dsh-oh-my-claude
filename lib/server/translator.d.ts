@@ -156,6 +156,10 @@ export declare class Translator {
     /** The turn's refusal, once the CLI reported one with no fallback: a `model_refusal_no_fallback`
      *  frame, or a top-level reply or result that stopped with `refusal`. */
     refusal: LlmFailure | undefined;
+    /** Whether the CLI itself said no fallback runs (`model_refusal_no_fallback`). A reply that
+     *  stopped with `refusal` alone does not end the turn as one: the CLI can still rewrite the
+     *  result's stop reason past it, so the result frame decides. */
+    refusalFinal: boolean;
     /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
     timeZone: string | undefined;
     hostLabel: string | undefined;

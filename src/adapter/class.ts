@@ -2,7 +2,7 @@
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync, watch } from "node:fs";
 import { dirname } from "node:path";
 import { hostname, tmpdir } from "node:os";
@@ -1544,10 +1544,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     proc.kill();
     await Promise.race([proc.child.done, new Promise((r) => setTimeout(r, 10_000).unref?.())]);
     const dir = join(this.claudeHome, "projects", projectDirName(cwd));
-    await rm(join(dir, `${id}.jsonl`), { force: true }).catch(() => {});
-    await rm(join(dir, id), { recursive: true, force: true }).catch(() => {});
+    // Moved aside, never deleted: for a session opened from a Claude Code transcript the id is the
+    // person's own, and `claude --resume` and the panel's reseed still need that file.
+    const stamp = Date.now();
+    await rename(join(dir, `${id}.jsonl`), join(dir, `${id}.jsonl.refused-${stamp}`)).catch(
+      () => {},
+    );
+    await rename(join(dir, id), join(dir, `${id}.refused-${stamp}`)).catch(() => {});
     await rememberStarted(id, false).catch(() => {});
-    this.log("info", `claude session ${id} refused a reply; its transcript was dropped`);
+    this.log("info", `claude session ${id} refused a reply; its transcript was moved aside`);
   }
 
   /** Everything one turn needs: spawn args + spec for the long-lived process, and the stdin line for this turn. */
@@ -1604,7 +1609,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         own ||
         (await loadStarted()).has(id) ||
         (await claudeSessionExists(this.claudeHome, cwd, id));
-      if (!known && !forceFresh) known = await this.forkTranscript(options, cwd, id);
+      // Not after a refusal: the transcript just moved aside, and a fork would resume the parent's
+      // conversation in its place instead of starting fresh from dsh's log.
+      if (!known && !forceFresh && !refused) known = await this.forkTranscript(options, cwd, id);
       session = { id, resuming: known && !forceFresh };
     }
     // One small file read per turn, next to a process spawn. No cache: the Settings card writes

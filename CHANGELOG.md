@@ -8,7 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
-- `refusalAsFailure: true` ends a turn Claude refused, or one a safety classifier stopped with no fallback model, as a failure with code `REFUSAL` instead of a normal stop, so a fallback plugin can carry the turn on another model. The session's Claude transcript is then dropped, and the next Claude turn starts a fresh Claude session from dsh's log instead of resuming a conversation whose last word was the refusal. Off by default.
+- `refusalAsFailure: true` ends a turn Claude refused, or one a safety classifier stopped with no fallback model, as a failure with code `REFUSAL` instead of a normal stop, so a fallback plugin can carry the turn on another model. The refused attempt draws nothing, so the fallback can still retry it. The session's Claude transcript is then moved aside, never deleted, and the next Claude turn starts a fresh Claude session from dsh's log instead of resuming a conversation whose last word was the refusal. Off by default. Thanks to @soffits (#288)
 - `prompt_session` can switch the target session's model and thinking level before it sends the message, with optional `provider`, `model` and `reasoningEffort`. A long job can move to a stronger model for a hard step and back to a lighter one after, without opening a new session and losing its context. The session stays on the new model until it is switched again. Only that session changes: the default for new sessions stays as it was. Switching to a model dsh does not list, or to an effort the model does not take, is refused before anything is sent. Thanks to @huananhuxu-debug (#278)
 
 ### Fixed

@@ -3,7 +3,7 @@
 // follow): no real refusal is ever provoked to test this. Off, a refusal ends the turn as before;
 // on, it is a failure with code REFUSAL, and the refused Claude session is dropped.
 import { strict as assert } from "node:assert";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PluginContext } from "../dsh.js";
@@ -78,6 +78,56 @@ for (const isError of [false, true]) {
   assert.ok(last?.type === "finish" && last.reason.kind === "stop");
 }
 
+// Frames shaped as Claude Code 2.1.325 sends them: the system frame with `content: ""` and the
+// sentence in `api_refusal_explanation`, and an assistant error frame that carries the CLI's text.
+// Under the option nothing but `finish` goes out, since any other chunk commits the attempt and
+// dsh-fallback-models only retries an uncommitted one; off, the text is drawn as before.
+{
+  // SAFETY: hand-written fixtures in the CLI's stream-json shapes
+  const real = [
+    {
+      type: "system",
+      subtype: "model_refusal_no_fallback",
+      original_model: "claude-test-1",
+      api_refusal_category: "cyber",
+      api_refusal_explanation: "Flagged by the cyber safeguard.",
+      content: "",
+    },
+    {
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        id: "m2",
+        role: "assistant",
+        content: [
+          { type: "text", text: "API Error: Claude Code's safeguards flagged this message" },
+        ],
+        stop_reason: "refusal",
+      },
+    },
+  ] as unknown as ClaudeEvent[];
+  const on = new Translator({ refusalAsFailure: true });
+  const out = [...real.flatMap((e) => on.translate(e)), ...on.translate(result(true))];
+  assert.deepEqual(
+    out.filter((c) => c.type !== "block-start").map((c) => c.type),
+    ["finish"],
+    "on: nothing commits the attempt before finish",
+  );
+  const last = out.at(-1);
+  assert.ok(last?.type === "finish" && last.reason.kind === "error");
+  assert.equal(
+    last.reason.failure.message,
+    "Claude declined to answer (cyber): Flagged by the cyber safeguard.",
+    "the sentence comes from the explanation when content is empty",
+  );
+  const off = new Translator({ refusalAsFailure: false });
+  const drawn = real.flatMap((e) => off.translate(e));
+  assert.ok(
+    drawn.some((c) => c.type === "text-delta" || c.type === "reasoning-delta"),
+    "off: drawn",
+  );
+}
+
 // The refused session's transcript, its folder and its started mark go; nothing else does.
 {
   const home = mkdtempSync(join(tmpdir(), "omc-refusal-"));
@@ -97,8 +147,14 @@ for (const isError of [false, true]) {
   } as unknown as ClaudeProcess;
   await adapter.dropRefused(proc, "/w", "s1");
   assert.equal(killed, 1);
-  assert.equal(existsSync(join(dir, "s1.jsonl")), false);
+  assert.equal(existsSync(join(dir, "s1.jsonl")), false, "the next turn does not resume it");
   assert.equal(existsSync(join(dir, "s1")), false);
+  const kept = readdirSync(dir);
+  assert.ok(
+    kept.some((f) => /^s1\.jsonl\.refused-\d+$/.test(f)) &&
+      kept.some((f) => /^s1\.refused-\d+$/.test(f)),
+    "moved aside, never deleted: an imported transcript is the person's own",
+  );
   assert.equal(existsSync(join(dir, "s2.jsonl")), true, "another session is untouched");
   assert.equal((await loadStarted()).has("s1"), false);
   rmSync(home, { recursive: true, force: true });

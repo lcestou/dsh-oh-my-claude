@@ -88,6 +88,7 @@ declare const EN: {
     readonly modelFallback: "Model fallback";
     readonly modelSwitched: "Model switched";
     readonly requestBlocked: "Request blocked";
+    readonly refusedReply: "Claude declined to answer{why}{said}";
     readonly requestBlockedOn: "Request blocked on {from}";
     readonly denied: "Denied {tool}";
     readonly resets: "resets {when}";
