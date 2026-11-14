@@ -12,6 +12,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- A dsh tool Claude calls that runs longer than five minutes, a subagent above all, no longer fails on Claude's side with "sent no response or progress for 300s". Claude Code 2.1.323 aborts an MCP call that stays silent that long whatever `MCP_TOOL_TIMEOUT` says, and a relayed dsh tool is silent until it is done. The `dsh` server entry now carries its own `timeout`, the same hour the plugin already sets.
 - Claude's tool calls show as tool rows again on a dsh installed with `npm install -g`. That install starts dsh through the `bin/dsh` link, and the plugin's check for dsh's session format looked for dsh next to the link instead of next to the file it points at. The check failed, and every tool call was drawn as plain text in the reply. Thanks to @soffits (#280)
 
 ## [1.6.3] - 2026-11-12
