@@ -1603,7 +1603,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     );
     // Under `systemPrompt: dsh` the prompt dsh wrote replaces Claude Code's (`buildArgs`).
     const dshSystem = dshMode ? dshSystemPrompt(options.messages, options.system) : undefined;
-    let prompt = buildPrompt(turns, drops, this.config.replayToolTextLimit);
+    // Claude Code loads no CLAUDE.md under `isolate` and expands no `/skill` line under
+    // `verbatimPrompts`, so dsh's copies of those are then the only ones and are kept.
+    const copies = { claudeMd: !this.config.isolate, skills: !this.config.verbatimPrompts };
+    let prompt = buildPrompt(turns, drops, this.config.replayToolTextLimit, copies);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
     if (targetHost)
       prompt = await relayFileHandles(
@@ -1650,7 +1653,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const sizes: ContextSizes | undefined = options.purpose
       ? undefined
       : {
-          ...contextSizes(turns),
+          ...contextSizes(turns, copies),
           tools: toolsSent ? dshToolsGuidance(mcpBridge.tools, this.config.builtinTools).length : 0,
         };
     const args = buildArgs({
@@ -1726,6 +1729,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       accessMode,
       input: stdin ? buildInput(prompt, images, undefined, this.config.verbatimPrompts) : null,
       drops,
+      copies,
       sizes,
       settingsKey,
       via,
@@ -5234,7 +5238,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (key && !proc.sent.has(key) && imageRefs([m]).length > 0)
           await this.writeSteerMessage(m, key, proc, cont.options);
       }
-      const extra = stepContextFor(cont.options.messages, prep.drops, proc.sent); // steers and notices ride on the last result
+      // steers and notices ride on the last result
+      const extra = stepContextFor(cont.options.messages, prep.drops, proc.sent, prep.copies);
       relays.forEach((relay, i) => {
         const result = cont.results[i];
         if (!result) return; // cannot happen: results were built from relays.keys()

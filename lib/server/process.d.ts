@@ -699,6 +699,12 @@ export interface TurnPrep {
     input: string | null;
     /** The context blocks the Settings switches withhold, read once when this turn was assembled. */
     drops?: ReadonlySet<ContextSource>;
+    /** What Claude Code adds of its own this turn, so dsh's copies of it are left out (`NativeCopies`
+     *  in adapter/prompt.ts; absent means both). */
+    copies?: {
+        claudeMd: boolean;
+        skills: boolean;
+    };
     /** What each of those blocks cost this turn in characters, before any of them were withheld.
      *  Absent on a side call, which has no workspace to record a number against. */
     sizes?: ContextSizes;

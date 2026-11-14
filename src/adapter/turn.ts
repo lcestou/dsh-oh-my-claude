@@ -28,7 +28,14 @@ import {
 } from "../process.js";
 import { type FsBox } from "../remote-fs.js";
 import { type LiveMode, type Translator } from "../translator.js";
-import { promptTextOf, steerKey, textOf, type LooseMessage } from "./prompt.js";
+import {
+  CLI_COPIES,
+  promptTextOf,
+  steerKey,
+  textOf,
+  type LooseMessage,
+  type NativeCopies,
+} from "./prompt.js";
 import { type TurnTotals } from "./types.js";
 
 export interface TurnRecord {
@@ -391,13 +398,14 @@ export function stepContextFor(
   messages: LooseMessage[] | undefined,
   drops: ReadonlySet<ContextSource> = new Set(),
   sent: ReadonlySet<string> = new Set(),
+  copies: NativeCopies = CLI_COPIES,
 ): string {
   const parts = [];
   for (const m of afterLastAssistant(messages)) {
     if (m.role !== "user") continue;
     if (m.source?.kind === "tool") continue;
     if (sent.has(steerKey(m) ?? "")) continue;
-    const text = promptTextOf(m, drops);
+    const text = promptTextOf(m, drops, copies);
     if (text) parts.push(text);
   }
   return parts.length === 0

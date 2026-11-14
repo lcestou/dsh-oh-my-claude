@@ -187,6 +187,17 @@ export function withoutNativeInstructions(text: string): string {
   return kept.join("").trimEnd() + (close ? close[0] : "");
 }
 
+/** What Claude Code adds of its own that dsh's turn may carry a copy of: the CLAUDE.md files it
+ *  loads, and the body of a skill it expands from a `/name` line. Each `true` means the CLI adds it,
+ *  so dsh's copy is left out; `isolate` turns CLAUDE.md loading off and `verbatimPrompts` turns
+ *  slash expansion off, and then dsh's copy is the only one and stays. */
+export interface NativeCopies {
+  claudeMd: boolean;
+  skills: boolean;
+}
+/** Claude Code as it runs by default: it adds both. */
+export const CLI_COPIES: NativeCopies = { claudeMd: true, skills: true };
+
 /** Which withheld block a message is, if any. The chat row mask classifies the same sources from
  *  the client side, so the rule itself lives in `context-sources.ts` and both read it there. */
 export const contextSourceOf = (m: LooseMessage): ContextSource | undefined =>
@@ -197,7 +208,10 @@ export const contextSourceOf = (m: LooseMessage): ContextSource | undefined =>
  *  `instructions` counts what survives the CLAUDE.md filter and `claudemd` counts what the filter
  *  took, so the two together are the bundle dsh handed over. A key is absent when this turn carried
  *  nothing of that kind, which is not the same as zero and must not be flattened into one. */
-export function contextSizes(turns: LooseMessage[]): ContextSizes {
+export function contextSizes(
+  turns: LooseMessage[],
+  copies: NativeCopies = CLI_COPIES,
+): ContextSizes {
   const sizes: ContextSizes = {};
   const add = (key: ContextSizeKey, n: number) => {
     sizes[key] = (sizes[key] ?? 0) + n;
@@ -210,7 +224,7 @@ export function contextSizes(turns: LooseMessage[]): ContextSizes {
       add(source, text.length);
       continue;
     }
-    const kept = withoutNativeInstructions(text);
+    const kept = copies.claudeMd ? withoutNativeInstructions(text) : text;
     add("instructions", kept.length);
     add("claudemd", text.length - kept.length);
   }
@@ -235,12 +249,17 @@ const cliCommands = (): string[] | undefined =>
 export const promptTextOf = (
   m: LooseMessage,
   drops: ReadonlySet<ContextSource> = new Set(),
+  copies: NativeCopies = CLI_COPIES,
 ): string => {
   const source = contextSourceOf(m);
   if (source !== undefined && drops.has(source)) return "";
-  if (m.source?.kind === "skill-invocation" && cliCommands()?.includes(m.source?.name ?? ""))
+  if (
+    copies.skills &&
+    m.source?.kind === "skill-invocation" &&
+    cliCommands()?.includes(m.source?.name ?? "")
+  )
     return "";
-  return m.source?.kind === "agent-instructions"
+  return m.source?.kind === "agent-instructions" && copies.claudeMd
     ? withoutNativeInstructions(textOf(m.content))
     : textOf(m.content);
 };
@@ -248,7 +267,12 @@ export const promptTextOf = (
 /** The turn's parts, with withheld blocks removed. An assistant message lists the tool calls it
  *  made and a tool result is labelled with the tool it came from, so a turn another model worked
  *  with tools reads as what happened, not as a bare reply. */
-const partsOf = (turns: LooseMessage[], drops: ReadonlySet<ContextSource>, cap: number) => {
+const partsOf = (
+  turns: LooseMessage[],
+  drops: ReadonlySet<ContextSource>,
+  cap: number,
+  copies: NativeCopies,
+) => {
   const names = new Map(turns.flatMap((m) => toolCallsOf(m).map((c) => [c.id, c.name] as const)));
   return turns
     .map((m) => {
@@ -258,7 +282,7 @@ const partsOf = (turns: LooseMessage[], drops: ReadonlySet<ContextSource>, cap: 
           role: "tool",
           text: `${names.get(callId) ?? "tool"} returned:\n${capped(textOf(m.content), cap)}`,
         };
-      const text = promptTextOf(m, drops);
+      const text = promptTextOf(m, drops, copies);
       const calls = toolCallsOf(m).map((c) => `(called ${c.name} ${capped(c.input, cap)})`);
       // A native model reads a developer message as an in-history system message.
       const role = m.role === "developer" ? "system" : m.role;
@@ -278,8 +302,9 @@ export function buildPrompt(
   drops: ReadonlySet<ContextSource> = new Set(),
   /** Characters of one tool input or output kept (`replayToolTextLimit`); 0 keeps them whole. */
   cap: number = TOOL_TEXT_CAP,
+  copies: NativeCopies = CLI_COPIES,
 ): string {
-  const filtered = partsOf(turns, drops, cap);
+  const filtered = partsOf(turns, drops, cap, copies);
   // A turn dsh opened with nothing but a withheld block would leave no prompt at all, and the CLI
   // needs one, so that turn goes out with an empty drop set: failing a turn is a worse answer than
   // sending the block it was about. The live case is the runtime snapshot, which re-sends itself
@@ -287,7 +312,7 @@ export function buildPrompt(
   // `withoutNativeInstructions` still applies on this path, and should: dropping dsh's duplicate of
   // a CLAUDE.md the CLI loads itself is not one of the switches, it is what the adapter has always
   // done, and re-sending the copy here would double the file rather than rescue the turn.
-  const parts = filtered.length > 0 ? filtered : partsOf(turns, new Set(), cap);
+  const parts = filtered.length > 0 ? filtered : partsOf(turns, new Set(), cap, copies);
   if (!parts.some((t) => t.role === "user")) {
     // Attachment-only turn: the user sent an image (or other non-text block) with no typed
     // text. Images ride along separately via imageRefs, but Claude still needs a non-empty
