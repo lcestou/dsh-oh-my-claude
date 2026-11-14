@@ -40,6 +40,14 @@ export declare const attachmentsOf: (content: LooseMessage["content"]) => SteerA
  *  stdin on its own: an assistant turn, a tool result. */
 export declare const steerKey: (m: LooseMessage) => string | undefined;
 /**
+ * Whether `text` is one slash line naming a command the CLI has, which has to reach it as a
+ * command even under `verbatimPrompts` (a line marked as written is never dispatched). `known` is
+ * the session's command list from the CLI's init frame; before one arrives, any `/name` in dsh's
+ * command grammar counts, so a bridged command on a fresh process is not sent as plain text. A
+ * path such as `/home/x` has a slash in its name and never matches.
+ */
+export declare function isCliCommandLine(text: string, known: readonly string[] | undefined): boolean;
+/**
  * dsh's system prompt for a loop-built request: the text of the latest run of system-role
  * messages, after a one-shot caller's `system`. A loop-built request leads with one system
  * message, and a prompt that changed during the session is a later system message holding the

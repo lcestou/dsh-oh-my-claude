@@ -323,6 +323,7 @@ import {
   relayFileHandles,
   selectTurns,
   dshSystemPrompt,
+  isCliCommandLine,
   STEER_COPY_CAP_MS,
   steerKey,
   textOf,
@@ -745,7 +746,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           continue;
         }
         const uuid = randomUUID();
-        if (proc.write(buildInput(text, [], uuid, this.config.verbatimPrompts))) {
+        if (proc.write(buildInput(text, [], uuid, this.composedFor(session?.id, text)))) {
           proc.sent.add(key);
           proc.steerPending = true;
           proc.forwarded += 1;
@@ -1791,7 +1792,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       session,
       spec,
       accessMode,
-      input: stdin ? buildInput(prompt, images, undefined, this.config.verbatimPrompts) : null,
+      input: stdin
+        ? buildInput(prompt, images, undefined, this.composedFor(options.sessionId, prompt))
+        : null,
       drops,
       copies,
       sizes,
@@ -1858,6 +1861,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   private ultracodeSaved: Promise<void> = Promise.resolve();
   /** dsh session id → the tool names its last init frame reported; absent until one arrives. */
   readonly sessionTools = new Map<string, string[]>();
+  /** dsh session id → the command names the CLI last reported (init or commands_changed); absent
+   *  until one arrives. Read by `composedFor`. */
+  readonly sessionCommands = new Map<string, string[]>();
+
+  /** Whether a stdin line for `sessionId` goes marked as written (`verbatimPrompts`): never for a
+   *  slash line naming one of the CLI's commands, which the mark would stop it dispatching. */
+  composedFor(sessionId: string | undefined, text: string): boolean {
+    if (!this.config.verbatimPrompts) return false;
+    return !isCliCommandLine(text, sessionId ? this.sessionCommands.get(sessionId) : undefined);
+  }
   /** dsh session id → the plugins its last init frame said the CLI failed to load. Absent until an
    *  init frame arrives; a clean load clears it. A session adopted from the keeper after a dsh
    *  restart sees no new init frame, so it reads clean until its next fresh spawn.
@@ -2463,7 +2476,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         // turn over, stdin would start a turn of its own; out of `sent`, dsh's delivery carries it.
         if (
           proc.busy &&
-          proc.write(buildInput(waiting.text, [], randomUUID(), this.config.verbatimPrompts))
+          proc.write(
+            buildInput(waiting.text, [], randomUUID(), this.composedFor(sessionId, waiting.text)),
+          )
         ) {
           proc.forwarded += 1;
           proc.steerPending = true;
@@ -5374,7 +5389,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // words at all, so it takes the prompt path's wording for an attachment-only turn. Skipping it
     // would lose it: the next prompt starts after this turn's reply (`selectTurns`).
     const body = [text, notes].filter(Boolean).join("\n\n") || "(see attached)";
-    if (!proc.write(buildInput(body, images, uuid, this.config.verbatimPrompts))) return false;
+    if (!proc.write(buildInput(body, images, uuid, this.composedFor(options.sessionId, body))))
+      return false;
     proc.sent.add(key);
     return true;
   }
@@ -5908,7 +5924,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (options.sessionId && pluginWarnings !== undefined)
           this.sessionPluginWarnings.set(options.sessionId, pluginWarnings);
         const agent = this.ctx?.agents?.get?.(options.sessionId);
-        if (names.length > 0) this.bridgeCommands(names, agent);
+        if (names.length > 0) {
+          if (options.sessionId) this.sessionCommands.set(options.sessionId, names);
+          this.bridgeCommands(names, agent);
+        }
         this.mountCompactOverride(agent);
       },
       onModel: (rec) => {

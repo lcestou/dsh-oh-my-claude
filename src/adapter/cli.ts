@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { JsonValue, ToolSchema } from "../dsh.js";
 import { KEY_ENV, KEY_HEADER } from "../mcp-config.js";
-import { ISOLATED_SETTINGS } from "./isolate.js";
+import { ISOLATED_ENV, ISOLATED_SETTINGS } from "./isolate.js";
 import { CHILD_ENV, shq, sshArgs, userTurnLine } from "../process.js";
 import { probeRawToolRows, type RowsSupport } from "../rows-probe.js";
 import { Config } from "./config.js";
@@ -93,6 +93,9 @@ const deniedFlags = new Map<string, Set<string>>();
 export function forgetCliProbe(host: string): void {
   for (const map of [cliProbes, deniedFlags])
     for (const key of map.keys()) if (key.startsWith(`${host}::`)) map.delete(key);
+  // Hidden flags a CLI refused are not kept per host, so any update forgets them: the next spawn
+  // passes them again, and the unknown-flag retry learns afresh which CLI still refuses one.
+  hiddenDenied.clear();
 }
 /** Every flag buildArgs guards with supports(). An unprobed binary is assumed to have all of them;
  * this list is what "all of them" means once one has to be taken away. */
@@ -438,7 +441,9 @@ export function buildArgs({
       type: "http",
       url: mcp.url,
       headers: { [KEY_HEADER]: `\${${KEY_ENV}}` },
-      timeout: Number(CHILD_ENV.MCP_TOOL_TIMEOUT),
+      // Under `isolate` the per-server field would otherwise cut isolate's longer limit back to the
+      // hour: the CLI takes this field over MCP_TOOL_TIMEOUT for the server's total too.
+      timeout: Number((config.isolate ? ISOLATED_ENV : CHILD_ENV).MCP_TOOL_TIMEOUT),
     };
     args.push("--mcp-config", JSON.stringify({ mcpServers: { dsh } }));
   }

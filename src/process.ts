@@ -505,13 +505,17 @@ export const seamSpawner =
     subprocess.spawn({
       argv: [command, ...args],
       cwd,
-      env: {
-        ...credentialEnv(base),
-        ...seamPath(base),
-        ...Object.fromEntries(forwardedEnv(base)),
-        ...CHILD_ENV,
-        ...envOverride,
-      },
+      // An override of the empty string removes the name, as in childEnv: `isolate` clears
+      // CLAUDE_CODE_SIMPLE that way, and an empty value is not an absent one to the CLI.
+      env: Object.fromEntries(
+        Object.entries({
+          ...credentialEnv(base),
+          ...seamPath(base),
+          ...Object.fromEntries(forwardedEnv(base)),
+          ...CHILD_ENV,
+          ...envOverride,
+        }).filter(([k]) => envOverride?.[k] !== ""),
+      ),
       graceMs: 5000,
       stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
     });

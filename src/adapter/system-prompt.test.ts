@@ -23,6 +23,17 @@ const history: LooseMessage[] = [
 
 assert.equal(dshSystemPrompt(history), "You are Sakina.");
 assert.equal(dshSystemPrompt(history, "One-shot."), "One-shot.\n\nYou are Sakina.");
+// dsh empties the later system messages when a session moves to a route that is not in-history;
+// the prompt in force is the last one with text, not the blank after it.
+assert.equal(
+  dshSystemPrompt([
+    { role: "system", content: "HEAD PROMPT v2" },
+    { role: "user", content: "hi" },
+    { role: "system", content: "" },
+    { role: "user", content: "again" },
+  ] as LooseMessage[]),
+  "HEAD PROMPT v2",
+);
 assert.equal(dshSystemPrompt([{ role: "user", content: text("x") }]), undefined);
 assert.equal(
   dshSystemPrompt([

@@ -61,5 +61,14 @@ assert.deepEqual(forwardedEnv(PRIVATE), [
     "a remote workspace's claude gets them",
   );
   assert.equal(env?.HOME, undefined, "still no dsh env leak");
+  // An override of the empty string removes the name, as childEnv does (`isolate` clears names
+  // the CLI reads for their presence that way).
+  spawn("claude", ["-p"], "/w", { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "", KEPT: "1" });
+  assert.equal(
+    env !== undefined && "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" in env,
+    false,
+    "an empty override removes the name",
+  );
+  assert.equal(env?.KEPT, "1");
 }
 console.log("privacy-env ok");

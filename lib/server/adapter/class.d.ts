@@ -453,6 +453,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     private ultracodeSaved;
     /** dsh session id → the tool names its last init frame reported; absent until one arrives. */
     readonly sessionTools: Map<string, string[]>;
+    /** dsh session id → the command names the CLI last reported (init or commands_changed); absent
+     *  until one arrives. Read by `composedFor`. */
+    readonly sessionCommands: Map<string, string[]>;
+    /** Whether a stdin line for `sessionId` goes marked as written (`verbatimPrompts`): never for a
+     *  slash line naming one of the CLI's commands, which the mark would stop it dispatching. */
+    composedFor(sessionId: string | undefined, text: string): boolean;
     /** dsh session id → the plugins its last init frame said the CLI failed to load. Absent until an
      *  init frame arrives; a clean load clears it. A session adopted from the keeper after a dsh
      *  restart sees no new init frame, so it reads clean until its next fresh spawn.

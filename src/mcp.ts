@@ -88,6 +88,10 @@ export function hiddenFor(builtins: readonly string[]): ReadonlySet<string> {
   return hidden;
 }
 
+/** dsh's file tools that change files. Bridged only when `builtinTools` leaves their Claude Code
+ *  twin out, and then listed without the read-only hint, so Claude Code runs them one at a time. */
+const FILE_WRITERS = new Set(["write", "edit", "multi_edit", "str_replace_editor"]);
+
 /** dsh's code-mode tool: under a PTC preset it is the only tool the model may call directly. */
 export const RUN_CODE = "run_code";
 
@@ -631,7 +635,9 @@ export async function handleRpc(
               name: t.name,
               description: t.description,
               inputSchema: t.parameters,
-              annotations: { readOnlyHint: true },
+              // A dsh file writer served because its Claude Code twin is left out (`builtinTools`)
+              // changes files: run in parallel with other calls, two writes could race.
+              annotations: { readOnlyHint: !FILE_WRITERS.has(t.name) },
             };
             // Claude Code defers every MCP tool behind ToolSearch, however few there are (2.1.323
             // with five), so a model would start with no dsh tool in view. This key, which the

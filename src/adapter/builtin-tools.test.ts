@@ -70,6 +70,23 @@ const called = (await handleRpc(
 )) as { result: { content: { text: string }[]; isError?: boolean } };
 assert.equal(called.result.isError, undefined);
 assert.equal(called.result.content[0]?.text, "ran read");
+// A served dsh writer changes files, so it is listed without the read-only hint and Claude Code
+// runs it one call at a time; a reader keeps the hint and runs in parallel.
+{
+  // SAFETY: test double carries only what handleRpc reads
+  const withWrite = {
+    ...env(hiddenFor(["ToolSearch"])),
+    tools: { ...tools, schemas: () => [schema("read"), schema("write")] },
+  } as unknown as Parameters<typeof handleRpc>[1];
+  // SAFETY: tools/list always answers a result with tools
+  const reply = (await handleRpc({ jsonrpc: "2.0", id: 3, method: "tools/list" }, withWrite)) as {
+    result: { tools: { name: string; annotations: { readOnlyHint: boolean } }[] };
+  };
+  const hint = Object.fromEntries(
+    reply.result.tools.map((t) => [t.name, t.annotations.readOnlyHint]),
+  );
+  assert.deepEqual(hint, { read: true, write: false });
+}
 
 const bash = [schema("bash", "run_in_background"), schema("job_output")];
 const mixed = dshToolsGuidance(bash);
