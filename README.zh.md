@@ -162,7 +162,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 30. Claude 的后台 shell 任务和子智能体运行时列在任务标签里，每项都有「停止」，shell 任务还有「输出」；运行中的有两个以上时还有「全部停止」。已结束的 shell 任务保留其行和「输出」，最多十条；会话已运行过的子智能体列在「之前的子智能体」下，每个都能以 Markdown 打开。聊天中子智能体的那一行会按 CLI 的报告逐步列出它在做什么。[任务](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
 31. 如果 dsh 环境里的 `ANTHROPIC_API_KEY` 取代了你的登录成为 Claude Code 的计费来源，会话开始时会用一行说明。[Where things live](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#where-things-live)
 32. 每个额度窗口会按当前速度给出走向：窗口结束时用到的百分比，或达到上限的时间。[Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
-33. 上下文窗口用到 75%（可在设置中调整）时，输入框上方会提醒并提供「压缩」按钮，发送 Claude 自己的 `/compact`。[Context nudge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#context-nudge)
+33. 上下文窗口用到 75%（可在设置中调整）时，输入框上方会提醒并提供「压缩」按钮，发送 Claude 自己的 `/compact`。每次压缩都会原样保留对话最新的一部分，默认是窗口的 16%，和 dsh 自己的压缩保留的一样多。[Context nudge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#context-nudge)
 34. Claude 写的每段 shell 代码块都有「运行」按钮，把代码作为提示放入输入框，按 Enter 发送后经由 Claude 的 Bash 工具和 dsh 的审批执行。[Run a snippet](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#run-a-snippet)
 35. 在 dsh 里重命名的会话在 `claude --resume` 中沿用同名，Claude 一侧设置的名字也会重命名 dsh 会话。[Command bridge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#command-bridge)
 36. 在 Claude 和其他模型（例如 DeepSeek 或本地模型）之间来回切换同一个会话：Claude 能看到其他模型期间的提示、回复和工具调用。[Sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#sessions)

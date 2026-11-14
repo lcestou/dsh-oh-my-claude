@@ -582,6 +582,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly owedCompactions: Set<string>;
     /** Sessions whose CLI ran `/compact` since its last request; cleared when the next one starts. */
     readonly compactedSinceRequest: Set<string>;
+    /** Sessions whose CLI compacted inside a turn, with where their transcript is: the newest rows
+     *  are kept verbatim at the next turn's start (`settleRetention`). */
+    readonly owedRetention: Map<string, {
+        cwd: string;
+        claudeId: string;
+    }>;
     /** Sessions with a `syncCompaction` waiting or running, so one compaction syncs once. */
     readonly syncingCompactions: Set<string>;
     /** Sessions where a typed `/compact` is on its way to the CLI as the next turn. dsh's check before
@@ -1391,6 +1397,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  made since dsh last compacted, or a `/compact` run now. Undefined hands the request to the
      *  one-shot summarizer; a refusal throws, which dsh logs before it carries on with the step. */
     compactionFromCli(sessionId: string, signal?: AbortSignal): Promise<string | undefined>;
+    /** The compaction service dsh runs for this session. dsh's web and desktop profiles mount one
+     *  inside each agent preset and disable the root one, so the agent's own preset is asked first,
+     *  the way dsh's session controller reads a preset service; the root seam is the fallback (the
+     *  ACP profile keeps it). */
+    compactionService(sessionId: string): import("../dsh.js").CompactionService | undefined;
     /** Compact dsh's copy once the agent is idle, after a compaction Claude Code made during a turn
      *  (answered from the pending summary, so no model runs) or one refused mid-turn (answered with
      *  `/compact` on the CLI). Never on a child agent: dsh settles it when it is idle and the parent
@@ -1399,6 +1410,41 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Run `/compact` on the session's idle Claude Code, started on the last turn's spec when it is
      *  not running, and read back its summary. Undefined when the CLI could not or did not compact. */
     compactOnCli(sessionId: string, signal?: AbortSignal): Promise<string | undefined>;
+    /** The newest share of the window, in tokens, a compaction keeps verbatim: dsh's own retention
+     *  for this session's route (`retainBudget`), over the window this plugin reports for it. Zero
+     *  when the session's route cannot be read. */
+    retentionBudget(sessionId: string): Promise<number>;
+    /** The end of a session's transcript, enough of it to hold `budget` tokens of rows and their
+     *  bookkeeping, with the file's size at the read. Undefined with no budget, no transcript, or a
+     *  box that cannot be read, which is logged. */
+    readForRetention(where: {
+        cwd: string;
+        claudeId: string;
+    }, budget: number): Promise<{
+        box: FsBox;
+        path: string;
+        size: number;
+        text: string;
+    } | undefined>;
+    /**
+     * Keep the newest share of the conversation verbatim after Claude Code compacted it: widen the
+     * compaction's kept rows in the transcript (`widenPreserved`) and end the session's idle CLI, so
+     * the next turn's `--resume` loads the summary followed by those rows. The live process holds
+     * only the summary and its last round, so the edit is made only once it has exited. Left owed
+     * while the CLI is busy (mid-turn, output of its own queued, or a background task that ending it
+     * would end), for the next turn's start (`settleRetention`). Never throws; every outcome goes to
+     * resume.log.
+     */
+    retainTail(sessionId: string, where: {
+        cwd: string;
+        claudeId: string;
+    }, proc?: ClaudeProcess | undefined): Promise<void>;
+    /** A verbatim tail owed since a compaction inside a turn: kept now, at the next turn's start,
+     *  before anything is written to the CLI. */
+    settleRetention(sessionId: string): Promise<void>;
+    /** End a settled process and forget it the way the idle reaper does, so the next turn starts the
+     *  session again with `--resume`. Waits up to ten seconds for it to exit; false when it has not. */
+    endIdleProcess(sessionId: string, proc: ClaudeProcess): Promise<boolean>;
     /** Claude finished a turn of its own (a background task it launched completed) while dsh was
      *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
      *  instead of riding on top of the user's next prompt. */

@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { chmod, readFile, readdir, stat, writeFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
@@ -28,6 +28,9 @@ import {
   removeScript,
   splitDirs,
   splitRead,
+  spliceAt,
+  spliceScript,
+  MOVED,
   writeAt,
   writeScript,
   copyToAt,
@@ -319,6 +322,35 @@ import { tempDir } from "./test-tmp.js";
   await assert.rejects(copyToAt({ sshHost: "far" }, local, "x.bin", 50, stuck));
   assert.equal(calls.at(-1)?.terminated, true, "the cap terminates the ssh");
   console.log("copy-to-box ok");
+}
+
+// Splice: one line replaced in place, only while the file is the size it was planned on. The
+// script runs here under sh against a real file, the way a box runs it.
+{
+  const dir = tempDir("omc-splice-");
+  const file = join(dir, "t's.jsonl");
+  await writeFile(file, "one\nTWO\nthree\n");
+  await chmod(file, 0o600);
+  const script = spliceScript(file, 4, 7, 14);
+  assert.match(script, /'.*t'\\''s\.jsonl'/, "the path is quoted");
+  const run = (text: string, s = script) =>
+    spawnSync("sh", ["-c", s], { input: Buffer.from(text).toString("base64") }).status;
+  assert.equal(run("zwei"), 0);
+  assert.equal(await readFile(file, "utf8"), "one\nzwei\nthree\n");
+  assert.equal((await stat(file)).mode & 0o777, 0o600, "the mode stays");
+  assert.equal(run("x"), MOVED, "planned on the old size: refused");
+  assert.equal(await readFile(file, "utf8"), "one\nzwei\nthree\n");
+  assert.deepEqual(await readdir(dir), ["t's.jsonl"], "no temp file left");
+
+  const local = join(dir, "local.jsonl");
+  await writeFile(local, "one\nTWO\nthree\n");
+  await chmod(local, 0o600);
+  assert.equal(await spliceAt({}, local, { start: 4, end: 7, size: 14 }, "two-ü"), true);
+  assert.equal(await readFile(local, "utf8"), "one\ntwo-ü\nthree\n");
+  assert.equal((await stat(local)).mode & 0o777, 0o600);
+  assert.equal(await spliceAt({}, local, { start: 4, end: 7, size: 14 }, "x"), false);
+  assert.equal(await readFile(local, "utf8"), "one\ntwo-ü\nthree\n", "a moved file is left alone");
+  assert.deepEqual((await readdir(dir)).toSorted(), ["local.jsonl", "t's.jsonl"]);
 }
 
 console.log("remote-fs ok");

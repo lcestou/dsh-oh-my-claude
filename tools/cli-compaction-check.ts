@@ -18,6 +18,8 @@
 //       again, its turn's start runs /compact once
 //   s8  the same for a team member, on a dsh with the experimental agent-team bundle
 //   s9  a forked subagent inherits a parent past the threshold: one-shot before its CLI starts
+//   s10 a typed /compact: the newest turns, under compaction-basic's retainTokens, reach the next
+//       request verbatim
 // s2, s7, s8 and s9 mount a web server, the session controller and what it needs, so the plugin's MCP
 // bridge comes up and Claude can call dsh tools. It spends tokens, on haiku and in s4 and s6 on
 // sonnet. dsh loads `lib/`, so run `bun run build` first.
@@ -39,6 +41,7 @@ import {
 import { createServer, type AddressInfo } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { zstdDecompressSync } from "node:zlib";
 import { compactSummaryOf } from "../src/compact-summary.js";
 import { claudeSessionId, projectDirName } from "../src/adapter/transcript-watch.js";
 import type { SessionEvent } from "../src/dsh.js";
@@ -157,11 +160,11 @@ function linkProfile(home: string, env: NodeJS.ProcessEnv, bundles: string[]) {
 type Target = { provider: string; model: string; ratio: number };
 
 /** One compaction-basic `modelPolicies` entry, as patch lines. */
-const policy = (provider: string, model: string, ratio: number) => [
+const policy = (provider: string, model: string, ratio: number, retain = 2000) => [
   `      - provider: ${provider}`,
   `        model: ${model}`,
   `        thresholdRatio: ${ratio}`,
-  "        retainTokens: 2000",
+  `        retainTokens: ${retain}`,
 ];
 
 /** The `--patch` overlay: the model, compaction-basic's threshold for it and for `targets`, and,
@@ -172,6 +175,7 @@ function patchFile(
   targets: Target[],
   webPort?: number,
   disallow: string[] = [],
+  retain?: number,
 ) {
   // The acp entry picks its sessions' model itself, ahead of agent-default-model.
   const out = [
@@ -186,7 +190,7 @@ function patchFile(
     "- id: compaction-basic",
     "  config:",
     "    modelPolicies:",
-    ...policy("claude-code", MODEL, ratio),
+    ...policy("claude-code", MODEL, ratio, retain),
     ...targets.flatMap((t) => policy(t.provider, t.model, t.ratio)),
   ];
   if (disallow.length > 0)
@@ -334,7 +338,7 @@ function sessionLogs(home: string): Map<string, Event[]> {
       const path = join(dir, file);
       try {
         const text = path.endsWith(".zstd")
-          ? execFileSync("zstd", ["-dc", path], { stdio: ["ignore", "pipe", "ignore"] }).toString()
+          ? zstdDecompressSync(readFileSync(path)).toString()
           : readFileSync(path, "utf8");
         const events: Event[] = [];
         for (const l of text.split("\n").filter(Boolean))
@@ -505,6 +509,8 @@ type Scenario = {
    *  65,536-token headroom. 0.4 puts it at 80,000: over what the CLI keeps after a /compact
    *  (about 43,000 on haiku), under a prompt carrying BIG. */
   ratio: number;
+  /** compaction-basic's retainTokens for haiku: what a compaction keeps verbatim. */
+  retain?: number;
   targets?: Target[];
   /** Mount what the plugin's MCP bridge needs, so Claude can call dsh tools. */
   bridge?: boolean;
@@ -520,9 +526,54 @@ type Scenario = {
   verify: (v: Verify) => void;
 };
 
+/** The fields of a Claude transcript row s10 reads: messages, the boundary, the request log. */
+type CliRow = {
+  uuid?: string;
+  type?: string;
+  subtype?: string;
+  hash?: string;
+  tail?: string[];
+  compactMetadata?: { preservedMessages?: { uuids?: string[] } };
+  message?: { content?: string | Array<{ type?: string; text?: string }> };
+};
+
+/** The Claude transcript of a dsh session, as rows; empty when there is none. */
+function cliRows(cwd: string, sessionId: string): CliRow[] {
+  const path = join(
+    homedir(),
+    ".claude",
+    "projects",
+    projectDirName(cwd),
+    `${claudeSessionId(sessionId)}.jsonl`,
+  );
+  if (!existsSync(path)) return [];
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .flatMap((l) => {
+      try {
+        // SAFETY: one transcript row; every field CliRow names is optional
+        return [JSON.parse(l) as CliRow];
+      } catch {
+        return [];
+      }
+    });
+}
+
+/** The text blocks of a transcript row's message, each whole. */
+function textBlocks(row: CliRow | undefined): string[] {
+  const content = row?.message?.content;
+  if (Array.isArray(content))
+    return content.flatMap((b) => (b.type === "text" && b.text !== undefined ? [b.text] : []));
+  return content === undefined ? [] : [content];
+}
+
 const READ_ALL =
   "Use your Read tool to read part1.txt, part2.txt and part3.txt in the current directory, each in full.";
 const OK = "Reply with exactly: OK";
+const POEM = "Remember the codeword VIOLET-STONE. Write a three-line poem about river stones.";
+const CODEWORD = "Remember a second codeword, TEAL-RIVER. Reply with exactly: OK";
+const RECALL =
+  "Without using any tools: quote the poem you wrote word for word, then list every codeword I gave you.";
 const BIG_OK = `${BIG}Reply with exactly: OK`;
 
 /** The checks a turn-start /compact must pass in `turn`: one /compact, any second ask refused,
@@ -927,6 +978,48 @@ const SCENARIOS: Scenario[] = [
       );
     },
   },
+  {
+    name: "s10",
+    // A typed /compact runs Claude Code's own inside a turn; the kept rows are added at the next
+    // turn's start. dsh's threshold stays out of the way.
+    ratio: 0.9,
+    retain: 20_000,
+    steps: async ({ prompt }) => {
+      await prompt(OK);
+      await prompt(POEM);
+      await prompt(CODEWORD);
+      await prompt("/compact");
+      await prompt(RECALL);
+    },
+    verify: (v) => {
+      check(
+        "s10 kept a verbatim tail",
+        count(v.log, "verbatim tail kept") === 1,
+        v.log.join(" | "),
+      );
+      const rows = cliRows(v.cwd, v.sessionId);
+      const boundary = rows.findLast((r) => r.subtype === "compact_boundary");
+      if (!boundary) return unmet("s10 compacted", "no compact_boundary in the Claude transcript");
+      const kept = boundary.compactMetadata?.preservedMessages?.uuids ?? [];
+      const first = rows.find((r) => r.uuid === kept[0]);
+      check(
+        "s10 the kept rows start at the poem prompt",
+        textBlocks(first).includes(POEM),
+        `${kept.length} rows kept, first: ${textBlocks(first)[0]?.slice(0, 60)}`,
+      );
+      // The CLI logs each request's messages: the recall, the last request, must carry the poem
+      // prompt and the codeword prompt as messages of their own, word for word.
+      const request = rows.findLast((r) => r.type === "api-request");
+      if (!request) return unmet("s10 request log", "this Claude Code writes no api-request rows");
+      const blobs = new Map(rows.map((r) => [r.hash, r]));
+      const sent = (request.tail ?? []).flatMap((h) => textBlocks(blobs.get(h)));
+      check(
+        "s10 the next request carries the kept turns verbatim",
+        sent.includes(POEM) && sent.includes(CODEWORD),
+        `${sent.length} text blocks sent`,
+      );
+    },
+  },
 ];
 
 /** One scenario in its own throwaway directories, cleaned up after, keepers and transcripts too. */
@@ -955,6 +1048,7 @@ async function runScenario(s: Scenario) {
       s.targets ?? [],
       s.bridge ? await freePort() : undefined,
       s.disallow,
+      s.retain,
     );
     acp = new Acp(env, patch, join(root, "dsh.stderr"));
     await acp.request("initialize", { protocolVersion: 1, clientCapabilities: {} }, 120_000);
@@ -1003,8 +1097,14 @@ async function runScenario(s: Scenario) {
     await s.steps({ sessionId, state, home, prompt, switchTo });
     await acp.close();
     acp = undefined;
+    // Keeping a verbatim tail ends the CLI once, so the next turn resumes with the kept rows.
+    const respawns = count(routeLog(state, sessionId), "verbatim tail kept");
     if (s.oneProcess !== false)
-      check(`${s.name} one Claude process throughout`, pids.size === 1, `claude pids ${[...pids]}`);
+      check(
+        `${s.name} one Claude process per verbatim tail kept`,
+        pids.size === 1 + respawns,
+        `claude pids ${[...pids]}, ${respawns} tails kept`,
+      );
     const logs = sessionLogs(home);
     s.verify({
       events: logs.get(sessionId) ?? [],

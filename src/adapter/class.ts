@@ -24,6 +24,12 @@ import {
 import { repairStoredTurns } from "../turn-repair.js";
 import { firstPartyKnown, firstPartyMode, wantsFirstParty } from "../first-party.js";
 import { readCompactSummary } from "../compact-summary.js";
+import {
+  compactInstructions,
+  retainBudget,
+  retentionSpan,
+  widenPreserved,
+} from "../compact-retain.js";
 import { CONTEXT_SIZE_KEYS, contextDrops, type ContextSizes } from "../context-sources.js";
 import {
   accountIdentity,
@@ -167,7 +173,7 @@ import {
   mirrorReplyBlocks,
   alreadyShown,
 } from "../transcript.js";
-import { copyToAt, homeAt, readFromAt, sizeAt, type FsBox } from "../remote-fs.js";
+import { copyToAt, homeAt, readFromAt, sizeAt, spliceAt, type FsBox } from "../remote-fs.js";
 import {
   READY as READY_MARK,
   asHoldRecord,
@@ -1972,6 +1978,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   readonly owedCompactions = new Set<string>();
   /** Sessions whose CLI ran `/compact` since its last request; cleared when the next one starts. */
   readonly compactedSinceRequest = new Set<string>();
+  /** Sessions whose CLI compacted inside a turn, with where their transcript is: the newest rows
+   *  are kept verbatim at the next turn's start (`settleRetention`). */
+  readonly owedRetention = new Map<string, { cwd: string; claudeId: string }>();
   /** Sessions with a `syncCompaction` waiting or running, so one compaction syncs once. */
   readonly syncingCompactions = new Set<string>();
   /** Sessions where a typed `/compact` is on its way to the CLI as the next turn. dsh's check before
@@ -5737,6 +5746,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         return;
       }
     }
+    await this.settleRetention(options.sessionId);
     const cont = this.continuationFor(options, forceFresh);
     options = cont.options;
     // The usage this request reports is what dsh prices next, so a compaction before it is spent.
@@ -6128,6 +6138,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const publishAsidesFor = () => this.publishAsides(options.sessionId);
     // Bound here: `dispatch` is a plain generator function, so `this` is not the adapter inside it.
     const compactSummary = async (preTokens: number | undefined) => {
+      if (prep.session?.id)
+        this.owedRetention.set(options.sessionId, { cwd: prep.cwd, claudeId: prep.session.id });
       const summary = await this.compactSummary(prep.cwd, prep.session?.id, preTokens);
       if (summary !== undefined && this.config.cliCompaction) {
         this.pendingCompactions.set(options.sessionId, summary);
@@ -6705,18 +6717,25 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return summary;
   }
 
+  /** The compaction service dsh runs for this session. dsh's web and desktop profiles mount one
+   *  inside each agent preset and disable the root one, so the agent's own preset is asked first,
+   *  the way dsh's session controller reads a preset service; the root seam is the fallback (the
+   *  ACP profile keeps it). */
+  compactionService(sessionId: string) {
+    const agent = this.ctx?.agents?.get?.(asSessionId(sessionId));
+    return (
+      (agent && this.ctx?.get?.("agentPresets")?.serviceFor?.(agent, "compaction")) ??
+      this.ctx?.get?.("compaction")
+    );
+  }
+
   /** Compact dsh's copy once the agent is idle, after a compaction Claude Code made during a turn
    *  (answered from the pending summary, so no model runs) or one refused mid-turn (answered with
    *  `/compact` on the CLI). Never on a child agent: dsh settles it when it is idle and the parent
    *  waits on that; the child's next turn compacts at its start instead. */
   async syncCompaction(sessionId: string, retries = 1): Promise<void> {
     const agent = this.ctx?.agents?.get?.(asSessionId(sessionId));
-    // dsh's web and desktop profiles mount compaction inside each agent preset and disable the
-    // root one, so the agent's own preset is asked first, the way dsh's session controller reads
-    // a preset service; the root seam is the fallback (the ACP profile keeps it).
-    const compaction =
-      (agent && this.ctx?.get?.("agentPresets")?.serviceFor?.(agent, "compaction")) ??
-      this.ctx?.get?.("compaction");
+    const compaction = this.compactionService(sessionId);
     const note = (line: string) =>
       trace(join(this.stateDir, "resume.log"), `compaction ${sessionId}: sync ${line}`);
     if (this.syncingCompactions.has(sessionId)) return;
@@ -6771,6 +6790,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (proc !== held) proc.kill();
       return undefined;
     }
+    const where = { cwd, claudeId };
+    const budget = await this.retentionBudget(sessionId);
+    const before = await this.readForRetention(where, budget);
+    const instructions = before && compactInstructions(before.text, budget);
     let compacted = false;
     let preTokens: number | undefined;
     let failed = false;
@@ -6783,7 +6806,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     proc.lastUsed = Date.now();
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      if (!proc.write(buildInput("/compact", []))) return undefined;
+      const command = instructions === undefined ? "/compact" : `/compact ${instructions}`;
+      if (!proc.write(buildInput(command, []))) return undefined;
       this.armIdle(idleKey, proc, false);
       for (;;) {
         const event = await proc.nextEvent();
@@ -6806,7 +6830,117 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     if (compacted && !failed) this.compactedSinceRequest.add(sessionId);
     if (!compacted || failed || signal?.aborted) return undefined;
-    return this.compactSummary(cwd, claudeId, preTokens);
+    const summary = await this.compactSummary(cwd, claudeId, preTokens);
+    await this.retainTail(sessionId, where, proc);
+    return summary;
+  }
+
+  /** The newest share of the window, in tokens, a compaction keeps verbatim: dsh's own retention
+   *  for this session's route (`retainBudget`), over the window this plugin reports for it. Zero
+   *  when the session's route cannot be read. */
+  async retentionBudget(sessionId: string): Promise<number> {
+    let ran: { provider?: string; model?: string } | undefined;
+    try {
+      ran = this.sessionRoutes(sessionId)?.ran;
+    } catch {
+      // no session log in this scope: fall back to the last turn's own route
+    }
+    const last = this.lastTurnOptions.get(sessionId);
+    const provider = ran?.provider ?? last?.provider;
+    const model = ran?.model ?? last?.model;
+    if (provider === undefined || model === undefined) return 0;
+    const route = { provider, model };
+    const window = (await this.fullModelInfo(route.provider, route.model)).context?.contextWindow;
+    return retainBudget(this.compactionService(sessionId)?.config, route, window);
+  }
+
+  /** The end of a session's transcript, enough of it to hold `budget` tokens of rows and their
+   *  bookkeeping, with the file's size at the read. Undefined with no budget, no transcript, or a
+   *  box that cannot be read, which is logged. */
+  async readForRetention(
+    where: { cwd: string; claudeId: string },
+    budget: number,
+  ): Promise<{ box: FsBox; path: string; size: number; text: string } | undefined> {
+    if (budget <= 0) return undefined;
+    const loc = await this.transcriptLocation(where.cwd, where.claudeId);
+    if (!loc) return undefined;
+    try {
+      const size = await sizeAt(loc.box, loc.path);
+      if (size === null) return undefined;
+      const text = await readFromAt(loc.box, loc.path, Math.max(0, size - retentionSpan(budget)));
+      return { ...loc, size, text };
+    } catch (error) {
+      this.log("warn", `verbatim tail: ${errorText(error)}`);
+      return undefined;
+    }
+  }
+
+  /**
+   * Keep the newest share of the conversation verbatim after Claude Code compacted it: widen the
+   * compaction's kept rows in the transcript (`widenPreserved`) and end the session's idle CLI, so
+   * the next turn's `--resume` loads the summary followed by those rows. The live process holds
+   * only the summary and its last round, so the edit is made only once it has exited. Left owed
+   * while the CLI is busy (mid-turn, output of its own queued, or a background task that ending it
+   * would end), for the next turn's start (`settleRetention`). Never throws; every outcome goes to
+   * resume.log.
+   */
+  async retainTail(
+    sessionId: string,
+    where: { cwd: string; claudeId: string },
+    proc = this.processFor(sessionId),
+  ): Promise<void> {
+    const note = (line: string) =>
+      trace(join(this.stateDir, "resume.log"), `compaction ${sessionId}: verbatim tail ${line}`);
+    const owed = this.owedRetention.delete(sessionId);
+    // The mirror reads the transcript by byte offset, and an edit before its offset would move it.
+    if (this.terminalSync) return note("skipped, terminal mirror on");
+    const tasks = this.liveTasksFor(sessionId).some((t) => t.endedAt === undefined);
+    if (proc?.alive && (cliMidTurn(proc) || proc.hasTurnOutput() || tasks)) {
+      this.owedRetention.set(sessionId, where);
+      // Asked again at every step of a turn, so said once.
+      return owed ? undefined : note("owed, the CLI is busy");
+    }
+    try {
+      const budget = await this.retentionBudget(sessionId);
+      const planned = await this.readForRetention(where, budget);
+      if (!planned) return note(budget <= 0 ? "skipped, no budget" : "skipped, no transcript");
+      const plan = widenPreserved(planned.text, budget);
+      if (plan.kind === "skip") return note(`skipped, ${plan.why}`);
+      if (proc?.alive && !(await this.endIdleProcess(sessionId, proc)))
+        return note("skipped, the CLI did not exit");
+      // Read again: the CLI writes its running totals to the transcript as it exits.
+      const read = await this.readForRetention(where, budget);
+      const edit = read && widenPreserved(read.text, budget);
+      if (!read || edit?.kind !== "edit") return note("skipped, the transcript changed under it");
+      const start = read.size - Buffer.byteLength(read.text.slice(edit.start));
+      const end = start + Buffer.byteLength(read.text.slice(edit.start, edit.end));
+      const done = await spliceAt(read.box, read.path, { start, end, size: read.size }, edit.line);
+      await note(
+        done
+          ? `kept the newest ${edit.kept} rows (about ${edit.tokens} tokens) for the next --resume`
+          : "skipped, the transcript grew while it was written",
+      );
+    } catch (error) {
+      this.log("warn", `verbatim tail ${sessionId}: ${errorText(error)}`);
+      await note(`failed: ${errorText(error)}`);
+    }
+  }
+
+  /** A verbatim tail owed since a compaction inside a turn: kept now, at the next turn's start,
+   *  before anything is written to the CLI. */
+  async settleRetention(sessionId: string): Promise<void> {
+    const where = this.owedRetention.get(sessionId);
+    if (where) await this.retainTail(sessionId, where);
+  }
+
+  /** End a settled process and forget it the way the idle reaper does, so the next turn starts the
+   *  session again with `--resume`. Waits up to ten seconds for it to exit; false when it has not. */
+  async endIdleProcess(sessionId: string, proc: ClaudeProcess): Promise<boolean> {
+    for (const [key, p] of this.processes) if (p === proc) this.processes.delete(key);
+    proc.kill();
+    this.forgetSession(sessionId);
+    await Promise.race([proc.child.done, new Promise((r) => setTimeout(r, 10_000).unref?.())]);
+    return !proc.alive;
   }
 
   /** Claude finished a turn of its own (a background task it launched completed) while dsh was

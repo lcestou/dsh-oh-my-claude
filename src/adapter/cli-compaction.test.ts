@@ -1,13 +1,14 @@
 // dsh's compaction of a Claude session answered by Claude Code's own: the route, the `/compact`
 // run on the session's CLI, the reuse of a summary the CLI already made, and the sync after it.
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ClaudeCodeAdapter, Config, registryKey } from "../adapter.js";
 import { asSessionId, type PluginContext } from "../dsh.js";
 import type { ClaudeEvent, ClaudeProcess } from "../process.js";
 import { cliMidTurn, compactionRoute, type CompactionFacts } from "./cli-compaction.js";
 import { tempDir } from "../test-tmp.js";
+import { projectDirName } from "./transcript-watch.js";
 
 const facts = (o: Partial<CompactionFacts> = {}): CompactionFacts => ({
   enabled: true,
@@ -349,7 +350,16 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
   a.acquire = async () => {
     throw new Error("stop here");
   };
+  const settled: string[] = [];
+  a.settleRetention = async (id) => {
+    settled.push(id);
+  };
   await assert.rejects(a.turn(options).next(), /stop here|no turn state/);
+  assert.deepEqual(
+    settled,
+    ["s1"],
+    "an owed verbatim tail is settled before the CLI is written to",
+  );
   const newTurn = mode === "prompt";
   assert.equal(a.compactedSinceRequest.has("s1"), false, mode);
   assert.equal(a.pendingCompactions.has("s1"), !newTurn, mode);
@@ -518,6 +528,147 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
   a.revive = async () => proc;
   assert.equal(await a.compactOnCli("s1"), undefined);
   assert.equal(wrote, 0, "nothing written behind the CLI's own turn");
+}
+
+// The newest rows kept verbatim: `/compact` is told what to leave out of the summary, the
+// compaction's kept rows are widened in the transcript once the CLI has exited, and the next turn
+// starts it again with `--resume`.
+const row = (uuid: string, parentUuid: string | null, type: string, extra: object) =>
+  JSON.stringify({ parentUuid, isSidechain: false, uuid, type, ...extra });
+const said = (role: string, text: string, id = "") => ({
+  message: { role, id, content: [{ type: "text", text: `${text} ${"words ".repeat(40)}` }] },
+});
+const conversation = [
+  row("u1", null, "user", said("user", "first question")),
+  row("a1", "u1", "assistant", said("assistant", "first answer", "m1")),
+  row("u2", "a1", "user", said("user", "second question")),
+  row("a2", "u2", "assistant", said("assistant", "second answer", "m2")),
+  row("u3", "a2", "user", said("user", "third question")),
+  row("a3", "u3", "assistant", said("assistant", "third answer", "m3")),
+].join("\n");
+const compaction = [
+  row("b1", null, "system", {
+    subtype: "compact_boundary",
+    logicalParentUuid: "a3",
+    compactMetadata: {
+      trigger: "manual",
+      preTokens: 1234,
+      preservedMessages: { anchorUuid: "s1", uuids: ["a3"], allUuids: ["a3"] },
+    },
+  }),
+  row("s1", "b1", "user", {
+    isCompactSummary: true,
+    message: { role: "user", content: "summary" },
+  }),
+].join("\n");
+const keptRows = async (path: string) => {
+  const text = await readFile(path, "utf8");
+  const line = text.split("\n").find((l) => l.includes('"compact_boundary"')) ?? "{}";
+  return JSON.parse(line).compactMetadata?.preservedMessages?.uuids;
+};
+/** An adapter whose session runs haiku, with dsh's retention and a transcript at `/work`. */
+const retaining = async (retainTokens: number) => {
+  const a = adapterWith({
+    sessions: sessionsWith({}, [], { provider: "claude-code", model: "claude-haiku-4-5" }),
+    get: (name: string) => (name === "compaction" ? { config: { retainTokens } } : undefined),
+  });
+  a.claudeHome = tempDir("omc-retain-home-");
+  const path = join(a.claudeHome, "projects", projectDirName("/work"), "claude-1.jsonl");
+  await mkdir(join(path, ".."), { recursive: true });
+  await writeFile(path, `${conversation}\n`);
+  a.compactSummary = async () => "fresh summary";
+  return { a, path };
+};
+/** A CLI that compacts into the transcript at `path` and can be ended. */
+const compactingCli = (path: string) => {
+  const cli = cliAnswering([boundary], {
+    child: { done: Promise.resolve() },
+    kill(this: { killed: boolean; alive: boolean }) {
+      this.killed = true;
+      this.alive = false;
+    },
+  });
+  const write = cli.proc.write.bind(cli.proc);
+  cli.proc.write = (line: string) => {
+    if (line.includes("/compact")) void appendFile(path, `${compaction}\n`);
+    return write(line);
+  };
+  return cli;
+};
+
+{
+  const { a, path } = await retaining(150);
+  const { proc, written } = compactingCli(path);
+  a.processes.set(registryKey(a.providerId, "s1"), proc);
+  assert.equal(await a.compactionFromCli("s1"), "fresh summary");
+  assert.match(
+    written[0]!,
+    /\/compact The newest part of this conversation, from the user message that begins \\"third question/,
+  );
+  assert.equal(proc.killed, true, "the CLI ends, so the next turn loads the kept rows");
+  assert.equal(a.processFor("s1"), undefined);
+  assert.deepEqual(await keptRows(path), ["u3", "a3"]);
+  assert.match(await resumeLog(), /compaction s1: verbatim tail kept the newest 2 rows/);
+}
+
+// A budget the CLI's own last round already fills: plain `/compact`, the CLI keeps its process.
+{
+  const { a, path } = await retaining(10);
+  const { proc, written } = compactingCli(path);
+  a.processes.set(registryKey(a.providerId, "s1"), proc);
+  assert.equal(await a.compactionFromCli("s1"), "fresh summary");
+  assert.match(written[0]!, /"\/compact"/);
+  assert.equal(proc.killed, false);
+  assert.deepEqual(await keptRows(path), ["a3"]);
+}
+
+// A background task would end with the CLI: owed, then kept at a later turn's start once idle.
+{
+  const { a, path } = await retaining(1_000_000);
+  const { proc } = compactingCli(path);
+  a.processes.set(registryKey(a.providerId, "s1"), proc);
+  let working = true;
+  a.liveTasksFor = () => (working ? [{ id: "t", at: 0, endedAt: undefined }] : []) as never;
+  await a.compactionFromCli("s1");
+  assert.equal(proc.killed, false, "the background task keeps running");
+  assert.deepEqual(await keptRows(path), ["a3"]);
+  assert.equal(a.owedRetention.has("s1"), true);
+  working = false;
+  await a.settleRetention("s1");
+  assert.equal(proc.killed, true);
+  assert.equal(a.owedRetention.has("s1"), false);
+  assert.deepEqual(await keptRows(path), ["u2", "a2", "u3", "a3"], "all but the first exchange");
+}
+
+// The terminal mirror reads the transcript by offset: nothing is rewritten under it.
+{
+  const { a, path } = await retaining(1_000_000);
+  a.terminalSync = true;
+  a.owedRetention.set("s1", { cwd: "/work", claudeId: "claude-1" });
+  await appendFile(path, `${compaction}\n`);
+  await a.settleRetention("s1");
+  assert.deepEqual(await keptRows(path), ["a3"]);
+  assert.equal(a.owedRetention.has("s1"), false);
+}
+
+// dsh's settings decide the budget: a model policy for the session's route, over its window.
+{
+  const a = adapterWith({
+    sessions: sessionsWith({}, [], { provider: "claude-code", model: "claude-haiku-4-5" }),
+    get: (name: string) =>
+      name === "compaction"
+        ? {
+            config: {
+              retainRatio: 0.16,
+              modelPolicies: [
+                { provider: "claude-code", model: "claude-haiku-4-5", retainRatio: 0.1 },
+              ],
+            },
+          }
+        : undefined,
+  });
+  assert.equal(await a.retentionBudget("s1"), 20_000, "10% of haiku's 200k window");
+  assert.equal(await adapterWith().retentionBudget("s1"), 0, "no route on record: nothing kept");
 }
 
 console.log("cli-compaction ok");

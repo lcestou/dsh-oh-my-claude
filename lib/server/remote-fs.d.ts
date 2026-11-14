@@ -53,6 +53,25 @@ export declare const childPath: (dir: string, name: string) => string;
  * connection and report on a file that may have moved on since.
  */
 export declare const writeScript: (path: string) => string;
+/** Exit code the splice script uses when the file is no longer the size the splice was planned on. */
+export declare const MOVED = 45;
+/**
+ * Replace bytes `start` to `end` of a file with the text on stdin (base64), only while the file is
+ * still `size` bytes long. The new file is written beside it with the same mode and moved over it,
+ * so a reader sees the old file or the new one, never half of each. `head -c`, `tail -c` and
+ * `wc -c` are POSIX on GNU and BSD alike.
+ */
+export declare const spliceScript: (path: string, start: number, end: number, size: number) => string;
+/**
+ * Replace bytes `start` to `end` of the file at `path` with `text`. False, with the file left
+ * alone, when it is no longer `size` bytes long, since the offsets were read off the old one.
+ * Throws when the box cannot be reached or the write fails.
+ */
+export declare function spliceAt(box: FsBox, path: string, at: {
+    start: number;
+    end: number;
+    size: number;
+}, text: string): Promise<boolean>;
 /** Delete, and stay silent about a file that was already gone. */
 export declare const removeScript: (path: string) => string;
 /** The file's size in bytes, GNU or BSD stat; a missing file exits with the absent code. */

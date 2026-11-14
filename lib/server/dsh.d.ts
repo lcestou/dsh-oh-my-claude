@@ -638,6 +638,18 @@ export interface PluginContext {
 /** dsh's compaction service (`dsh-compaction`): its `compactNow` is what dsh's own `/compact` runs.
  *  `shadowedSeqs` and `shadowedTokenCount` are what that command reports; null is nothing to compact. */
 export interface CompactionService {
+    /** `dsh-compaction-basic`'s resolved settings, of which only the retention is read here; another
+     *  backend may carry none. */
+    readonly config?: {
+        readonly retainRatio?: number;
+        readonly retainTokens?: number;
+        readonly modelPolicies?: ReadonlyArray<{
+            readonly provider: string;
+            readonly model: string;
+            readonly retainRatio?: number;
+            readonly retainTokens?: number;
+        }>;
+    };
     compactNow(agent: Agent, signal: AbortSignal, sourceCommandId?: string): Promise<{
         shadowedSeqs: readonly number[];
         shadowedTokenCount: number;
