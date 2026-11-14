@@ -627,6 +627,10 @@ export class Translator {
    *  stopped with `refusal` alone does not end the turn as one: the CLI can still rewrite the
    *  result's stop reason past it, so the result frame decides. */
   refusalFinal: boolean;
+  /** Whether the result frame ended this turn as the REFUSAL failure. Only then is the Claude
+   *  transcript dropped: a refusal the result overruled (it ended as a normal stop), or one an
+   *  abort or a usage limit outranked, leaves the session as it is. */
+  refusalEnded: boolean;
   /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
   timeZone: string | undefined;
   hostLabel: string | undefined;
@@ -835,6 +839,7 @@ export class Translator {
     this.refusalAsFailure = refusalAsFailure;
     this.refusal = undefined;
     this.refusalFinal = false;
+    this.refusalEnded = false;
     this.timeZone = timeZone;
     this.hostLabel = hostLabel;
     this.routerOnly = routerOnly;
@@ -1479,7 +1484,8 @@ export class Translator {
         // A refused attempt's usage is not sent under refusalAsFailure: a usage chunk commits the
         // attempt, and dsh-fallback-models retries on another model only an uncommitted one. Its
         // tokens go unreported to dsh, which is the price of letting the fallback answer.
-        if (!refused || this.aborting || limit) events.push(...stepUsage);
+        this.refusalEnded = refused !== undefined && !this.aborting && !limit;
+        if (!this.refusalEnded) events.push(...stepUsage);
         events.push({
           type: "finish",
           reason: this.aborting

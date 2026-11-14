@@ -1536,8 +1536,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /**
    * Forget a refused Claude session: stop its process, wait (at most ten seconds) for it to exit so
-   * nothing writes the transcript after it is gone, then delete the transcript and its folder and
-   * the started mark. The next turn starts that session id afresh, from dsh's own log, in which the
+   * nothing writes the transcript after it is gone, then move the transcript and its folder aside
+   * (renamed with a `.refused-<time>` suffix) and forget the started mark. The next turn starts that session id afresh, from dsh's own log, in which the
    * refused reply is kept as a failed attempt and never shown to a model. Never throws.
    */
   async dropRefused(proc: ClaudeProcess, cwd: string, id: string): Promise<void> {
@@ -6265,7 +6265,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // A refused reply ended the turn as a failure: the session's Claude transcript, refusal
       // and all, is dropped, so the next turn on this route starts a new Claude session from dsh's
       // log instead of resuming one whose last word was the refusal.
-      if (tr.refusal && this.config.refusalAsFailure && prep.session)
+      if (tr.refusalEnded && prep.session)
         this.refused.set(options.sessionId, this.dropRefused(proc, prep.cwd, prep.session.id));
       options.signal?.removeEventListener("abort", onAbort);
       for (const c of pending.values()) c.abort();

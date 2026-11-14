@@ -31,6 +31,7 @@ const frames = [
     message: { id: "m1", role: "assistant", content: [], stop_reason: "refusal" },
   },
 ] as unknown as ClaudeEvent[];
+/** A result frame that stopped with `refusal`, as an error or not. */
 // SAFETY: hand-written result frame
 const result = (isError: boolean) =>
   ({
@@ -126,6 +127,22 @@ for (const isError of [false, true]) {
     drawn.some((c) => c.type === "text-delta" || c.type === "reasoning-delta"),
     "off: drawn",
   );
+}
+
+// A reply frame that stopped with `refusal`, followed by a result that ended the turn normally: the
+// result decides, so the turn is a normal stop and nothing marks the transcript for dropping.
+{
+  const tr = new Translator({ refusalAsFailure: true });
+  tr.translate(frames[1]!);
+  // SAFETY: hand-written fixture
+  const end = tr.translate({ type: "result", is_error: false, stop_reason: "end_turn" } as never);
+  const last = end.at(-1);
+  assert.ok(last?.type === "finish" && last.reason.kind === "stop", "the result overruled it");
+  assert.equal(tr.refusalEnded, false, "so the transcript stays");
+}
+{
+  const { tr } = finish(true, true);
+  assert.equal(tr.refusalEnded, true, "a turn ended as REFUSAL marks its transcript for dropping");
 }
 
 // The refused session's transcript, its folder and its started mark go; nothing else does.

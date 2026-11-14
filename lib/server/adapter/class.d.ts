@@ -404,8 +404,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly refused: Map<string, Promise<void>>;
     /**
      * Forget a refused Claude session: stop its process, wait (at most ten seconds) for it to exit so
-     * nothing writes the transcript after it is gone, then delete the transcript and its folder and
-     * the started mark. The next turn starts that session id afresh, from dsh's own log, in which the
+     * nothing writes the transcript after it is gone, then move the transcript and its folder aside
+     * (renamed with a `.refused-<time>` suffix) and forget the started mark. The next turn starts that session id afresh, from dsh's own log, in which the
      * refused reply is kept as a failed attempt and never shown to a model. Never throws.
      */
     dropRefused(proc: ClaudeProcess, cwd: string, id: string): Promise<void>;
