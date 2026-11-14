@@ -1042,9 +1042,17 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /**
      * At boot, reattach to keepers whose Claude process is still alive (a dsh restart left them
      * running) and register them as this instance's processes. One with output waiting gets a
-     * drain turn so what Claude did during the gap shows up without anyone typing.
+     * drain turn so what Claude did during the gap shows up without anyone typing. `only` limits the
+     * pass to those keeper directories (a retry of ones left to another dsh). Returns the directories
+     * left because another live dsh holds them, and on a full pass looks at those again for a minute,
+     * in case the holder was a dsh still shutting down for a restart.
      */
-    adoptKeepers(): Promise<void>;
+    adoptKeepers(only?: Set<string>): Promise<Set<string>>;
+    /** Every `everyMs` for `tries` looks, adopt the keepers a boot pass left to another live dsh once
+     *  that dsh has exited: a restart whose old server was still shutting down when this one booted.
+     *  Stops when this instance's scope is disposed, so a short-lived second dsh (`dsh web --help`)
+     *  never comes back for them. Keepers whose holder outlives the minute stay theirs. */
+    readoptLeft(left: Set<string>, everyMs?: number, tries?: number): Promise<void>;
     /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn, and the
      *  answer says whether a turn took it (that wake, or a prompt that got there first). A
      *  `system` notice on its own is no reply and wakes nobody; the next turn reads it. The one

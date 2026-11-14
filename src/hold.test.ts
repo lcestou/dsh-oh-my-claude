@@ -135,6 +135,8 @@ const fakeRunner = (): { run: RunOnBox; sshes: FakeSsh[] } => {
   };
   return { run, sshes };
 };
+// Polls stop at the first answer; the budget (1000 ticks, 5 s) is for a box under load, where the
+// fake cli took more than half a second to answer and the suite failed for no fault of the code.
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
 // The handle: a prompt written before READY waits and lands after it; output moves the offset by
@@ -309,7 +311,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     const h1 = holdHandle(sh, name, 0, (o) => offsets.push(o));
     h1.stdout.on("data", (d) => seen.push(String(d)));
     h1.stdin.write("1\n");
-    for (let i = 0; i < 100 && seen.length === 0; i++) await tick();
+    for (let i = 0; i < 1000 && seen.length === 0; i++) await tick();
     assert.deepEqual(seen, ['{"got":1}\n'], "the fake cli answered through the FIFO and the log");
     const off = offsets.at(-1)!;
     assert.equal(
@@ -322,7 +324,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     const seen2: string[] = [];
     h2.stdout.on("data", (d) => seen2.push(String(d)));
     h2.stdin.write("2\n");
-    for (let i = 0; i < 100 && seen2.length === 0; i++) await tick();
+    for (let i = 0; i < 1000 && seen2.length === 0; i++) await tick();
     assert.deepEqual(seen2, ['{"got":2}\n'], "a second attach reads only from its offset");
     h2.stdin.write("quit\n");
     const outcome = await h2.done;
