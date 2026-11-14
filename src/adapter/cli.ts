@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { JsonValue, ToolSchema } from "../dsh.js";
 import { KEY_ENV, KEY_HEADER } from "../mcp-config.js";
+import { ISOLATED_SETTINGS } from "./isolate.js";
 import { shq, sshArgs, userTurnLine } from "../process.js";
 import { probeRawToolRows, type RowsSupport } from "../rows-probe.js";
 import { Config } from "./config.js";
@@ -115,6 +116,8 @@ const GUARDED_FLAGS = [
   "--session-id",
   "--resume",
   "--mcp-config",
+  "--setting-sources",
+  "--strict-mcp-config",
 ];
 /** The flag in `error: unknown option '--x'`, however the CLI wrapped the line. */
 export function unknownFlagIn(text: string): string | undefined {
@@ -353,8 +356,18 @@ export function buildArgs({
   if (model) args.push("--model", model);
   if (reasoningEffort && supports(flags, "--effort")) args.push("--effort", reasoningEffort);
   // In -p mode /fast only works in a session launched with fast mode in --settings (fast-mode docs).
-  if (config.fastMode && supports(flags, "--settings"))
-    args.push("--settings", JSON.stringify({ fastMode: true }));
+  const settings: Record<string, JsonValue> = config.isolate ? { ...ISOLATED_SETTINGS } : {};
+  if (config.fastMode) settings.fastMode = true;
+  if (Object.keys(settings).length > 0 && supports(flags, "--settings"))
+    args.push("--settings", JSON.stringify(settings));
+  if (config.isolate) {
+    // None of the user's settings files (with their hooks, permission rules and MCP servers), and
+    // no MCP server but the bridge: Claude Code is the engine, and dsh is the rest. An empty list
+    // is how the CLI spells "no source"; a side call takes the same, so a title or a compaction
+    // runs no user hook either.
+    if (supports(flags, "--setting-sources")) args.push("--setting-sources", "");
+    if (supports(flags, "--strict-mcp-config")) args.push("--strict-mcp-config");
+  }
   const guidance = mcp ? dshToolsGuidance(mcp.tools, config.builtinTools) : "";
   if (dshSystem !== undefined && supports(flags, "--system-prompt")) {
     // dsh's prompt stands in for Claude Code's, the tool guidance after it as it would follow

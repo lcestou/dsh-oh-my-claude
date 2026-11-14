@@ -100,12 +100,15 @@ export function forwardedEnv(base: NodeJS.ProcessEnv = process.env): [string, st
 /** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
  *  the caller passes. CHILD_ENV beats the inherited value on purpose. An `MCP_TOOL_TIMEOUT` that
  *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode
- *  and not the other. A caller that means to override still wins, which is the escape hatch. */
+ *  and not the other. A caller that means to override still wins, which is the escape hatch. An
+ *  override of the empty string removes the name instead (`isolate` clears CLAUDE_CODE_SIMPLE that
+ *  way): the CLI reads some names for their presence, and an empty value is not an absent one. */
 export function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, string>) {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) if (v !== undefined) env[k] = v;
   if (process.platform !== "win32") env.PATH = withClaudeDirs(env.PATH);
   Object.assign(env, CHILD_ENV, override ?? {});
+  for (const [k, v] of Object.entries(override ?? {})) if (v === "") delete env[k];
   return env;
 }
 
@@ -1481,6 +1484,11 @@ export interface ClaudeProcessSpec {
    *  `followToolSet`. Claude Code lists an MCP server's tools once, at start, so a changed set
    *  changes the key and the session's next turn starts a process that lists it again. */
   tools?: string;
+  /** A digest of the config that decides how the CLI is started beyond the fields above
+   *  (`builtinTools`, `toolLoading`, `isolate`), present only when one of them is not its default.
+   *  A keeper outlives a dsh restart, and a config change comes with one: without this the new
+   *  config would reattach to a Claude started under the old. */
+  engine?: string;
 }
 
 /** What the caller wants to know when a Claude process ends, live or after a restart. */

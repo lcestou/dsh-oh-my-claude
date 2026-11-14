@@ -39,6 +39,7 @@ import { managedDir } from "../instructions.js";
 import { readUsage, stillLimitedUntil } from "../usage.js";
 import { MCP_PATH, type McpBridge } from "../mcp.js";
 import { KEY_ENV } from "../mcp-config.js";
+import { ISOLATED_ENV, engineDigest } from "./isolate.js";
 import {
   type ClaudeEvent,
   ClaudeProcess,
@@ -1680,6 +1681,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (dshSystem !== undefined)
       spec.system = createHash("sha256").update(dshSystem).digest("hex").slice(0, 16);
     if (this.config.followToolSet && mcpBridge?.tools) spec.tools = toolSetDigest(mcpBridge.tools);
+    const engine = engineDigest(this.config);
+    if (engine !== undefined) spec.engine = engine;
     // An environment is fixed at spawn, so the switch joins the spec: a session already running
     // when it flips is replaced on its next turn and resumes with the window the switch gives.
     // Local spawns only; the flag does not ride to a box, whose own environment decides.
@@ -3897,6 +3900,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       over.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(window);
       over.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(window);
     }
+    if (this.config.isolate) Object.assign(over, ISOLATED_ENV);
     return Object.keys(over).length === 0 ? undefined : over;
   }
 
