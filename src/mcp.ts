@@ -37,6 +37,9 @@ import { asSessionId } from "./dsh.js";
 import { resolvedAgent } from "./adapter/turn.js";
 import { PLAN_REFUSAL, planRefuses } from "./plan-gate.js";
 
+/** The MCP tool `_meta` key Claude Code reads to load a tool up front instead of deferring it. */
+export const ALWAYS_LOAD = "anthropic/alwaysLoad";
+
 /** HTTP endpoint path for the MCP bridge handler. */
 export const MCP_PATH = "/dsh-oh-my-claude/mcp";
 const PROTOCOL = "2025-06-18";
@@ -508,6 +511,14 @@ const textOf = (blocks: JsonValue): string =>
     )
     .join("\n");
 
+/** One tool as tools/list offers it. */
+interface ListedTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, JsonValue>;
+  annotations: { readOnlyHint: boolean };
+  _meta?: Record<string, JsonValue>;
+}
 /** One JSON-RPC request as the CLI sends it; only `id`, `method` and `params` are read. */
 export interface JsonRpcRequest {
   jsonrpc?: string;
@@ -558,13 +569,29 @@ export interface RpcEnv {
   mode?: () => string | undefined;
   /** The dsh tools left off for this session (`hiddenFor`); `HIDDEN` when not given. */
   hidden?: ReadonlySet<string>;
+  /** Mark every dsh tool dsh itself loads up front as one Claude Code must load up front too
+   *  (`toolLoading: dsh`); otherwise Claude Code defers all of them behind its ToolSearch. */
+  alwaysLoad?: boolean;
   log?: (level: string, msg: string) => void;
 }
 
 /** One JSON-RPC request against the tools visible to `agent`. Returns null for notifications. */
 export async function handleRpc(
   msg: JsonRpcRequest,
-  { tools, agent, signal, version, open, prompt, wait, relay, mode, hidden = HIDDEN, log }: RpcEnv,
+  {
+    tools,
+    agent,
+    signal,
+    version,
+    open,
+    prompt,
+    wait,
+    relay,
+    mode,
+    hidden = HIDDEN,
+    alwaysLoad = false,
+    log,
+  }: RpcEnv,
 ): Promise<JsonRpcReply | null> {
   // The bridge's own tools the host provided, by name; dsh never sees these.
   const own = new Map<string, (args: Record<string, JsonValue>) => Promise<string>>();
@@ -596,12 +623,20 @@ export async function handleRpc(
           // readOnlyHint is what Claude Code keys concurrency on: without it every MCP call runs
           // one after another, so parallel subagents would serialize. dsh's own permission
           // presets still govern what a child may do.
-          .map((t) => ({
-            name: t.name,
-            description: t.description,
-            inputSchema: t.parameters,
-            annotations: { readOnlyHint: true },
-          }))
+          .map((t) => {
+            const listed: ListedTool = {
+              name: t.name,
+              description: t.description,
+              inputSchema: t.parameters,
+              annotations: { readOnlyHint: true },
+            };
+            // Claude Code defers every MCP tool behind ToolSearch, however few there are (2.1.323
+            // with five), so a model would start with no dsh tool in view. This key, which the
+            // CLI reads per tool, keeps one loaded; a tool dsh defers itself stays deferred.
+            // `_meta` is MCP's own name for the field.
+            if (alwaysLoad && t.deferLoading !== true) listed["_meta"] = { [ALWAYS_LOAD]: true };
+            return listed;
+          })
           .concat(
             OWN_TOOLS.filter((t) => own.has(t.name)).map((t) => ({
               name: t.name,
@@ -695,6 +730,8 @@ export interface BridgeOptions {
   /** The Claude Code built-ins a session's CLI is started with (`builtinTools`), which decide the
    *  dsh file tools the bridge leaves out (`hiddenFor`). Every one of them when not given. */
   builtins?: (sessionId: string) => readonly string[];
+  /** Whether a session's tools follow dsh's own deferral (`toolLoading: dsh`). */
+  dshLoading?: (sessionId: string) => boolean;
   /** Path of a file holding the bridge key; created once, reused across restarts. */
   keyFile?: string;
   /** Path of a file holding the loopback listener's port, so a restart rebinds the same port and
@@ -828,7 +865,7 @@ async function startLoopback(
  *  web port is the one address that is fixed by configuration. */
 export function registerMcpBridge(
   ctx: PluginContext,
-  { log, version, relay, mode, builtins, keyFile, portFile }: BridgeOptions,
+  { log, version, relay, mode, builtins, dshLoading, keyFile, portFile }: BridgeOptions,
 ): Promise<McpBridge> {
   // SAFETY: the key symbol is this plugin's own key on globalThis, typed here once
   const g = globalThis as typeof globalThis & { [KEY_REGISTRY]?: string };
@@ -879,6 +916,7 @@ export function registerMcpBridge(
                   : undefined,
                 mode: mode ? () => mode(sessionId) : undefined,
                 hidden: builtins ? hiddenFor(builtins(sessionId)) : HIDDEN,
+                alwaysLoad: dshLoading?.(sessionId) === true,
                 log,
               });
               return out === null ? send(res, 202) : send(res, 200, out);

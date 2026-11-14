@@ -281,6 +281,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       },
       // Which file tools the session's CLI has of its own, from the mount that runs it.
       builtins: (sessionId) => adapter.ownerFor(sessionId).config.builtinTools,
+      dshLoading: (sessionId) => adapter.ownerFor(sessionId).config.toolLoading === "dsh",
     }).then(
       (mcp) => {
         adapter.mcp = mcp;

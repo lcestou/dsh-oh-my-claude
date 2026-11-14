@@ -356,6 +356,8 @@ export interface ToolSchema {
   name: string;
   description: string;
   parameters: Record<string, JsonValue>;
+  /** dsh loads this tool's definition only once something surfaces it (dsh-llm 0.2). */
+  deferLoading?: true;
 }
 
 /** What one tool call carries into execute(). */

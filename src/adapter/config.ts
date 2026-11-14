@@ -80,6 +80,7 @@ export type Config = {
   allowedTools: string[];
   disallowedTools: string[];
   builtinTools: string[];
+  toolLoading: "claude" | "dsh";
   addDirs: string[];
   pluginDirs: string[];
   pluginUrls: string[];
@@ -172,6 +173,12 @@ export const Config = z.object({
     .default(["default"])
     .description(
       "Claude Code's own tools, passed as --tools: 'default' for all of them, or the names to keep (for example ToolSearch), or an empty list for none. A dsh file tool (read, write, edit, glob, grep, ls) whose Claude Code counterpart is left out is offered over the dsh bridge instead, so dsh runs it with its own cards, sandbox and approvals",
+    ),
+  toolLoading: z
+    .union(["claude", "dsh"])
+    .default("claude")
+    .description(
+      "Which bridged dsh tools Claude sees up front. 'claude': Claude Code decides, and it defers every MCP tool behind its ToolSearch. 'dsh': the tools dsh loads up front for a native model are marked for Claude Code to load up front too (the MCP _meta key anthropic/alwaysLoad); only the ones dsh defers stay behind ToolSearch",
     ),
   addDirs: z.array(z.string()).default([]).description("Extra --add-dir directories"),
   pluginDirs: z
