@@ -44,9 +44,20 @@ const OPTION_TEXT = {
 /** A checkbox row: a label, and a fainter hint after it. */
 const ROW = { display: "flex", alignItems: "center", gap: 8, fontSize: 13 } as const;
 
+/** dsh's own name for one of its built-in modes, which its registry lists by id alone; undefined
+ *  for any other preset, which carries the name it was declared with. */
+function builtInName(id: string): string | undefined {
+  if (id === "standard") return t("main.settingsUi.engineModeStandard");
+  if (id === "ptc") return t("main.settingsUi.engineModePtc");
+  if (id === "minimal") return t("main.settingsUi.engineModeMinimal");
+  if (id === "cordis") return t("main.settingsUi.engineModeCreator");
+  return undefined;
+}
+
 /** One preset's checkbox; ticked means sessions started in that mode run Claude as dsh's engine. */
 function PresetBox({ preset }: { preset: PresetRow }) {
   const [on, setOn] = useHintFlag(ENGINE_PRESET_PREFIX + preset.id);
+  const name = builtInName(preset.id) ?? preset.name;
   return (
     <label style={ROW}>
       <input
@@ -55,10 +66,8 @@ function PresetBox({ preset }: { preset: PresetRow }) {
         checked={on}
         onChange={(e) => setOn(e.target.checked)}
       />
-      {preset.name}
-      {preset.name !== preset.id && (
-        <span style={{ color: T.faint, fontSize: 12 }}>{preset.id}</span>
-      )}
+      {name}
+      {name !== preset.id && <span style={{ color: T.faint, fontSize: 12 }}>{preset.id}</span>}
     </label>
   );
 }
@@ -69,15 +78,20 @@ function OptionBox({ option }: { option: EngineOption }) {
   const [skip, setSkip] = useHintFlag(ENGINE_SKIP_PREFIX + option);
   const [label, hint] = OPTION_TEXT[option];
   return (
-    <label style={ROW}>
+    <label style={{ ...ROW, alignItems: "flex-start" }}>
       <input
         type="checkbox"
         data-omc-engine-option={option}
         checked={!skip}
         onChange={(e) => setSkip(!e.target.checked)}
+        style={{ marginTop: 2 }}
       />
-      {t(label)}
-      <span style={{ color: T.faint, fontSize: 12 }}>{t(hint)}</span>
+      {/* The hint under the label, not beside it: beside, a phone-width card squeezed both into
+          two narrow columns. */}
+      <span style={{ display: "flex", flexDirection: "column" }}>
+        {t(label)}
+        <span style={{ color: T.faint, fontSize: 12 }}>{t(hint)}</span>
+      </span>
     </label>
   );
 }
