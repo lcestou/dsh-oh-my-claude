@@ -66,8 +66,11 @@ const rows: Record<string, ChatFlowNode> = {
 const order = ["typed", "instructions", "catalog", "snapshot", "job", "harness"];
 const node = (key: string) => rows[key];
 
-// Master switch on: dsh's system prompt is still masked, because this plugin never passes it on.
+// Master switch on: dsh's system prompt is still masked, because by default this plugin never
+// passes it on; a mount on `systemPrompt: dsh` does, so there it stays.
 assert.deepEqual(maskedRows(order, node, contextDrops({ dshContextOn: true })), ["harness"]);
+assert.deepEqual(maskedRows(order, node, contextDrops({ dshContextOn: true }), true), []);
+assert.deepEqual(maskedRows(order, node, contextDrops({}), true), ["instructions", "catalog"]);
 assert.deepEqual(maskedRows(order, node, contextDrops({})), ["instructions", "catalog", "harness"]);
 assert.deepEqual(
   maskedRows(order, node, contextDrops({ dshContextOn: true, dshContextSkillsOff: true })),

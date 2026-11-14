@@ -40,14 +40,30 @@ export declare const attachmentsOf: (content: LooseMessage["content"]) => SteerA
  *  stdin on its own: an assistant turn, a tool result. */
 export declare const steerKey: (m: LooseMessage) => string | undefined;
 /**
+ * Whether `text` is one slash line naming a command the CLI has, which has to reach it as a
+ * command even under `verbatimPrompts` (a line marked as written is never dispatched). `known` is
+ * the session's command list from the CLI's init frame; before one arrives, any `/name` in dsh's
+ * command grammar counts, so a bridged command on a fresh process is not sent as plain text. A
+ * path such as `/home/x` has a slash in its name and never matches.
+ */
+export declare function isCliCommandLine(text: string, known: readonly string[] | undefined): boolean;
+/**
+ * dsh's system prompt for a loop-built request: the text of the latest run of system-role
+ * messages, after a one-shot caller's `system`. A loop-built request leads with one system
+ * message, and a prompt that changed during the session is a later system message holding the
+ * whole new text, so the latest run is the prompt in force. Undefined when neither has text.
+ */
+export declare function dshSystemPrompt(messages: readonly LooseMessage[] | undefined, system?: string): string | undefined;
+/**
  * Pick the messages that go into this call. Fresh: the whole transcript, since `claude -p` is
  * stateless. Resuming: what came after Claude's own last reply (`own` names this route's
  * provider), so the turns another model made while the session ran elsewhere reach Claude too;
  * without that its transcript skipped from its own last reply to the new prompt. A tool result
  * rides along only when the call it answers is in the same slice: another model's tool use is
  * transcript Claude never saw, while Claude's own results already sit in its session.
+ * `developer` keeps dsh's developer messages with text (see `isTurn`).
  */
-export declare function selectTurns(messages: LooseMessage[] | undefined, resuming: boolean, own?: string): LooseMessage[];
+export declare function selectTurns(messages: LooseMessage[] | undefined, resuming: boolean, own?: string, developer?: boolean): LooseMessage[];
 /** The most of one tool's input or output another model's transcript carries into the prompt. */
 export declare const TOOL_TEXT_CAP = 2000;
 /** dsh's instruction bundle repeats files Claude Code already loads on its own (`CLAUDE.md` in the
@@ -55,6 +71,16 @@ export declare const TOOL_TEXT_CAP = 2000;
  *  bundle is one `<system-reminder>` with `Instructions from: <path>` headers; a block runs to
  *  the next header or the closing tag. Empty when nothing but the wrapper would remain. */
 export declare function withoutNativeInstructions(text: string): string;
+/** What Claude Code adds of its own that dsh's turn may carry a copy of: the CLAUDE.md files it
+ *  loads, and the body of a skill it expands from a `/name` line. Each `true` means the CLI adds it,
+ *  so dsh's copy is left out; `isolate` turns CLAUDE.md loading off and `verbatimPrompts` turns
+ *  slash expansion off, and then dsh's copy is the only one and stays. */
+export interface NativeCopies {
+    claudeMd: boolean;
+    skills: boolean;
+}
+/** Claude Code as it runs by default: it adds both. */
+export declare const CLI_COPIES: NativeCopies;
 /** Which withheld block a message is, if any. The chat row mask classifies the same sources from
  *  the client side, so the rule itself lives in `context-sources.ts` and both read it there. */
 export declare const contextSourceOf: (m: LooseMessage) => ContextSource | undefined;
@@ -63,19 +89,21 @@ export declare const contextSourceOf: (m: LooseMessage) => ContextSource | undef
  *  `instructions` counts what survives the CLAUDE.md filter and `claudemd` counts what the filter
  *  took, so the two together are the bundle dsh handed over. A key is absent when this turn carried
  *  nothing of that kind, which is not the same as zero and must not be flattened into one. */
-export declare function contextSizes(turns: LooseMessage[]): ContextSizes;
+export declare function contextSizes(turns: LooseMessage[], copies?: NativeCopies): ContextSizes;
 /** Prompt text of one dsh message: a withheld block answers empty, a skill-invocation the CLI also
  *  lists is dsh's duplicate of a body Claude Code injects itself (so it answers empty), and the
  *  instruction bundle keeps losing its CLAUDE.md sections whatever the switches say, since Claude
  *  Code loads those itself. */
-export declare const promptTextOf: (m: LooseMessage, drops?: ReadonlySet<ContextSource>) => string;
+export declare const promptTextOf: (m: LooseMessage, drops?: ReadonlySet<ContextSource>, copies?: NativeCopies) => string;
 /**
  * The turn's text as one stdin prompt. A turn with assistant text in it is labelled by role so the
  * history stays legible; a plain user turn is sent as it was typed, with no label. A turn that
  * carries only an image has no text to send, so it becomes `(see attached)` and the image rides
  * along in `imageRefs`.
  */
-export declare function buildPrompt(turns: LooseMessage[], drops?: ReadonlySet<ContextSource>): string;
+export declare function buildPrompt(turns: LooseMessage[], drops?: ReadonlySet<ContextSource>, 
+/** Characters of one tool input or output kept (`replayToolTextLimit`); 0 keeps them whole. */
+cap?: number, copies?: NativeCopies): string;
 /** An image loaded from dsh's attachment store, ready for the stdin line, plus the path of the
  *  copy kept for Claude's tools when one could be written. */
 /** An image of the turn. `data` is its base64 for the stdin line, or empty when the image rides by

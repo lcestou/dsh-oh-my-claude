@@ -1,5 +1,6 @@
 // The turn record, the ultracode state, the result and login parses, the notice texts and the live-turn shape.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
+import { createHash } from "node:crypto";
 import { hostname } from "node:os";
 import {
   boundContextSummary,
@@ -16,6 +17,7 @@ import {
   type JsonValue,
   type PluginContext,
   type ResolvedAgent,
+  type ToolSchema,
 } from "../dsh.js";
 import { serverText } from "../locale.js";
 import {
@@ -29,7 +31,14 @@ import {
 } from "../process.js";
 import { type FsBox } from "../remote-fs.js";
 import { type LiveMode, type Translator } from "../translator.js";
-import { promptTextOf, steerKey, textOf, type LooseMessage } from "./prompt.js";
+import {
+  CLI_COPIES,
+  promptTextOf,
+  steerKey,
+  textOf,
+  type LooseMessage,
+  type NativeCopies,
+} from "./prompt.js";
 import { type TurnTotals } from "./types.js";
 
 export interface TurnRecord {
@@ -436,13 +445,14 @@ export function stepContextFor(
   messages: LooseMessage[] | undefined,
   drops: ReadonlySet<ContextSource> = new Set(),
   sent: ReadonlySet<string> = new Set(),
+  copies: NativeCopies = CLI_COPIES,
 ): string {
   const parts = [];
   for (const m of afterLastAssistant(messages)) {
     if (m.role !== "user") continue;
     if (m.source?.kind === "tool") continue;
     if (sent.has(steerKey(m) ?? "")) continue;
-    const text = promptTextOf(m, drops);
+    const text = promptTextOf(m, drops, copies);
     if (text) parts.push(text);
   }
   return parts.length === 0
@@ -537,6 +547,19 @@ export function* relayBlocks(tr: Translator, call: RelayEvent): IterableIterator
 
 /** A process spec as a string, so two specs compare by content when deciding to reuse a process. */
 export const specKey = (spec: ClaudeProcessSpec) => JSON.stringify(spec);
+
+/**
+ * A short digest of the tools the bridge lists: each name with its parameter schema and whether
+ * dsh defers it, in name order. Descriptions are left out on purpose: a tool may word its
+ * description from live state, and a description that changed every turn would restart Claude
+ * every turn, while a name or a schema changes only when the tool itself does.
+ */
+export function toolSetDigest(tools: readonly ToolSchema[]): string {
+  const rows = tools
+    .toSorted((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .map((t) => [t.name, t.deferLoading === true, t.parameters]);
+  return createHash("sha256").update(JSON.stringify(rows)).digest("hex").slice(0, 16);
+}
 
 /** Whether a todo list still has work on it. A list of nothing but completed items is finished,
  *  and a finished list is not worth painting over a fresh message. */

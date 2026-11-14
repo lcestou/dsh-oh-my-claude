@@ -42,7 +42,9 @@ export declare function forwardedEnv(base?: NodeJS.ProcessEnv): [string, string]
 /** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
  *  the caller passes. CHILD_ENV beats the inherited value on purpose. An `MCP_TOOL_TIMEOUT` that
  *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode
- *  and not the other. A caller that means to override still wins, which is the escape hatch. */
+ *  and not the other. A caller that means to override still wins, which is the escape hatch. An
+ *  override of the empty string removes the name instead (`isolate` clears CLAUDE_CODE_SIMPLE that
+ *  way): the CLI reads some names for their presence, and an empty value is not an absent one. */
 export declare function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, string>): Record<string, string>;
 /** Where Claude Code's installers put `claude` (the native installer, the old local install, Homebrew,
  *  npm and bun globals, Volta). An app started from the macOS Dock or Finder, DSH Desktop among
@@ -427,8 +429,11 @@ export declare function sshInvocation(host: string, command: string, args: strin
  */
 export declare const sshSpawner: (host: string, resolveCwd?: (cwd: string) => string, far?: FarEnv) => Spawner;
 /** stdin line for one user turn. `session_id` empty and `parent_tool_use_id` null match what the SDK
- *  writes. `uuid` names the line for a later `cancel_async_message`; the CLI keeps it as the message's id. */
-export declare function userTurnLine(content: unknown, uuid?: string): string;
+ *  writes. `uuid` names the line for a later `cancel_async_message`; the CLI keeps it as the message's id.
+ *  `composed` marks it as the SDK's `verbatimPrompts` does (`client_composed`): the CLI then sends the
+ *  text as written, with no `@path` expansion, no slash-command dispatch and none of the context it
+ *  attaches at a turn's start (nested CLAUDE.md files, skill and tool listings, reminders). */
+export declare function userTurnLine(content: unknown, uuid?: string, composed?: boolean): string;
 /** stdin line answering one of the CLI's control requests with a result. */
 export declare function controlResponseLine(requestId: string, response: unknown): string;
 /** stdin line asking the CLI to stop the current turn; it answers with a result and stays alive. */
@@ -703,6 +708,12 @@ export interface TurnPrep {
     input: string | null;
     /** The context blocks the Settings switches withhold, read once when this turn was assembled. */
     drops?: ReadonlySet<ContextSource>;
+    /** What Claude Code adds of its own this turn, so dsh's copies of it are left out (`NativeCopies`
+     *  in adapter/prompt.ts; absent means both). */
+    copies?: {
+        claudeMd: boolean;
+        skills: boolean;
+    };
     /** What each of those blocks cost this turn in characters, before any of them were withheld.
      *  Absent on a side call, which has no workspace to record a number against. */
     sizes?: ContextSizes;
@@ -754,6 +765,19 @@ export interface ClaudeProcessSpec {
      *  before the field existed; a flip changes the key and the session's next turn respawns, never
      *  the turn in flight. */
     child?: "node" | "dsh";
+    /** A digest of dsh's system prompt when the `dsh` system prompt mode passed it with
+     *  `--system-prompt`. Absent otherwise, so every other spec keys as before; a prompt dsh changed
+     *  changes the key, and the session's next turn starts a process that reads the new one. */
+    system?: string;
+    /** A digest of the bridged dsh tools (names, parameter schemas, deferral) under
+     *  `followToolSet`. Claude Code lists an MCP server's tools once, at start, so a changed set
+     *  changes the key and the session's next turn starts a process that lists it again. */
+    tools?: string;
+    /** A digest of the config that decides how the CLI is started beyond the fields above
+     *  (`builtinTools`, `toolLoading`, `isolate`), present only when one of them is not its default.
+     *  A keeper outlives a dsh restart, and a config change comes with one: without this the new
+     *  config would reattach to a Claude started under the old. */
+    engine?: string;
 }
 /** What the caller wants to know when a Claude process ends, live or after a restart. */
 export interface ClaudeProcessOnExit {

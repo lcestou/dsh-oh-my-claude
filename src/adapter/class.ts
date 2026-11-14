@@ -39,6 +39,7 @@ import { managedDir } from "../instructions.js";
 import { readUsage, stillLimitedUntil } from "../usage.js";
 import { MCP_PATH, type McpBridge } from "../mcp.js";
 import { KEY_ENV } from "../mcp-config.js";
+import { ISOLATED_ENV, engineConfigFor, engineDigest } from "./isolate.js";
 import {
   type ClaudeEvent,
   ClaudeProcess,
@@ -321,6 +322,8 @@ import {
   oversize,
   relayFileHandles,
   selectTurns,
+  dshSystemPrompt,
+  isCliCommandLine,
   STEER_COPY_CAP_MS,
   steerKey,
   textOf,
@@ -383,6 +386,7 @@ import {
   RESUME_DELAY_MS,
   sideQuestionsIn,
   specKey,
+  toolSetDigest,
   type SpliceEvent,
   stepContextFor,
   STREAM_MAX_MS,
@@ -742,7 +746,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           continue;
         }
         const uuid = randomUUID();
-        if (proc.write(buildInput(text, [], uuid))) {
+        if (proc.write(buildInput(text, [], uuid, this.composedFor(session?.id, text)))) {
           proc.sent.add(key);
           proc.steerPending = true;
           proc.forwarded += 1;
@@ -1655,8 +1659,24 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const far = targetHost === undefined ? undefined : await boxRouteOf(targetHost);
     const farRoute = far && boxRouteState(far);
     if (farRoute?.state === "routed") via = farRoute.host;
-    const turns = selectTurns(options.messages, session?.resuming ?? false, this.providerId);
-    let prompt = buildPrompt(turns, drops);
+    const dshMode = this.config.systemPrompt === "dsh" && !options.purpose;
+    const turns = selectTurns(
+      options.messages,
+      session?.resuming ?? false,
+      this.providerId,
+      dshMode,
+    );
+    // Under `systemPrompt: dsh` the prompt dsh wrote replaces Claude Code's (`buildArgs`).
+    const dshSystem = dshMode ? dshSystemPrompt(options.messages, options.system) : undefined;
+    // `isolate` covers local spawns only: its environment (no CLAUDE.md, no telemetry) goes into
+    // the local child's env, and a box's claude keeps its own settings and CLAUDE.md, so neither
+    // its flags nor the CLAUDE.md copy apply there. Mixed, a box's CLI read its CLAUDE.md while
+    // dsh's copy was kept as well.
+    const engineConfig = engineConfigFor(this.config, targetHost);
+    // Claude Code loads no CLAUDE.md under `isolate` and expands no `/skill` line under
+    // `verbatimPrompts`, so dsh's copies of those are then the only ones and are kept.
+    const copies = { claudeMd: !engineConfig.isolate, skills: !this.config.verbatimPrompts };
+    let prompt = buildPrompt(turns, drops, this.config.replayToolTextLimit, copies);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
     if (targetHost)
       prompt = await relayFileHandles(
@@ -1697,14 +1717,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // nothing; leaving `sizes` undefined is what keeps them out of the store. The guidance also
     // rides on `--append-system-prompt`, so a CLI without that flag sends none of it and the row
     // has to read zero rather than the length of text that stayed home.
-    const toolsSent = mcpBridge !== undefined && supports(cli.flags, "--append-system-prompt");
+    const toolsSent =
+      mcpBridge !== undefined &&
+      supports(cli.flags, dshSystem === undefined ? "--append-system-prompt" : "--system-prompt");
     const sizes: ContextSizes | undefined = options.purpose
       ? undefined
-      : { ...contextSizes(turns), tools: toolsSent ? dshToolsGuidance(mcpBridge.tools).length : 0 };
+      : {
+          ...contextSizes(turns, copies),
+          tools: toolsSent ? dshToolsGuidance(mcpBridge.tools, this.config.builtinTools).length : 0,
+        };
     const args = buildArgs({
       ...options,
       model,
-      config: this.config,
+      config: engineConfig,
       session,
       accessMode,
       flags: cli.flags,
@@ -1712,6 +1737,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       temporary,
       permissionMode: effectivePermissionMode,
       mcp: mcpBridge,
+      dshSystem,
     });
     // Spec = what a running process was spawned with. `resuming` is deliberately left out: it flips
     // to true after the first turn and must not force a respawn.
@@ -1723,6 +1749,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       sessionId: session?.id ?? null,
       temporary,
     };
+    // A process keeps the prompt it was started with, so a changed one has to key a new process.
+    // Hashed: the spec is saved beside a keeper, and the prompt has no business on disk there.
+    if (dshSystem !== undefined)
+      spec.system = createHash("sha256").update(dshSystem).digest("hex").slice(0, 16);
+    if (this.config.followToolSet && mcpBridge?.tools) spec.tools = toolSetDigest(mcpBridge.tools);
+    const engine = engineDigest(this.config);
+    if (engine !== undefined) spec.engine = engine;
     // An environment is fixed at spawn, so the switch joins the spec: a session already running
     // when it flips is replaced on its next turn and resumes with the window the switch gives.
     // Local spawns only; the flag does not ride to a box, whose own environment decides.
@@ -1764,8 +1797,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       session,
       spec,
       accessMode,
-      input: stdin ? buildInput(prompt, images) : null,
+      input: stdin
+        ? buildInput(prompt, images, undefined, this.composedFor(options.sessionId, prompt))
+        : null,
       drops,
+      copies,
       sizes,
       settingsKey,
       via,
@@ -1830,6 +1866,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   private ultracodeSaved: Promise<void> = Promise.resolve();
   /** dsh session id → the tool names its last init frame reported; absent until one arrives. */
   readonly sessionTools = new Map<string, string[]>();
+  /** dsh session id → the command names the CLI last reported (init or commands_changed); absent
+   *  until one arrives. Read by `composedFor`. */
+  readonly sessionCommands = new Map<string, string[]>();
+
+  /** Whether a stdin line for `sessionId` goes marked as written (`verbatimPrompts`): never for a
+   *  slash line naming one of the CLI's commands, which the mark would stop it dispatching. */
+  composedFor(sessionId: string | undefined, text: string): boolean {
+    if (!this.config.verbatimPrompts) return false;
+    return !isCliCommandLine(text, sessionId ? this.sessionCommands.get(sessionId) : undefined);
+  }
   /** dsh session id → the plugins its last init frame said the CLI failed to load. Absent until an
    *  init frame arrives; a clean load clears it. A session adopted from the keeper after a dsh
    *  restart sees no new init frame, so it reads clean until its next fresh spawn.
@@ -2433,7 +2479,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (!message || !inbox?.remove(id)) {
         // dsh already drew it as sent: give Claude its copy back so chat and Claude agree. With the
         // turn over, stdin would start a turn of its own; out of `sent`, dsh's delivery carries it.
-        if (proc.busy && proc.write(buildInput(waiting.text, [], randomUUID()))) {
+        if (
+          proc.busy &&
+          proc.write(
+            buildInput(waiting.text, [], randomUUID(), this.composedFor(sessionId, waiting.text)),
+          )
+        ) {
           proc.forwarded += 1;
           proc.steerPending = true;
         } else proc.sent.delete(waiting.key);
@@ -3937,6 +3988,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       over.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(window);
       over.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(window);
     }
+    if (this.config.isolate) Object.assign(over, ISOLATED_ENV);
     return Object.keys(over).length === 0 ? undefined : over;
   }
 
@@ -5342,7 +5394,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // words at all, so it takes the prompt path's wording for an attachment-only turn. Skipping it
     // would lose it: the next prompt starts after this turn's reply (`selectTurns`).
     const body = [text, notes].filter(Boolean).join("\n\n") || "(see attached)";
-    if (!proc.write(buildInput(body, images, uuid))) return false;
+    if (!proc.write(buildInput(body, images, uuid, this.composedFor(options.sessionId, body))))
+      return false;
     proc.sent.add(key);
     return true;
   }
@@ -5397,7 +5450,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (key && !proc.sent.has(key) && imageRefs([m]).length > 0)
           await this.writeSteerMessage(m, key, proc, cont.options);
       }
-      const extra = stepContextFor(cont.options.messages, prep.drops, proc.sent); // steers and notices ride on the last result
+      // steers and notices ride on the last result
+      const extra = stepContextFor(cont.options.messages, prep.drops, proc.sent, prep.copies);
       // An image in dsh's result (read_image) goes back as MCP image content; dropped, Claude
       // would read the text line about the image and never see it. On a box the bridge is off.
       await loadRelayImages(cont.results, this.ctx.attachments, cont.options.signal, (msg) =>
@@ -5875,7 +5929,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (options.sessionId && pluginWarnings !== undefined)
           this.sessionPluginWarnings.set(options.sessionId, pluginWarnings);
         const agent = this.ctx?.agents?.get?.(options.sessionId);
-        if (names.length > 0) this.bridgeCommands(names, agent);
+        if (names.length > 0) {
+          if (options.sessionId) this.sessionCommands.set(options.sessionId, names);
+          this.bridgeCommands(names, agent);
+        }
         this.mountCompactOverride(agent);
       },
       onModel: (rec) => {

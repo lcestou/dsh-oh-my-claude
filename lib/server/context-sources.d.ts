@@ -40,13 +40,15 @@ export interface ChatFlowNode {
  * Which chat rows misdescribe a Claude Code session, given what the switches withheld. dsh draws a
  * row for every block it assembled, and a row for a block that never left dsh reads as a receipt
  * for something Claude Code never saw. Two kinds qualify: dsh's own system prompt, which this
- * plugin has never passed on, and any injected block a switch dropped from the prompt.
+ * plugin passes on only under the `dsh` system prompt mode, and any injected block a switch
+ * dropped from the prompt.
  * @param order - the chat's render order, as dsh publishes it.
  * @param node - reader for one row by key.
  * @param drops - the blocks the switches are withholding right now.
+ * @param systemPromptSent - the session's mount passes dsh's system prompt to Claude.
  * @returns the keys to fold away, in render order.
  */
-export declare function maskedRows(order: readonly string[], node: (key: string) => ChatFlowNode | undefined, drops: ReadonlySet<ContextSource>): string[];
+export declare function maskedRows(order: readonly string[], node: (key: string) => ChatFlowNode | undefined, drops: ReadonlySet<ContextSource>, systemPromptSent?: boolean): string[];
 /** Every row the Settings card shows a number for. Two of them are not messages: `tools` is this
  *  plugin's own guidance appended to the system prompt, and `claudemd` is what the CLAUDE.md filter
  *  took out of dsh's instruction bundle before the rest was sent. */

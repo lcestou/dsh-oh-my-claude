@@ -112,12 +112,15 @@ export function forwardedEnv(base: NodeJS.ProcessEnv = process.env): [string, st
 /** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
  *  the caller passes. CHILD_ENV beats the inherited value on purpose. An `MCP_TOOL_TIMEOUT` that
  *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode
- *  and not the other. A caller that means to override still wins, which is the escape hatch. */
+ *  and not the other. A caller that means to override still wins, which is the escape hatch. An
+ *  override of the empty string removes the name instead (`isolate` clears CLAUDE_CODE_SIMPLE that
+ *  way): the CLI reads some names for their presence, and an empty value is not an absent one. */
 export function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, string>) {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) if (v !== undefined) env[k] = v;
   if (process.platform !== "win32") env.PATH = withClaudeDirs(env.PATH);
   Object.assign(env, CHILD_ENV, override ?? {});
+  for (const [k, v] of Object.entries(override ?? {})) if (v === "") delete env[k];
   return env;
 }
 
@@ -502,13 +505,17 @@ export const seamSpawner =
     subprocess.spawn({
       argv: [command, ...args],
       cwd,
-      env: {
-        ...credentialEnv(base),
-        ...seamPath(base),
-        ...Object.fromEntries(forwardedEnv(base)),
-        ...CHILD_ENV,
-        ...envOverride,
-      },
+      // An override of the empty string removes the name, as in childEnv: `isolate` clears
+      // CLAUDE_CODE_SIMPLE that way, and an empty value is not an absent one to the CLI.
+      env: Object.fromEntries(
+        Object.entries({
+          ...credentialEnv(base),
+          ...seamPath(base),
+          ...Object.fromEntries(forwardedEnv(base)),
+          ...CHILD_ENV,
+          ...envOverride,
+        }).filter(([k]) => envOverride?.[k] !== ""),
+      ),
       graceMs: 5000,
       stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
     });
@@ -695,8 +702,11 @@ export const sshSpawner =
   };
 
 /** stdin line for one user turn. `session_id` empty and `parent_tool_use_id` null match what the SDK
- *  writes. `uuid` names the line for a later `cancel_async_message`; the CLI keeps it as the message's id. */
-export function userTurnLine(content: unknown, uuid?: string): string {
+ *  writes. `uuid` names the line for a later `cancel_async_message`; the CLI keeps it as the message's id.
+ *  `composed` marks it as the SDK's `verbatimPrompts` does (`client_composed`): the CLI then sends the
+ *  text as written, with no `@path` expansion, no slash-command dispatch and none of the context it
+ *  attaches at a turn's start (nested CLAUDE.md files, skill and tool listings, reminders). */
+export function userTurnLine(content: unknown, uuid?: string, composed = false): string {
   // Built in order, not spread: the key order is the byte order of the line, and the line without a
   // uuid must stay what it was before the steer card.
   const line: { type: "user"; uuid?: string } & Record<string, unknown> = { type: "user" };
@@ -704,6 +714,7 @@ export function userTurnLine(content: unknown, uuid?: string): string {
   line.session_id = "";
   line.message = { role: "user", content };
   line.parent_tool_use_id = null;
+  if (composed) line.client_composed = true;
   return `${JSON.stringify(line)}\n`;
 }
 
@@ -1434,6 +1445,9 @@ export interface TurnPrep {
   input: string | null;
   /** The context blocks the Settings switches withhold, read once when this turn was assembled. */
   drops?: ReadonlySet<ContextSource>;
+  /** What Claude Code adds of its own this turn, so dsh's copies of it are left out (`NativeCopies`
+   *  in adapter/prompt.ts; absent means both). */
+  copies?: { claudeMd: boolean; skills: boolean };
   /** What each of those blocks cost this turn in characters, before any of them were withheld.
    *  Absent on a side call, which has no workspace to record a number against. */
   sizes?: ContextSizes;
@@ -1487,6 +1501,19 @@ export interface ClaudeProcessSpec {
    *  before the field existed; a flip changes the key and the session's next turn respawns, never
    *  the turn in flight. */
   child?: "node" | "dsh";
+  /** A digest of dsh's system prompt when the `dsh` system prompt mode passed it with
+   *  `--system-prompt`. Absent otherwise, so every other spec keys as before; a prompt dsh changed
+   *  changes the key, and the session's next turn starts a process that reads the new one. */
+  system?: string;
+  /** A digest of the bridged dsh tools (names, parameter schemas, deferral) under
+   *  `followToolSet`. Claude Code lists an MCP server's tools once, at start, so a changed set
+   *  changes the key and the session's next turn starts a process that lists it again. */
+  tools?: string;
+  /** A digest of the config that decides how the CLI is started beyond the fields above
+   *  (`builtinTools`, `toolLoading`, `isolate`), present only when one of them is not its default.
+   *  A keeper outlives a dsh restart, and a config change comes with one: without this the new
+   *  config would reattach to a Claude started under the old. */
+  engine?: string;
 }
 
 /** What the caller wants to know when a Claude process ends, live or after a restart. */

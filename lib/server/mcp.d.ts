@@ -1,11 +1,19 @@
 export { KEY_HEADER } from "./mcp-config.js";
 import type { RelayResult } from "./process.js";
 import type { Agent, DshToolsRegistry, JsonValue, PluginContext, ToolSchema, WebServer } from "./dsh.js";
+/** The MCP tool `_meta` key Claude Code reads to load a tool up front instead of deferring it. */
+export declare const ALWAYS_LOAD = "anthropic/alwaysLoad";
 /** HTTP endpoint path for the MCP bridge handler. */
 export declare const MCP_PATH = "/dsh-oh-my-claude/mcp";
 /** dsh tools Claude Code already has natively; proxying them would only confuse the model.
  *  `str_replace_editor` is the file editor some presets offer in place of `edit`. */
 export declare const HIDDEN: Set<string>;
+/**
+ * The dsh tools the bridge leaves out for a CLI started with these built-ins (the `--tools` list):
+ * all of `HIDDEN` for `default`, and otherwise only the file tools whose Claude Code stand-in is on.
+ * `run_code` stays out either way: it is dsh's executor transport, offered alone in code mode.
+ */
+export declare function hiddenFor(builtins: readonly string[]): ReadonlySet<string>;
 /** dsh's code-mode tool: under a PTC preset it is the only tool the model may call directly. */
 export declare const RUN_CODE = "run_code";
 /** `run_code` when dsh offers the agent only that tool (a code-mode preset), else undefined. dsh's
@@ -82,10 +90,15 @@ export interface RpcEnv {
     /** The session CLI's permission mode right now, read once per tools/call so a switch made after
      *  spawn counts; undefined when unknown, which gates nothing. */
     mode?: () => string | undefined;
+    /** The dsh tools left off for this session (`hiddenFor`); `HIDDEN` when not given. */
+    hidden?: ReadonlySet<string>;
+    /** Mark every dsh tool dsh itself loads up front as one Claude Code must load up front too
+     *  (`toolLoading: dsh`); otherwise Claude Code defers all of them behind its ToolSearch. */
+    alwaysLoad?: boolean;
     log?: (level: string, msg: string) => void;
 }
 /** One JSON-RPC request against the tools visible to `agent`. Returns null for notifications. */
-export declare function handleRpc(msg: JsonRpcRequest, { tools, agent, signal, version, open, prompt, wait, relay, mode, log }: RpcEnv): Promise<JsonRpcReply | null>;
+export declare function handleRpc(msg: JsonRpcRequest, { tools, agent, signal, version, open, prompt, wait, relay, mode, hidden, alwaysLoad, log, }: RpcEnv): Promise<JsonRpcReply | null>;
 /** What the adapter hands the bridge. */
 export interface BridgeOptions {
     log: (level: string, msg: string) => void;
@@ -93,6 +106,11 @@ export interface BridgeOptions {
     relay?: (sessionId: string, name: string, args: Record<string, JsonValue>, signal: AbortSignal) => Promise<RelayResult | undefined> | undefined;
     /** The permission mode the session's CLI is in right now; feeds the plan-mode gate. */
     mode?: (sessionId: string) => string | undefined;
+    /** The Claude Code built-ins a session's CLI is started with (`builtinTools`), which decide the
+     *  dsh file tools the bridge leaves out (`hiddenFor`). Every one of them when not given. */
+    builtins?: (sessionId: string) => readonly string[];
+    /** Whether a session's tools follow dsh's own deferral (`toolLoading: dsh`). */
+    dshLoading?: (sessionId: string) => boolean;
     /** Path of a file holding the bridge key; created once, reused across restarts. */
     keyFile?: string;
     /** Path of a file holding the loopback listener's port, so a restart rebinds the same port and
@@ -126,4 +144,4 @@ export declare function webServerBase(webServer: Pick<WebServer, "port" | "host"
  *  routes. Everywhere else they get the web server route as before, and no listener is started:
  *  a process that outlives a restart can only reconnect to the URL it was started with, and the
  *  web port is the one address that is fixed by configuration. */
-export declare function registerMcpBridge(ctx: PluginContext, { log, version, relay, mode, keyFile, portFile }: BridgeOptions): Promise<McpBridge>;
+export declare function registerMcpBridge(ctx: PluginContext, { log, version, relay, mode, builtins, dshLoading, keyFile, portFile }: BridgeOptions): Promise<McpBridge>;
