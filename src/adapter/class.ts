@@ -1603,7 +1603,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     );
     // Under `systemPrompt: dsh` the prompt dsh wrote replaces Claude Code's (`buildArgs`).
     const dshSystem = dshMode ? dshSystemPrompt(options.messages, options.system) : undefined;
-    let prompt = buildPrompt(turns, drops);
+    let prompt = buildPrompt(turns, drops, this.config.replayToolTextLimit);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
     if (targetHost)
       prompt = await relayFileHandles(

@@ -98,6 +98,7 @@ export type Config = {
   systemPrompt: "claude" | "dsh";
   verbatimPrompts: boolean;
   isolate: boolean;
+  replayToolTextLimit: number;
   fastMode: boolean;
   commandBridge: boolean;
   redactSecrets: boolean;
@@ -242,6 +243,14 @@ export const Config = z.object({
     .min(100)
     .default(600)
     .description("Characters of tool arguments/results shown in the activity blocks"),
+  replayToolTextLimit: z
+    .number()
+    .step(1)
+    .min(0)
+    .default(2000)
+    .description(
+      "Characters of each tool call's input and each tool result kept when dsh's history is sent to Claude as text: a turn another model worked, or the whole conversation when a new Claude session starts (its transcript gone, a fork, a refusal under refusalAsFailure). 0 keeps them whole, so a Claude session rebuilt from dsh's log loses nothing",
+    ),
   dshTools: z
     .boolean()
     .default(true)

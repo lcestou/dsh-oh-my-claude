@@ -83,7 +83,9 @@ export declare const promptTextOf: (m: LooseMessage, drops?: ReadonlySet<Context
  * carries only an image has no text to send, so it becomes `(see attached)` and the image rides
  * along in `imageRefs`.
  */
-export declare function buildPrompt(turns: LooseMessage[], drops?: ReadonlySet<ContextSource>): string;
+export declare function buildPrompt(turns: LooseMessage[], drops?: ReadonlySet<ContextSource>, 
+/** Characters of one tool input or output kept (`replayToolTextLimit`); 0 keeps them whole. */
+cap?: number): string;
 /** An image loaded from dsh's attachment store, ready for the stdin line, plus the path of the
  *  copy kept for Claude's tools when one could be written. */
 /** An image of the turn. `data` is its base64 for the stdin line, or empty when the image rides by

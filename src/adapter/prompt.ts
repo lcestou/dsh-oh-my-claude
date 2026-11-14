@@ -162,10 +162,10 @@ export function selectTurns(
 
 /** The most of one tool's input or output another model's transcript carries into the prompt. */
 export const TOOL_TEXT_CAP = 2000;
-/** `text`, or its first TOOL_TEXT_CAP characters and how many more there were. */
-const capped = (text: string) =>
-  text.length > TOOL_TEXT_CAP
-    ? `${text.slice(0, TOOL_TEXT_CAP)}… (${text.length - TOOL_TEXT_CAP} more characters)`
+/** `text`, or its first `cap` characters and how many more there were; whole when `cap` is 0. */
+const capped = (text: string, cap: number) =>
+  cap > 0 && text.length > cap
+    ? `${text.slice(0, cap)}… (${text.length - cap} more characters)`
     : text;
 
 /** dsh's instruction bundle repeats files Claude Code already loads on its own (`CLAUDE.md` in the
@@ -248,7 +248,7 @@ export const promptTextOf = (
 /** The turn's parts, with withheld blocks removed. An assistant message lists the tool calls it
  *  made and a tool result is labelled with the tool it came from, so a turn another model worked
  *  with tools reads as what happened, not as a bare reply. */
-const partsOf = (turns: LooseMessage[], drops: ReadonlySet<ContextSource>) => {
+const partsOf = (turns: LooseMessage[], drops: ReadonlySet<ContextSource>, cap: number) => {
   const names = new Map(turns.flatMap((m) => toolCallsOf(m).map((c) => [c.id, c.name] as const)));
   return turns
     .map((m) => {
@@ -256,10 +256,10 @@ const partsOf = (turns: LooseMessage[], drops: ReadonlySet<ContextSource>) => {
       if (callId !== undefined)
         return {
           role: "tool",
-          text: `${names.get(callId) ?? "tool"} returned:\n${capped(textOf(m.content))}`,
+          text: `${names.get(callId) ?? "tool"} returned:\n${capped(textOf(m.content), cap)}`,
         };
       const text = promptTextOf(m, drops);
-      const calls = toolCallsOf(m).map((c) => `(called ${c.name} ${capped(c.input)})`);
+      const calls = toolCallsOf(m).map((c) => `(called ${c.name} ${capped(c.input, cap)})`);
       // A native model reads a developer message as an in-history system message.
       const role = m.role === "developer" ? "system" : m.role;
       return { role, text: [text, ...calls].filter(Boolean).join("\n") };
@@ -276,8 +276,10 @@ const partsOf = (turns: LooseMessage[], drops: ReadonlySet<ContextSource>) => {
 export function buildPrompt(
   turns: LooseMessage[],
   drops: ReadonlySet<ContextSource> = new Set(),
+  /** Characters of one tool input or output kept (`replayToolTextLimit`); 0 keeps them whole. */
+  cap: number = TOOL_TEXT_CAP,
 ): string {
-  const filtered = partsOf(turns, drops);
+  const filtered = partsOf(turns, drops, cap);
   // A turn dsh opened with nothing but a withheld block would leave no prompt at all, and the CLI
   // needs one, so that turn goes out with an empty drop set: failing a turn is a worse answer than
   // sending the block it was about. The live case is the runtime snapshot, which re-sends itself
@@ -285,7 +287,7 @@ export function buildPrompt(
   // `withoutNativeInstructions` still applies on this path, and should: dropping dsh's duplicate of
   // a CLAUDE.md the CLI loads itself is not one of the switches, it is what the adapter has always
   // done, and re-sending the copy here would double the file rather than rescue the turn.
-  const parts = filtered.length > 0 ? filtered : partsOf(turns, new Set());
+  const parts = filtered.length > 0 ? filtered : partsOf(turns, new Set(), cap);
   if (!parts.some((t) => t.role === "user")) {
     // Attachment-only turn: the user sent an image (or other non-text block) with no typed
     // text. Images ride along separately via imageRefs, but Claude still needs a non-empty
