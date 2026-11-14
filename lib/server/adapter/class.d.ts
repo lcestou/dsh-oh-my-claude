@@ -456,6 +456,74 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** dsh session id → the command names the CLI last reported (init or commands_changed); absent
      *  until one arrives. Read by `composedFor`. */
     readonly sessionCommands: Map<string, string[]>;
+    /** dsh session id → the config its last turn ran on, set by `prepare` when it is not the
+     *  plugin's own (engine mode). The bridge's tool list and the steer writers read it through
+     *  `configFor` between turns; absent means the plugin's own config. */
+    readonly sessionConfigs: Map<string, Schemastery.ObjectT<{
+        command: import("@deepseek-ai/schemastery").default<string, string>;
+        spawn: import("@deepseek-ai/schemastery").default<"dsh" | "keeper" | "node", "dsh" | "keeper" | "node">;
+        sshHost: import("@deepseek-ai/schemastery").default<string, string>;
+        permissionMode: import("@deepseek-ai/schemastery").default<"acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan", "acceptEdits" | "auto" | "bypassPermissions" | "dontAsk" | "dsh" | "manual" | "plan">;
+        hiddenModels: import("@deepseek-ai/schemastery").default<string[], string[]>;
+        customModels: import("@deepseek-ai/schemastery").default<({
+            model?: string | null | undefined;
+            label?: string | null | undefined;
+            contextWindow?: number | null | undefined;
+            efforts?: string[] | null | undefined;
+        } & import("@deepseek-ai/cosmokit").Dict)[], Schemastery.ObjectT<{
+            model: import("@deepseek-ai/schemastery").default<string, string>;
+            label: import("@deepseek-ai/schemastery").default<string, string>;
+            contextWindow: import("@deepseek-ai/schemastery").default<number, number>;
+            efforts: import("@deepseek-ai/schemastery").default<string[], string[]>;
+        }>[]>;
+        allowedTools: import("@deepseek-ai/schemastery").default<string[], string[]>;
+        disallowedTools: import("@deepseek-ai/schemastery").default<string[], string[]>;
+        builtinTools: import("@deepseek-ai/schemastery").default<string[], string[]>;
+        toolLoading: import("@deepseek-ai/schemastery").default<"claude" | "dsh", "claude" | "dsh">;
+        followToolSet: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        addDirs: import("@deepseek-ai/schemastery").default<string[], string[]>;
+        pluginDirs: import("@deepseek-ai/schemastery").default<string[], string[]>;
+        pluginUrls: import("@deepseek-ai/schemastery").default<string[], string[]>;
+        maxTurns: import("@deepseek-ai/schemastery").default<number, number>;
+        maxBudgetUsd: import("@deepseek-ai/schemastery").default<number, number>;
+        titleModel: import("@deepseek-ai/schemastery").default<string, string>;
+        toolActivity: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        toolsInline: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        hookRows: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        resume: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        idleTimeoutMs: import("@deepseek-ai/schemastery").default<number, number>;
+        toolTextLimit: import("@deepseek-ai/schemastery").default<number, number>;
+        thinkingDisplay: import("@deepseek-ai/schemastery").default<"" | "highlights" | "omitted" | "summarized", "" | "highlights" | "omitted" | "summarized">;
+        replayToolTextLimit: import("@deepseek-ai/schemastery").default<number, number>;
+        dshTools: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        systemPrompt: import("@deepseek-ai/schemastery").default<"claude" | "dsh", "claude" | "dsh">;
+        verbatimPrompts: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        isolate: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        fastMode: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        commandBridge: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        redactSecrets: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        persistTodos: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        cliCompaction: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        refusalAsFailure: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        continueAfterLimit: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        debug: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        approvals: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        processIdleMs: import("@deepseek-ai/schemastery").default<number, number>;
+        maxProcesses: import("@deepseek-ai/schemastery").default<number, number>;
+        configDir: import("@deepseek-ai/schemastery").default<string, string>;
+        ownTranscripts: import("@deepseek-ai/schemastery").default<boolean, boolean>;
+        providerId: import("@deepseek-ai/schemastery").default<string, string>;
+        providerName: import("@deepseek-ai/schemastery").default<string, string>;
+    }>>;
+    /** The config `sessionId`'s turns run on, as its last `prepare` worked it out; the plugin's own
+     *  config before a session's first turn, for a side call, and for a session not in engine mode. */
+    configFor(sessionId: string | undefined): ClaudeCodeAdapter["config"];
+    /**
+     * Reads the session's agent preset and the hints store, records the config its turns run on and
+     * returns it (engine-mode.ts decides). A dsh without the preset service, a session it cannot
+     * find, a scope already disposed, or an unreadable hints store all read as engine mode off.
+     */
+    sessionConfigOf(sessionId: string | undefined): Promise<ClaudeCodeAdapter["config"]>;
     /** Whether a stdin line for `sessionId` goes marked as written (`verbatimPrompts`): never for a
      *  slash line naming one of the CLI's commands, which the mark would stop it dispatching. */
     composedFor(sessionId: string | undefined, text: string): boolean;
@@ -1031,12 +1099,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * this box's panel login as CLAUDE_CODE_OAUTH_TOKEN for the default instance. A second instance
      * keeps its own login, which is what a second instance is for.
      */
-    localEnvOverride(firstParty?: boolean, window?: number, routed?: boolean): Record<string, string> | undefined;
+    localEnvOverride(firstParty?: boolean, window?: number, routed?: boolean, isolate?: boolean): Record<string, string> | undefined;
     /** What a `claude` started on `host` is handed: the box's panel login, withheld from a turn
      *  proven to go to a router there (as `localEnvOverride` does here), and the spec's window. */
     private farEnv;
     /** The child env a keeper hands Claude: dsh's environment plus the plugin's additions. */
-    keeperEnv(firstParty?: boolean, window?: number, routed?: boolean): Record<string, string>;
+    keeperEnv(firstParty?: boolean, window?: number, routed?: boolean, isolate?: boolean): Record<string, string>;
     /** Spawner for one session: keeper mode needs the session to place and name the keeper. A spec
      *  with `child` set runs as dsh's child whatever the switch says now: the spec is the decision
      *  `prepare` made for this process. */
@@ -1106,7 +1174,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * purpose one-shot (title/compaction) always runs on the local claude for the default provider. */
     hostLabelFor(sessionId: string | undefined, purpose?: string): string | undefined;
     /** The function that spawns a session's claude: over SSH for an ssh box, over SSH on the box for a remote-workspace cwd, else the local seam or node spawner with this box's login. `child` picks the seam or node; a one-shot with no session passes none and gets the seam only under `spawn: dsh` in the config, as before the switch existed. */
-    spawner(firstParty?: boolean, child?: "node" | "dsh", window?: number, routed?: boolean): Spawner;
+    spawner(firstParty?: boolean, child?: "node" | "dsh", window?: number, routed?: boolean, isolate?: boolean): Spawner;
     /** Kill this instance's live processes and drop them from the shared registry: called when an SSH
      * box is removed from the panel, so its remote `claude` sessions do not outlive the mount. */
     disposeProcesses(): void;

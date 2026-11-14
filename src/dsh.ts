@@ -562,11 +562,17 @@ export interface PluginContext {
   /** dsh's compaction seam (`dsh-compaction`) at the root, mounted when a backend is. dsh's web and
    *  desktop profiles disable it and mount one inside each agent preset; see `agentPresets`. */
   get(name: "compaction"): CompactionService | undefined;
-  /** Mirrors `serviceFor` in @deepseek-ai/dsh-agent-preset-registry: a service supplied inside the
-   *  agent's isolated preset group, undefined when its preset has none. */
-  get(
-    name: "agentPresets",
-  ): { serviceFor?(agent: Agent, name: "compaction"): CompactionService | undefined } | undefined;
+  /** Mirrors @deepseek-ai/dsh-agent-preset-registry `AgentPresetRegistry`. `serviceFor` is a service
+   *  supplied inside the agent's isolated preset group, undefined when its preset has none; `list`
+   *  is the presets a session can start under; `presetForSession` is the one a session runs, fixed
+   *  once it has a message, null when none was recorded. */
+  get(name: "agentPresets"):
+    | {
+        serviceFor?(agent: Agent, name: "compaction"): CompactionService | undefined;
+        list(): Promise<ReadonlyArray<{ id: string; name?: string; broken?: string }>>;
+        presetForSession(session: Session): string | null;
+      }
+    | undefined;
 }
 
 /** dsh's compaction service (`dsh-compaction`): its `compactNow` is what dsh's own `/compact` runs.
