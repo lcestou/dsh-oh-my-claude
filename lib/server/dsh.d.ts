@@ -455,6 +455,11 @@ export interface SessionWriteHandle {
 export interface PluginContext {
     root: PluginContext;
     baseUrl?: string;
+    /** The plugin's cordis fiber; `uid` turns null once a reload or a toggle disposes it. Optional:
+     *  the suites' fakes carry none. */
+    fiber?: {
+        readonly uid: number | null;
+    };
     llm: {
         registerConfigurableProviders: (providers: Array<{
             provider: string;
