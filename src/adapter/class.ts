@@ -39,7 +39,7 @@ import { managedDir } from "../instructions.js";
 import { readUsage, stillLimitedUntil } from "../usage.js";
 import { MCP_PATH, type McpBridge } from "../mcp.js";
 import { KEY_ENV } from "../mcp-config.js";
-import { ISOLATED_ENV, engineDigest } from "./isolate.js";
+import { ISOLATED_ENV, engineConfigFor, engineDigest } from "./isolate.js";
 import {
   type ClaudeEvent,
   ClaudeProcess,
@@ -1668,9 +1668,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     );
     // Under `systemPrompt: dsh` the prompt dsh wrote replaces Claude Code's (`buildArgs`).
     const dshSystem = dshMode ? dshSystemPrompt(options.messages, options.system) : undefined;
+    // `isolate` covers local spawns only: its environment (no CLAUDE.md, no telemetry) goes into
+    // the local child's env, and a box's claude keeps its own settings and CLAUDE.md, so neither
+    // its flags nor the CLAUDE.md copy apply there. Mixed, a box's CLI read its CLAUDE.md while
+    // dsh's copy was kept as well.
+    const engineConfig = engineConfigFor(this.config, targetHost);
     // Claude Code loads no CLAUDE.md under `isolate` and expands no `/skill` line under
     // `verbatimPrompts`, so dsh's copies of those are then the only ones and are kept.
-    const copies = { claudeMd: !this.config.isolate, skills: !this.config.verbatimPrompts };
+    const copies = { claudeMd: !engineConfig.isolate, skills: !this.config.verbatimPrompts };
     let prompt = buildPrompt(turns, drops, this.config.replayToolTextLimit, copies);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
     if (targetHost)
@@ -1724,7 +1729,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const args = buildArgs({
       ...options,
       model,
-      config: this.config,
+      config: engineConfig,
       session,
       accessMode,
       flags: cli.flags,

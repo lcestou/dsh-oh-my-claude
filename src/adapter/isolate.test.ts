@@ -5,7 +5,7 @@ import { strict as assert } from "node:assert";
 import { childEnv } from "../process.js";
 import { buildArgs } from "./cli.js";
 import { Config } from "./config.js";
-import { ISOLATED_ENV, engineDigest } from "./isolate.js";
+import { ISOLATED_ENV, engineDigest, engineConfigFor } from "./isolate.js";
 
 /** The value after `flag`, or undefined when the flag is absent. */
 const valueOf = (args: string[], flag: string) => {
@@ -55,5 +55,15 @@ const a = engineDigest(new Config({ isolate: true }));
 assert.ok(a);
 assert.notEqual(engineDigest(new Config({ isolate: true, builtinTools: ["ToolSearch"] })), a);
 assert.notEqual(engineDigest(new Config({ toolLoading: "dsh" })), undefined);
+
+// Local spawns only: a turn on a box builds its command line with isolate off, since the box CLI
+// keeps its own settings and CLAUDE.md; a local turn keeps it, and a config without it is untouched.
+{
+  const on = new Config({ isolate: true });
+  assert.equal(engineConfigFor(on, "u@box").isolate, false, "a box: off");
+  assert.equal(engineConfigFor(on, undefined), on, "local: the same config");
+  const off = new Config({});
+  assert.equal(engineConfigFor(off, "u@box"), off, "nothing to switch off");
+}
 
 console.log("isolate: ok");

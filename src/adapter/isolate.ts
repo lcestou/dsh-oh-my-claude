@@ -83,3 +83,13 @@ export function engineDigest(config: {
   );
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
+
+/** The config a turn's command line is built from. `isolate` covers local spawns only: its
+ *  environment goes into the local child's env, so on a box its flags would switch the box CLI's
+ *  settings off while that CLI still read its own CLAUDE.md, and dsh's copy would be kept too. */
+export function engineConfigFor<T extends { isolate: boolean }>(
+  config: T,
+  targetHost: string | undefined,
+): T {
+  return config.isolate && targetHost ? { ...config, isolate: false } : config;
+}
