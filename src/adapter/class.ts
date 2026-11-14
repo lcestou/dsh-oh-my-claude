@@ -314,6 +314,7 @@ import {
   oversize,
   relayFileHandles,
   selectTurns,
+  dshSystemPrompt,
   STEER_COPY_CAP_MS,
   steerKey,
   textOf,
@@ -1591,7 +1592,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const far = targetHost === undefined ? undefined : await boxRouteOf(targetHost);
     const farRoute = far && boxRouteState(far);
     if (farRoute?.state === "routed") via = farRoute.host;
-    const turns = selectTurns(options.messages, session?.resuming ?? false, this.providerId);
+    const dshMode = this.config.systemPrompt === "dsh" && !options.purpose;
+    const turns = selectTurns(
+      options.messages,
+      session?.resuming ?? false,
+      this.providerId,
+      dshMode,
+    );
+    // Under `systemPrompt: dsh` the prompt dsh wrote replaces Claude Code's (`buildArgs`).
+    const dshSystem = dshMode ? dshSystemPrompt(options.messages, options.system) : undefined;
     let prompt = buildPrompt(turns, drops);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
     if (targetHost)
@@ -1633,7 +1642,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // nothing; leaving `sizes` undefined is what keeps them out of the store. The guidance also
     // rides on `--append-system-prompt`, so a CLI without that flag sends none of it and the row
     // has to read zero rather than the length of text that stayed home.
-    const toolsSent = mcpBridge !== undefined && supports(cli.flags, "--append-system-prompt");
+    const toolsSent =
+      mcpBridge !== undefined &&
+      supports(cli.flags, dshSystem === undefined ? "--append-system-prompt" : "--system-prompt");
     const sizes: ContextSizes | undefined = options.purpose
       ? undefined
       : { ...contextSizes(turns), tools: toolsSent ? dshToolsGuidance(mcpBridge.tools).length : 0 };
@@ -1648,6 +1659,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       temporary,
       permissionMode: effectivePermissionMode,
       mcp: mcpBridge,
+      dshSystem,
     });
     // Spec = what a running process was spawned with. `resuming` is deliberately left out: it flips
     // to true after the first turn and must not force a respawn.
@@ -1659,6 +1671,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       sessionId: session?.id ?? null,
       temporary,
     };
+    // A process keeps the prompt it was started with, so a changed one has to key a new process.
+    // Hashed: the spec is saved beside a keeper, and the prompt has no business on disk there.
+    if (dshSystem !== undefined)
+      spec.system = createHash("sha256").update(dshSystem).digest("hex").slice(0, 16);
     // An environment is fixed at spawn, so the switch joins the spec: a session already running
     // when it flips is replaced on its next turn and resumes with the window the switch gives.
     // Local spawns only; the flag does not ride to a box, whose own environment decides.

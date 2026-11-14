@@ -103,6 +103,8 @@ const GUARDED_FLAGS = [
   "--effort",
   "--settings",
   "--append-system-prompt",
+  "--system-prompt",
+  "--system-prompt-snapshot",
   "--no-session-persistence",
   "--permission-mode",
   "--permission-prompt-tool",
@@ -302,7 +304,11 @@ export function buildArgs({
   mcp,
   temporary = false,
   permissionMode,
+  dshSystem,
 }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
+  /** dsh's own system prompt (`dshSystemPrompt`), passed only under `systemPrompt: dsh`. It
+   *  replaces Claude Code's prompt rather than following it. */
+  dshSystem?: string | undefined;
   model: string | undefined;
   config: Schemastery.TypeT<typeof Config>;
   session?: { id: string; resuming: boolean } | undefined;
@@ -329,9 +335,19 @@ export function buildArgs({
   // In -p mode /fast only works in a session launched with fast mode in --settings (fast-mode docs).
   if (config.fastMode && supports(flags, "--settings"))
     args.push("--settings", JSON.stringify({ fastMode: true }));
-  const appended = [system, mcp ? dshToolsGuidance(mcp.tools) : ""].filter(Boolean).join("\n\n");
-  if (appended && supports(flags, "--append-system-prompt")) {
-    args.push("--append-system-prompt", appended);
+  const guidance = mcp ? dshToolsGuidance(mcp.tools) : "";
+  if (dshSystem !== undefined && supports(flags, "--system-prompt")) {
+    // dsh's prompt stands in for Claude Code's, the tool guidance after it as it would follow
+    // Claude Code's. The CLI records a conversation's prompt on its first request and replays that
+    // record on every resume, so a prompt dsh changed would never arrive; the snapshot is off for
+    // that reason, and the prompt is the same text for the life of the process anyway.
+    args.push("--system-prompt", [dshSystem, guidance].filter(Boolean).join("\n\n"));
+    if (supports(flags, "--system-prompt-snapshot")) args.push("--system-prompt-snapshot", "off");
+  } else {
+    const appended = [system, guidance].filter(Boolean).join("\n\n");
+    if (appended && supports(flags, "--append-system-prompt")) {
+      args.push("--append-system-prompt", appended);
+    }
   }
   if (purpose) {
     // Auxiliary calls (title, compaction): one turn, no tools, no session of their own. Without

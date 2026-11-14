@@ -40,14 +40,22 @@ export declare const attachmentsOf: (content: LooseMessage["content"]) => SteerA
  *  stdin on its own: an assistant turn, a tool result. */
 export declare const steerKey: (m: LooseMessage) => string | undefined;
 /**
+ * dsh's system prompt for a loop-built request: the text of the latest run of system-role
+ * messages, after a one-shot caller's `system`. A loop-built request leads with one system
+ * message, and a prompt that changed during the session is a later system message holding the
+ * whole new text, so the latest run is the prompt in force. Undefined when neither has text.
+ */
+export declare function dshSystemPrompt(messages: readonly LooseMessage[] | undefined, system?: string): string | undefined;
+/**
  * Pick the messages that go into this call. Fresh: the whole transcript, since `claude -p` is
  * stateless. Resuming: what came after Claude's own last reply (`own` names this route's
  * provider), so the turns another model made while the session ran elsewhere reach Claude too;
  * without that its transcript skipped from its own last reply to the new prompt. A tool result
  * rides along only when the call it answers is in the same slice: another model's tool use is
  * transcript Claude never saw, while Claude's own results already sit in its session.
+ * `developer` keeps dsh's developer messages with text (see `isTurn`).
  */
-export declare function selectTurns(messages: LooseMessage[] | undefined, resuming: boolean, own?: string): LooseMessage[];
+export declare function selectTurns(messages: LooseMessage[] | undefined, resuming: boolean, own?: string, developer?: boolean): LooseMessage[];
 /** The most of one tool's input or output another model's transcript carries into the prompt. */
 export declare const TOOL_TEXT_CAP = 2000;
 /** dsh's instruction bundle repeats files Claude Code already loads on its own (`CLAUDE.md` in the

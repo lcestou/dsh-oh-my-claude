@@ -957,6 +957,35 @@ const NO_ROWS: readonly string[] = [];
 
 const ROW_MASK_STYLE_ID = "dsh-oh-my-claude-context-rows";
 
+/** Per mount, whether it passes dsh's system prompt on (`systemPrompt: dsh`). A config fact that
+ *  holds until dsh reloads the plugin, so one read per mount per page is enough. */
+const promptModes = new Map<string, Promise<boolean>>();
+/** Whether the mount `provider` sends dsh's system prompt to Claude; false until the answer lands,
+ *  and false on a failed read, which keeps the row folded as it always was. */
+function useSystemPromptSent(provider: string | undefined): boolean {
+  const [sent, setSent] = useState(false);
+  useEffect(() => {
+    if (provider === undefined) return;
+    let live = true;
+    let read = promptModes.get(provider);
+    if (read === undefined) {
+      read = fetch(`${ROUTE}/system-prompt?provider=${encodeURIComponent(provider)}`)
+        .then((r) => readJson<{ mode?: string }>(r))
+        .then((r) => r.mode === "dsh")
+        .catch(() => {
+          promptModes.delete(provider);
+          return false;
+        });
+      promptModes.set(provider, read);
+    }
+    void read.then((v) => live && setSent(v));
+    return () => {
+      live = false;
+    };
+  }, [provider]);
+  return sent;
+}
+
 /**
  * Fold away the chat rows that describe context Claude Code never received. dsh logs every block it
  * assembled and draws a row per block, so a session with the switches off still shows an
@@ -984,6 +1013,8 @@ export function ContextRowMask({
   const order = useChat?.((chat) => chat.order) ?? NO_ROWS;
   const nodes = useChat?.((chat) => chat.nodes);
   const mine = sessionId !== undefined && isClaudeSession(ctx, sessionId);
+  const provider = sessionId === undefined ? undefined : claudeProviderOf(ctx, sessionId);
+  const promptSent = useSystemPromptSent(provider);
   // The node map is a new object on every streamed chunk, and the walk below visits every row in
   // the conversation, so keying the memo on the map made a long turn quadratic in the length of
   // the transcript. What decides a row's masking is its source kind, fixed when the row is made,
@@ -999,8 +1030,8 @@ export function ContextRowMask({
       [OFF_KEY.instructions]: instructionsOff,
       [OFF_KEY.skills]: skillsOff,
     });
-    return maskedRows(order, (key) => current.get(key), drops);
-  }, [mine, order, haveNodes, on, instructionsOff, skillsOff]);
+    return maskedRows(order, (key) => current.get(key), drops, promptSent);
+  }, [mine, order, haveNodes, on, instructionsOff, skillsOff, promptSent]);
   useEffect(() => {
     const existing = document.getElementById(ROW_MASK_STYLE_ID);
     const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");

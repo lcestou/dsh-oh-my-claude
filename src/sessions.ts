@@ -1951,6 +1951,8 @@ export interface MountBox {
   configDir: string;
   command?: string;
   sshHost?: string;
+  /** The mount's `systemPrompt` config; absent reads as `claude`, the default. */
+  systemPrompt?: "claude" | "dsh";
 }
 
 /**

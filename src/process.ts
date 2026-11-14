@@ -1469,6 +1469,10 @@ export interface ClaudeProcessSpec {
    *  before the field existed; a flip changes the key and the session's next turn respawns, never
    *  the turn in flight. */
   child?: "node" | "dsh";
+  /** A digest of dsh's system prompt when the `dsh` system prompt mode passed it with
+   *  `--system-prompt`. Absent otherwise, so every other spec keys as before; a prompt dsh changed
+   *  changes the key, and the session's next turn starts a process that reads the new one. */
+  system?: string;
 }
 
 /** What the caller wants to know when a Claude process ends, live or after a restart. */

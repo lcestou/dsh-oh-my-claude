@@ -317,6 +317,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         configDir: other.claudeHome,
         command: other.config.command,
         sshHost: other.config.sshHost,
+        systemPrompt: other.config.systemPrompt,
       };
     };
     registerUsageRoute(

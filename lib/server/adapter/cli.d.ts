@@ -72,7 +72,10 @@ export declare function dshToolsGuidance(tools?: readonly ToolSchema[]): string;
  * of its own, and never carries a permission mode, allowed tools, budget or resume. Everything
  * after that early return applies only to a real conversation turn.
  */
-export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, permissionMode, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
+export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, permissionMode, dshSystem, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
+    /** dsh's own system prompt (`dshSystemPrompt`), passed only under `systemPrompt: dsh`. It
+     *  replaces Claude Code's prompt rather than following it. */
+    dshSystem?: string | undefined;
     model: string | undefined;
     config: Schemastery.TypeT<typeof Config>;
     session?: {

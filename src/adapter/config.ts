@@ -92,6 +92,7 @@ export type Config = {
   idleTimeoutMs: number;
   toolTextLimit: number;
   dshTools: boolean;
+  systemPrompt: "claude" | "dsh";
   fastMode: boolean;
   commandBridge: boolean;
   redactSecrets: boolean;
@@ -222,6 +223,12 @@ export const Config = z.object({
     .boolean()
     .default(true)
     .description("Expose dsh tools (subagents, jobs, skills...) to Claude Code over MCP"),
+  systemPrompt: z
+    .union(["claude", "dsh"])
+    .default("claude")
+    .description(
+      "Whose system prompt Claude reads. 'claude': Claude Code's own, with the plugin's dsh tool guidance appended; dsh's system prompt is not sent. 'dsh': dsh's system prompt replaces Claude Code's (--system-prompt, recorded fresh on every spawn), followed by the tool guidance, and dsh's mid-session system updates go into the turn as system lines, so Claude reads what a native model would. A changed dsh prompt starts a new Claude process on the session's next turn",
+    ),
   fastMode: z
     .boolean()
     .default(false)

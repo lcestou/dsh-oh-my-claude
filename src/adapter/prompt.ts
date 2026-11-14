@@ -79,9 +79,34 @@ export const steerKey = (m: LooseMessage): string | undefined =>
   m.role === "user" && m.source?.kind !== "tool" ? (m.source?.rpcId ?? m.id) : undefined;
 
 /** A message the prompt builder treats as conversation: a user message that is not a tool result,
- * and every assistant message. */
-const isTurn = (m: LooseMessage) =>
-  (m.role === "user" && m.source?.kind !== "tool") || m.role === "assistant";
+ * and every assistant message. With `developer` set, dsh's developer messages that carry text (a
+ * system update the loop wrote mid-session) count too: the `dsh` system prompt mode forwards
+ * everything dsh would show a native model, and these are part of it. */
+const isTurn = (m: LooseMessage, developer = false) =>
+  (m.role === "user" && m.source?.kind !== "tool") ||
+  m.role === "assistant" ||
+  (developer && m.role === "developer" && textOf(m.content).trim() !== "");
+
+/**
+ * dsh's system prompt for a loop-built request: the text of the latest run of system-role
+ * messages, after a one-shot caller's `system`. A loop-built request leads with one system
+ * message, and a prompt that changed during the session is a later system message holding the
+ * whole new text, so the latest run is the prompt in force. Undefined when neither has text.
+ */
+export function dshSystemPrompt(
+  messages: readonly LooseMessage[] | undefined,
+  system?: string,
+): string | undefined {
+  const all = messages ?? [];
+  let end = all.length - 1;
+  while (end >= 0 && all[end]?.role !== "system") end--;
+  let start = end;
+  while (start > 0 && all[start - 1]?.role === "system") start--;
+  const parts = [system ?? ""];
+  for (let i = start; i >= 0 && i <= end; i++) parts.push(textOf(all[i]?.content));
+  const text = parts.filter((p) => p.trim() !== "").join("\n\n");
+  return text === "" ? undefined : text;
+}
 
 /** A tool result, in either form dsh has written one (a `role: "tool"` message, or a user message
  *  from a tool), with the id of the call it answers. */
@@ -107,11 +132,13 @@ const toolCallsOf = (m: LooseMessage): { id: string; name: string; input: string
  * without that its transcript skipped from its own last reply to the new prompt. A tool result
  * rides along only when the call it answers is in the same slice: another model's tool use is
  * transcript Claude never saw, while Claude's own results already sit in its session.
+ * `developer` keeps dsh's developer messages with text (see `isTurn`).
  */
 export function selectTurns(
   messages: LooseMessage[] | undefined,
   resuming: boolean,
   own?: string,
+  developer = false,
 ): LooseMessage[] {
   const all = messages ?? [];
   let start = 0;
@@ -129,7 +156,7 @@ export function selectTurns(
   const calls = new Set(slice.flatMap((m) => toolCallsOf(m).map((c) => c.id)));
   return slice.filter((m) => {
     const callId = resultCallId(m);
-    return callId === undefined ? isTurn(m) : calls.has(callId);
+    return callId === undefined ? isTurn(m, developer) : calls.has(callId);
   });
 }
 
@@ -233,7 +260,9 @@ const partsOf = (turns: LooseMessage[], drops: ReadonlySet<ContextSource>) => {
         };
       const text = promptTextOf(m, drops);
       const calls = toolCallsOf(m).map((c) => `(called ${c.name} ${capped(c.input)})`);
-      return { role: m.role, text: [text, ...calls].filter(Boolean).join("\n") };
+      // A native model reads a developer message as an in-history system message.
+      const role = m.role === "developer" ? "system" : m.role;
+      return { role, text: [text, ...calls].filter(Boolean).join("\n") };
     })
     .filter((t) => t.text !== "");
 };
