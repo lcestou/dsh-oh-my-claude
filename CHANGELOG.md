@@ -12,6 +12,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- Claude gets dsh's tools on a dsh web started with `--host <address>`. A server bound to one address answers only there, and the bridge always called 127.0.0.1, so the connection was refused and Claude ran with none of dsh's tools. The bridge now uses the configured address, and still 127.0.0.1 when dsh listens on every interface.
 - Claude's tool calls show as tool rows again on a dsh installed with `npm install -g`. That install starts dsh through the `bin/dsh` link, and the plugin's check for dsh's session format looked for dsh next to the link instead of next to the file it points at. The check failed, and every tool call was drawn as plain text in the reply. Thanks to @soffits (#280)
 
 ## [1.6.3] - 2026-11-12

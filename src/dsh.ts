@@ -378,6 +378,8 @@ export interface DshToolsRegistry {
 /** Mirrors: @deepseek-ai/dsh-host-webserver/lib/types/index.d.ts */
 export interface WebServer {
   readonly port: number;
+  /** The configured bind address (`dsh web --host`); undefined or a wildcard means every interface. */
+  readonly host?: string | undefined;
   register(route: {
     kind: "prefix";
     path: string;
