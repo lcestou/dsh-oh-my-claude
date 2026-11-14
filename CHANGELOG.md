@@ -13,6 +13,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 ### Fixed
 
 - Claude's tool calls show as tool rows again on a dsh installed with `npm install -g`. That install starts dsh through the `bin/dsh` link, and the plugin's check for dsh's session format looked for dsh next to the link instead of next to the file it points at. The check failed, and every tool call was drawn as plain text in the reply. Thanks to @soffits (#280)
+- Another plugin's status label no longer picks up the running row's gradient. The Desktop tab's "Watching" label, for one, turned blue. The turn-status styling matched every polite `role="status"` region on the page; it now only claims one inside the conversation. Thanks to @soffits
 
 ## [1.6.3] - 2026-11-12
 

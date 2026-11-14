@@ -51,6 +51,13 @@ export interface ContractProbe {
   detects: "exact" | "presence";
 }
 
+/** The polite status region dsh draws in the conversation, and the only place the turn-status writer
+ *  and its sheet may claim one. dsh gives the region no hook, so the pair of attributes is the
+ *  whole match; the `[data-chat-flow]` ancestor keeps it off another plugin's status label in a
+ *  sidebar tab or a panel, which the pair alone also matches (2026-11-13: a "Watching" label in the
+ *  Desktop tab was painted with the running row's gradient). */
+export const TURN_STATUS_SELECTOR = '[data-chat-flow] [role="status"][aria-live="polite"]';
+
 /** Every DOM assumption this plugin makes about dsh's own markup. */
 export const DSH_CONTRACT: readonly ContractProbe[] = [
   {
@@ -97,10 +104,10 @@ export const DSH_CONTRACT: readonly ContractProbe[] = [
     scope: "conversation",
     kind: "role",
     // dsh gives its turn-status element no hook of its own, so this is the pair the watcher looks
-    // for and nothing narrows it further. Any polite status region on the page satisfies it, which
+    // for, inside the conversation. Any polite status region in the conversation satisfies it, which
     // is why this one is `presence`: it catches the element going away, not the row moving to an
     // element we no longer style.
-    selector: '[role="status"][aria-live="polite"]',
+    selector: TURN_STATUS_SELECTOR,
     detects: "presence",
   },
 ] as const;
