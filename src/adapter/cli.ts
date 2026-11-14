@@ -416,6 +416,8 @@ export function buildInput(
   prompt: string,
   images: Array<{ mediaType: string; data: string }>,
   uuid?: string,
+  /** Send it as written (`verbatimPrompts`); never for a line that is a command for the CLI. */
+  composed = false,
 ): string {
   const content: Array<{
     type: string;
@@ -429,7 +431,7 @@ export function buildInput(
       source: { type: "base64", media_type: img.mediaType, data: img.data },
     });
   }
-  return userTurnLine(content, uuid);
+  return userTurnLine(content, uuid, composed);
 }
 
 // ---------------------------------------------------------------------------

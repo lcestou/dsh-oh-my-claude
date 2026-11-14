@@ -418,8 +418,11 @@ export declare function sshInvocation(host: string, command: string, args: strin
  */
 export declare const sshSpawner: (host: string, resolveCwd?: (cwd: string) => string, far?: FarEnv) => Spawner;
 /** stdin line for one user turn. `session_id` empty and `parent_tool_use_id` null match what the SDK
- *  writes. `uuid` names the line for a later `cancel_async_message`; the CLI keeps it as the message's id. */
-export declare function userTurnLine(content: unknown, uuid?: string): string;
+ *  writes. `uuid` names the line for a later `cancel_async_message`; the CLI keeps it as the message's id.
+ *  `composed` marks it as the SDK's `verbatimPrompts` does (`client_composed`): the CLI then sends the
+ *  text as written, with no `@path` expansion, no slash-command dispatch and none of the context it
+ *  attaches at a turn's start (nested CLAUDE.md files, skill and tool listings, reminders). */
+export declare function userTurnLine(content: unknown, uuid?: string, composed?: boolean): string;
 /** stdin line answering one of the CLI's control requests with a result. */
 export declare function controlResponseLine(requestId: string, response: unknown): string;
 /** stdin line asking the CLI to stop the current turn; it answers with a result and stays alive. */

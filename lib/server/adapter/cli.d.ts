@@ -103,7 +103,9 @@ export declare function buildArgs({ model, reasoningEffort, system, purpose, con
 export declare function buildInput(prompt: string, images: Array<{
     mediaType: string;
     data: string;
-}>, uuid?: string): string;
+}>, uuid?: string, 
+/** Send it as written (`verbatimPrompts`); never for a line that is a command for the CLI. */
+composed?: boolean): string;
 /** Names from the CLI's init frame that dsh's command grammar accepts (lowercase, `[a-z0-9_-]`), deduped. */
 export declare function commandNames(value: JsonValue | undefined): string[];
 /**

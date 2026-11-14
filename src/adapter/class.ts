@@ -724,7 +724,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           continue;
         }
         const uuid = randomUUID();
-        if (proc.write(buildInput(text, [], uuid))) {
+        if (proc.write(buildInput(text, [], uuid, this.config.verbatimPrompts))) {
           proc.sent.add(key);
           proc.steerPending = true;
           proc.forwarded += 1;
@@ -1721,7 +1721,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       session,
       spec,
       accessMode,
-      input: stdin ? buildInput(prompt, images) : null,
+      input: stdin ? buildInput(prompt, images, undefined, this.config.verbatimPrompts) : null,
       drops,
       sizes,
       settingsKey,
@@ -2390,7 +2390,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (!message || !inbox?.remove(id)) {
         // dsh already drew it as sent: give Claude its copy back so chat and Claude agree. With the
         // turn over, stdin would start a turn of its own; out of `sent`, dsh's delivery carries it.
-        if (proc.busy && proc.write(buildInput(waiting.text, [], randomUUID()))) {
+        if (
+          proc.busy &&
+          proc.write(buildInput(waiting.text, [], randomUUID(), this.config.verbatimPrompts))
+        ) {
           proc.forwarded += 1;
           proc.steerPending = true;
         } else proc.sent.delete(waiting.key);
@@ -5172,7 +5175,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // words at all, so it takes the prompt path's wording for an attachment-only turn. Skipping it
     // would lose it: the next prompt starts after this turn's reply (`selectTurns`).
     const body = [text, notes].filter(Boolean).join("\n\n") || "(see attached)";
-    if (!proc.write(buildInput(body, images, uuid))) return false;
+    if (!proc.write(buildInput(body, images, uuid, this.config.verbatimPrompts))) return false;
     proc.sent.add(key);
     return true;
   }

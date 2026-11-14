@@ -677,8 +677,11 @@ export const sshSpawner =
   };
 
 /** stdin line for one user turn. `session_id` empty and `parent_tool_use_id` null match what the SDK
- *  writes. `uuid` names the line for a later `cancel_async_message`; the CLI keeps it as the message's id. */
-export function userTurnLine(content: unknown, uuid?: string): string {
+ *  writes. `uuid` names the line for a later `cancel_async_message`; the CLI keeps it as the message's id.
+ *  `composed` marks it as the SDK's `verbatimPrompts` does (`client_composed`): the CLI then sends the
+ *  text as written, with no `@path` expansion, no slash-command dispatch and none of the context it
+ *  attaches at a turn's start (nested CLAUDE.md files, skill and tool listings, reminders). */
+export function userTurnLine(content: unknown, uuid?: string, composed = false): string {
   // Built in order, not spread: the key order is the byte order of the line, and the line without a
   // uuid must stay what it was before the steer card.
   const line: { type: "user"; uuid?: string } & Record<string, unknown> = { type: "user" };
@@ -686,6 +689,7 @@ export function userTurnLine(content: unknown, uuid?: string): string {
   line.session_id = "";
   line.message = { role: "user", content };
   line.parent_tool_use_id = null;
+  if (composed) line.client_composed = true;
   return `${JSON.stringify(line)}\n`;
 }
 
