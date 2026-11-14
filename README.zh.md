@@ -146,29 +146,30 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 14. 用一份已脱敏的本机报告反馈问题，可复制，也可直接提交 issue。[Report a problem](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#report-a-problem)
 15. 所有橙色都可以按组关闭，颜色也可以自选。[Claude look](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#claude-look)
 16. 选择 dsh 往你的提示词里添加哪些内容，每一块的大小都标在标签上。[dsh context](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#dsh-context)
-17. 会话所在主机有新的 Claude Code 版本时会出现卡片，并可在 dsh 里直接安装；无界面的 `claude -p` 从不自动更新。每台主机的更新渠道、自动安装和历史记录都在设置里的开关下。[Claude Code updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#surviving-claude-code-updates)
-18. 在设置里查看最近五个版本的变化，内容来自插件自己的更新日志。[Changelog](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#changelog)
-19. 按范围列出 CLI 能用到的所有技能，你自己的和项目的技能可以添加、编辑和删除。每个技能的开销来自 CLI 自己的 `/skill-doctor`，是一张可排序的表格，旁边还有其他影响用量的因素：请求最多的 MCP 服务器，以及工作的构成。[Skills](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#skills)
-20. 你没在看的会话完成或停下来问你时，浏览器标签页会有标记，还可以选择弹出桌面通知。[Session notices](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-notices)
-21. dsh 自己的目标和会话以往的每个目标，与 Claude Code 的目标和定时任务并列显示。[Tasks](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
-22. Claude 工作时你插话发送的消息，在 Claude 读取之前可以编辑或移除，也可以合并为一条编辑。消息上的文件或图片会保留，只修改文字。编辑期间消息不会发出。“立即发送”会打断 Claude，把这条消息作为下一轮发出。[Steering](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
-23. 向上滚动越过 Claude 的工作状态行（旋转图标、动词、数字）后，它会在输入框上方重复显示，回看一长轮时也不会错过 Claude 正在做的事。设置中有开关可关闭。[轮次状态](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
-24. 在回复中选中文本，dsh 的浮层（dsh 0.2.2）会在「引用文本」旁多一个「提问」，手机上则显示在输入框上方的一行：把这段内容作为旁问向 Claude 提问，不占用对话本身；问题留空，Claude 会解释这段内容。[旁问](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#asides)
-25. 一轮结束后，标题处保留一行收尾，和终端里一样：`✻ 烘焙了 27s · 03:21 完成`。被你停止的一轮显示 `已中断 · 想让 Claude 改做什么？`。[轮次状态](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
-26. Claude 的工具调用显示为 dsh 自己的工具卡片，和其他提供方一样，文字在卡片之间实时输出。也可以在设置中切换回行内文本（「原生工具卡片」）。[Native tool rows](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#native-tool-rows)
-27. 在工作区中新建会话时，会使用该工作区上次运行的 Claude 主机、模型和推理强度；没有记录的工作区则使用你选定的默认模型和推理强度。[按工作区记住模型](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#remember-model-per-workspace)
-28. 每次回复后，Claude 对你下一条提示的猜测显示在输入框上方：「采用」填入输入框，「发送」原样发出，你输入别的内容时它会自动收起。默认开启，与终端一致；设置中有开关可关闭。[下一条提示建议](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#suggested-next-prompt)
-29. Claude 的后台 shell 任务和子智能体运行时列在任务标签里，每项都有「停止」，shell 任务还有「输出」；运行中的有两个以上时还有「全部停止」。已结束的 shell 任务保留其行和「输出」，最多十条；会话已运行过的子智能体列在「之前的子智能体」下，每个都能以 Markdown 打开。聊天中子智能体的那一行会按 CLI 的报告逐步列出它在做什么。[任务](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
-30. 如果 dsh 环境里的 `ANTHROPIC_API_KEY` 取代了你的登录成为 Claude Code 的计费来源，会话开始时会用一行说明。[Where things live](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#where-things-live)
-31. 每个额度窗口会按当前速度给出走向：窗口结束时用到的百分比，或达到上限的时间。[Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
-32. 上下文窗口用到 75%（可在设置中调整）时，输入框上方会提醒并提供「压缩」按钮，发送 Claude 自己的 `/compact`。[Context nudge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#context-nudge)
-33. Claude 写的每段 shell 代码块都有「运行」按钮，把代码作为提示放入输入框，按 Enter 发送后经由 Claude 的 Bash 工具和 dsh 的审批执行。[Run a snippet](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#run-a-snippet)
-34. 在 dsh 里重命名的会话在 `claude --resume` 中沿用同名，Claude 一侧设置的名字也会重命名 dsh 会话。[Command bridge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#command-bridge)
-35. 在 Claude 和其他模型（例如 DeepSeek 或本地模型）之间来回切换同一个会话：Claude 能看到其他模型期间的提示、回复和工具调用。[Sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#sessions)
-36. 输入框为空时按上箭头调出上一条提示词，再按上箭头调出更早的，下箭头调出更新的直至清空，与 Claude Code 终端一致；输入任意字符即结束回溯。新会话从该工作区最近的记录中回溯。可在设置中关闭（「提示词回溯」）。
-37. 在输入框按 Ctrl+R 搜索之前输入过的提示词：范围可为本会话、本工作区或整台机器（Ctrl+S 或 Ctrl+↑/↓ 切换）。Enter 发送所选行，Tab 填入输入框，Esc 关闭。可在设置中关闭（「历史搜索」）。
-38. 输入框为空且没有任务运行时按两次 Esc，打开回溯标签页并选中最新一条提示词，与终端按两次 Esc 打开 /rewind 一致；回溯后该提示词会回到输入框，可修改后重新发送。可在设置中关闭（「编辑上一条提示词」）。这三个输入框按键也列在 dsh 的快捷键对话框里。
-39. 插件自带三个命令：`/btw <问题>` 向 Claude 提一个旁问，不加入对话；`/temporary` 让该会话不保留 Claude 的对话记录；`/ultracode` 开关 Claude Code 的 ultracode，无需重启进程。[Asides](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#asides)、[Temporary sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#temporary-sessions)、[Ultracode](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#ultracode)
+17. 只在你选定的 dsh 模式里把 Claude 作为 dsh 的引擎，其他会话保持不变。[Claude as dsh's engine](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#claude-as-dshs-engine)
+18. 会话所在主机有新的 Claude Code 版本时会出现卡片，并可在 dsh 里直接安装；无界面的 `claude -p` 从不自动更新。每台主机的更新渠道、自动安装和历史记录都在设置里的开关下。[Claude Code updates](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#surviving-claude-code-updates)
+19. 在设置里查看最近五个版本的变化，内容来自插件自己的更新日志。[Changelog](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#changelog)
+20. 按范围列出 CLI 能用到的所有技能，你自己的和项目的技能可以添加、编辑和删除。每个技能的开销来自 CLI 自己的 `/skill-doctor`，是一张可排序的表格，旁边还有其他影响用量的因素：请求最多的 MCP 服务器，以及工作的构成。[Skills](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#skills)
+21. 你没在看的会话完成或停下来问你时，浏览器标签页会有标记，还可以选择弹出桌面通知。[Session notices](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#session-notices)
+22. dsh 自己的目标和会话以往的每个目标，与 Claude Code 的目标和定时任务并列显示。[Tasks](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
+23. Claude 工作时你插话发送的消息，在 Claude 读取之前可以编辑或移除，也可以合并为一条编辑。消息上的文件或图片会保留，只修改文字。编辑期间消息不会发出。“立即发送”会打断 Claude，把这条消息作为下一轮发出。[Steering](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
+24. 向上滚动越过 Claude 的工作状态行（旋转图标、动词、数字）后，它会在输入框上方重复显示，回看一长轮时也不会错过 Claude 正在做的事。设置中有开关可关闭。[轮次状态](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
+25. 在回复中选中文本，dsh 的浮层（dsh 0.2.2）会在「引用文本」旁多一个「提问」，手机上则显示在输入框上方的一行：把这段内容作为旁问向 Claude 提问，不占用对话本身；问题留空，Claude 会解释这段内容。[旁问](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#asides)
+26. 一轮结束后，标题处保留一行收尾，和终端里一样：`✻ 烘焙了 27s · 03:21 完成`。被你停止的一轮显示 `已中断 · 想让 Claude 改做什么？`。[轮次状态](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#turn-status)
+27. Claude 的工具调用显示为 dsh 自己的工具卡片，和其他提供方一样，文字在卡片之间实时输出。也可以在设置中切换回行内文本（「原生工具卡片」）。[Native tool rows](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#native-tool-rows)
+28. 在工作区中新建会话时，会使用该工作区上次运行的 Claude 主机、模型和推理强度；没有记录的工作区则使用你选定的默认模型和推理强度。[按工作区记住模型](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#remember-model-per-workspace)
+29. 每次回复后，Claude 对你下一条提示的猜测显示在输入框上方：「采用」填入输入框，「发送」原样发出，你输入别的内容时它会自动收起。默认开启，与终端一致；设置中有开关可关闭。[下一条提示建议](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#suggested-next-prompt)
+30. Claude 的后台 shell 任务和子智能体运行时列在任务标签里，每项都有「停止」，shell 任务还有「输出」；运行中的有两个以上时还有「全部停止」。已结束的 shell 任务保留其行和「输出」，最多十条；会话已运行过的子智能体列在「之前的子智能体」下，每个都能以 Markdown 打开。聊天中子智能体的那一行会按 CLI 的报告逐步列出它在做什么。[任务](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#tasks)
+31. 如果 dsh 环境里的 `ANTHROPIC_API_KEY` 取代了你的登录成为 Claude Code 的计费来源，会话开始时会用一行说明。[Where things live](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#where-things-live)
+32. 每个额度窗口会按当前速度给出走向：窗口结束时用到的百分比，或达到上限的时间。[Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
+33. 上下文窗口用到 75%（可在设置中调整）时，输入框上方会提醒并提供「压缩」按钮，发送 Claude 自己的 `/compact`。[Context nudge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#context-nudge)
+34. Claude 写的每段 shell 代码块都有「运行」按钮，把代码作为提示放入输入框，按 Enter 发送后经由 Claude 的 Bash 工具和 dsh 的审批执行。[Run a snippet](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#run-a-snippet)
+35. 在 dsh 里重命名的会话在 `claude --resume` 中沿用同名，Claude 一侧设置的名字也会重命名 dsh 会话。[Command bridge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#command-bridge)
+36. 在 Claude 和其他模型（例如 DeepSeek 或本地模型）之间来回切换同一个会话：Claude 能看到其他模型期间的提示、回复和工具调用。[Sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#sessions)
+37. 输入框为空时按上箭头调出上一条提示词，再按上箭头调出更早的，下箭头调出更新的直至清空，与 Claude Code 终端一致；输入任意字符即结束回溯。新会话从该工作区最近的记录中回溯。可在设置中关闭（「提示词回溯」）。
+38. 在输入框按 Ctrl+R 搜索之前输入过的提示词：范围可为本会话、本工作区或整台机器（Ctrl+S 或 Ctrl+↑/↓ 切换）。Enter 发送所选行，Tab 填入输入框，Esc 关闭。可在设置中关闭（「历史搜索」）。
+39. 输入框为空且没有任务运行时按两次 Esc，打开回溯标签页并选中最新一条提示词，与终端按两次 Esc 打开 /rewind 一致；回溯后该提示词会回到输入框，可修改后重新发送。可在设置中关闭（「编辑上一条提示词」）。这三个输入框按键也列在 dsh 的快捷键对话框里。
+40. 插件自带三个命令：`/btw <问题>` 向 Claude 提一个旁问，不加入对话；`/temporary` 让该会话不保留 Claude 的对话记录；`/ultracode` 开关 Claude Code 的 ultracode，无需重启进程。[Asides](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#asides)、[Temporary sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#temporary-sessions)、[Ultracode](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#ultracode)
 
 一些你永远不必动的默认行为，比如工具结果中的密钥脱敏和挺过 CLI 自身的更新，见 [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)。
 
