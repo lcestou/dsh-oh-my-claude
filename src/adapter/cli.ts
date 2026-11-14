@@ -102,6 +102,7 @@ const GUARDED_FLAGS = [
   "--forward-subagent-text",
   "--include-hook-events",
   "--effort",
+  "--thinking-display",
   "--settings",
   "--append-system-prompt",
   "--system-prompt",
@@ -355,6 +356,8 @@ export function buildArgs({
     args.push("--include-hook-events");
   if (model) args.push("--model", model);
   if (reasoningEffort && supports(flags, "--effort")) args.push("--effort", reasoningEffort);
+  if (config.thinkingDisplay && !purpose && supports(flags, "--thinking-display"))
+    args.push("--thinking-display", config.thinkingDisplay);
   // In -p mode /fast only works in a session launched with fast mode in --settings (fast-mode docs).
   const settings: Record<string, JsonValue> = config.isolate ? { ...ISOLATED_SETTINGS } : {};
   if (config.fastMode) settings.fastMode = true;
