@@ -143,14 +143,17 @@ function useTickedPresets(): Set<string> {
 /**
  * The engine-mode card: a master switch, off by default, and under it, only while it is on, the
  * presets folded under one line that names the ticked ones, each with a tick. The preset list is
- * read once per mount: presets change only when the dsh
- * profile is edited, which reloads the plugin, and Settings mounts the card afresh each time it
- * opens. The ticks are hints-store flags and follow a change made in another tab. Undefined
- * presets (the read failed, or this dsh has no preset service) show a one-line note.
+ * read on mount and again each time the fold opens: dsh applies a profile edit that adds, renames
+ * or drops a preset live, with no restart and nothing sent to the page, so a list read once would
+ * go stale under an open Settings. A preset that is gone drops off the list and the summary; its
+ * tick stays in the store, so a preset that comes back under the same id is in engine mode again.
+ * The ticks are hints-store flags and follow a change made in another tab. Undefined presets (the
+ * read failed, or this dsh has no preset service) show a one-line note.
  */
 export function EngineModeCard() {
   useLocale();
   const [presets, setPresets] = useState<PresetRow[] | undefined>();
+  const [reads, setReads] = useState(0);
   useEffect(() => {
     let live = true;
     fetch(`${ROUTE}/presets`)
@@ -160,7 +163,7 @@ export function EngineModeCard() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [reads]);
   const [on, setOn] = useHintFlag(ENGINE_ON_KEY);
   const ticked = useTickedPresets();
   const tickedNames = (presets ?? [])
@@ -186,7 +189,11 @@ export function EngineModeCard() {
         <Switch on={on} onChange={setOn} label={t("main.settingsUi.engineTitle")} />
       </div>
       {on && (
-        <details data-omc-engine-modes="" style={{ ...nested, margin: "0 0 12px", fontSize: 13 }}>
+        <details
+          data-omc-engine-modes=""
+          onToggle={(e) => e.currentTarget.open && setReads((n) => n + 1)}
+          style={{ ...nested, margin: "0 0 12px", fontSize: 13 }}
+        >
           <summary style={{ cursor: "pointer", color: T.muted }}>
             {tickedNames.length > 0
               ? t("main.settingsUi.engineModesOn", {
