@@ -4,7 +4,7 @@ import { execFile } from "node:child_process";
 import { type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { JsonValue, ToolSchema } from "../dsh.js";
 import { KEY_ENV, KEY_HEADER } from "../mcp-config.js";
-import { shq, sshArgs, userTurnLine } from "../process.js";
+import { CHILD_ENV, shq, sshArgs, userTurnLine } from "../process.js";
 import { probeRawToolRows, type RowsSupport } from "../rows-probe.js";
 import { Config } from "./config.js";
 import { textOf, type LooseMessage } from "./prompt.js";
@@ -368,7 +368,16 @@ export function buildArgs({
   }
   if (mcp && supports(flags, "--mcp-config")) {
     // The key itself travels in the environment (`localEnvOverride`); see KEY_ENV.
-    const dsh = { type: "http", url: mcp.url, headers: { [KEY_HEADER]: `\${${KEY_ENV}}` } };
+    // `timeout` is the server's own: Claude Code 2.1.323 aborts a call that sends nothing for 300 s
+    // ("sent no response or progress for 300s"), whatever MCP_TOOL_TIMEOUT says, and a relayed
+    // dsh tool (a subagent, an approval someone has not answered yet) is silent until it is done.
+    // Measured with a 330 s call: aborted without it, answered with it.
+    const dsh = {
+      type: "http",
+      url: mcp.url,
+      headers: { [KEY_HEADER]: `\${${KEY_ENV}}` },
+      timeout: Number(CHILD_ENV.MCP_TOOL_TIMEOUT),
+    };
     args.push("--mcp-config", JSON.stringify({ mcpServers: { dsh } }));
   }
   return args;

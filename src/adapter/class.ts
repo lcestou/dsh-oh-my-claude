@@ -380,6 +380,7 @@ import {
   STREAM_MAX_MS,
   STREAM_THRESHOLD_MS,
   TOOL_IDLE_FACTOR,
+  loadRelayImages,
   toolResultFor,
   TRANSCRIPT_SETTLE_MS,
   TURN_RING,
@@ -1619,7 +1620,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Hoisted out of the buildArgs call: `buildArgs` appends the tools guidance to the system
     // prompt exactly when this bridge is passed, so the size readout has to ask the same question
     // rather than a similar-looking one. A turn that runs on a box gets no bridge: its URL is this
-    // dsh's loopback port, which the far side cannot reach, and `dshTools` is per mount while a
+    // dsh's own web address, which the far side cannot reach, and `dshTools` is per mount while a
     // remote workspace makes a session remote under the local mount (measured on a remote box 2026-09-15:
     // Claude spent its first reply asking for a tool server that was never reachable).
     const mcpBridge =
@@ -5195,7 +5196,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       this.publishAsides(cont.options.sessionId);
       const live = this.liveTurn.get(cont.options.sessionId);
       if (live) live.relay = undefined;
-      // An MCP tool result is text, so a steer carrying an image goes over stdin whole instead: the
+      // A steer's image is not part of dsh's tool result, so a steer carrying one goes over stdin whole instead: the
       // CLI injects it at its next tool call. Its key lands in `sent`, which keeps its words out of
       // the result below. Left to the result, the image was lost: the next prompt starts after
       // this step's own reply (`selectTurns`), so it never went anywhere. `relays` is already
@@ -5207,6 +5208,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           await this.writeSteerMessage(m, key, proc, cont.options);
       }
       const extra = stepContextFor(cont.options.messages, prep.drops, proc.sent); // steers and notices ride on the last result
+      // An image in dsh's result (read_image) goes back as MCP image content; dropped, Claude
+      // would read the text line about the image and never see it. On a box the bridge is off.
+      await loadRelayImages(cont.results, this.ctx.attachments, cont.options.signal, (msg) =>
+        this.log("warn", msg),
+      );
       relays.forEach((relay, i) => {
         const result = cont.results[i];
         if (!result) return; // cannot happen: results were built from relays.keys()

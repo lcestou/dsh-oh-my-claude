@@ -6,6 +6,7 @@ import {
   contractSummary,
   DSH_CONTRACT,
   type ContractProbe,
+  TURN_STATUS_SELECTOR,
 } from "./contract.js";
 
 /** A stand-in document: every selector answers the count this map gives it. */
@@ -154,6 +155,18 @@ const probes: ContractProbe[] = [
       probe.detects === "exact" || probe.detects === "presence",
       `${probe.id} says what a green answer is worth`,
     );
+}
+
+// The turn-status writer claims a polite status region only inside the conversation: another
+// plugin's status label (a sidebar tab) has the same two attributes and must keep its own look.
+{
+  assert.ok(
+    TURN_STATUS_SELECTOR.startsWith("[data-chat-flow] "),
+    "the turn-status selector is scoped to the conversation",
+  );
+  const turn = DSH_CONTRACT.find((p) => p.id === "turn-status");
+  assert.ok(turn, "the turn-status probe is in the list");
+  assert.equal(turn.selector, TURN_STATUS_SELECTOR, "the probe watches what the writer claims");
 }
 
 console.log("contract ok");

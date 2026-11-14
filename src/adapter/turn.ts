@@ -10,13 +10,21 @@ import {
 } from "@deepseek-ai/dsh-llm";
 import { degradedNote, peekStatus } from "../anthropic-status.js";
 import { type ContextSource } from "../context-sources.js";
-import { type Agent, type ApprovalOutcome, type JsonValue, type ResolvedAgent } from "../dsh.js";
+import {
+  type Agent,
+  type ApprovalOutcome,
+  type JsonValue,
+  type PluginContext,
+  type ResolvedAgent,
+} from "../dsh.js";
 import { serverText } from "../locale.js";
 import {
+  errorText,
   type ClaudeEvent,
   type ClaudeProcessSpec,
   type SettingsKey,
   type RelayEvent,
+  type RelayResult,
   type WorkspaceDiff,
 } from "../process.js";
 import { type FsBox } from "../remote-fs.js";
@@ -268,21 +276,61 @@ export function abortKind(signal: AbortSignal | undefined): string | undefined {
   return undefined;
 }
 
-/** dsh's tool-result for a relayed call, searched from the newest message back. */
+/** dsh's tool-result for a relayed call, searched from the newest message back; its image blocks
+ *  come back as `refs` for the caller to load into `images`, absent when there are none. */
 export function toolResultFor(
   messages: LooseMessage[] | undefined,
   id: string,
-): { text: string; isError?: boolean } | undefined {
+): RelayResult | undefined {
   const list = messages ?? [];
   for (let i = list.length - 1; i >= 0; i--) {
     const m = list[i];
     if (!m) continue;
     // The result is a message of its own, `role: "tool"`, with the call id on it and the text in
-    // its blocks.
-    if (m.role === "tool" && m.toolCallId === id)
-      return { text: textOf(m.content), isError: m.isError === true };
+    // its blocks. Its images are named here and loaded by the caller, which holds the store.
+    if (m.role === "tool" && m.toolCallId === id) {
+      const result: RelayResult = { text: textOf(m.content), isError: m.isError === true };
+      const refs = Array.isArray(m.content)
+        ? m.content.flatMap((b) => (b.type === "image" && b.attachment ? [b.attachment] : []))
+        : [];
+      if (refs.length > 0) result.refs = refs;
+      return result;
+    }
   }
   return undefined;
+}
+
+/**
+ * Loads each relayed result's image `refs` into `images` as base64 and drops `refs`. It reads
+ * straight from dsh's store, without the 2000 px rule a stdin image gets: that rule exists because
+ * a stdin image is not scaled, while the CLI scales and re-encodes an MCP image itself (2.1.325
+ * showed a 2560x1440 PNG at 2000x1125, and sent a 4 MB PNG as a 0.5 MB JPEG). An image the store
+ * cannot read is skipped and reported through `warn`, so the text still goes back; without a store
+ * every result goes back as text alone.
+ */
+export async function loadRelayImages(
+  results: RelayResult[],
+  store: PluginContext["attachments"] | undefined,
+  signal: AbortSignal | undefined,
+  warn: (msg: string) => void,
+): Promise<void> {
+  for (const result of results) {
+    if (!result.refs) continue;
+    const images: { mediaType: string; data: string }[] = [];
+    for (const ref of result.refs)
+      try {
+        const stored = await store?.readImage(ref, signal);
+        if (stored)
+          images.push({
+            mediaType: ref.mediaType,
+            data: Buffer.from(stored.data).toString("base64"),
+          });
+      } catch (error: unknown) {
+        warn(`relayed image ${ref.attachmentId} not loaded: ${errorText(error)}`);
+      }
+    result.images = images;
+    delete result.refs;
+  }
 }
 
 /** Messages dsh delivered after the last assistant step. */
