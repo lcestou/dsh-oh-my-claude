@@ -399,6 +399,16 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** A dsh fork of a Claude session becomes a Claude fork: the parent's transcript is copied under
      *  the new id, cut at the forked turn. True when a copy was made. */
     forkTranscript(options: GenerateOptions, cwd: string, id: string): Promise<boolean>;
+    /** Sessions whose last turn ended on a refusal under `refusalAsFailure`, with the transcript
+     *  cleanup still running; `prepare` waits for it before it looks for a session to resume. */
+    readonly refused: Map<string, Promise<void>>;
+    /**
+     * Forget a refused Claude session: stop its process, wait (at most ten seconds) for it to exit so
+     * nothing writes the transcript after it is gone, then move the transcript and its folder aside
+     * (renamed with a `.refused-<time>` suffix) and forget the started mark. The next turn starts that session id afresh, from dsh's own log, in which the
+     * refused reply is kept as a failed attempt and never shown to a model. Never throws.
+     */
+    dropRefused(proc: ClaudeProcess, cwd: string, id: string): Promise<void>;
     /** Everything one turn needs: spawn args + spec for the long-lived process, and the stdin line for this turn. */
     prepare(options: GenerateOptions, { forceFresh }?: {
         forceFresh?: boolean;

@@ -603,6 +603,9 @@ export interface FallbackRecord {
   content?: string;
 }
 
+/** The failure code a refused reply ends the turn with under `refusalAsFailure`. */
+export const REFUSAL_CODE = "REFUSAL";
+
 /** Turns one CLI process's stream-json events into dsh stream chunks, and keeps the per-turn state
  *  that needs: open blocks, streamed ids, tool rows, usage and the result summary. */
 export class Translator {
@@ -615,6 +618,19 @@ export class Translator {
   limitResetAt: number | undefined;
   /** A limit's failure, held back until the CLI's own message and result frame have gone by. */
   limitFailure: (LlmFailure & { providerRetryAfterMs?: number }) | undefined;
+  /** Report a refused reply as a failure (`refusalAsFailure`), not as the turn's normal end. */
+  refusalAsFailure: boolean;
+  /** The turn's refusal, once the CLI reported one with no fallback: a `model_refusal_no_fallback`
+   *  frame, or a top-level reply or result that stopped with `refusal`. */
+  refusal: LlmFailure | undefined;
+  /** Whether the CLI itself said no fallback runs (`model_refusal_no_fallback`). A reply that
+   *  stopped with `refusal` alone does not end the turn as one: the CLI can still rewrite the
+   *  result's stop reason past it, so the result frame decides. */
+  refusalFinal: boolean;
+  /** Whether the result frame ended this turn as the REFUSAL failure. Only then is the Claude
+   *  transcript dropped: a refusal the result overruled (it ended as a normal stop), or one an
+   *  abort or a usage limit outranked, leaves the session as it is. */
+  refusalEnded: boolean;
   /** IANA zone for reset clocks: the browser's when dsh stamped one, else the box's. */
   timeZone: string | undefined;
   hostLabel: string | undefined;
@@ -753,6 +769,7 @@ export class Translator {
   constructor({
     toolActivity = true,
     continueAfterLimit = false,
+    refusalAsFailure = false,
     timeZone,
     toolTextLimit = TOOL_TEXT_LIMIT,
     relay = false,
@@ -778,6 +795,7 @@ export class Translator {
   }: {
     toolActivity?: boolean;
     continueAfterLimit?: boolean;
+    refusalAsFailure?: boolean;
     timeZone?: string;
     toolTextLimit?: number;
     relay?: boolean;
@@ -818,6 +836,10 @@ export class Translator {
     this.continueAfterLimit = continueAfterLimit;
     this.limitResetAt = undefined;
     this.limitFailure = undefined;
+    this.refusalAsFailure = refusalAsFailure;
+    this.refusal = undefined;
+    this.refusalFinal = false;
+    this.refusalEnded = false;
     this.timeZone = timeZone;
     this.hostLabel = hostLabel;
     this.routerOnly = routerOnly;
@@ -909,6 +931,20 @@ export class Translator {
             : { type: "reasoning", text: block.text },
       },
     ];
+  }
+
+  /**
+   * Record the turn's refusal, the first one that arrives: the system frame carries the category and
+   * the CLI's sentence, and the error frame and the result that follow say only `refusal`. The code
+   * is the one dsh-fallback-models switches models on, so a fallback chain can answer instead.
+   */
+  noteRefusal(category: string, said: string): void {
+    if (this.refusal) return;
+    const why = category ? ` (${category})` : "";
+    this.refusal = {
+      message: serverText("refusedReply", { why, said: said ? `: ${said}` : "" }),
+      code: REFUSAL_CODE,
+    };
   }
 
   /** Emit a whole block at once, block-start then delta then block-end, for text that arrives in one
@@ -1192,7 +1228,10 @@ export class Translator {
         if (event.subtype === "model_refusal_no_fallback") {
           const from = event.original_model ?? "";
           const cat = (event.api_refusal_category ?? "").trim();
-          const said = (event.content ?? event.api_refusal_explanation ?? "").trim();
+          // `||`: the CLI sends `content: ""` on this path and the sentence in the explanation.
+          const said = (event.content || event.api_refusal_explanation || "").trim();
+          this.noteRefusal(cat, said);
+          this.refusalFinal = true;
           this.onModel?.({
             kind: "model_refusal_no_fallback",
             from,
@@ -1200,6 +1239,10 @@ export class Translator {
             category: cat || undefined,
             content: said || undefined,
           });
+          // Under refusalAsFailure nothing is drawn: any chunk past block-start commits the attempt,
+          // and a committed attempt is one a fallback plugin (dsh-fallback-models) will not retry.
+          // The failure the result frame ends the turn with carries the same words.
+          if (this.refusalAsFailure) return [];
           const why = cat ? ` (${cat} safeguard)` : "";
           return this.wholeBlock(
             "reasoning",
@@ -1319,6 +1362,12 @@ export class Translator {
           (event.parent_tool_use_id ?? undefined) !== undefined,
         );
       case "assistant":
+        // A subagent's refusal is its own; only the conversation's own reply ends the turn.
+        if (event.message?.stop_reason === "refusal" && !event.parent_tool_use_id) {
+          this.noteRefusal("", "");
+          // The CLI's error text for the refusal; drawn, it would commit the attempt (see above).
+          if (this.refusalAsFailure) return [];
+        }
         return this.assistant(
           event.message?.content ?? [],
           event.parent_tool_use_id,
@@ -1418,7 +1467,7 @@ export class Translator {
         // What the last step spent, before the chunk that ends the stream: dsh fails a stream that
         // emits anything "after terminal finish", and this frame is what closes the final step of
         // every turn. The adapter's own call after this one then finds nothing left to spend.
-        events.push(...this.takeStepUsage());
+        const stepUsage = this.takeStepUsage();
         // A rejection that named no reset, on a turn the CLI itself ended as an error, is the API
         // throttling requests and not a plan window: the result carries the CLI's own sentence
         // ("Server is temporarily limiting requests (not your usage limit)"), and that is what the
@@ -1427,13 +1476,25 @@ export class Translator {
           this.limitFailure?.providerRetryAfterMs === undefined && event.is_error
             ? undefined
             : this.limitFailure;
+        if (event.stop_reason === "refusal") this.noteRefusal("", "");
+        const refused =
+          this.refusalAsFailure && (this.refusalFinal || event.stop_reason === "refusal")
+            ? this.refusal
+            : undefined;
+        // A refused attempt's usage is not sent under refusalAsFailure: a usage chunk commits the
+        // attempt, and dsh-fallback-models retries on another model only an uncommitted one. Its
+        // tokens go unreported to dsh, which is the price of letting the fallback answer.
+        this.refusalEnded = refused !== undefined && !this.aborting && !limit;
+        if (!this.refusalEnded) events.push(...stepUsage);
         events.push({
           type: "finish",
           reason: this.aborting
             ? { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } }
             : limit
               ? { kind: "error", failure: limit }
-              : finishReason(event, this.hostLabel, this.routerOnly, this.settingsKey, this.via),
+              : refused
+                ? { kind: "error", failure: refused }
+                : finishReason(event, this.hostLabel, this.routerOnly, this.settingsKey, this.via),
         });
         return events;
       }

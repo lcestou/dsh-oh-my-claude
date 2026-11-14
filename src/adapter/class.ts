@@ -2,7 +2,7 @@
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync, watch } from "node:fs";
 import { dirname } from "node:path";
 import { hostname, tmpdir } from "node:os";
@@ -1530,6 +1530,42 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return true;
   }
 
+  /** Sessions whose last turn ended on a refusal under `refusalAsFailure`, with the transcript
+   *  cleanup still running; `prepare` waits for it before it looks for a session to resume. */
+  readonly refused = new Map<string, Promise<void>>();
+
+  /**
+   * Forget a refused Claude session: stop its process, wait (at most ten seconds) for it to exit so
+   * nothing writes the transcript after it is gone, then move the transcript and its folder aside
+   * (renamed with a `.refused-<time>` suffix) and forget the started mark. The next turn starts that session id afresh, from dsh's own log, in which the
+   * refused reply is kept as a failed attempt and never shown to a model. Never throws.
+   */
+  async dropRefused(proc: ClaudeProcess, cwd: string, id: string): Promise<void> {
+    proc.kill();
+    await Promise.race([proc.child.done, new Promise((r) => setTimeout(r, 10_000).unref?.())]);
+    const dir = join(this.claudeHome, "projects", projectDirName(cwd));
+    // Moved aside, never deleted: for a session opened from a Claude Code transcript the id is the
+    // person's own, and `claude --resume` and the panel's reseed still need that file.
+    const stamp = Date.now();
+    // A transcript that is not there (never written) is fine; one that would not move stays where
+    // the next turn will resume it, and the log says so rather than claiming it moved.
+    let stuck: string | undefined;
+    try {
+      await rename(join(dir, `${id}.jsonl`), join(dir, `${id}.jsonl.refused-${stamp}`));
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT"))
+        stuck = errorText(error);
+    }
+    await rename(join(dir, id), join(dir, `${id}.refused-${stamp}`)).catch(() => {});
+    await rememberStarted(id, false).catch(() => {});
+    if (stuck)
+      this.log(
+        "warn",
+        `claude session ${id} refused a reply; its transcript did not move: ${stuck}`,
+      );
+    else this.log("info", `claude session ${id} refused a reply; its transcript was moved aside`);
+  }
+
   /** Everything one turn needs: spawn args + spec for the long-lived process, and the stdin line for this turn. */
   // SAFETY: options shape from dsh LlmAdapter.generate() contract
   async prepare(
@@ -1570,6 +1606,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     let session;
     const temporary = Boolean(options.sessionId) && this.temporary.has(options.sessionId ?? "");
+    // A refusal's cleanup has to land before the session is looked up, or it would be resumed.
+    const refused = options.sessionId ? this.refused.get(options.sessionId) : undefined;
+    if (refused) {
+      await refused;
+      this.refused.delete(options.sessionId ?? "");
+    }
     if (!options.purpose && this.config.resume && options.sessionId && !temporary) {
       // A dsh session opened from a Claude Code transcript carries the Claude id itself.
       const own = await claudeSessionExists(this.claudeHome, cwd, options.sessionId);
@@ -1578,7 +1620,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         own ||
         (await loadStarted()).has(id) ||
         (await claudeSessionExists(this.claudeHome, cwd, id));
-      if (!known && !forceFresh) known = await this.forkTranscript(options, cwd, id);
+      // Not after a refusal: the transcript just moved aside, and a fork would resume the parent's
+      // conversation in its place instead of starting fresh from dsh's log.
+      if (!known && !forceFresh && !refused) known = await this.forkTranscript(options, cwd, id);
       session = { id, resuming: known && !forceFresh };
     }
     // One small file read per turn, next to a process spawn. No cache: the Settings card writes
@@ -5698,6 +5742,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const tr = new Translator({
       toolActivity: this.config.toolActivity,
       continueAfterLimit: this.config.continueAfterLimit,
+      refusalAsFailure: this.config.refusalAsFailure,
       timeZone: clientTimeZone(options.messages),
       toolTextLimit: this.config.toolTextLimit,
       relay: this.mcp !== undefined && this.config.dshTools,
@@ -6228,6 +6273,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         });
       }
       this.clearIdle(options.sessionId);
+      // A refused reply ended the turn as a failure: the session's Claude transcript, refusal
+      // and all, is dropped, so the next turn on this route starts a new Claude session from dsh's
+      // log instead of resuming one whose last word was the refusal.
+      if (tr.refusalEnded && prep.session)
+        this.refused.set(options.sessionId, this.dropRefused(proc, prep.cwd, prep.session.id));
       options.signal?.removeEventListener("abort", onAbort);
       for (const c of pending.values()) c.abort();
       // Backstop: the clears above run when a decision settles, which needs the answerer to honour
