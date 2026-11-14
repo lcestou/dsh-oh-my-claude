@@ -8,7 +8,7 @@ import type { PluginContext } from "../dsh.js";
 import { STATE_DIR } from "../state.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
-import { ENGINE_OPTIONS, engineOverlay, enginePresets } from "./engine-mode.js";
+import { ENGINE_OPTIONS, engineOverlay, enginePresets, engineSkipKey } from "./engine-mode.js";
 import { engineDigest } from "./isolate.js";
 
 const base = new Config({});
@@ -48,14 +48,33 @@ assert.equal(base.isolate, false, "the plugin's own config is not edited");
 assert.notEqual(engineDigest(engine), undefined, "so the process spec keys a new process");
 
 // A skipped option keeps the config's own value.
-const noIsolate = engineOverlay(base, { ...on, "engineSkip:isolate": true }, "engine");
+const noIsolate = engineOverlay(base, { ...on, "engineSkip:engine:isolate": true }, "engine");
 assert.equal(noIsolate.isolate, false);
 assert.equal(noIsolate.systemPrompt, "dsh");
-const allSkipped = Object.fromEntries(ENGINE_OPTIONS.map((o) => [`engineSkip:${o}`, true]));
+const allSkipped = Object.fromEntries(
+  ENGINE_OPTIONS.map((o) => [engineSkipKey(o, "engine"), true]),
+);
 assert.deepEqual(
   engineOverlay(base, { ...on, ...allSkipped }, "engine").builtinTools,
   base.builtinTools,
 );
+
+// Each ticked mode has its own set: one mode's skip never reaches another.
+{
+  const hints = {
+    "enginePreset:engine": true,
+    "enginePreset:assistant": true,
+    [engineSkipKey("isolate", "assistant")]: true,
+    [engineSkipKey("thinkingDisplay", "engine")]: true,
+  };
+  const engineMode = engineOverlay(base, hints, "engine");
+  assert.equal(engineMode.isolate, true, "engine keeps isolate");
+  assert.equal(engineMode.thinkingDisplay, base.thinkingDisplay, "engine's own skip applies");
+  const assistant = engineOverlay(base, hints, "assistant");
+  assert.equal(assistant.isolate, false, "assistant's own skip applies");
+  assert.equal(assistant.thinkingDisplay, "summarized", "engine's skip does not reach it");
+  assert.equal(engineSkipKey("isolate", "assistant"), "engineSkip:assistant:isolate");
+}
 
 assert.deepEqual(enginePresets({ "enginePreset:a": true, "enginePreset:b": true, other: true }), [
   "a",

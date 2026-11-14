@@ -8,7 +8,7 @@ import { useHintFlag } from "./hints.js";
 import {
   ENGINE_OPTIONS,
   ENGINE_PRESET_PREFIX,
-  ENGINE_SKIP_PREFIX,
+  engineSkipKey,
   type EngineOption,
 } from "../adapter/engine-mode.js";
 
@@ -54,34 +54,51 @@ function builtInName(id: string): string | undefined {
   return undefined;
 }
 
-/** One preset's checkbox; ticked means sessions started in that mode run Claude as dsh's engine. */
+/** One preset's checkbox; ticked means sessions started in that mode run Claude as dsh's engine.
+ *  A ticked mode shows its own folded "What it changes" set right under it. */
 function PresetBox({ preset }: { preset: PresetRow }) {
   const [on, setOn] = useHintFlag(ENGINE_PRESET_PREFIX + preset.id);
   const name = builtInName(preset.id) ?? preset.name;
   return (
-    <label style={ROW}>
-      <input
-        type="checkbox"
-        data-omc-engine-preset={preset.id}
-        checked={on}
-        onChange={(e) => setOn(e.target.checked)}
-      />
-      {name}
-      {name !== preset.id && <span style={{ color: T.faint, fontSize: 12 }}>{preset.id}</span>}
-    </label>
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <label style={ROW}>
+        <input
+          type="checkbox"
+          data-omc-engine-preset={preset.id}
+          checked={on}
+          onChange={(e) => setOn(e.target.checked)}
+        />
+        {name}
+        {name !== preset.id && <span style={{ color: T.faint, fontSize: 12 }}>{preset.id}</span>}
+      </label>
+      {on && (
+        <details data-omc-engine-options={preset.id} style={{ ...nested, marginLeft: 24 }}>
+          <summary style={{ cursor: "pointer", color: T.muted, fontSize: 12 }}>
+            {t("main.settingsUi.engineOptions")}
+          </summary>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0 0 16px" }}
+          >
+            {ENGINE_OPTIONS.map((o) => (
+              <OptionBox key={o} option={o} preset={preset.id} />
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
   );
 }
 
-/** One engine option's checkbox; ticked means it applies, which is the default (the hints store
- *  holds a skip flag, so a fresh box gets the whole bundle). */
-function OptionBox({ option }: { option: EngineOption }) {
-  const [skip, setSkip] = useHintFlag(ENGINE_SKIP_PREFIX + option);
+/** One engine option's checkbox for one mode; ticked means it applies, which is the default (the
+ *  hints store holds a skip flag, so a newly ticked mode gets the whole bundle). */
+function OptionBox({ option, preset }: { option: EngineOption; preset: string }) {
+  const [skip, setSkip] = useHintFlag(engineSkipKey(option, preset));
   const [label, hint] = OPTION_TEXT[option];
   return (
     <label style={{ ...ROW, alignItems: "flex-start" }}>
       <input
         type="checkbox"
-        data-omc-engine-option={option}
+        data-omc-engine-option={`${preset}:${option}`}
         checked={!skip}
         onChange={(e) => setSkip(!e.target.checked)}
         style={{ marginTop: 2 }}
@@ -142,16 +159,6 @@ export function EngineModeCard() {
           presets.map((p) => <PresetBox key={p.id} preset={p} />)
         )}
       </fieldset>
-      <details data-omc-engine-options="" style={{ ...nested, marginTop: 8 }}>
-        <summary style={{ cursor: "pointer", color: T.muted }}>
-          {t("main.settingsUi.engineOptions")}
-        </summary>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0 0 16px" }}>
-          {ENGINE_OPTIONS.map((o) => (
-            <OptionBox key={o} option={o} />
-          ))}
-        </div>
-      </details>
     </div>
   );
 }
