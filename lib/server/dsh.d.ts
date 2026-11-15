@@ -98,6 +98,29 @@ export interface SessionStore {
     fork(source: Session | SessionId, boundary?: number, childSessionId?: SessionId): Session;
     on?(event: string, cb: (...args: unknown[]) => void): void;
 }
+/** Mirrors: @deepseek-ai/dsh-session-query `SessionObservation`, the fields a wake reads. A lease:
+ *  dispose it when done. */
+export interface SessionObservationLease extends Disposable {
+    readonly header: {
+        parentSession?: string;
+        origin?: string;
+    };
+    readonly events: readonly SessionEvent[];
+}
+/** Mirrors: @deepseek-ai/dsh-session-query `SessionQueryEngine`, narrowed. */
+export interface SessionQueryReader {
+    observeSession(sessionId: SessionId, options?: {
+        signal?: AbortSignal;
+        projectionMode?: "all" | "none";
+    }): Promise<SessionObservationLease>;
+}
+/** Mirrors: @deepseek-ai/dsh-subagent `SubagentRuntime.sendMessage`: steers a message from an exact
+ *  live parent Agent to its direct child, cold-resuming a child that is not loaded. */
+export interface SubagentMessenger {
+    sendMessage(sender: Agent, targetId: SessionId, content: ContentBlock[], options: {
+        signal: AbortSignal;
+    }): Promise<string>;
+}
 /** A model route as dsh-agent's `AgentModel` records it and dsh-llm's call config carries it. */
 export interface ModelRoute {
     provider: string;
@@ -541,6 +564,12 @@ export interface PluginContext {
     get(name: "profileContext"): {
         readonly dir: string;
     } | undefined;
+    /** Mirrors: @deepseek-ai/dsh-session-query `SessionQueryEngine.observeSession`, narrowed to the
+     *  header and events a wake reads. Works for a session dsh has not loaded, without loading it. */
+    get(name: "sessionQuery"): SessionQueryReader | undefined;
+    /** Mirrors: @deepseek-ai/dsh-subagent `SubagentRuntime.sendMessage`. The one way to reach a
+     *  subagent's session that dsh does not hold live: through its exact live parent. */
+    get(name: "subagents"): SubagentMessenger | undefined;
     /** dsh-commands (`/name` in the composer); optional so a host without it still mounts the plugin. */
     commands?: {
         register(definition: {
