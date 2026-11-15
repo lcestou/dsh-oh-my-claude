@@ -63,6 +63,13 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Sessions dsh refused to resume for good (a subagent's log: "owned by subagent routing").
      *  A wake for one can never open a turn, so the retry loops stop asking. */
     readonly unwakeable: Set<string>;
+    /** Drain notices (`WAKE_TEXT`, `RECONNECT_TEXT`) still waiting in a session's inbox, with the agent
+     *  that holds them. dsh gives every followup a turn of its own, so a notice whose output another
+     *  turn already drew would open an empty turn later; `withdrawDrainNotices` takes them back. */
+    readonly drainNotices: Map<string, {
+        agent: Agent;
+        ids: Set<string>;
+    }>;
     /** Subagent sessions this process continued through their parent, by parent id, so the parent's
      *  own restart notice can name them and the parent does not hand them the work again. Shared by
      *  every adapter instance like `wokeThroughParent`: a child on a box's model wakes under that
@@ -1473,6 +1480,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
      *  instead of riding on top of the user's next prompt. */
     wake(sessionId: string, proc: ClaudeProcess | undefined, text?: string): Promise<boolean>;
+    /**
+     * A prompt turn is starting on `sessionId`: it reads everything the process queued, so drain
+     * notices still pending for that output have nothing left to show. Taken out of dsh's inbox they
+     * open no turn; left there, each became an empty turn of its own after the one that drew the
+     * output (2026-11-15: a restart's background-task wake and reconnect notice landed while the turn
+     * for a waiting subagent message was starting, and showed as two blank turns after it). The
+     * notice that opened this turn is no longer pending, so `remove` passes over it.
+     */
+    withdrawDrainNotices(sessionId: string): Promise<void>;
     /** The parent of a subagent's session, and whether a restart notice already waits in its inbox;
      *  undefined for any other session (a fork carries a parent too, but dsh resumes it like any
      *  root). Read from the live session when dsh holds it, else from the log without loading it. */
