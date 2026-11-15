@@ -76,8 +76,9 @@ function world(
     sessions: { get: () => undefined },
     agents: { get: (id: string) => live.get(id) },
   } as unknown as PluginContext;
-  // The guard against a double wake is process-wide; each block starts clean.
+  // The double-wake guard and the continued-children map are process-wide; each block starts clean.
   ClaudeCodeAdapter.wokeThroughParent.clear();
+  ClaudeCodeAdapter.continuedChildren.clear();
   const adapter = new ClaudeCodeAdapter(ctx, Config({}));
   adapter.sessionController = {
     resolveAgent: async (id: string) => {
