@@ -1,0 +1,17 @@
+name: Release check
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: python3 .github/scripts/release-bump-check.py "$GITHUB_REF_NAME"
