@@ -290,12 +290,21 @@ export interface RelayResult {
         data: string;
     }[];
 }
+/** A dsh tool Claude called over the bridge, as its tool_use block streamed: the name without the
+ *  `mcp__dsh__` prefix and the arguments as JSON text, which stays partial until the block stops. */
+export interface DshCall {
+    name: string;
+    args: string;
+}
 /** A dsh tool call the MCP bridge parks on the live turn; settled when dsh returns its result. */
 export interface RelayEvent {
     type: "dsh_relay";
     id: string;
     name: string;
     args: Record<string, JsonValue>;
+    /** The tool_use block this call answers, as Claude Code stamps it on the MCP request
+     *  (`_meta["claudecode/toolUseId"]`); undefined from a CLI that does not send it. */
+    toolUseId?: string;
     resolve: (v: RelayResult) => void;
     reject: (e: Error) => void;
 }
@@ -967,7 +976,7 @@ export declare class ClaudeProcess {
      *  turn is reading: a line written to stdin now would start a turn of its own after it. */
     compacting: boolean;
     dshIds?: Set<string>;
-    dshNames?: Map<string, string>;
+    dshCalls?: Map<string, DshCall>;
     relayed?: Set<string>;
     steerPending: boolean;
     /** Typed steers Claude has not read yet, by dsh message id: written to stdin during a native

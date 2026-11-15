@@ -570,6 +570,7 @@ export interface RpcEnv {
     name: string,
     args: Record<string, JsonValue>,
     signal: AbortSignal,
+    toolUseId: string | undefined,
   ) => Promise<RelayResult | undefined> | undefined;
   /** The session CLI's permission mode right now, read once per tools/call so a switch made after
    *  spawn counts; undefined when unknown, which gates nothing. */
@@ -581,6 +582,15 @@ export interface RpcEnv {
   alwaysLoad?: boolean;
   log?: (level: string, msg: string) => void;
 }
+
+/** The tool_use id Claude Code stamps on a tools/call (`_meta["claudecode/toolUseId"]`), which
+ *  ties the request to the exact block in the stream; undefined when the CLI sends none. */
+const toolUseIdOf = (msg: JsonRpcRequest): string | undefined => {
+  const meta = msg.params?.["_meta"];
+  return meta && typeof meta === "object" && !Array.isArray(meta)
+    ? str(meta["claudecode/toolUseId"])
+    : undefined;
+};
 
 /** One JSON-RPC request against the tools visible to `agent`. Returns null for notifications. */
 export async function handleRpc(
@@ -688,7 +698,7 @@ export async function handleRpc(
       try {
         // A live Claude turn takes the call first: dsh then runs the tool itself and renders it
         // natively (subagent cards, counts, notices). Otherwise execute it here.
-        const relayed = relay ? await relay(name, args, signal) : undefined;
+        const relayed = relay ? await relay(name, args, signal, toolUseIdOf(msg)) : undefined;
         if (relayed) {
           const result: CallResult = {
             content: [{ type: "text", text: relayed.text }],
@@ -735,6 +745,7 @@ export interface BridgeOptions {
     name: string,
     args: Record<string, JsonValue>,
     signal: AbortSignal,
+    toolUseId: string | undefined,
   ) => Promise<RelayResult | undefined> | undefined;
   /** The permission mode the session's CLI is in right now; feeds the plan-mode gate. */
   mode?: (sessionId: string) => string | undefined;
@@ -939,7 +950,8 @@ export function registerMcpBridge(
                 prompt: (args) => promptSession(promptHost, agent, args, controller.signal),
                 wait: (args) => waitSession(openHost, agent, args, controller.signal),
                 relay: relay
-                  ? (name, args, signal) => relay(sessionId, name, args, signal)
+                  ? (name, args, signal, toolUseId) =>
+                      relay(sessionId, name, args, signal, toolUseId)
                   : undefined,
                 mode: mode ? () => mode(sessionId) : undefined,
                 hidden: builtins ? hiddenFor(builtins(sessionId)) : HIDDEN,

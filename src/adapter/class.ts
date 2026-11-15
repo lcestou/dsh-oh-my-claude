@@ -5776,7 +5776,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     proc.prep = prep;
     if (cont.mode !== "relay") {
       proc.dshIds = new Set(); // ids only need to survive a relay round trip
-      proc.dshNames = new Map();
+      proc.dshCalls = new Map();
       proc.relayed = new Set();
       // dsh clears the todo panel at turn/start; re-append the last list now that the turn is
       // open (a todo/write outside an open turn is rejected by dsh's todo invariant).
@@ -5878,7 +5878,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       toolTextLimit: this.config.toolTextLimit,
       relay: this.mcp !== undefined && this.config.dshTools,
       dshIds: proc.dshIds,
-      dshNames: proc.dshNames,
+      dshCalls: proc.dshCalls,
       relayed: proc.relayed,
       hostLabel: this.hostLabelFor(options.sessionId),
       routerOnly: await this.routerOnly(prep.spec.model),
@@ -6131,6 +6131,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // deadline instead, re-armed by every event the way the base one is.
     const armToolIdle = () =>
       this.armIdle(options.sessionId, proc, true, this.config.idleTimeoutMs * TOOL_IDLE_FACTOR);
+    const rearmIdle = () => this.armIdle(options.sessionId, proc);
     const resolveControl = this.resolveControl.bind(this);
     /** One CLI event. Returns what the loop should do next. */
     // The generator below is a plain function, so the adapter is reached through this closure.
@@ -6250,10 +6251,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             c.reject(new Error("claude turn ended before dsh could run the tool"));
           return outcomeUnderUs;
         };
-        while (calls.length < tr.relayableIds().length) {
+        // Claude Code starts a call the moment its tool_use block stops, while the model may still
+        // be writing the next block of the same message. Counting only the blocks seen so far, the
+        // batch closed on the first call, the step ended, and the sibling's request then found no
+        // live turn and ran inside the bridge. So the gather lasts until the message is complete,
+        // and then until every call it holds has arrived or the window passes.
+        while (tr.messageOpen || calls.length < tr.relayableIds().length) {
           const more = await proc.nextEvent(RELAY_BATCH_MS);
           if (more === null) return abandon("ended");
-          if (more.type === "timeout") break;
+          if (more.type === "timeout") {
+            if (tr.messageOpen) continue;
+            break;
+          }
+          if (more.type !== "idle_warning") rearmIdle();
           if (more.type === "dsh_relay") {
             calls.push(more);
             continue;
@@ -6306,11 +6316,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           }
         }
         flushPending();
-        // The oldest outstanding dsh tool_use blocks are the ones these calls came from; the
-        // bridge's own tools never relay, so they are not among them.
-        const ids = tr.relayableIds();
-        for (const [i, call] of calls.entries()) {
-          if (ids[i] !== undefined) tr.relayed.add(ids[i]);
+        tr.claimRelayed(calls.map((c) => c.toolUseId));
+        for (const call of calls) {
           yield* relayBlocks(tr, call);
           proc.relays.set(call.id, call);
         }
@@ -7073,19 +7080,29 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     toolName: string,
     args: Record<string, JsonValue>,
     signal: AbortSignal,
+    toolUseId?: string,
   ): Promise<RelayResult> | undefined {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
     if (!proc?.alive || !proc.busy || proc.relays.size > 0) {
       // Why a dsh tool ran in the bridge instead of dsh's loop; goal tools refuse the bridge path.
       void trace(
         join(this.stateDir, "resume.log"),
-        `relay ${toolName} for ${sessionId} declined: alive=${String(proc?.alive)} busy=${String(proc?.busy)} pending=${proc?.relays.size ?? 0}`,
+        `relay ${toolName} for ${sessionId} declined: alive=${String(proc?.alive)} busy=${String(proc?.busy)} pending=${proc?.relays.size ?? 0} toolUse=${toolUseId ?? "?"}`,
       );
       return undefined;
     }
     return new Promise<RelayResult>((resolve, reject) => {
       signal?.addEventListener("abort", () => reject(new Error("relay aborted")), { once: true });
-      proc.inject({ type: "dsh_relay", id: randomUUID(), name: toolName, args, resolve, reject });
+      const call: RelayEvent = {
+        type: "dsh_relay",
+        id: randomUUID(),
+        name: toolName,
+        args,
+        resolve,
+        reject,
+      };
+      if (toolUseId !== undefined) call.toolUseId = toolUseId;
+      proc.inject(call);
     });
   }
 
