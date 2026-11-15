@@ -1604,6 +1604,7 @@ export class Translator {
         if (!this.nested) {
           this.setToolPending(false);
           this.calls.clear();
+          this.dshBlocks.clear(); // block indexes restart per message; a nested one keeps the line's
           this.streaming = true;
         }
         // One whitespace token at the step's first message_start, the response's first byte. dsh
@@ -1899,7 +1900,9 @@ export class Translator {
     const exact = new Set(toolUseIds.filter((id) => id !== undefined && candidates.includes(id)));
     const rest = candidates.filter((id) => !exact.has(id));
     for (const id of toolUseIds) {
-      const mark = id !== undefined && exact.has(id) ? id : rest.shift();
+      // A stamped id that is no candidate (a block this translator never saw) marks nothing:
+      // giving it the oldest candidate would hide that call's own result.
+      const mark = id === undefined ? rest.shift() : exact.has(id) ? id : undefined;
       if (mark !== undefined) this.relayed.add(mark);
     }
   }
@@ -2078,8 +2081,13 @@ export class Translator {
         if (this.fireToolCall(toolUseId, name, dshCall?.args || "{}") !== undefined) {
           this.callInputs.delete(toolUseId);
           this.firedCalls.delete(toolUseId);
-          this.onToolResult(toolUseId, raw, b.is_error ?? false);
-          continue;
+          try {
+            this.onToolResult(toolUseId, raw, b.is_error ?? false);
+            continue;
+          } catch (err) {
+            this.log("warn", `bridge tool result append failed: ${err}`);
+            // fall through to render it as reasoning, like a native result that failed to append
+          }
         }
       }
       // Inline native result: draw a formatted markdown block matching its call, in stream order.

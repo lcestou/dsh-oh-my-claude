@@ -417,23 +417,7 @@ import {
   wantedUltracode,
   WATCH_LOOKBACK_BYTES,
 } from "./turn.js";
-
-/** The parent of a subagent's session and whether a restart notice already waits in its inbox, or
- *  undefined for any other session: a fork carries a parent too, but dsh resumes it like a root. */
-function subagentLinkOf(
-  header: { parentSession?: string; origin?: string },
-  events: () => Iterable<{ type: string; data?: unknown }>,
-): { parentId: string; noticePending: boolean } | undefined {
-  if (header.origin !== "subagent" || !header.parentSession) return undefined;
-  return {
-    parentId: String(header.parentSession),
-    noticePending: hasPendingNotice(events(), "dsh-oh-my-claude", [
-      RESTART_TEXT,
-      RECONNECT_TEXT,
-      RELOAD_TEXT,
-    ]),
-  };
-}
+import { subagentLinkOf } from "./wake-subagent.js";
 
 /** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
 export class ClaudeCodeAdapter extends LlmAdapter {
@@ -478,9 +462,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  A wake for one can never open a turn, so the retry loops stop asking. */
   readonly unwakeable = new Set<string>();
   /** Subagent sessions this process continued through their parent, by parent id, so the parent's
-   *  own restart notice can name them and the parent does not hand them the work again. */
-  readonly continuedChildren = new Map<string, Set<string>>();
-
+   *  own restart notice can name them and the parent does not hand them the work again. Shared by
+   *  every adapter instance like `wokeThroughParent`: a child on a box's model wakes under that
+   *  box's instance while its parent's notice goes out from another. */
+  static readonly continuedChildren = new Map<string, Set<string>>();
   /** What a heal needs from dsh, handed over by the session routes; undefined until they load. */
   heal?: HealHost;
   /** Masks secret env values in tool results; undefined when `redactSecrets` is off. */
@@ -6167,6 +6152,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // deadline instead, re-armed by every event the way the base one is.
     const armToolIdle = () =>
       this.armIdle(options.sessionId, proc, true, this.config.idleTimeoutMs * TOOL_IDLE_FACTOR);
+    /** Push the base deadline out while a relay batch gathers: the stream is live, so the longer
+     *  tool deadline its first tool_use armed no longer applies. */
     const rearmIdle = () => this.armIdle(options.sessionId, proc);
     const resolveControl = this.resolveControl.bind(this);
     /** One CLI event. Returns what the loop should do next. */
@@ -7055,7 +7042,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Subagents this process already continued through this session: its notice names them once.
     const continued =
       text === RESTART_TEXT || text === RECONNECT_TEXT || text === RELOAD_TEXT
-        ? this.continuedChildren.get(sessionId)
+        ? ClaudeCodeAdapter.continuedChildren.get(sessionId)
         : undefined;
     const extra = continued?.size ? childrenContinuedText([...continued]) : undefined;
     try {
@@ -7096,7 +7083,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return false;
     }
     if (extra) {
-      this.continuedChildren.delete(sessionId);
+      ClaudeCodeAdapter.continuedChildren.delete(sessionId);
       await note(`told it about continued subagents ${[...(continued ?? [])].join(", ")}`);
     }
     await note(`followup sent (agent ${how})`);
@@ -7184,8 +7171,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // By now the child's turn has started; a later wake is a new one.
     setTimeout(() => waking.delete(sessionId), WAKE_THROUGH_PARENT_HOLD_MS).unref?.();
     if (continuation) {
-      const set = this.continuedChildren.get(child.parentId) ?? new Set<string>();
-      this.continuedChildren.set(child.parentId, set.add(sessionId));
+      const set = ClaudeCodeAdapter.continuedChildren.get(child.parentId) ?? new Set<string>();
+      ClaudeCodeAdapter.continuedChildren.set(child.parentId, set.add(sessionId));
     }
     await note(`followup sent through parent ${child.parentId}`);
     return true;
@@ -7212,8 +7199,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         parent = resolvedAgent(await this.sessionController.resolveAgent(parentId));
     } catch (error) {
       const reason = errorText(error);
-      // The parent is a subagent itself, which only its own parent reaches: one level deeper than
-      // this wake goes.
+      // A parent that is a subagent itself is refused too ("owned by subagent routing"): only its
+      // own parent reaches it, one level deeper than this wake goes.
       if (/owned by subagent routing/i.test(reason)) this.unwakeable.add(sessionId);
       await note(`parent ${parentId} unavailable: ${reason}`);
       return false;

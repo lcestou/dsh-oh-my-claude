@@ -170,8 +170,11 @@ const boundary = {
     return "fresh summary";
   };
   assert.equal(await a.compactionFromCli("s1"), "fresh summary");
-  assert.match(written[0]!, /"\/compact Open the summary with a short section on the people/,
-    "the prompt is the CLI's own command, with the people section asked for");
+  assert.match(
+    written[0]!,
+    /"\/compact Open the summary with a short section on the people/,
+    "the prompt is the CLI's own command, with the people section asked for",
+  );
   assert.match(written[1]!, /not supported while compacting/, "a control request is refused");
   assert.deepEqual(asked, [["/work", "claude-1", 1234]]);
   assert.equal(proc.busy, false);
@@ -618,7 +621,11 @@ const compactingCli = (path: string) => {
   const { proc, written } = compactingCli(path);
   a.processes.set(registryKey(a.providerId, "s1"), proc);
   assert.equal(await a.compactionFromCli("s1"), "fresh summary");
-  assert.match(written[0]!, /"\/compact Open the summary[^"]*as they are\."/, "no tail note when nothing is kept");
+  assert.match(
+    written[0]!,
+    /"\/compact Open the summary[^"]*as they are\."/,
+    "no tail note when nothing is kept",
+  );
   assert.equal(proc.killed, false);
   assert.deepEqual(await keptRows(path), ["a3"]);
 }

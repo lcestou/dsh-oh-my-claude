@@ -4083,6 +4083,17 @@ console.log("ok");
   assert.deepEqual([...tr.relayed], ["b", "a"], "an unstamped call takes the oldest unmarked one");
   assert.deepEqual(tr.relayableIds(), [], "a marked call is no longer a candidate");
 }
+// A stamped id the translator never saw marks nothing, never the oldest candidate.
+{
+  const tr = new Translator({ relay: true }) as any;
+  tr.translate({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", id: "a", name: "mcp__dsh__bash", input: {} }] },
+  });
+  tr.claimRelayed(["zz"]);
+  assert.deepEqual([...tr.relayed], [], "an unknown stamped id takes no other block's mark");
+  assert.deepEqual(tr.relayableIds(), ["a"]);
+}
 console.log("relay ok");
 
 // Unknown stream-json shapes warn once (schema-drift canary); knowingly-benign types stay silent.

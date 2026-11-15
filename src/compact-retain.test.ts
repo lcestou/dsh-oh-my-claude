@@ -262,7 +262,10 @@ console.log("compact-retain ok");
   const bare = summaryInstructions(undefined);
   assert.match(bare, /^Open the summary with a short section on the people/);
   assert.match(bare, /their newest message quoted word for word/);
-  assert.match(bare, /Write the rest of the summary in the language of the newest of those messages/);
+  assert.match(
+    bare,
+    /Write the rest of the summary in the language of the newest of those messages/,
+  );
   const both = summaryInstructions(compactInstructions(before, 1_000_000));
   assert.ok(both.startsWith(bare) && /Summarize only what comes before it/.test(both));
 }
