@@ -458,6 +458,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Probe targets already written to resume.log, so the line lands once per binary, not per turn. */
   probeTraced = new Set<string>();
   sessionController?: SessionController;
+  /** Drain notices (`WAKE_TEXT`, `RECONNECT_TEXT`) still waiting in a session's inbox, with the agent
+   *  that holds them. dsh gives every followup a turn of its own, so a notice whose output another
+   *  turn already drew would open an empty turn later; `withdrawDrainNotices` takes them back. */
+  readonly drainNotices = new Map<string, { agent: Agent; ids: Set<string> }>();
   /** Subagent sessions this process continued through their parent, by parent id, so the parent's
    *  own restart notice can name them and the parent does not hand them the work again. Shared by
    *  every adapter instance like `wokeThroughParent`: a child on a box's model wakes under that
@@ -6167,6 +6171,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
     proc.busy = true;
+    if (cont.mode === "prompt") void this.withdrawDrainNotices(options.sessionId);
     proc.claimed = false;
     proc.lastUsed = Date.now();
     this.clearLimitWait(options.sessionId); // a prompt (or our own notice) supersedes the wait
@@ -6960,21 +6965,25 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       } catch {
         // no goal service or inactive scope: plain notice
       }
-      agent.followup(
-        createUserMessage({
-          // The extra line rides in a block of its own, so the notice block stays exactly `text`
-          // and the pending-notice check still knows it.
-          content: [
-            { type: "text", text },
-            ...(extra ? [{ type: "text" as const, text: extra }] : []),
-          ],
-          // SAFETY: the plugin builds against dsh-llm 0.1.6 types, whose MessageSource still spells
-          // the v3 `{ kind: "plugin", plugin }` wrapper; dsh 0.1.7's v4 log refuses exactly that
-          // shape at runtime and takes the producer-owned kind instead. The runtime is the
-          // authority here, so the v4 shape goes through the stale type.
-          source: noticeSource(text, goalActive, logVersion) as MessageSource,
-        }),
-      );
+      const notice = createUserMessage({
+        // The extra line rides in a block of its own, so the notice block stays exactly `text`
+        // and the pending-notice check still knows it.
+        content: [
+          { type: "text", text },
+          ...(extra ? [{ type: "text" as const, text: extra }] : []),
+        ],
+        // SAFETY: the plugin builds against dsh-llm 0.1.6 types, whose MessageSource still spells
+        // the v3 `{ kind: "plugin", plugin }` wrapper; dsh 0.1.7's v4 log refuses exactly that
+        // shape at runtime and takes the producer-owned kind instead. The runtime is the
+        // authority here, so the v4 shape goes through the stale type.
+        source: noticeSource(text, goalActive, logVersion) as MessageSource,
+      });
+      agent.followup(notice);
+      if (text === WAKE_TEXT || text === RECONNECT_TEXT) {
+        const held = this.drainNotices.get(sessionId);
+        if (held?.agent === agent) held.ids.add(String(notice.id));
+        else this.drainNotices.set(sessionId, { agent, ids: new Set([String(notice.id)]) });
+      }
     } catch (error) {
       this.log("warn", `wake after idle reply failed: ${errorText(error)}`);
       await note(`followup failed: ${errorText(error)}`);
@@ -7009,6 +7018,32 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
     }
     return true;
+  }
+
+  /**
+   * A prompt turn is starting on `sessionId`: it reads everything the process queued, so drain
+   * notices still pending for that output have nothing left to show. Taken out of dsh's inbox they
+   * open no turn; left there, each became an empty turn of its own after the one that drew the
+   * output (2026-11-15: a restart's background-task wake and reconnect notice landed while the turn
+   * for a waiting subagent message was starting, and showed as two blank turns after it). The
+   * notice that opened this turn is no longer pending, so `remove` passes over it.
+   */
+  async withdrawDrainNotices(sessionId: string): Promise<void> {
+    const held = this.drainNotices.get(sessionId);
+    if (!held) return;
+    this.drainNotices.delete(sessionId);
+    let withdrawn = 0;
+    for (const id of held.ids)
+      try {
+        if (held.agent.inbox?.remove(id)) withdrawn++;
+      } catch (error) {
+        this.log("warn", `withdraw drain notice: ${errorText(error)}`);
+      }
+    if (withdrawn > 0)
+      await trace(
+        join(this.stateDir, "resume.log"),
+        `wake ${sessionId}: withdrew ${withdrawn} drain notice(s), this turn draws the output`,
+      );
   }
 
   /** The parent of a subagent's session, and whether a restart notice already waits in its inbox;
