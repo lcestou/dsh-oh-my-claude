@@ -43,19 +43,19 @@ const history: LooseMessage[] = [
   { role: "system", content: text("You are Sakina."), source: { kind: "system-prompt" } },
   {
     role: "user",
-    content: text("[Telegram message from Lia]"),
+    content: text("[Telegram message from Alice]"),
     source: { kind: "telegram-sender" },
   },
-  person("帮我查一下包裹"),
+  person("帮我查一下快递"),
   call("c1", "bash", '{"command":"amazon-ca order 1"}', "我看看"),
   result("c1", "Delivery attempted today at 6:14 a.m."),
-  reply("包裹今天早上 6:14 来过一次，没送成。"),
-  person("白天送呗你帮我改"),
+  reply("快递今天早上 6:14 来过一次，没送成。"),
+  person("改成白天送吧"),
   call("c2", "subagent", '{"prompt":"Move the redelivery to daytime."}'),
   result("c2", "started subagent 086518b8"),
   call("c3", "edit", "{not json"),
   // c3 never got a result: the turn was cut off.
-  reply("派了一只小猫猫去改。", "other-route"),
+  reply("已经安排好，我去改。", "other-route"),
   person("怎么样了"),
 ];
 
@@ -97,7 +97,7 @@ assert.deepEqual(
 );
 assert.equal(
   seed[1].message.content[0].text,
-  "帮我查一下包裹",
+  "帮我查一下快递",
   "the person's own words, unlabelled",
 );
 assert.ok(!JSON.stringify(seed).includes("You are Sakina."), "the system prompt rides on its flag");
@@ -114,7 +114,7 @@ assert.equal(seed[9].message.content[0].content[0].text, NO_RESULT, "an unanswer
 assert.equal(seed[9].message.content[0].is_error, true);
 assert.equal(
   seed[10].message.content[0].text,
-  "派了一只小猫猫去改。",
+  "已经安排好，我去改。",
   "another route's reply counts",
 );
 // A chain the CLI walks back from the last row, with the fields its loader reads.
