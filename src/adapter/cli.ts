@@ -4,6 +4,7 @@ import { execFile } from "node:child_process";
 import { type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { JsonValue, ToolSchema } from "../dsh.js";
 import { KEY_ENV, KEY_HEADER } from "../mcp-config.js";
+import { PEOPLE_INSTRUCTIONS } from "../compact-retain.js";
 import { ISOLATED_ENV, ISOLATED_SETTINGS } from "./isolate.js";
 import { CHILD_ENV, shq, sshArgs, userTurnLine } from "../process.js";
 import { probeRawToolRows, type RowsSupport } from "../rows-probe.js";
@@ -312,6 +313,23 @@ export function dshToolsGuidance(
 }
 
 /**
+ * The people section for Claude Code's own compaction. The plugin's `/compact` passes it as the
+ * command's argument, but the CLI also compacts by itself mid-turn when the context fills, and that
+ * summary got none of it: it came back in English with the people's words only as quotes, and
+ * replies to someone writing another language drifted into English after it. A PreCompact hook's
+ * output is what the CLI adds to the instructions of an automatic compaction, so this hook prints
+ * the same text for the `auto` trigger (the manual one already carries it).
+ */
+export const AUTO_COMPACT_HOOKS = {
+  PreCompact: [
+    {
+      matcher: "auto",
+      hooks: [{ type: "command", command: `printf '%s' ${shq(PEOPLE_INSTRUCTIONS)}` }],
+    },
+  ],
+} satisfies JsonValue;
+
+/**
  * The argument list for one `claude -p` spawn: every flag this plugin sends, in one place.
  *
  * Almost every flag is guarded by `supports`, which asks what this particular CLI binary
@@ -373,6 +391,7 @@ export function buildArgs({
   // In -p mode /fast only works in a session launched with fast mode in --settings (fast-mode docs).
   const settings: Record<string, JsonValue> = config.isolate ? { ...ISOLATED_SETTINGS } : {};
   if (config.fastMode) settings.fastMode = true;
+  if (!purpose) settings.hooks = AUTO_COMPACT_HOOKS;
   if (Object.keys(settings).length > 0 && supports(flags, "--settings"))
     args.push("--settings", JSON.stringify(settings));
   if (config.isolate) {

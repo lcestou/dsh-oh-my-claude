@@ -15,7 +15,11 @@ const valueOf = (args: string[], flag: string) => {
 
 const plain = buildArgs({ model: "m", config: new Config({}) });
 assert.ok(!plain.includes("--setting-sources") && !plain.includes("--strict-mcp-config"));
-assert.equal(valueOf(plain, "--settings"), undefined, "the default passes no settings");
+assert.deepEqual(
+  Object.keys(JSON.parse(valueOf(plain, "--settings") ?? "{}")),
+  ["hooks"],
+  "the default passes only the auto-compact hook (auto-compact-hook.test.ts)",
+);
 
 const isolated = buildArgs({ model: "m", config: new Config({ isolate: true, fastMode: true }) });
 assert.equal(valueOf(isolated, "--setting-sources"), "", "no settings source at all");

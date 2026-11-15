@@ -66,6 +66,23 @@ export declare const usesStdin: (flags: Set<string> | null | undefined) => boole
  */
 export declare function dshToolsGuidance(tools?: readonly ToolSchema[], builtins?: readonly string[]): string;
 /**
+ * The people section for Claude Code's own compaction. The plugin's `/compact` passes it as the
+ * command's argument, but the CLI also compacts by itself mid-turn when the context fills, and that
+ * summary got none of it: it came back in English with the people's words only as quotes, and
+ * replies to someone writing another language drifted into English after it. A PreCompact hook's
+ * output is what the CLI adds to the instructions of an automatic compaction, so this hook prints
+ * the same text for the `auto` trigger (the manual one already carries it).
+ */
+export declare const AUTO_COMPACT_HOOKS: {
+    PreCompact: {
+        matcher: string;
+        hooks: {
+            type: string;
+            command: string;
+        }[];
+    }[];
+};
+/**
  * The argument list for one `claude -p` spawn: every flag this plugin sends, in one place.
  *
  * Almost every flag is guarded by `supports`, which asks what this particular CLI binary

@@ -5200,7 +5200,7 @@ console.log("command-catalog ok");
   } as any);
   const i = on.indexOf("--settings");
   assert.ok(
-    i >= 0 && on[i + 1] === JSON.stringify({ fastMode: true }),
+    i >= 0 && JSON.parse(on[i + 1] ?? "{}").fastMode === true,
     "fast mode launches with --settings",
   );
   const off = buildArgs({
@@ -5212,7 +5212,8 @@ console.log("command-catalog ok");
     flags,
     mcp: null,
   } as any);
-  assert.equal(off.indexOf("--settings"), -1, "no --settings without fastMode");
+  const j = off.indexOf("--settings");
+  assert.equal(JSON.parse(off[j + 1] ?? "{}").fastMode, undefined, "no fastMode without fastMode");
 }
 console.log("fast-mode ok");
 
