@@ -86,7 +86,7 @@ export interface RpcEnv {
     /** prompt_session and wait_session; each is offered only when given, like `open`. */
     prompt?: (args: Record<string, JsonValue>) => Promise<string>;
     wait?: (args: Record<string, JsonValue>) => Promise<string>;
-    relay?: (name: string, args: Record<string, JsonValue>, signal: AbortSignal) => Promise<RelayResult | undefined> | undefined;
+    relay?: (name: string, args: Record<string, JsonValue>, signal: AbortSignal, toolUseId: string | undefined) => Promise<RelayResult | undefined> | undefined;
     /** The session CLI's permission mode right now, read once per tools/call so a switch made after
      *  spawn counts; undefined when unknown, which gates nothing. */
     mode?: () => string | undefined;
@@ -103,7 +103,7 @@ export declare function handleRpc(msg: JsonRpcRequest, { tools, agent, signal, v
 export interface BridgeOptions {
     log: (level: string, msg: string) => void;
     version: string;
-    relay?: (sessionId: string, name: string, args: Record<string, JsonValue>, signal: AbortSignal) => Promise<RelayResult | undefined> | undefined;
+    relay?: (sessionId: string, name: string, args: Record<string, JsonValue>, signal: AbortSignal, toolUseId: string | undefined) => Promise<RelayResult | undefined> | undefined;
     /** The permission mode the session's CLI is in right now; feeds the plan-mode gate. */
     mode?: (sessionId: string) => string | undefined;
     /** The Claude Code built-ins a session's CLI is started with (`builtinTools`), which decide the

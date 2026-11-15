@@ -153,6 +153,35 @@ const relayedContent = relayed.result.content[0];
 assert.ok(relayedContent);
 assert.equal(relayedContent.text, 'relayed subagent_local {"a":1}');
 assert.equal(relayed.result.isError, undefined);
+// Claude Code stamps each tools/call with the tool_use block it answers; the relay gets that id so
+// the adapter can mark exactly that block as drawn by dsh, and gets none from a CLI that sends none.
+{
+  const seen: Array<string | undefined> = [];
+  const relay = async (
+    _name: string,
+    _args: unknown,
+    _signal: AbortSignal,
+    toolUseId: string | undefined,
+  ) => (seen.push(toolUseId), { text: "ran" });
+  await handleRpc(
+    {
+      jsonrpc: "2.0",
+      id: 81,
+      method: "tools/call",
+      params: {
+        name: "subagent_local",
+        arguments: {},
+        _meta: { "claudecode/toolUseId": "toolu_01abc" },
+      },
+    },
+    { ...env, relay },
+  );
+  await handleRpc(
+    { jsonrpc: "2.0", id: 82, method: "tools/call", params: { name: "subagent_local" } },
+    { ...env, relay },
+  );
+  assert.deepEqual(seen, ["toolu_01abc", undefined], "the stamped tool_use id reaches the relay");
+}
 const fallback = (await handleRpc(
   {
     jsonrpc: "2.0",

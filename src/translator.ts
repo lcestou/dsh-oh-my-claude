@@ -3,6 +3,7 @@ import {
   type ClaudeEvent,
   type ClaudeStreamPartial,
   type ClaudeContentBlock,
+  type DshCall,
   toolResultText,
   type SettingsKey,
 } from "./process.js";
@@ -644,7 +645,7 @@ export class Translator {
   statusNote: ((httpStatus: number) => string) | undefined;
   relay: boolean; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
   dshIds: Set<string>; // tool_use ids of dsh tools called over the MCP bridge
-  dshNames: Map<string, string>; // dsh tool_use id → tool name, for a fallback row
+  dshCalls: Map<string, DshCall>; // dsh tool_use id → its name and arguments, for its own row
   relayed: Set<string>; // dsh tool_use ids dsh ran natively; results not drawn here
   limit: number;
   index: number;
@@ -658,6 +659,8 @@ export class Translator {
   toolPending: boolean; // a tool_use block closed and its result has not arrived yet
   private calls = new Set<string>(); // tool_use ids of the streamed message not yet echoed as results
   private streaming = false; // a top-level message is between its message_start and message_stop
+  /** api block index → tool_use id of the dsh call streaming there, whose arguments are collected. */
+  private readonly dshBlocks = new Map<number, string>();
   private wholeId: string | undefined; // the message whose whole frames are filling `calls`
   private tokened = false; // the step's first-token marker has gone out
   private nested = false; // the frame in hand belongs to a nested agent: its modes are not the line's
@@ -774,7 +777,7 @@ export class Translator {
     toolTextLimit = TOOL_TEXT_LIMIT,
     relay = false,
     dshIds,
-    dshNames,
+    dshCalls,
     relayed,
     log,
     onToolCall,
@@ -800,7 +803,7 @@ export class Translator {
     toolTextLimit?: number;
     relay?: boolean;
     dshIds?: Set<string>;
-    dshNames?: Map<string, string>;
+    dshCalls?: Map<string, DshCall>;
     relayed?: Set<string>;
     log?: (level: string, msg: string) => void;
     onToolCall?: (callId: string, name: string, args: string) => number | undefined;
@@ -848,9 +851,10 @@ export class Translator {
     this.statusNote = statusNote;
     this.relay = relay; // dsh tool calls are relayed to dsh's own loop: hide Claude's view of them
     this.dshIds = dshIds ?? new Set(); // tool_use ids of dsh tools called over the MCP bridge
-    // dsh tool_use id → tool name, for a fallback row and to tell the bridge's own tools apart.
-    // Shared across a turn's steps like dshIds: a call can outlive the step that drew it.
-    this.dshNames = dshNames ?? new Map();
+    // dsh tool_use id → name and arguments, for the row of a call dsh did not draw, and to tell
+    // the bridge's own tools apart. Shared across a turn's steps like dshIds: a call can outlive
+    // the step that drew it.
+    this.dshCalls = dshCalls ?? new Map();
     this.relayed = relayed ?? new Set(); // dsh tool_use ids dsh ran natively; results not drawn here
     this.limit = toolTextLimit;
     this.index = 0;
@@ -1632,6 +1636,11 @@ export class Translator {
           this.callInputs.set(cbMeta.id, (existing ?? "") + partial);
           return [];
         }
+        const dshCall = this.dshCalls.get(this.dshBlocks.get(apiIndex) ?? "");
+        if (dshCall && ev.delta?.partial_json !== undefined) {
+          dshCall.args += ev.delta.partial_json;
+          return [];
+        }
         if (!block || block.index < 0) return [];
         const d = ev.delta ?? {};
         const text = d.text ?? d.thinking ?? d.partial_json ?? "";
@@ -1669,6 +1678,7 @@ export class Translator {
           }
         }
         this.open.delete(apiIndex);
+        this.dshBlocks.delete(apiIndex);
         // A finished tool_use block means the CLI is now running that tool: no stream events until
         // its result arrives, however long it takes. Callers read this to pause their idle timer.
         this.setToolPending(block.tool === true);
@@ -1761,7 +1771,8 @@ export class Translator {
       const dsh = toolName.startsWith("mcp__dsh__");
       if (dsh && cb.id) {
         this.dshIds.add(cb.id);
-        this.dshNames.set(cb.id, toolName.slice("mcp__dsh__".length));
+        this.dshCalls.set(cb.id, { name: toolName.slice("mcp__dsh__".length), args: "" });
+        this.dshBlocks.set(apiIndex, cb.id);
       }
       // Native tools: hide the raw block and accumulate input; content_block_stop draws the row
       // (a dsh session row when onToolCall is wired, else a formatted inline markdown block).
@@ -1776,7 +1787,9 @@ export class Translator {
         });
         return [];
       }
-      if (!this.toolActivity || (dsh && this.relay)) {
+      // A dsh call draws no block of its own: dsh draws a relayed one, and `toolResults` gives one
+      // that ran in the bridge a row once its result is in.
+      if (!this.toolActivity || dsh) {
         this.open.set(apiIndex, {
           index: -1,
           blockType: "hidden",
@@ -1836,7 +1849,10 @@ export class Translator {
         const dsh = toolName.startsWith("mcp__dsh__");
         if (dsh) {
           this.dshIds.add(b.id);
-          this.dshNames.set(b.id, toolName.slice("mcp__dsh__".length));
+          this.dshCalls.set(b.id, {
+            name: toolName.slice("mcp__dsh__".length),
+            args: JSON.stringify(b.input ?? {}),
+          });
         }
         // Native tools render as session rows (onToolCall) or an inline markdown block.
         if (isNativeTool(toolName) && b.id) {
@@ -1852,7 +1868,7 @@ export class Translator {
           }
           continue;
         }
-        if (!this.toolActivity || (dsh && this.relay)) continue;
+        if (!this.toolActivity || dsh) continue;
         const [kind, lead] = this.toolLead(b);
         events.push(
           ...this.wholeBlock(kind, lead + clip(JSON.stringify(b.input ?? {}), this.limit)),
@@ -1865,20 +1881,37 @@ export class Translator {
   /** Outstanding dsh tool_use ids a relay can still come from, oldest first. The bridge's own tools
    *  (open_session, wait_session…) are answered inside the bridge and never relay: counted here, a
    *  wait_session held open for minutes made the batch wait for a relay that never came and then
-   *  took the mark meant for the call beside it. An id whose name was never seen counts as
-   *  relayable, the safe side: at worst the batch waits out its window. */
+   *  took the mark meant for the call beside it. A call already relayed and waiting for its echo
+   *  is not a candidate either. An id whose name was never seen counts as relayable, the safe
+   *  side: at worst the batch waits out its window. */
   relayableIds(): string[] {
-    return [...this.dshIds].filter((id) => !OWN_TOOL_NAMES.has(this.dshNames.get(id) ?? ""));
+    return [...this.dshIds].filter(
+      (id) => !this.relayed.has(id) && !OWN_TOOL_NAMES.has(this.dshCalls.get(id)?.name ?? ""),
+    );
   }
 
-  /** dsh tools reached over the MCP bridge (subagents, jobs...) render as visible text rows, the
-   *  rest as collapsed reasoning. Returns [block kind, lead text]. */
-  toolLead(cb: { id?: string; name?: string }): [string, string] {
-    const toolName = cb.name ?? "";
-    if (toolName.startsWith("mcp__dsh__")) {
-      if (cb.id) this.dshIds.add(cb.id);
-      return ["text", `⤷ ${toolName.slice("mcp__dsh__".length)} `];
+  /** Mark the tool_use blocks a batch of relayed calls answers, so their results are left to dsh.
+   *  A call carrying its tool_use id marks exactly that block; one without (a CLI that does not
+   *  stamp the id) takes the oldest candidate left, which is wrong when an older call of the same
+   *  message is still on its way. */
+  claimRelayed(toolUseIds: ReadonlyArray<string | undefined>) {
+    const candidates = this.relayableIds();
+    const exact = new Set(toolUseIds.filter((id) => id !== undefined && candidates.includes(id)));
+    const rest = candidates.filter((id) => !exact.has(id));
+    for (const id of toolUseIds) {
+      const mark = id !== undefined && exact.has(id) ? id : rest.shift();
+      if (mark !== undefined) this.relayed.add(mark);
     }
+  }
+
+  /** Whether a top-level assistant message is still streaming, so more tool_use blocks may come. */
+  get messageOpen(): boolean {
+    return this.streaming;
+  }
+
+  /** The kind and lead text of a non-dsh tool block drawn while it streams: collapsed reasoning
+   *  headed by the tool's name. */
+  toolLead(cb: { name?: string }): [string, string] {
     return ["reasoning", `${cb.name} `];
   }
 
@@ -2034,9 +2067,21 @@ export class Translator {
       const toolUseId = b.tool_use_id ?? "";
       events.push(...this.endHeartbeat(toolUseId));
       const dsh = this.dshIds.delete(toolUseId);
-      const toolName = this.dshNames.get(toolUseId);
-      this.dshNames.delete(toolUseId);
+      const dshCall = this.dshCalls.get(toolUseId);
+      this.dshCalls.delete(toolUseId);
       if (dsh && this.relayed.delete(toolUseId)) continue; // dsh drew the native call and result
+      // A dsh call dsh never saw: it ran inside the bridge (no live turn to take it, or one of the
+      // bridge's own tools). It gets the row a relayed call gets, call and result together, now
+      // that both are known. Never answer text: it would read as words the model wrote.
+      if (dsh && this.onToolCall && this.onToolResult) {
+        const name = dshCall?.name ?? serverText("dshTool");
+        if (this.fireToolCall(toolUseId, name, dshCall?.args || "{}") !== undefined) {
+          this.callInputs.delete(toolUseId);
+          this.firedCalls.delete(toolUseId);
+          this.onToolResult(toolUseId, raw, b.is_error ?? false);
+          continue;
+        }
+      }
       // Inline native result: draw a formatted markdown block matching its call, in stream order.
       if (!this.onToolResult && this.callNames.has(toolUseId)) {
         const name = this.callNames.get(toolUseId)!;
@@ -2090,14 +2135,13 @@ export class Translator {
         }
         continue;
       }
-      // A dsh call that could not be relayed ran inside the bridge: show it as one compact row.
-      const lead =
-        dsh && this.relay
-          ? `⤷ ${serverText("ranInBridge", { tool: toolName ?? serverText("dshTool") })}\n`
-          : "";
+      // Without session rows, a dsh call that ran inside the bridge folds into reasoning beside
+      // the other tools' results.
+      const tool = dshCall?.name ?? serverText("dshTool");
+      const lead = dsh ? `⤷ ${this.relay ? serverText("ranInBridge", { tool }) : tool}\n` : "";
       events.push(
         ...this.wholeBlock(
-          dsh ? "text" : "reasoning",
+          "reasoning",
           `${lead}${tag}${dsh ? "⤶" : "◀"} ${b.is_error ? "error" : "result"}\n${body}`,
         ),
       );

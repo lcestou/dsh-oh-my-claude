@@ -272,8 +272,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       version: "0.9.0",
       // The bridge is mounted once; a session on a box's model runs under that box's instance, so
       // the offer has to reach that mount's live turn (see ownerFor).
-      relay: (sessionId, toolName, args, signal) =>
-        adapter.ownerFor(sessionId).relay(sessionId, toolName, args, signal),
+      relay: (sessionId, toolName, args, signal, toolUseId) =>
+        adapter.ownerFor(sessionId).relay(sessionId, toolName, args, signal, toolUseId),
       // The live process's mode, else the one its next spawn would get.
       mode: (sessionId) => {
         const info = adapter.ownerFor(sessionId).permissionModeInfo(sessionId);

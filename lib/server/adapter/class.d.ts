@@ -1394,7 +1394,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     wake(sessionId: string, proc: ClaudeProcess | undefined, text?: string): Promise<boolean>;
     /** Offer a dsh tool call from the MCP bridge to the session's live turn. Undefined when no turn
      *  can take it (idle process, a relay already pending); the bridge then executes it directly. */
-    relay(sessionId: string, toolName: string, args: Record<string, JsonValue>, signal: AbortSignal): Promise<RelayResult> | undefined;
+    relay(sessionId: string, toolName: string, args: Record<string, JsonValue>, signal: AbortSignal, toolUseId?: string): Promise<RelayResult> | undefined;
     /** Answer a CLI control request. Permission prompts and questions become dsh dialogs; the answer is written back on stdin. */
     handleControl(event: ControlRequestEvent, options: SessionOptions, prep: TurnPrep, proc: ClaudeProcess, pending: Map<string, AbortController>, tr: Translator): AsyncGenerator<StreamChunk, void, unknown>;
     /**
