@@ -1,5 +1,5 @@
 import type { StreamChunk, LlmFailure } from "@deepseek-ai/dsh-llm";
-import { type ClaudeEvent, type ClaudeStreamPartial, type ClaudeContentBlock, type SettingsKey } from "./process.js";
+import { type ClaudeEvent, type ClaudeStreamPartial, type ClaudeContentBlock, type DshCall, type SettingsKey } from "./process.js";
 import { TurnRecord } from "./adapter/turn.js";
 import { type PluginLoadError } from "./plugins.js";
 /** Clamp a fenced body to its first `max` lines, with a count of what was elided. A tool-heavy turn
@@ -177,7 +177,7 @@ export declare class Translator {
     statusNote: ((httpStatus: number) => string) | undefined;
     relay: boolean;
     dshIds: Set<string>;
-    dshNames: Map<string, string>;
+    dshCalls: Map<string, DshCall>;
     relayed: Set<string>;
     limit: number;
     index: number;
@@ -191,6 +191,8 @@ export declare class Translator {
     toolPending: boolean;
     private calls;
     private streaming;
+    /** api block index → tool_use id of the dsh call streaming there, whose arguments are collected. */
+    private readonly dshBlocks;
     private wholeId;
     private tokened;
     private nested;
@@ -279,7 +281,7 @@ export declare class Translator {
     private fireToolCall;
     /** Every option is optional: a bare Translator shows tool activity, relays nothing and reports
      *  to no callbacks, which is what a one-shot call wants. */
-    constructor({ toolActivity, continueAfterLimit, refusalAsFailure, timeZone, toolTextLimit, relay, dshIds, dshNames, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, noteApiKey, onTask, onHookRun, hostLabel, routerOnly, settingsKey, via, statusNote, }?: {
+    constructor({ toolActivity, continueAfterLimit, refusalAsFailure, timeZone, toolTextLimit, relay, dshIds, dshCalls, relayed, log, onToolCall, onToolResult, onResult, redact, onInit, onProgress, onModel, noteApiKey, onTask, onHookRun, hostLabel, routerOnly, settingsKey, via, statusNote, }?: {
         toolActivity?: boolean;
         continueAfterLimit?: boolean;
         refusalAsFailure?: boolean;
@@ -287,7 +289,7 @@ export declare class Translator {
         toolTextLimit?: number;
         relay?: boolean;
         dshIds?: Set<string>;
-        dshNames?: Map<string, string>;
+        dshCalls?: Map<string, DshCall>;
         relayed?: Set<string>;
         log?: (level: string, msg: string) => void;
         onToolCall?: (callId: string, name: string, args: string) => number | undefined;
@@ -371,13 +373,20 @@ export declare class Translator {
     /** Outstanding dsh tool_use ids a relay can still come from, oldest first. The bridge's own tools
      *  (open_session, wait_session…) are answered inside the bridge and never relay: counted here, a
      *  wait_session held open for minutes made the batch wait for a relay that never came and then
-     *  took the mark meant for the call beside it. An id whose name was never seen counts as
-     *  relayable, the safe side: at worst the batch waits out its window. */
+     *  took the mark meant for the call beside it. A call already relayed and waiting for its echo
+     *  is not a candidate either. An id whose name was never seen counts as relayable, the safe
+     *  side: at worst the batch waits out its window. */
     relayableIds(): string[];
-    /** dsh tools reached over the MCP bridge (subagents, jobs...) render as visible text rows, the
-     *  rest as collapsed reasoning. Returns [block kind, lead text]. */
+    /** Mark the tool_use blocks a batch of relayed calls answers, so their results are left to dsh.
+     *  A call carrying its tool_use id marks exactly that block; one without (a CLI that does not
+     *  stamp the id) takes the oldest candidate left, which is wrong when an older call of the same
+     *  message is still on its way. */
+    claimRelayed(toolUseIds: ReadonlyArray<string | undefined>): void;
+    /** Whether a top-level assistant message is still streaming, so more tool_use blocks may come. */
+    get messageOpen(): boolean;
+    /** The kind and lead text of a non-dsh tool block drawn while it streams: collapsed reasoning
+     *  headed by the tool's name. */
     toolLead(cb: {
-        id?: string;
         name?: string;
     }): [string, string];
     /** The CLI's per-call progress frame. Two variants reach a headless run: a 30-second heartbeat

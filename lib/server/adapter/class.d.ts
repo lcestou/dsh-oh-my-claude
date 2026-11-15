@@ -59,6 +59,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Probe targets already written to resume.log, so the line lands once per binary, not per turn. */
     probeTraced: Set<string>;
     sessionController?: SessionController;
+    /** Subagent sessions this process continued through their parent, by parent id, so the parent's
+     *  own restart notice can name them and the parent does not hand them the work again. Shared by
+     *  every adapter instance like `wokeThroughParent`: a child on a box's model wakes under that
+     *  box's instance while its parent's notice goes out from another. */
+    static readonly continuedChildren: Map<string, Set<string>>;
     /** What a heal needs from dsh, handed over by the session routes; undefined until they load. */
     heal?: HealHost;
     /** Masks secret env values in tool results; undefined when `redactSecrets` is off. */
@@ -1083,6 +1088,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     }>;
     /** Register the /btw command that asks Claude a quick side question without interrupting the turn; a no-op once that command is already bridged. */
     registerAsideCommand(commands: NonNullable<PluginContext["commands"]>): void;
+    /** Subagent sessions a wake reached through their parent a moment ago, shared by every adapter
+     *  instance in the process (dsh can mount the plugin twice at boot, and each instance adopts the
+     *  same keeper). The direct wake is deduplicated by the turn it opens at once (`proc.busy`); this
+     *  one resolves the parent and cold-resumes the child first, so two wakes in the same moment would
+     *  both get through without it. */
+    static readonly wokeThroughParent: Set<string>;
     /** Two boots closer than this are a crash loop, not a restart. */
     static readonly BOOT_BACKOFF_MS = 60000;
     /**
@@ -1392,9 +1403,28 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
      *  instead of riding on top of the user's next prompt. */
     wake(sessionId: string, proc: ClaudeProcess | undefined, text?: string): Promise<boolean>;
+    /** The parent of a subagent's session, and whether a restart notice already waits in its inbox;
+     *  undefined for any other session (a fork carries a parent too, but dsh resumes it like any
+     *  root). Read from the live session when dsh holds it, else from the log without loading it. */
+    subagentLink(sessionId: string): Promise<{
+        parentId: string;
+        noticePending: boolean;
+    } | undefined>;
+    /** Wake a subagent's session through its parent. dsh resumes a subagent only through subagent
+     *  routing (`resolveAgent` refuses one: "owned by subagent routing"), so the notice goes as a
+     *  message from the exact live parent, which cold-resumes the child from its log on the child's
+     *  own model and preset. The child reports back to that parent when it finishes, as it would
+     *  have without the restart. */
+    wakeThroughParent(sessionId: string, child: {
+        parentId: string;
+        noticePending: boolean;
+    }, text: string): Promise<boolean>;
+    /** Send `text` to a subagent's session as a message from its parent, loading the parent first
+     *  when dsh had dropped it. False, with the reason noted, when it could not be sent. */
+    sendThroughParent(sessionId: string, parentId: string, text: string, note: (line: string) => Promise<void>): Promise<boolean>;
     /** Offer a dsh tool call from the MCP bridge to the session's live turn. Undefined when no turn
      *  can take it (idle process, a relay already pending); the bridge then executes it directly. */
-    relay(sessionId: string, toolName: string, args: Record<string, JsonValue>, signal: AbortSignal): Promise<RelayResult> | undefined;
+    relay(sessionId: string, toolName: string, args: Record<string, JsonValue>, signal: AbortSignal, toolUseId?: string): Promise<RelayResult> | undefined;
     /** Answer a CLI control request. Permission prompts and questions become dsh dialogs; the answer is written back on stdin. */
     handleControl(event: ControlRequestEvent, options: SessionOptions, prep: TurnPrep, proc: ClaudeProcess, pending: Map<string, AbortController>, tr: Translator): AsyncGenerator<StreamChunk, void, unknown>;
     /**

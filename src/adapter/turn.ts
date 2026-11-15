@@ -409,15 +409,32 @@ export const RELOAD_TEXT =
   "[Oh My Claude] the plugin reloaded while this turn was in progress and the step that was streaming ended early. If your Claude Code process kept running, what it did meanwhile is shown above. Pick up where the transcript stops and finish the task.";
 export const RESTART_TEXT =
   "[Oh My Claude] dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task. If this session has an active goal, dsh disarmed it on resume: call get_goal, then update_goal with action resume, so the goal rounds keep driving the work without anyone typing.";
+/** Added to a parent's restart notice when some of its subagents were continued through it, so the
+ *  parent waits for their reports instead of sending them the work a second time. */
+export function childrenContinuedText(childIds: readonly string[]): string {
+  return `[Oh My Claude] dsh also continued ${childIds.length === 1 ? "this subagent" : "these subagents"} of yours where ${childIds.length === 1 ? "it" : "they"} stopped: ${childIds.join(", ")}. Their results come back to you as messages when they finish; do not send them the task again.`;
+}
+/** How long a subagent woken through its parent ignores further wakes: long enough for the turn
+ *  the message opened to start and mark the process busy. */
+export const WAKE_THROUGH_PARENT_HOLD_MS = 10_000;
 /** How long after boot to nudge interrupted sessions; dsh needs its sessions and agents loaded. */
 export const RESUME_DELAY_MS = 10_000;
 /** Slack after a usage limit's reset instant before the continue notice goes out. */
 export const LIMIT_GRACE_MS = 5_000;
 
-/** A message that is our own wake notice, a plugin user message whose text is exactly WAKE_TEXT,
- * so wakeOnlyTurn can treat it apart from a real user prompt. */
-const isWake = (m: LooseMessage) =>
-  m.role === "user" && isOwnSource(m.source) && textOf(m.content) === WAKE_TEXT;
+/** The source kind dsh gives a message one agent sent another (`subagents.sendMessage`); its content
+ *  is a `Agent <id> sent a message: ` block followed by the sender's own blocks. */
+const AGENT_MESSAGE_KIND = "agent-message";
+/** A message that is our own wake notice, so wakeOnlyTurn can treat it apart from a real user
+ * prompt: a plugin user message whose text is exactly WAKE_TEXT, or, in a subagent's session, the
+ * same notice relayed through its parent (`wakeThroughParent`), whose last block is WAKE_TEXT. */
+const isWake = (m: LooseMessage) => {
+  if (m.role !== "user") return false;
+  if (isOwnSource(m.source)) return textOf(m.content) === WAKE_TEXT;
+  if (m.source?.kind !== AGENT_MESSAGE_KIND || !Array.isArray(m.content)) return false;
+  const last = m.content.at(-1);
+  return last?.type === "text" && last.text === WAKE_TEXT;
+};
 /** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
  *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
 export function wakeOnlyTurn(messages: LooseMessage[] | undefined): boolean {

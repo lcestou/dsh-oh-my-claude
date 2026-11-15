@@ -6,6 +6,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- A dsh tool call that ran inside the bridge no longer shows up as text at the top of Claude's reply ("⤷ list_agents (ran in bridge)" followed by the whole result). It is drawn as the same tool row a relayed call gets, or folded into reasoning on a dsh that takes no tool rows from a provider. Fewer calls end up there too: Claude Code starts a call as soon as its block is written, and the second of two parallel calls used to arrive after the first had already ended the step, so it ran in the bridge. The step now waits until the whole message is in, and each relayed call is matched to its block by the tool_use id Claude Code puts on the request rather than by position, which had marked the wrong call as drawn and drawn the right one twice. Thanks to @soffits (#296).
+- A subagent cut off by a dsh restart, or whose kept Claude finished while dsh was away, now continues: the wake goes through its parent with `subagents.sendMessage`, since dsh refuses to resume a subagent's session directly ("owned by subagent routing"), and the parent's own restart notice names the children already continued so it does not dispatch them again. Two wakes arriving together send one message. Thanks to @soffits (#297).
+
 ## [1.6.4] - 2026-11-14
 
 dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.3; built and tested on 0.2.2-rc.3.

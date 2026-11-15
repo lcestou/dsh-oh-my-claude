@@ -914,7 +914,8 @@ assert.equal(closing[0].usage.outputTokens, 7);
 // Nothing left for the adapter's own call at the step's end to spend.
 assert.deepEqual(trb.takeStepUsage(), []);
 
-// dsh tools called over the MCP bridge render as visible text rows, results too
+// A dsh tool that ran in the bridge, with no session rows to draw on, folds into reasoning beside
+// the other tools: never answer text, which reads as words the model wrote.
 const trd = new Translator() as any;
 const dshCall = trd.translate({
   type: "assistant",
@@ -929,16 +930,15 @@ const dshCall = trd.translate({
     ],
   },
 });
-assert.equal(dshCall[0].blockType, "text", "bridge call is a text block");
-assert.match(dshCall[1].text, /^⤷ subagent_local /, "bridge call drops the mcp prefix");
+assert.deepEqual(dshCall, [], "the call draws nothing until its result is in");
 const dshResult = trd.translate({
   type: "user",
   message: {
     content: [{ type: "tool_result", tool_use_id: "d1", content: "abc" }],
   },
 });
-assert.equal(dshResult[0].blockType, "text", "bridge result is a text block");
-assert.match(dshResult[1].text, /^⤶ result\nabc/);
+assert.equal(dshResult[0].blockType, "reasoning", "bridge result is reasoning, not answer text");
+assert.match(dshResult[1].text, /^⤷ subagent_local\n⤶ result\nabc/, "named without the mcp prefix");
 const nativeResult = trd.translate({
   type: "user",
   message: {
@@ -2136,7 +2136,7 @@ console.log("ok");
   // SAFETY: open has entry for index 0
   const plainBlock = plain.open.get(0);
   assert.ok(plainBlock);
-  assert.equal(plainBlock.blockType, "text", "without relay the old visible row stays");
+  assert.equal(plainBlock.blockType, "hidden", "without relay the call still draws no text block");
 }
 {
   const tr = new Translator() as any;
@@ -2386,9 +2386,9 @@ console.log("ok");
 // wait_session held open beside a subagent made the batch wait for a second relay, then took the
 // subagent's mark: the subagent's result drew twice and wait_session's own row was dropped.
 {
-  const names = new Map<string, string>();
+  const names = new Map<string, { name: string; args: string }>();
   const ids = new Set<string>();
-  const tr = new Translator({ relay: true, dshIds: ids, dshNames: names }) as any;
+  const tr = new Translator({ relay: true, dshIds: ids, dshCalls: names }) as any;
   tr.translate({
     type: "assistant",
     message: {
@@ -2403,7 +2403,7 @@ console.log("ok");
   assert.equal(tr.dshIds.size, 4, "own tools stay tracked, so their results still draw a row");
   assert.deepEqual(tr.relayableIds(), ["d1"], "only the subagent can relay");
   // The next step's translator shares the turn's ids and names, so the answer holds there too.
-  const next = new Translator({ relay: true, dshIds: ids, dshNames: names }) as any;
+  const next = new Translator({ relay: true, dshIds: ids, dshCalls: names }) as any;
   assert.deepEqual(next.relayableIds(), ["d1"], "still told apart a step later");
   const row = next.translate({
     type: "user",
@@ -4009,12 +4009,90 @@ console.log("ok");
   assert.deepEqual(result("r1"), [], "a relayed call's result is dsh's to draw");
   open("f1");
   const shown = result("f1");
-  assert.equal(shown.at(-1).block.type, "text");
+  assert.equal(shown.at(-1).block.type, "reasoning", "a fallback result is never answer text");
   assert.match(
     shown.at(-1).block.text,
     /subagent_local \(ran in bridge\)/,
-    "a call that fell back is drawn as one row",
+    "a call that fell back is drawn as one collapsed row",
   );
+}
+// A dsh call that ran inside the bridge (Claude Code went on with no live dsh turn, or a sibling
+// call came after the batch closed) used to land as answer text: "⤷ list_agents (ran in bridge)"
+// and the whole result opened the visible reply. With session rows it gets the row a relayed
+// call gets, the arguments it streamed included, and nothing in the reply.
+{
+  const calls: Array<[string, string, string]> = [];
+  const results: Array<[string, string, boolean]> = [];
+  const tr = new Translator({
+    relay: true,
+    onToolCall: (id: string, name: string, args: string) => (calls.push([id, name, args]), 7),
+    onToolResult: (id: string, text: string, isError: boolean) => results.push([id, text, isError]),
+  }) as any;
+  const frame = (event: object) => tr.translate({ type: "stream_event", event });
+  const drawn = [
+    ...frame({ type: "message_start", message: { id: "m1" } }),
+    ...frame({
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "tool_use", id: "tl1", name: "mcp__dsh__list_agents" },
+    }),
+    ...frame({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "input_json_delta", partial_json: '{"scope":' },
+    }),
+    ...frame({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "input_json_delta", partial_json: '"children"}' },
+    }),
+    ...frame({ type: "content_block_stop", index: 0 }),
+    ...frame({ type: "message_stop" }),
+    ...tr.translate({
+      type: "user",
+      message: { content: [{ type: "tool_result", tool_use_id: "tl1", content: "a1 [inactive]" }] },
+    }),
+  ];
+  assert.deepEqual(
+    drawn.filter((c: any) => c.blockType === "text" || c.block?.type === "text"),
+    [],
+    "no answer text for a bridge-run call",
+  );
+  assert.deepEqual(calls, [["tl1", "list_agents", '{"scope":"children"}']], "a call row");
+  assert.deepEqual(results, [["tl1", "a1 [inactive]", false]], "and its result row");
+  assert.equal(tr.dshCalls.size, 0, "the call is forgotten once drawn");
+}
+// The mark that says "dsh drew this call" goes to the block the relay answers. Positional matching
+// gave it to an older call still waiting for its echo, and the call dsh had drawn drew a second
+// time as a bridge row.
+{
+  const tr = new Translator({ relay: true }) as any;
+  tr.translate({
+    type: "assistant",
+    message: {
+      content: [
+        { type: "tool_use", id: "a", name: "mcp__dsh__bash", input: {} },
+        { type: "tool_use", id: "b", name: "mcp__dsh__present", input: {} },
+      ],
+    },
+  });
+  tr.claimRelayed(["b"]);
+  assert.deepEqual([...tr.relayed], ["b"], "the stamped id is marked, not the oldest");
+  assert.deepEqual(tr.relayableIds(), ["a"]);
+  tr.claimRelayed([undefined]);
+  assert.deepEqual([...tr.relayed], ["b", "a"], "an unstamped call takes the oldest unmarked one");
+  assert.deepEqual(tr.relayableIds(), [], "a marked call is no longer a candidate");
+}
+// A stamped id the translator never saw marks nothing, never the oldest candidate.
+{
+  const tr = new Translator({ relay: true }) as any;
+  tr.translate({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", id: "a", name: "mcp__dsh__bash", input: {} }] },
+  });
+  tr.claimRelayed(["zz"]);
+  assert.deepEqual([...tr.relayed], [], "an unknown stamped id takes no other block's mark");
+  assert.deepEqual(tr.relayableIds(), ["a"]);
 }
 console.log("relay ok");
 
@@ -9885,6 +9963,91 @@ console.log("watch-save-race ok");
   assert.deepEqual(timedReads, [], "no window spent waiting on a relay wait_session never sends");
   assert.deepEqual([...proc.dshIds], ["w1", "d1"], "wait_session stays tracked for its own row");
   console.log("relay beside own tool ok");
+}
+
+// Regression: Claude Code starts a dsh call as soon as its block stops, while the model is still
+// writing the next block of the same message. The batch counted only the blocks seen so far,
+// closed on the first call and ended the step; the second call then found no live turn, ran inside
+// the bridge, and its result landed in the reply as text. The gather now lasts while the message
+// streams, so both calls relay in one batch, each marked by the tool_use id the CLI stamped on it.
+{
+  const session = {
+    header: { version: 0 },
+    snapshotEvents: () => [
+      { type: "turn/start", data: { turn: 1 } },
+      { type: "step/start", data: { step: 1 } },
+    ],
+    append: () => ({ seq: 1 }),
+  };
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
+  );
+  a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
+  (a as any).mcp = { base: "http://127.0.0.1:1", key: "k", via: "webserver", toolsFor: () => [] };
+  const frame = (event: object) => ({ type: "stream_event", event });
+  const relay = (id: string, name: string, toolUseId: string) => ({
+    type: "dsh_relay",
+    id,
+    name,
+    args: {},
+    toolUseId,
+    resolve() {},
+    reject() {},
+  });
+  const block = (index: number, id: string, name: string) =>
+    frame({ type: "content_block_start", index, content_block: { type: "tool_use", id, name } });
+  const queue: Array<unknown> = [
+    frame({ type: "message_start", message: { id: "m1" } }),
+    block(0, "d1", "mcp__dsh__bash"),
+    frame({ type: "content_block_stop", index: 0 }),
+    relay("r1", "bash", "d1"),
+    // A timed read while the message is still open must not close the batch.
+    { type: "timeout" },
+    block(1, "d2", "mcp__dsh__edit"),
+    frame({ type: "content_block_stop", index: 1 }),
+    frame({ type: "message_stop" }),
+    relay("r2", "edit", "d2"),
+  ];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    parked: undefined,
+    steerPending: false,
+    relays: new Map(),
+    sent: new Set(),
+    queue: { lines: [] },
+    queuedIndexes: [],
+    idleKilled: false,
+    exitCode: 0,
+    stderr: "",
+    stray: "",
+    staleResults: 0,
+    countStaleResults: () => 0,
+    write: () => true,
+    nextEvent: async (ms?: number) => {
+      if (queue.length) return queue.shift();
+      return ms === undefined ? null : { type: "timeout" };
+    },
+    kill: () => {},
+  };
+  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
+  a.acquire = async () => ({ prep, proc }) as any;
+  a.reconnectIfStale = async () => {};
+  a.watchTranscript = (async () => {}) as any;
+  a.pumpMirror = (async () => {}) as any;
+  const chunks: any[] = [];
+  for await (const c of a.stream({
+    sessionId: "sstream",
+    model: "m",
+    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    signal: new AbortController().signal,
+  } as any))
+    chunks.push(c);
+  assert.equal(chunks.at(-1)?.reason?.kind, "tool-calls", "the step ends on the relayed calls");
+  assert.deepEqual([...proc.relays.keys()], ["r1", "r2"], "both calls of the message relay");
+  assert.deepEqual([...proc.relayed], ["d1", "d2"], "each marked by its own tool_use id");
+  console.log("relay waits for the streaming message ok");
 }
 
 // Stop while a batch is still being gathered: dsh ends the step with `return()` at a yield inside
