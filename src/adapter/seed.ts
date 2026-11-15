@@ -229,6 +229,7 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
       parentUuid: null,
       type: "user",
       uuid: first,
+      timestamp: new Date(Date.parse(rows[0].timestamp) - 1000).toISOString(),
       message: { role: "user", content: [{ type: "text", text: "(conversation start)" }] },
     });
   }

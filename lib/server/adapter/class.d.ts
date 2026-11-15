@@ -62,8 +62,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     sessionController?: SessionController;
     /** Drain notices (`WAKE_TEXT`, `RECONNECT_TEXT`) still waiting in a session's inbox, with the agent
      *  that holds them. dsh gives every followup a turn of its own, so a notice whose output another
-     *  turn already drew would open an empty turn later; `withdrawDrainNotices` takes them back. */
-    readonly drainNotices: Map<string, {
+     *  turn already drew would open an empty turn later; `withdrawDrainNotices` takes them back.
+     *  Shared by every adapter instance, like `wokeThroughParent`: after a hot reload the new
+     *  instance runs the turn that should take back what the old one queued. */
+    static readonly drainNotices: Map<string, {
         agent: Agent;
         ids: Set<string>;
     }>;

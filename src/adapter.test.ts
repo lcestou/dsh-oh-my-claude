@@ -3729,7 +3729,7 @@ console.log("ok");
   await a.withdrawDrainNotices("s1");
   assert.equal(pending.size, 0, "the reconnect notice queued behind the wake turn is taken back");
   await a.withdrawDrainNotices("s1");
-  assert.equal(a.drainNotices.has("s1"), false, "nothing left to withdraw");
+  assert.equal(ClaudeCodeAdapter.drainNotices.has("s1"), false, "nothing left to withdraw");
 }
 {
   // dsh's instruction bundle: CLAUDE.md blocks go, Claude Code loads those files itself.

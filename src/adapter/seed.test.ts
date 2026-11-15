@@ -2,7 +2,15 @@
 // whole history flattened into a single prompt. Checked here: the rows the seed holds, where the
 // history ends and the new turn begins, and the adapter writing the file (moving an old one aside).
 import { strict as assert } from "node:assert";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -206,6 +214,15 @@ assert.equal(bridgedName("mcp__other__x"), "mcp__other__x");
     readdirSync(dir).some((f) => /^s2\.jsonl\.replaced-\d+$/.test(f)),
     "the old one kept",
   );
+  // A transcript that cannot be moved aside is never written over: the seed gives up instead.
+  writeFileSync(join(dir, "s3.jsonl"), "{}\n");
+  chmodSync(dir, 0o555);
+  try {
+    assert.equal(await adapter.seedTranscript(history, "/w", "s3", "2.1.325", {}), false);
+  } finally {
+    chmodSync(dir, 0o755);
+  }
+  assert.equal(readFileSync(join(dir, "s3.jsonl"), "utf8"), "{}\n", "the old one untouched");
   rmSync(home, { recursive: true, force: true });
 }
 

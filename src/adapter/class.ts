@@ -460,8 +460,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   sessionController?: SessionController;
   /** Drain notices (`WAKE_TEXT`, `RECONNECT_TEXT`) still waiting in a session's inbox, with the agent
    *  that holds them. dsh gives every followup a turn of its own, so a notice whose output another
-   *  turn already drew would open an empty turn later; `withdrawDrainNotices` takes them back. */
-  readonly drainNotices = new Map<string, { agent: Agent; ids: Set<string> }>();
+   *  turn already drew would open an empty turn later; `withdrawDrainNotices` takes them back.
+   *  Shared by every adapter instance, like `wokeThroughParent`: after a hot reload the new
+   *  instance runs the turn that should take back what the old one queued. */
+  static readonly drainNotices = new Map<string, { agent: Agent; ids: Set<string> }>();
   /** Subagent sessions this process continued through their parent, by parent id, so the parent's
    *  own restart notice can name them and the parent does not hand them the work again. Shared by
    *  every adapter instance like `wokeThroughParent`: a child on a box's model wakes under that
@@ -1585,7 +1587,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const dest = join(dir, `${id}.jsonl`);
     try {
       await mkdir(dir, { recursive: true });
-      await rename(dest, `${dest}.replaced-${Date.now()}`).catch(() => {});
+      // Only a missing transcript may be passed over: any other failure to move one aside would
+      // have the write below replace it.
+      try {
+        await rename(dest, `${dest}.replaced-${Date.now()}`);
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      }
       await writeFile(dest, text);
     } catch (error) {
       this.log("warn", `seeding claude session ${id} from dsh's log failed: ${errorText(error)}`);
@@ -6980,9 +6988,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       });
       agent.followup(notice);
       if (text === WAKE_TEXT || text === RECONNECT_TEXT) {
-        const held = this.drainNotices.get(sessionId);
+        const held = ClaudeCodeAdapter.drainNotices.get(sessionId);
         if (held?.agent === agent) held.ids.add(String(notice.id));
-        else this.drainNotices.set(sessionId, { agent, ids: new Set([String(notice.id)]) });
+        else
+          ClaudeCodeAdapter.drainNotices.set(sessionId, {
+            agent,
+            ids: new Set([String(notice.id)]),
+          });
       }
     } catch (error) {
       this.log("warn", `wake after idle reply failed: ${errorText(error)}`);
@@ -7029,9 +7041,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * notice that opened this turn is no longer pending, so `remove` passes over it.
    */
   async withdrawDrainNotices(sessionId: string): Promise<void> {
-    const held = this.drainNotices.get(sessionId);
+    const held = ClaudeCodeAdapter.drainNotices.get(sessionId);
     if (!held) return;
-    this.drainNotices.delete(sessionId);
+    ClaudeCodeAdapter.drainNotices.delete(sessionId);
     let withdrawn = 0;
     for (const id of held.ids)
       try {
