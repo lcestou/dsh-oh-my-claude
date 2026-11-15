@@ -101,7 +101,7 @@ function world(
   assert.deepEqual(w.sent, [{ sender: "p1", target: "c1", text: RESTART_TEXT }]);
   assert.deepEqual(w.resolved, ["p1"], "the parent is resumed; the child is never asked for");
   assert.equal(w.followups.length, 0, "no followup straight into the child");
-  assert.deepEqual([...(w.adapter.continuedChildren.get("p1") ?? [])], ["c1"]);
+  assert.deepEqual([...(ClaudeCodeAdapter.continuedChildren.get("p1") ?? [])], ["c1"]);
 
   // The parent's own restart notice names the child once, in a block of its own.
   assert.equal(await w.adapter.wake("p1", undefined, RESTART_TEXT), true);
@@ -109,7 +109,7 @@ function world(
     w.followups.map((f) => f.content.map((b) => b.text)),
     [[RESTART_TEXT, childrenContinuedText(["c1"])]],
   );
-  assert.equal(w.adapter.continuedChildren.has("p1"), false, "named once, then forgotten");
+  assert.equal(ClaudeCodeAdapter.continuedChildren.has("p1"), false, "named once, then forgotten");
 }
 
 {
@@ -117,7 +117,11 @@ function world(
   assert.equal(await w.adapter.wake("c1", undefined, WAKE_TEXT), true);
   assert.deepEqual(w.resolved, [], "a live parent is used as it is");
   assert.equal(w.sent[0]?.text, WAKE_TEXT);
-  assert.equal(w.adapter.continuedChildren.size, 0, "a background-task wake is no continuation");
+  assert.equal(
+    ClaudeCodeAdapter.continuedChildren.size,
+    0,
+    "a background-task wake is no continuation",
+  );
 }
 
 {

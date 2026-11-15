@@ -60,8 +60,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     probeTraced: Set<string>;
     sessionController?: SessionController;
     /** Subagent sessions this process continued through their parent, by parent id, so the parent's
-     *  own restart notice can name them and the parent does not hand them the work again. */
-    readonly continuedChildren: Map<string, Set<string>>;
+     *  own restart notice can name them and the parent does not hand them the work again. Shared by
+     *  every adapter instance like `wokeThroughParent`: a child on a box's model wakes under that
+     *  box's instance while its parent's notice goes out from another. */
+    static readonly continuedChildren: Map<string, Set<string>>;
     /** What a heal needs from dsh, handed over by the session routes; undefined until they load. */
     heal?: HealHost;
     /** Masks secret env values in tool results; undefined when `redactSecrets` is off. */
