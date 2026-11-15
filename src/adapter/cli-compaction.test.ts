@@ -170,7 +170,8 @@ const boundary = {
     return "fresh summary";
   };
   assert.equal(await a.compactionFromCli("s1"), "fresh summary");
-  assert.match(written[0]!, /"\/compact"/, "the prompt is the CLI's own command");
+  assert.match(written[0]!, /"\/compact Open the summary with a short section on the people/,
+    "the prompt is the CLI's own command, with the people section asked for");
   assert.match(written[1]!, /not supported while compacting/, "a control request is refused");
   assert.deepEqual(asked, [["/work", "claude-1", 1234]]);
   assert.equal(proc.busy, false);
@@ -603,7 +604,7 @@ const compactingCli = (path: string) => {
   assert.equal(await a.compactionFromCli("s1"), "fresh summary");
   assert.match(
     written[0]!,
-    /\/compact The newest part of this conversation, from the user message that begins \\"third question/,
+    /\/compact Open the summary [^"]*? The newest part of this conversation, from the user message that begins \\"third question/,
   );
   assert.equal(proc.killed, true, "the CLI ends, so the next turn loads the kept rows");
   assert.equal(a.processFor("s1"), undefined);
@@ -611,13 +612,13 @@ const compactingCli = (path: string) => {
   assert.match(await resumeLog(), /compaction s1: verbatim tail kept the newest 2 rows/);
 }
 
-// A budget the CLI's own last round already fills: plain `/compact`, the CLI keeps its process.
+// A budget the CLI's own last round already fills: `/compact` with only the people section, and the CLI keeps its process.
 {
   const { a, path } = await retaining(10);
   const { proc, written } = compactingCli(path);
   a.processes.set(registryKey(a.providerId, "s1"), proc);
   assert.equal(await a.compactionFromCli("s1"), "fresh summary");
-  assert.match(written[0]!, /"\/compact"/);
+  assert.match(written[0]!, /"\/compact Open the summary[^"]*as they are\."/, "no tail note when nothing is kept");
   assert.equal(proc.killed, false);
   assert.deepEqual(await keptRows(path), ["a3"]);
 }

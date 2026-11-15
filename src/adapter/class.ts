@@ -26,6 +26,7 @@ import { firstPartyKnown, firstPartyMode, wantsFirstParty } from "../first-party
 import { readCompactSummary } from "../compact-summary.js";
 import {
   compactInstructions,
+  summaryInstructions,
   retainBudget,
   retentionSpan,
   widenPreserved,
@@ -6835,7 +6836,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const where = { cwd, claudeId };
     const budget = await this.retentionBudget(sessionId);
     const before = await this.readForRetention(where, budget);
-    const instructions = before && compactInstructions(before.text, budget);
+    const instructions = before ? compactInstructions(before.text, budget) : undefined;
     let compacted = false;
     let preTokens: number | undefined;
     let failed = false;
@@ -6848,7 +6849,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     proc.lastUsed = Date.now();
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      const command = instructions === undefined ? "/compact" : `/compact ${instructions}`;
+      const command = `/compact ${summaryInstructions(instructions)}`;
       if (!proc.write(buildInput(command, []))) return undefined;
       this.armIdle(idleKey, proc, false);
       for (;;) {

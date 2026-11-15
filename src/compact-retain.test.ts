@@ -7,6 +7,7 @@ import {
   estimateTokens,
   retainBudget,
   retentionSpan,
+  summaryInstructions,
   widenPreserved,
 } from "./compact-retain.js";
 
@@ -255,3 +256,13 @@ assert.deepEqual(widenPreserved(before, 1_000_000), {
 }
 
 console.log("compact-retain ok");
+
+// Every summary opens with the people, their language and their newest words, with or without a tail.
+{
+  const bare = summaryInstructions(undefined);
+  assert.match(bare, /^Open the summary with a short section on the people/);
+  assert.match(bare, /their newest message quoted word for word/);
+  assert.match(bare, /Write the rest of the summary in the language of the newest of those messages/);
+  const both = summaryInstructions(compactInstructions(before, 1_000_000));
+  assert.ok(both.startsWith(bare) && /Summarize only what comes before it/.test(both));
+}

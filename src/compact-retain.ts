@@ -267,6 +267,23 @@ export function compactInstructions(text: string, budget: number): string | unde
   );
 }
 
+/**
+ * What every summary carries about the people in the conversation. Claude Code's summary is
+ * written in English and replaces the conversation itself, so without this the context after a
+ * compaction holds the people's own words only as quotes inside English prose, and replies drift
+ * into English for someone who writes in another language.
+ */
+export const PEOPLE_INSTRUCTIONS =
+  "Open the summary with a short section on the people who write in this conversation (not " +
+  "agents, tools or scheduled prompts): for each, their name, the language they write in, and " +
+  "their newest message quoted word for word, and a line that replies to them are written in " +
+  "that language. Write the rest of the summary in the language of the newest of those " +
+  "messages, keeping names, paths, commands and code as they are.";
+
+/** The whole `/compact` argument: the people section, then the verbatim-tail note when there is one. */
+export const summaryInstructions = (retain: string | undefined): string =>
+  [PEOPLE_INSTRUCTIONS, retain].filter(Boolean).join(" ");
+
 /** The boundary row as the CLI wrote it; only the metadata is touched. */
 interface RawBoundary {
   compactMetadata?: { preservedMessages?: JsonValue; preservedSegment?: JsonValue };

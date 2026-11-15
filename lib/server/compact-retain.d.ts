@@ -27,6 +27,15 @@ export declare function estimateTokens(text: string): number;
  * same rows, so the two agree unless the transcript changed in between.
  */
 export declare function compactInstructions(text: string, budget: number): string | undefined;
+/**
+ * What every summary carries about the people in the conversation. Claude Code's summary is
+ * written in English and replaces the conversation itself, so without this the context after a
+ * compaction holds the people's own words only as quotes inside English prose, and replies drift
+ * into English for someone who writes in another language.
+ */
+export declare const PEOPLE_INSTRUCTIONS: string;
+/** The whole `/compact` argument: the people section, then the verbatim-tail note when there is one. */
+export declare const summaryInstructions: (retain: string | undefined) => string;
 /** The replacement for the compaction's boundary row, or why there is none. `start` and `end`
  *  are the boundary line's character range in the text it was found in, newline excluded. */
 export type BoundaryEdit = {
