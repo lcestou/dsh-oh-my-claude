@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- A subagent cut off by a dsh restart, or whose kept Claude finished while dsh was away, now continues: the wake goes through its parent with `subagents.sendMessage`, since dsh refuses to resume a subagent's session directly ("owned by subagent routing"), and the parent's own restart notice names the children already continued so it does not dispatch them again. Two wakes arriving together send one message.
+
 ## [1.6.4] - 2026-11-14
 
 dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.3; built and tested on 0.2.2-rc.3.
