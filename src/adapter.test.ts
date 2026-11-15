@@ -3689,6 +3689,49 @@ console.log("ok");
   assert.equal(sent.length, 4, "and so does the idle-reply wake");
 }
 {
+  // A restart's wake and reconnect notice can land while a turn for some other waiting message is
+  // starting. That turn draws everything the process queued, and dsh gives each notice a turn of
+  // its own, so left in the inbox they open blank turns after it. The prompt turn takes back the
+  // drain notices still pending; the one that opened a turn is gone from the inbox already, and a
+  // restart notice (a prompt Claude must read) is never withdrawn.
+  const pending = new Map<string, Message>();
+  const agent = fakeAgent({
+    followup: (m: Message) => pending.set(String(m.id), m),
+    inbox: {
+      nextStep: [],
+      replace: () => true,
+      remove: (id: string) => pending.delete(id),
+    },
+  });
+  // SAFETY: partial fake for tests; PluginContext requires many fields not used here
+  const ctx = {
+    on() {},
+    agents: { get: () => agent },
+    logger: { info() {}, warn() {} },
+  } as unknown as import("./dsh.js").PluginContext;
+  const a = new ClaudeCodeAdapter(fakeCtx(ctx), Config({}));
+  await a.wake("s1", fakeProc({ busy: false }));
+  await a.wake("s1", fakeProc({ busy: false }), RECONNECT_TEXT);
+  await a.wake("s1", fakeProc({ busy: false }), RESTART_TEXT);
+  assert.equal(pending.size, 3, "all three queued");
+  await a.withdrawDrainNotices("s1");
+  assert.deepEqual(
+    [...pending.values()].map((m) => (m.content as Array<{ text?: string }>)[0]?.text),
+    [RESTART_TEXT],
+    "the drain notices are withdrawn, the restart notice stays",
+  );
+  // The wake turn itself: dsh claimed its notice, so only the later reconnect notice goes.
+  pending.clear();
+  await a.wake("s1", fakeProc({ busy: false }));
+  const claimed = [...pending.keys()][0] ?? "";
+  pending.delete(claimed);
+  await a.wake("s1", fakeProc({ busy: false }), RECONNECT_TEXT);
+  await a.withdrawDrainNotices("s1");
+  assert.equal(pending.size, 0, "the reconnect notice queued behind the wake turn is taken back");
+  await a.withdrawDrainNotices("s1");
+  assert.equal(a.drainNotices.has("s1"), false, "nothing left to withdraw");
+}
+{
   // dsh's instruction bundle: CLAUDE.md blocks go, Claude Code loads those files itself.
   const bundle = [
     "<system-reminder>",
