@@ -1,6 +1,7 @@
 import type { Spawner, SubprocessHandle, CliModel } from "../process.js";
 import { type PluginLoadError } from "../plugins.js";
 import { LlmAdapter, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { type ContextSource } from "../context-sources.js";
 import { type PickerRow } from "../sessions.js";
 import { type OmcEvent } from "../events.js";
 import { readUsage } from "../usage.js";
@@ -19,7 +20,7 @@ import { Config, type CustomModel } from "./config.js";
 import { type Route } from "./routing.js";
 import { type AsideEntry, type AsidesReply, type AwaitingRow, Continuation, ControlRequestEvent, type ControlReply, type ContextUsageReply, type Decision, type HeldSteer, type HoldReply, type IdleReply, type LoginNeed, type LiveTurnReply, type McpAuthReply, type McpStatusReply, type PermissionModeInfo, type PermissionModeReply, type PermissionModeState, type PermissionReadoutReply, type RewindReply, type SessionOptions, type SkillDoctorReply, type SteerCardState, type SteerEditReply, type WorkspaceDiffReply } from "./types.js";
 import { type MirrorQueue, type StreamState, type TranscriptWatch } from "./transcript-watch.js";
-import { type LoadedImage } from "./prompt.js";
+import { type LoadedImage, type LooseMessage, type NativeCopies } from "./prompt.js";
 import { CommandRows } from "./lane.js";
 import { type IdleTarget, type LiveTurn, type ResultFrame, type TurnRecord, type TurnsReply, type UltracodeState } from "./turn.js";
 /** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
@@ -410,6 +411,18 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** A dsh fork of a Claude session becomes a Claude fork: the parent's transcript is copied under
      *  the new id, cut at the forked turn. True when a copy was made. */
     forkTranscript(options: GenerateOptions, cwd: string, id: string): Promise<boolean>;
+    /**
+     * Write dsh's log as the Claude transcript `id` resumes from (`seed.ts`), for a turn that would
+     * otherwise send the whole history as one prompt. A transcript already there (a fresh start
+     * forced over it) is moved aside first, never deleted. True when a seed was written; false when
+     * the log has no reply yet or the write failed, and the turn then starts the old way.
+     */
+    seedTranscript(messages: LooseMessage[], cwd: string, id: string, version: string | undefined, o: {
+        drops?: ReadonlySet<ContextSource>;
+        copies?: NativeCopies;
+        developer?: boolean;
+        cap?: number;
+    }): Promise<boolean>;
     /** Sessions whose last turn ended on a refusal under `refusalAsFailure`, with the transcript
      *  cleanup still running; `prepare` waits for it before it looks for a session to resume. */
     readonly refused: Map<string, Promise<void>>;
