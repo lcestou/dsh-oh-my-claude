@@ -24,7 +24,12 @@ import {
 import { repairStoredTurns } from "../turn-repair.js";
 import { firstPartyKnown, firstPartyMode, wantsFirstParty } from "../first-party.js";
 import { readCompactSummary } from "../compact-summary.js";
-import { CONTEXT_SIZE_KEYS, contextDrops, type ContextSizes } from "../context-sources.js";
+import {
+  CONTEXT_SIZE_KEYS,
+  contextDrops,
+  type ContextSizes,
+  type ContextSource,
+} from "../context-sources.js";
 import {
   accountIdentity,
   forgetIdentity,
@@ -321,6 +326,7 @@ import {
   type LoadedImage,
   type LooseMessage,
   MAX_IMAGE_SIDE,
+  type NativeCopies,
   oversize,
   relayFileHandles,
   selectTurns,
@@ -330,6 +336,7 @@ import {
   steerKey,
   textOf,
 } from "./prompt.js";
+import { seedTranscriptText } from "./seed.js";
 import { busyEnterOf, CommandRows, commandNameOf, leavesQueue, lineReceipt } from "./lane.js";
 import {
   accessModeOf,
@@ -1544,6 +1551,50 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return true;
   }
 
+  /**
+   * Write dsh's log as the Claude transcript `id` resumes from (`seed.ts`), for a turn that would
+   * otherwise send the whole history as one prompt. A transcript already there (a fresh start
+   * forced over it) is moved aside first, never deleted. True when a seed was written; false when
+   * the log has no reply yet or the write failed, and the turn then starts the old way.
+   */
+  async seedTranscript(
+    messages: LooseMessage[],
+    cwd: string,
+    id: string,
+    version: string | undefined,
+    o: {
+      drops?: ReadonlySet<ContextSource>;
+      copies?: NativeCopies;
+      developer?: boolean;
+      cap?: number;
+    },
+  ): Promise<boolean> {
+    const text = seedTranscriptText(messages, {
+      sessionId: id,
+      cwd,
+      // The probe answers "2.1.325 (Claude Code)"; the CLI stamps its rows with the number alone.
+      version: /\d+\.\d+\.\d+/.exec(version ?? "")?.[0] ?? "",
+      ...o,
+    });
+    if (text === "") return false;
+    const dir = join(this.claudeHome, "projects", projectDirName(cwd));
+    const dest = join(dir, `${id}.jsonl`);
+    try {
+      await mkdir(dir, { recursive: true });
+      await rename(dest, `${dest}.replaced-${Date.now()}`).catch(() => {});
+      await writeFile(dest, text);
+    } catch (error) {
+      this.log("warn", `seeding claude session ${id} from dsh's log failed: ${errorText(error)}`);
+      return false;
+    }
+    await rememberStarted(id, true);
+    this.log(
+      "info",
+      `seeded claude session ${id} from dsh's log (${text.split("\n").length - 1} rows)`,
+    );
+    return true;
+  }
+
   /** Sessions whose last turn ended on a refusal under `refusalAsFailure`, with the transcript
    *  cleanup still running; `prepare` waits for it before it looks for a session to resume. */
   readonly refused = new Map<string, Promise<void>>();
@@ -1630,10 +1681,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // A dsh session opened from a Claude Code transcript carries the Claude id itself.
       const own = await claudeSessionExists(this.claudeHome, cwd, options.sessionId);
       const id = own ? options.sessionId : claudeSessionId(options.sessionId);
-      let known =
-        own ||
-        (await loadStarted()).has(id) ||
-        (await claudeSessionExists(this.claudeHome, cwd, id));
+      const onDisk = own || (await claudeSessionExists(this.claudeHome, cwd, id));
+      // A box's transcripts are on the box, so only the started mark says one is there.
+      let known = onDisk || (targetHost !== undefined && (await loadStarted()).has(id));
       // Not after a refusal: the transcript just moved aside, and a fork would resume the parent's
       // conversation in its place instead of starting fresh from dsh's log.
       if (!known && !forceFresh && !refused) known = await this.forkTranscript(options, cwd, id);
@@ -1673,12 +1723,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // compaction) keeps the plugin's own config.
     const cfg = options.purpose ? this.config : await this.sessionConfigOf(options.sessionId);
     const dshMode = cfg.systemPrompt === "dsh" && !options.purpose;
-    const turns = selectTurns(
-      options.messages,
-      session?.resuming ?? false,
-      this.providerId,
-      dshMode,
-    );
     // Under `systemPrompt: dsh` the prompt dsh wrote replaces Claude Code's (`buildArgs`).
     const dshSystem = dshMode ? dshSystemPrompt(options.messages, options.system) : undefined;
     // `isolate` covers local spawns only: its environment (no CLAUDE.md, no telemetry) goes into
@@ -1689,6 +1733,24 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Claude Code loads no CLAUDE.md under `isolate` and expands no `/skill` line under
     // `verbatimPrompts`, so dsh's copies of those are then the only ones and are kept.
     const copies = { claudeMd: !engineConfig.isolate, skills: !cfg.verbatimPrompts };
+    // No transcript to resume: dsh's log becomes one, so the CLI resumes the conversation as turns
+    // and only the new turn goes as the prompt. Every earlier reply then counts, whichever route
+    // wrote it, so the prompt starts after the last of them.
+    let seeded = false;
+    if (session && !session.resuming && !targetHost)
+      seeded = await this.seedTranscript(options.messages ?? [], cwd, session.id, cli.version, {
+        drops,
+        copies,
+        developer: dshMode,
+        cap: cfg.replayToolTextLimit,
+      });
+    if (session && seeded) session = { id: session.id, resuming: true };
+    const turns = selectTurns(
+      options.messages,
+      session?.resuming ?? false,
+      seeded ? undefined : this.providerId,
+      dshMode,
+    );
     let prompt = buildPrompt(turns, drops, cfg.replayToolTextLimit, copies);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
     if (targetHost)
