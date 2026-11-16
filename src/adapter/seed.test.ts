@@ -237,6 +237,34 @@ assert.equal(bridgedName("bash"), "mcp__dsh__bash");
     .filter((b: { type: string }) => b.type === "tool_use")
     .map((b: { name: string }) => b.name);
   assert.deepEqual(imported, ["Bash", "mcp__dsh__bash", "mcp__dsh__subagent"]);
+  // Two calls Claude made side by side are logged as two messages before either result: they go
+  // back as one reply with both results after it, not as a first call closed unanswered.
+  const parallel = rows(
+    seedTranscriptText(
+      [
+        person("go"),
+        native("p1", "bash"),
+        native("p2", "read"),
+        result("p1", "one"),
+        result("p2", "two"),
+        reply("done"),
+      ],
+      { sessionId: "s", cwd: "/w", version: "2.1.325" },
+    ),
+  );
+  assert.deepEqual(
+    parallel.map(
+      (r) => `${r.type}:${r.message.content.map((b: { type: string }) => b.type).join("+")}`,
+    ),
+    [
+      "user:text",
+      "assistant:tool_use+tool_use",
+      "user:tool_result",
+      "user:tool_result",
+      "assistant:text",
+    ],
+  );
+  assert.ok(!JSON.stringify(parallel).includes(NO_RESULT), "both results kept");
 }
 assert.equal(bridgedName("ToolSearch"), "ToolSearch");
 assert.equal(bridgedName("mcp__other__x"), "mcp__other__x");

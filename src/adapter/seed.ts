@@ -196,7 +196,18 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
       ]);
     open = [];
   };
-  for (const m of messages.slice(0, end)) {
+  const history = messages.slice(0, end);
+  /** Whether a result for one of the open calls still comes after `from`, before the person speaks
+   *  again: then the calls are running side by side, not cut off. */
+  const answeredLater = (from: number) => {
+    for (const later of history.slice(from + 1)) {
+      const id = resultCallId(later);
+      if (id !== undefined && open.includes(id)) return true;
+      if (later.role === "user" && later.source?.kind !== "tool") return false;
+    }
+    return false;
+  };
+  for (const [i, m] of history.entries()) {
     const callId = resultCallId(m);
     if (callId !== undefined) {
       if (!open.includes(callId)) continue; // its call is not in the seed, or already answered
@@ -219,8 +230,13 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
       continue;
     }
     if (m.role === "assistant") {
-      closeOpen();
-      const content: Block[] = [];
+      // Claude runs a message's tool calls side by side, and the plugin logs each as a message of
+      // its own before any result: those calls belong in the one reply that made them, or the
+      // first would be closed as unanswered and its real result dropped.
+      const last = rows.at(-1);
+      const together = open.length > 0 && last?.type === "assistant" && answeredLater(i);
+      if (!together) closeOpen();
+      const content: Block[] = together && last ? last.message.content : [];
       if (Array.isArray(m.content)) {
         for (const b of m.content) {
           if (b.type === "text" && b.text.trim() !== "")
@@ -238,7 +254,7 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
       } else if (m.content !== undefined && m.content.trim() !== "") {
         content.push({ type: "text", text: m.content });
       }
-      if (content.length > 0) push("assistant", content);
+      if (content.length > 0 && !together) push("assistant", content);
       continue;
     }
     const conversation =
