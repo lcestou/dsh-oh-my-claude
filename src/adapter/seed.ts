@@ -144,10 +144,13 @@ export function historyEnd(messages: readonly LooseMessage[]): number {
   let first = last;
   while (messages[first - 1]?.role === "assistant") first--;
   const calls = new Set(messages.slice(first, last + 1).flatMap(callIdsOf));
+  // A developer message dsh puts between a call and its result does not cut the result off.
   let end = last + 1;
-  for (let m = messages[end]; m !== undefined; m = messages[++end]) {
+  for (let i = last + 1; i < messages.length; i++) {
+    const m = messages[i]!;
     const id = resultCallId(m);
-    if (id === undefined || !calls.has(id)) break;
+    if (id !== undefined && calls.has(id)) end = i + 1;
+    else if (m.role !== "developer") break;
   }
   return end;
 }

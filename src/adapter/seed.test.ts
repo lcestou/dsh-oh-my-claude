@@ -299,6 +299,20 @@ assert.deepEqual(announcementOf("t3", "ToolSearch"), { id: "t3:call", name: "Too
     result("q2", "two"),
   ];
   assert.equal(historyEnd(endsParallel), 5);
+  const dev = {
+    role: "developer",
+    content: [{ type: "text", text: "note" }],
+  } as unknown as LooseMessage;
+  assert.equal(
+    historyEnd([person("go"), native("e1", "bash"), dev, result("e1", "one")]),
+    4,
+    "a developer message does not cut a result off",
+  );
+  assert.equal(
+    historyEnd([person("go"), native("e2", "bash"), result("e2", "one"), dev]),
+    3,
+    "nor joins the history after the last result",
+  );
   assert.ok(
     !seedTranscriptText(endsParallel, { sessionId: "s", cwd: "/w", version: "2.1.325" }).includes(
       NO_RESULT,
