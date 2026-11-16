@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.6.5] - 2026-11-16
+
+dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.3; built and tested on 0.2.2-rc.3.
+
 ### Fixed
 
 - A session whose Claude transcript is gone (cleared from `~/.claude/projects`, moved aside after a refusal) no longer restarts with the whole history flattened into one prompt. The plugin writes dsh's log as a Claude Code transcript, each message, reply, tool call and result as its own turn, and resumes it, sending only the new turn. Flattened, Claude read the conversation as one long block of text from the user, mostly tool output: replies to someone writing another language slipped into English for hours afterwards. Thanks to @soffits (#299).
