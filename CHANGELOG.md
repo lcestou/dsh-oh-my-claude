@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- The context ring's popup shows the Claude usage block again while a subagent is running. dsh's subagent button also opens a dialog, and its activity dot made it look like the ring, so the plugin claimed that button instead: the real popup opened as dsh's own, and the subagent button was read out as "N% of context used".
+
 ## [1.6.5] - 2026-11-16
 
 dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.3; built and tested on 0.2.2-rc.3.

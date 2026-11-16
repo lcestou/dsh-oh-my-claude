@@ -90,10 +90,10 @@ export const DSH_CONTRACT: readonly ContractProbe[] = [
     // The ring's own arc, not merely a button that opens a dialog. Measured side by side on a
     // live page, 2026-09-21: the loose form matches 28 nodes and this one matches 1, so the loose
     // form would have reported the hook found while the ring had moved out from under us. This is
-    // the selector the reader itself uses (`ARC` in index.tsx). It is conversation-scoped because
+    // the selector the reader itself uses (`RING_ARC` in shared.ts). It is conversation-scoped because
     // dsh draws the ring only once a session has context, so a blank session must skip it rather
     // than report the ring missing.
-    selector: 'button[aria-haspopup="dialog"] circle + circle',
+    selector: 'button[aria-haspopup="dialog"] > svg > circle + circle',
     detects: "exact",
   },
   {

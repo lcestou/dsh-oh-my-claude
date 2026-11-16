@@ -498,9 +498,14 @@ export function openSession(ctx: ClientCtx, id: string): void {
  * The meter (dsh-client-ui-conversation ContextMeter) has no slot, so this watches the DOM for
  * its dialog: a `[role=dialog]` whose parent holds a `button[aria-haspopup=dialog]` with the ring.
  * ponytail: DOM hook on a structural selector; swap for a slot the day the meter grows one.
+ * The circles must sit directly in the button's own `<svg>`: dsh's subagent count button also
+ * opens a dialog, and while a subagent runs its activity dot draws circles nested in a span. A loose
+ * `circle + circle` claimed that button as the ring, so the plugin relabelled it and the real
+ * meter's popup opened without the usage block (owner, 2026-11-16).
  */
-export const isRingRoot = (el: HTMLElement | null) =>
-  !!el?.querySelector(':scope > button[aria-haspopup="dialog"] circle + circle');
+export const RING_ARC = 'button[aria-haspopup="dialog"] > svg > circle + circle';
+/** True when `el` directly holds the meter's ring button; false for null and for the subagent button. */
+export const isRingRoot = (el: HTMLElement | null) => !!el?.querySelector(`:scope > ${RING_ARC}`);
 
 /**
  * The mount a session runs on (`claude-code`, `claude-code-nova`, …), else undefined.

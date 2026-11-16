@@ -26,7 +26,7 @@ if (await item.count()) {
   await item.click({ force: true });
   await p.waitForTimeout(2500);
 }
-const ring = p.locator('button[aria-haspopup="dialog"]:has(circle + circle)').first();
+const ring = p.locator('button[aria-haspopup="dialog"]:has(> svg > circle + circle)').first();
 console.log("ring:", await ring.count());
 if (await ring.count()) {
   await ring.hover();
