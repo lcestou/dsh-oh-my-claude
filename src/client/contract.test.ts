@@ -8,6 +8,7 @@ import {
   type ContractProbe,
   TURN_STATUS_SELECTOR,
 } from "./contract.js";
+import { RING_ARC } from "./shared.js";
 
 /** A stand-in document: every selector answers the count this map gives it. */
 const docOf = (counts: Record<string, number>) => ({
@@ -149,6 +150,13 @@ const probes: ContractProbe[] = [
   assert.ok(
     ring.selector.includes("circle"),
     "the ring probe names the arc, not merely a button that opens a dialog",
+  );
+  // dsh's subagent button opens a dialog too, and while a subagent runs its activity dot nests two
+  // circles in a span. Only circles directly in the button's own svg are the ring (2026-11-16).
+  assert.equal(ring.selector, RING_ARC, "the probe checks the selector the reader uses");
+  assert.ok(
+    RING_ARC.endsWith("> svg > circle + circle"),
+    "the arc must sit directly in the button's svg, not anywhere inside it",
   );
   for (const probe of DSH_CONTRACT)
     assert.ok(
