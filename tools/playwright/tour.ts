@@ -320,7 +320,7 @@ if (!process.env.PW_CLIPS_ONLY) {
       height: sb.height + 56,
     });
   // dsh's context ring: the only aria-haspopup button drawn as two concentric circles.
-  const ring = p.locator('button[aria-haspopup="dialog"]:has(circle + circle)').first();
+  const ring = p.locator('button[aria-haspopup="dialog"]:has(> svg > circle + circle)').first();
   if (await ring.count()) {
     await hit(ring);
     await wait(p, 2500);

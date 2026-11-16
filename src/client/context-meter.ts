@@ -11,6 +11,7 @@ import {
   activeClaudeProvider,
   whenContextGone,
   isRingRoot,
+  RING_ARC,
   maskEmail,
   type ClientCtx,
 } from "./shared.js";
@@ -613,7 +614,7 @@ export function watchContextMeter(ctx: ClientCtx) {
       });
   };
   // The ring's filled arc, its geometry, the occupancy last read for it, and when that was asked for.
-  const ARC = ':scope > button[aria-haspopup="dialog"] circle + circle';
+  const ARC = `:scope > ${RING_ARC}`;
   let arc: SVGCircleElement | undefined;
   let arcLength = 0;
   let ringSession: string | undefined;
