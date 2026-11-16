@@ -376,6 +376,16 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
     get: (name: string) => (name === "compaction" ? compaction : undefined),
   });
   const busy = Object.assign(new Error("busy"), { code: "busy" });
+  /** Waits for the retry a `busy` answer starts in the background. The retry marks the session as
+   *  syncing before its first await and holds it until its log line is written, so it is done
+   *  once the mark is gone. A fixed sleep lost that race under the parallel suite: a retry still
+   *  writing its log line made the next block's sync return at once (a slow `whenIdle` would miss
+   *  the retry's own call instead). */
+  const retried = async () => {
+    for (let i = 0; i < 1000 && a.syncingCompactions.has("s1"); i++)
+      await new Promise((r) => setTimeout(r, 5));
+    assert.equal(a.syncingCompactions.has("s1"), false, "the retry finished");
+  };
 
   await a.syncCompaction("s1");
   assert.deepEqual(calls, [], "nothing pending, nothing to sync");
@@ -405,7 +415,7 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
   };
   calls.length = 0;
   await a.syncCompaction("s1");
-  await new Promise((r) => setTimeout(r, 10));
+  await retried();
   assert.deepEqual(calls, ["compactNow", "compactNow"], "busy retries after the next idle");
 
   // An agent that stays busy is retried once, not spun on; the summary waits for dsh's own trigger.
@@ -415,7 +425,7 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
   };
   calls.length = 0;
   await a.syncCompaction("s1");
-  await new Promise((r) => setTimeout(r, 10));
+  await retried();
   assert.deepEqual(calls, ["compactNow", "compactNow"]);
   assert.equal(a.pendingCompactions.get("s1"), "S");
 
