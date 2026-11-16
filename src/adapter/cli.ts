@@ -5,6 +5,7 @@ import { type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { JsonValue, ToolSchema } from "../dsh.js";
 import { KEY_ENV, KEY_HEADER } from "../mcp-config.js";
 import { PEOPLE_INSTRUCTIONS } from "../compact-retain.js";
+import { AUTOCOMPACT_PCT_ENV } from "./cli-compaction.js";
 import { ISOLATED_ENV, ISOLATED_SETTINGS } from "./isolate.js";
 import { CHILD_ENV, shq, sshArgs, userTurnLine } from "../process.js";
 import { probeRawToolRows, type RowsSupport } from "../rows-probe.js";
@@ -356,6 +357,7 @@ export function buildArgs({
   temporary = false,
   permissionMode,
   dshSystem,
+  compactPct,
 }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
   /** dsh's own system prompt (`dshSystemPrompt`), passed only under `systemPrompt: dsh`. It
    *  replaces Claude Code's prompt rather than following it. */
@@ -372,6 +374,8 @@ export function buildArgs({
   temporary?: boolean;
   /** Optional permission mode override; if provided, used instead of computing from config. */
   permissionMode?: string;
+  /** Where the CLI compacts on its own, in percent of its window (`cliCompactPct`). */
+  compactPct?: number | undefined;
 }) {
   const args = ["-p"];
   if (usesStdin(flags)) args.push("--input-format", "stream-json");
@@ -392,6 +396,10 @@ export function buildArgs({
   const settings: Record<string, JsonValue> = config.isolate ? { ...ISOLATED_SETTINGS } : {};
   if (config.fastMode) settings.fastMode = true;
   if (!purpose) settings.hooks = AUTO_COMPACT_HOOKS;
+  // In the settings' `env`, which the CLI copies into its own environment at start, so it reaches
+  // a keeper and a box the same way the rest of the command line does.
+  if (!purpose && compactPct !== undefined)
+    settings.env = { [AUTOCOMPACT_PCT_ENV]: String(compactPct) };
   if (Object.keys(settings).length > 0 && supports(flags, "--settings"))
     args.push("--settings", JSON.stringify(settings));
   if (config.isolate) {

@@ -36,6 +36,60 @@ export type CompactionFacts = {
   switchPending: boolean;
 };
 
+/** The variable Claude Code reads, at every request, for the share of its window at which it
+ *  compacts on its own: `min(effective window × pct / 100, effective window − 13,000)` on 2.1.325,
+ *  where the effective window is the window less the output reservation. */
+export const AUTOCOMPACT_PCT_ENV = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE";
+
+/** `dsh-compaction-basic`'s defaults for what its resolved config leaves out. */
+const DSH_THRESHOLD_RATIO = 0.8;
+const DSH_HEADROOM_TOKENS = 65536;
+
+/** dsh's automatic-compaction settings as its compaction service holds them, global and per model. */
+export type ThresholdSettings = {
+  readonly auto?: boolean;
+  readonly thresholdRatio?: number;
+  readonly headroomTokens?: number;
+  readonly modelPolicies?: ReadonlyArray<{
+    readonly provider: string;
+    readonly model: string;
+    readonly thresholdRatio?: number;
+    readonly headroomTokens?: number;
+  }>;
+};
+
+/**
+ * Where Claude Code should compact on its own, as a percentage of the window: dsh's own threshold
+ * for the route, resolved the way `dsh-compaction-basic` does (`min(window × ratio, window −
+ * headroom − output reservation)`). dsh asks for its compaction between steps, and a Claude Code
+ * mid-turn can only refuse, so without this a turn that crosses dsh's threshold runs on to the
+ * CLI's own (about 97% of the window) and every step pays for a context dsh meant to cut. Set to
+ * dsh's threshold, the CLI compacts at the same point inside the turn, and a dsh request that
+ * still comes takes that summary (`reuse`) instead of a second one. A hair early, since the CLI takes its share of the
+ * window less its output reservation. Undefined when dsh does not compact on its own, or for a
+ * threshold the CLI's own default already meets.
+ */
+export function cliCompactPct(
+  settings: ThresholdSettings | undefined,
+  route: { provider: string; model: string } | undefined,
+  window: number | undefined,
+  reserved = 0,
+): number | undefined {
+  if (settings === undefined || settings.auto === false) return undefined;
+  if (window === undefined || !Number.isFinite(window) || window <= 0) return undefined;
+  const policy = settings.modelPolicies?.find(
+    (p) => p.provider === route?.provider && p.model === route?.model,
+  );
+  const ratio = policy?.thresholdRatio ?? settings.thresholdRatio ?? DSH_THRESHOLD_RATIO;
+  const headroom = policy?.headroomTokens ?? settings.headroomTokens ?? DSH_HEADROOM_TOKENS;
+  if (!Number.isFinite(ratio) || ratio <= 0) return undefined;
+  const threshold = Math.min(window * ratio, window - headroom - Math.max(0, reserved));
+  if (threshold <= 0) return undefined;
+  // One decimal, rounded down, so the CLI never compacts later than dsh asks.
+  const pct = Math.floor((threshold / window) * 1000) / 10;
+  return pct > 0 && pct < 100 ? pct : undefined;
+}
+
 /** Claude Code is inside a turn: running, or held on relayed tool calls or a steer. */
 export const cliMidTurn = (proc: {
   busy: boolean;

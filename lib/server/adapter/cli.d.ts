@@ -95,7 +95,7 @@ export declare const AUTO_COMPACT_HOOKS: {
  * of its own, and never carries a permission mode, allowed tools, budget or resume. Everything
  * after that early return applies only to a real conversation turn.
  */
-export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, permissionMode, dshSystem, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
+export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, permissionMode, dshSystem, compactPct, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
     /** dsh's own system prompt (`dshSystemPrompt`), passed only under `systemPrompt: dsh`. It
      *  replaces Claude Code's prompt rather than following it. */
     dshSystem?: string | undefined;
@@ -117,6 +117,8 @@ export declare function buildArgs({ model, reasoningEffort, system, purpose, con
     temporary?: boolean;
     /** Optional permission mode override; if provided, used instead of computing from config. */
     permissionMode?: string;
+    /** Where the CLI compacts on its own, in percent of its window (`cliCompactPct`). */
+    compactPct?: number | undefined;
 }): string[];
 /** One stream-json input line: the user turn with text and inline images. `uuid` goes on the line so a later `cancel_async_message` can name it. */
 export declare function buildInput(prompt: string, images: Array<{

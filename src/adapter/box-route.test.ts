@@ -59,6 +59,18 @@ assert.equal(
   parseBoxEnv(["CLAUDE_CODE_MAX_CONTEXT_TOKENS=64000", "", "", ""].join(MARK))?.ownWindow,
   true,
 );
+// Where the box's CLI compacts on its own, set there by variable or settings `env`: the plugin's
+// own pick (dsh's threshold) is not sent over it.
+assert.equal(parseBoxEnv(["", "", "", ""].join(MARK))?.ownCompact, false);
+assert.equal(
+  parseBoxEnv(["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=50", "", "", ""].join(MARK))?.ownCompact,
+  true,
+);
+assert.equal(
+  parseBoxEnv(["", '{"env":{"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE":"40"}}', "", ""].join(MARK))
+    ?.ownCompact,
+  true,
+);
 // No files at all is a box with no router; an answer cut short is no answer.
 assert.deepEqual(parseBoxEnv(["", "", "", ""].join(MARK))?.env.baseUrl, undefined);
 assert.equal(parseBoxEnv(["", "{}"].join(MARK)), undefined);

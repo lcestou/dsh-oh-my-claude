@@ -667,14 +667,19 @@ export interface PluginContext {
 /** dsh's compaction service (`dsh-compaction`): its `compactNow` is what dsh's own `/compact` runs.
  *  `shadowedSeqs` and `shadowedTokenCount` are what that command reports; null is nothing to compact. */
 export interface CompactionService {
-    /** `dsh-compaction-basic`'s resolved settings, of which only the retention is read here; another
-     *  backend may carry none. */
+    /** `dsh-compaction-basic`'s resolved settings, of which the retention and the automatic
+     *  threshold are read here; another backend may carry none. */
     readonly config?: {
+        readonly auto?: boolean;
+        readonly thresholdRatio?: number;
+        readonly headroomTokens?: number;
         readonly retainRatio?: number;
         readonly retainTokens?: number;
         readonly modelPolicies?: ReadonlyArray<{
             readonly provider: string;
             readonly model: string;
+            readonly thresholdRatio?: number;
+            readonly headroomTokens?: number;
             readonly retainRatio?: number;
             readonly retainTokens?: number;
         }>;

@@ -769,6 +769,11 @@ export interface ClaudeProcessSpec {
      *  every other spec keys as before; a size changed in Settings changes the key and the
      *  session's next turn starts a process that knows it. */
     window?: number;
+    /** Where the CLI was told to compact on its own, in percent of its window: dsh's threshold for
+     *  the route (`cliCompactPct`). Absent when dsh does not compact on its own or someone set the
+     *  CLI's variable themselves. A threshold changed in dsh's config changes the key, and the
+     *  session's next turn starts a process that compacts there. */
+    compactPct?: number;
     /** Started as dsh's child rather than under a keeper: the Settings switch off, or `spawn: node` or
      *  `dsh` in the config. Absent for a keeper, so a keeper's saved spec keys the same as it did
      *  before the field existed; a flip changes the key and the session's next turn respawns, never

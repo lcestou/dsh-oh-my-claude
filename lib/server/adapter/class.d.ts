@@ -1441,6 +1441,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Run `/compact` on the session's idle Claude Code, started on the last turn's spec when it is
      *  not running, and read back its summary. Undefined when the CLI could not or did not compact. */
     compactOnCli(sessionId: string, signal?: AbortSignal): Promise<string | undefined>;
+    /** Where a turn's Claude Code should compact on its own, in percent of its window: dsh's
+     *  threshold for this session's route (`cliCompactPct`). Undefined with `cliCompaction` off,
+     *  whose sessions dsh summarizes by itself, and when the window or the service is not known. */
+    cliCompactAt(sessionId: string, model: string | undefined): Promise<number | undefined>;
     /** The newest share of the window, in tokens, a compaction keeps verbatim: dsh's own retention
      *  for this session's route (`retainBudget`), over the window this plugin reports for it. Zero
      *  when the session's route cannot be read. */

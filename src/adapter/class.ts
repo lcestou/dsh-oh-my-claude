@@ -310,7 +310,12 @@ import {
   SELECTION_EXPLAIN,
 } from "./asides.js";
 import { claudeOnlyRefusal } from "./claude-only.js";
-import { cliMidTurn, compactionRoute } from "./cli-compaction.js";
+import {
+  AUTOCOMPACT_PCT_ENV,
+  cliCompactPct,
+  cliMidTurn,
+  compactionRoute,
+} from "./cli-compaction.js";
 import { claudeCommandText, skillContent } from "./skill-line.js";
 import {
   claudeSessionExists,
@@ -1818,6 +1823,17 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           ...contextSizes(turns, copies),
           tools: toolsSent ? dshToolsGuidance(mcpBridge.tools, cfg.builtinTools).length : 0,
         };
+    // dsh's threshold for the CLI's own compaction, so a long turn compacts where dsh would have:
+    // dsh's request between steps can only be refused while Claude Code is mid-turn. Not over a
+    // value someone set themselves, here or on the box, and not on a box that could not be read.
+    const ownCompact =
+      here !== undefined
+        ? (await this.claudeEnv(here))[AUTOCOMPACT_PCT_ENV] !== undefined
+        : far === undefined || far.ownCompact === true;
+    const compactPct =
+      options.purpose || !options.sessionId || ownCompact
+        ? undefined
+        : await this.cliCompactAt(options.sessionId, options.model);
     const args = buildArgs({
       ...options,
       model,
@@ -1830,6 +1846,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       permissionMode: effectivePermissionMode,
       mcp: mcpBridge,
       dshSystem,
+      compactPct,
     });
     // Spec = what a running process was spawned with. `resuming` is deliberately left out: it flips
     // to true after the first turn and must not force a respawn.
@@ -1873,6 +1890,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (here !== undefined) sized = await this.sizedWindow(model, here);
     else if (this.config.sshHost && far && !far.ownWindow) sized = await this.rowWindow(model);
     if (sized !== undefined) spec.window = sized;
+    if (compactPct !== undefined) spec.compactPct = compactPct;
     // Keeper or child joins the spec the same way: a flip of the Settings switch replaces each
     // running process on its session's next turn, never during one. The switch lives in the
     // default instance's hints file, which the Settings route writes, so a second instance (an SSH
@@ -6930,6 +6948,26 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const summary = await this.compactSummary(cwd, claudeId, preTokens);
     await this.retainTail(sessionId, where, proc);
     return summary;
+  }
+
+  /** Where a turn's Claude Code should compact on its own, in percent of its window: dsh's
+   *  threshold for this session's route (`cliCompactPct`). Undefined with `cliCompaction` off,
+   *  whose sessions dsh summarizes by itself, and when the window or the service is not known. */
+  async cliCompactAt(sessionId: string, model: string | undefined): Promise<number | undefined> {
+    if (!this.config.cliCompaction || !model) return undefined;
+    try {
+      const info = await this.fullModelInfo(this.providerId, model);
+      const route = { provider: this.providerId, model };
+      return cliCompactPct(
+        this.compactionService(sessionId)?.config,
+        route,
+        info.context?.contextWindow,
+        info.defaultMaxTokens,
+      );
+    } catch (error) {
+      this.log("warn", `compaction threshold for ${sessionId}: ${errorText(error)}`);
+      return undefined;
+    }
   }
 
   /** The newest share of the window, in tokens, a compaction keeps verbatim: dsh's own retention

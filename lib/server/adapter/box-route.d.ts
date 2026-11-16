@@ -7,6 +7,9 @@ export interface BoxRoute {
     /** The box states a context window of its own (a settings key or either CLI variable), which
      *  the plugin must not overrule with one of its own. */
     ownWindow: boolean;
+    /** The box sets where its CLI compacts on its own (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`), which the
+     *  plugin's own pick (`cliCompactPct`) must not overrule. */
+    ownCompact?: boolean;
     /** Whether the base URL reaches Anthropic, asked from the box. `undefined` when there is no
      *  proxy address to ask, the box has no `curl`, or the endpoint did not answer. */
     answer: FirstPartyProbe;
@@ -26,7 +29,7 @@ export declare const boxProbeScript: (baseUrl: string) => string;
  * half answer is never taken for "no router". A settings file that does not parse counts as
  * silent, as it does for the CLI.
  */
-export declare function parseBoxEnv(out: string): Pick<BoxRoute, "env" | "ownWindow"> | undefined;
+export declare function parseBoxEnv(out: string): Pick<BoxRoute, "env" | "ownWindow" | "ownCompact"> | undefined;
 /**
  * Read `boxProbeScript`'s output: header blocks, then the body. `undefined` for an empty answer
  * (no `curl`, a refused connection, a timeout), which is "not asked" rather than "not Anthropic".

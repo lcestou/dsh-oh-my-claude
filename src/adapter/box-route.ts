@@ -22,6 +22,9 @@ export interface BoxRoute {
   /** The box states a context window of its own (a settings key or either CLI variable), which
    *  the plugin must not overrule with one of its own. */
   ownWindow: boolean;
+  /** The box sets where its CLI compacts on its own (`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`), which the
+   *  plugin's own pick (`cliCompactPct`) must not overrule. */
+  ownCompact?: boolean;
   /** Whether the base URL reaches Anthropic, asked from the box. `undefined` when there is no
    *  proxy address to ask, the box has no `curl`, or the endpoint did not answer. */
   answer: FirstPartyProbe;
@@ -47,7 +50,7 @@ const MARK = "<<omc-box-route>>";
 /** The variables read out of the far shell's environment: the ones that route the CLI or size its
  *  window. By name, so a key exported there never crosses the wire. */
 const SHELL_VARS =
-  "^(ANTHROPIC_BASE_URL|ANTHROPIC_DEFAULT_[A-Z0-9_]+|CLAUDE_CODE_USE_[A-Z]+|CLAUDE_CODE_AUTO_COMPACT_WINDOW|CLAUDE_CODE_MAX_CONTEXT_TOKENS)=";
+  "^(ANTHROPIC_BASE_URL|ANTHROPIC_DEFAULT_[A-Z0-9_]+|CLAUDE_CODE_USE_[A-Z]+|CLAUDE_CODE_AUTO_COMPACT_WINDOW|CLAUDE_CODE_MAX_CONTEXT_TOKENS|CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)=";
 
 /**
  * The script that prints the three layers the far CLI merges, lowest first: the shell's own
@@ -68,7 +71,9 @@ export const boxProbeScript = (baseUrl: string): string =>
  * half answer is never taken for "no router". A settings file that does not parse counts as
  * silent, as it does for the CLI.
  */
-export function parseBoxEnv(out: string): Pick<BoxRoute, "env" | "ownWindow"> | undefined {
+export function parseBoxEnv(
+  out: string,
+): Pick<BoxRoute, "env" | "ownWindow" | "ownCompact"> | undefined {
   const parts = out.split(`\n${MARK}\n`);
   if (parts.length < 4) return undefined;
   const env: Record<string, string> = {};
@@ -86,8 +91,9 @@ export function parseBoxEnv(out: string): Pick<BoxRoute, "env" | "ownWindow"> | 
     files.autoCompactWindow !== undefined ||
     env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined ||
     env.CLAUDE_CODE_MAX_CONTEXT_TOKENS !== undefined;
+  const ownCompact = env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE !== undefined;
   // Only the routing variables are kept: the settings file also holds the router's key.
-  return { env: routeEnvIn(env), ownWindow };
+  return { env: routeEnvIn(env), ownWindow, ownCompact };
 }
 
 /**
@@ -137,7 +143,14 @@ export const boxRouteState = (box: BoxRoute): Route =>
 
 /** One text for "what this box last said", compared to tell a change from a repeat. */
 const signatureOf = (box: BoxRoute | undefined): string =>
-  box ? JSON.stringify([routeSignature(box.env), box.ownWindow, box.answer ?? null]) : "";
+  box
+    ? JSON.stringify([
+        routeSignature(box.env),
+        box.ownWindow,
+        box.ownCompact === true,
+        box.answer ?? null,
+      ])
+    : "";
 
 /** Kept answers by host, with the request in flight for each. A box that could not be read is
  *  kept too, as `undefined`, so an unreachable box is asked once per `PROBE_TTL_MS` and not on
