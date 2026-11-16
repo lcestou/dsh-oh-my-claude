@@ -60,15 +60,13 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Probe targets already written to resume.log, so the line lands once per binary, not per turn. */
     probeTraced: Set<string>;
     sessionController?: SessionController;
-    /** Drain notices (`WAKE_TEXT`, `RECONNECT_TEXT`) still waiting in a session's inbox, with the agent
-     *  that holds them. dsh gives every followup a turn of its own, so a notice whose output another
+    /** Ids of the drain notices (`WAKE_TEXT`, `RECONNECT_TEXT`) still waiting in a session's inbox. Ids
+     *  only: the agent is looked up when they are taken back, so an entry never keeps a session's
+     *  agent alive after dsh unloads it. dsh gives every followup a turn of its own, so a notice whose output another
      *  turn already drew would open an empty turn later; `withdrawDrainNotices` takes them back.
      *  Shared by every adapter instance, like `wokeThroughParent`: after a hot reload the new
      *  instance runs the turn that should take back what the old one queued. */
-    static readonly drainNotices: Map<string, {
-        agent: Agent;
-        ids: Set<string>;
-    }>;
+    static readonly drainNotices: Map<string, Set<string>>;
     /** Subagent sessions this process continued through their parent, by parent id, so the parent's
      *  own restart notice can name them and the parent does not hand them the work again. Shared by
      *  every adapter instance like `wokeThroughParent`: a child on a box's model wakes under that

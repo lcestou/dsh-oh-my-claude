@@ -10096,15 +10096,13 @@ console.log("watch-save-race ok");
 // subagent's) takes back the drain notices a wake queued for the same session.
 {
   const removed: string[] = [];
-  ClaudeCodeAdapter.drainNotices.set("sdrain", {
-    agent: fakeAgent({
-      inbox: { nextStep: [], replace: () => true, remove: (id: string) => removed.push(id) > 0 },
-    }),
-    ids: new Set(["n1"]),
+  ClaudeCodeAdapter.drainNotices.set("sdrain", new Set(["n1"]));
+  const holder = fakeAgent({
+    inbox: { nextStep: [], replace: () => true, remove: (id: string) => removed.push(id) > 0 },
   });
   const session = { header: { version: 0 }, snapshotEvents: () => [], append: () => ({ seq: 1 }) };
   const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    fakeCtx({ on() {}, sessions: { get: () => session }, agents: { get: () => holder } }),
     Config({ resume: true }),
   );
   a.stateDir = joinPath(tmpdir(), "omc-drain-test-nowrite");

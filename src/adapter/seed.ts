@@ -55,16 +55,26 @@ const NATIVE_NAMES = new Map<string, string>(
     .map(([native, dsh]) => [dsh, native]),
 );
 
-/** The name Claude called a logged tool by. The plugin writes each of Claude's own tool calls as a
- *  message of its own with the id `<callId>:call`; dsh's relayed calls never carry that id, so they
- *  keep their bridge name. A call logged by the Import seed carries Claude's message id instead, so
- *  it keeps the bridge name; shortcut: an imported session rebuilt from its log names native calls
- *  as dsh's, mark them at import if that turns up. */
+/** The id shape the plugin mints for a relayed dsh call (`randomUUID`); Claude's own calls carry
+ *  the API's tool_use id instead. */
+const RELAY_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+
+/** Whether a logged call is one of Claude's own tools. The plugin writes each live one as a message
+ *  of its own with the id `<callId>:call`. The Import seed writes them inside Claude's reply under
+ *  dsh's name, where only the id tells them apart: a relayed dsh call has a minted id, Claude's
+ *  call keeps its tool_use id, and a dsh tool Claude called over the bridge keeps its
+ *  `mcp__dsh__` name. */
+const isNativeCall = (m: LooseMessage, call: { id: string; name: string }): boolean =>
+  m.id === `${call.id}:call` ||
+  (m.source?.provider === "claude-code" && NATIVE_NAMES.has(call.name) && !RELAY_ID.test(call.id));
+
+/** The name Claude called a logged tool by: its own name for one of its own tools, the bridge
+ *  name for a dsh tool. */
 const calledName = (
   m: LooseMessage,
   call: { id: string; name: string; arguments: string },
 ): string => {
-  if (m.id !== `${call.id}:call`) return bridgedName(call.name);
+  if (!isNativeCall(m, call)) return bridgedName(call.name);
   // MultiEdit logs as `edit` too; its input is the one that carries an `edits` list.
   if (call.name === "edit" && /"edits"\s*:\s*\[/.test(call.arguments)) return "MultiEdit";
   return NATIVE_NAMES.get(call.name) ?? call.name;

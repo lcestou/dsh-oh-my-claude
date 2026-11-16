@@ -55,8 +55,9 @@ const history: LooseMessage[] = [
     source: { kind: "telegram-sender" },
   },
   person("帮我查一下包裹"),
-  call("c1", "bash", '{"command":"amazon-ca order 1"}', "我看看"),
-  result("c1", "Delivery attempted today at 6:14 a.m."),
+  // A relayed dsh call: the plugin mints its id.
+  call("6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f", "bash", '{"command":"amazon-ca order 1"}', "我看看"),
+  result("6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f", "Delivery attempted today at 6:14 a.m."),
   reply("包裹今天早上 6:14 来过一次，没送成。"),
   person("白天送呗你帮我改"),
   call("c2", "subagent", '{"prompt":"Move the redelivery to daytime."}'),
@@ -204,8 +205,8 @@ assert.equal(bridgedName("bash"), "mcp__dsh__bash");
         result("n2", "ok"),
         native("n3", "edit", '{"file_path":"f","edits":[]}'),
         result("n3", "ok"),
-        call("r1", "bash", "{}"),
-        result("r1", "ok"),
+        call("9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a", "bash", "{}"),
+        result("9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a", "ok"),
         reply("done"),
       ],
       { sessionId: "s", cwd: "/w", version: "2.1.325" },
@@ -215,6 +216,27 @@ assert.equal(bridgedName("bash"), "mcp__dsh__bash");
     .filter((b: { type: string }) => b.type === "tool_use")
     .map((b: { name: string }) => b.name);
   assert.deepEqual(named, ["Bash", "Edit", "MultiEdit", "mcp__dsh__bash"]);
+  // The Import seed writes Claude's calls inside its reply, under dsh's name and Claude's
+  // tool_use id; a relayed call in a live reply has the id the plugin minted for it.
+  const imported = rows(
+    seedTranscriptText(
+      [
+        person("go"),
+        call("toolu_01Abc", "bash", "{}"),
+        result("toolu_01Abc", "ok"),
+        call("0b6a5c1e-3f2d-4c8e-9a7b-1d2e3f4a5b6c", "bash", "{}"),
+        result("0b6a5c1e-3f2d-4c8e-9a7b-1d2e3f4a5b6c", "ok"),
+        call("toolu_02Def", "mcp__dsh__subagent", "{}"),
+        result("toolu_02Def", "ok"),
+        reply("done"),
+      ],
+      { sessionId: "s", cwd: "/w", version: "2.1.325" },
+    ),
+  )
+    .flatMap((r) => r.message.content)
+    .filter((b: { type: string }) => b.type === "tool_use")
+    .map((b: { name: string }) => b.name);
+  assert.deepEqual(imported, ["Bash", "mcp__dsh__bash", "mcp__dsh__subagent"]);
 }
 assert.equal(bridgedName("ToolSearch"), "ToolSearch");
 assert.equal(bridgedName("mcp__other__x"), "mcp__other__x");
