@@ -1057,6 +1057,11 @@ export declare class ClaudeProcess {
      *  CLI aborts its in-flight guess on new input, so a frame that still lands after a prompt was
      *  written is for the turn before it. Set by the readline handler, cleared by the prompt write. */
     resultSeen: boolean;
+    /** The CLI is inside a turn: a frame of one came out after the last `result`. Kept from every
+     *  line the process prints, whether a dsh turn reads it or not, so a turn the CLI is still
+     *  running on its own (an adopted keeper that kept going while dsh restarted) is known as one
+     *  before its result arrives. */
+    cliTurnOpen: boolean;
     /** Spawn the child Claude and feed its stdout into the line queue, noting idle completion replies
      *  so the adapter can open a dsh turn. */
     constructor({ args, cwd, spec, onExit, command, spawner, }: {
@@ -1096,8 +1101,16 @@ export declare class ClaudeProcess {
     /** A `result` line while no turn is reading: Claude just finished a turn of its own. Tell the
      *  adapter (`onIdleResult`) so it can open a dsh turn and show the reply now. */
     noteIdleResult(line: string): void;
-    /** Count buffered `result` events with no turn reading them, so the loop can tell a real reply
-     *  from a stale background-task completion. */
+    /** Open or close `cliTurnOpen` on a line the cheap text test took for a turn frame. Parsed, since
+     *  the test also matches a tool's text that mentions one; a line that is not JSON changes nothing. */
+    noteTurnFrame(line: string): void;
+    /** How many `result` events the CLI sends before it answers a prompt written now: the ones
+     *  queued with no turn reading them (a turn Claude ran on its own, a background task finishing),
+     *  plus one for a turn it is still in. The CLI queues a prompt written mid-turn and answers it
+     *  only after that turn's own result, so a prompt sent to a process adopted mid-turn after a dsh
+     *  restart read the old turn's result as its reply, ended early, and its real answer ran in a
+     *  Claude turn no dsh turn read. For a subagent dsh then holds no live agent, so every tool call
+     *  in that answer failed with "no live agent". */
     countStaleResults(): number;
     /** True when the queue holds a frame a turn has to read out: a frame of a turn Claude ran while
      *  dsh was away (TURN_FRAMES), a relayed call injected for a turn, or the `task_notification` of
