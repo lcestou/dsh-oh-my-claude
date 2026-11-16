@@ -3689,6 +3689,49 @@ console.log("ok");
   assert.equal(sent.length, 4, "and so does the idle-reply wake");
 }
 {
+  // A restart's wake and reconnect notice can land while a turn for some other waiting message is
+  // starting. That turn draws everything the process queued, and dsh gives each notice a turn of
+  // its own, so left in the inbox they open blank turns after it. The prompt turn takes back the
+  // drain notices still pending; the one that opened a turn is gone from the inbox already, and a
+  // restart notice (a prompt Claude must read) is never withdrawn.
+  const pending = new Map<string, Message>();
+  const agent = fakeAgent({
+    followup: (m: Message) => pending.set(String(m.id), m),
+    inbox: {
+      nextStep: [],
+      replace: () => true,
+      remove: (id: string) => pending.delete(id),
+    },
+  });
+  // SAFETY: partial fake for tests; PluginContext requires many fields not used here
+  const ctx = {
+    on() {},
+    agents: { get: () => agent },
+    logger: { info() {}, warn() {} },
+  } as unknown as import("./dsh.js").PluginContext;
+  const a = new ClaudeCodeAdapter(fakeCtx(ctx), Config({}));
+  await a.wake("s1", fakeProc({ busy: false }));
+  await a.wake("s1", fakeProc({ busy: false }), RECONNECT_TEXT);
+  await a.wake("s1", fakeProc({ busy: false }), RESTART_TEXT);
+  assert.equal(pending.size, 3, "all three queued");
+  await a.withdrawDrainNotices("s1");
+  assert.deepEqual(
+    [...pending.values()].map((m) => (m.content as Array<{ text?: string }>)[0]?.text),
+    [RESTART_TEXT],
+    "the drain notices are withdrawn, the restart notice stays",
+  );
+  // The wake turn itself: dsh claimed its notice, so only the later reconnect notice goes.
+  pending.clear();
+  await a.wake("s1", fakeProc({ busy: false }));
+  const claimed = [...pending.keys()][0] ?? "";
+  pending.delete(claimed);
+  await a.wake("s1", fakeProc({ busy: false }), RECONNECT_TEXT);
+  await a.withdrawDrainNotices("s1");
+  assert.equal(pending.size, 0, "the reconnect notice queued behind the wake turn is taken back");
+  await a.withdrawDrainNotices("s1");
+  assert.equal(ClaudeCodeAdapter.drainNotices.has("s1"), false, "nothing left to withdraw");
+}
+{
   // dsh's instruction bundle: CLAUDE.md blocks go, Claude Code loads those files itself.
   const bundle = [
     "<system-reminder>",
@@ -10048,6 +10091,61 @@ console.log("watch-save-race ok");
   assert.deepEqual([...proc.relays.keys()], ["r1", "r2"], "both calls of the message relay");
   assert.deepEqual([...proc.relayed], ["d1", "d2"], "each marked by its own tool_use id");
   console.log("relay waits for the streaming message ok");
+}
+// The withdrawal is wired to the start of a prompt turn: a turn for a person's message (or a
+// subagent's) takes back the drain notices a wake queued for the same session.
+{
+  const removed: string[] = [];
+  ClaudeCodeAdapter.drainNotices.set("sdrain", {
+    agent: fakeAgent({
+      inbox: { nextStep: [], replace: () => true, remove: (id: string) => removed.push(id) > 0 },
+    }),
+    ids: new Set(["n1"]),
+  });
+  const session = { header: { version: 0 }, snapshotEvents: () => [], append: () => ({ seq: 1 }) };
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    Config({ resume: true }),
+  );
+  a.stateDir = joinPath(tmpdir(), "omc-drain-test-nowrite");
+  const proc: any = {
+    alive: true,
+    busy: false,
+    parked: undefined,
+    steerPending: false,
+    relays: new Map(),
+    sent: new Set(),
+    queue: { lines: [] },
+    queuedIndexes: [],
+    idleKilled: false,
+    exitCode: 0,
+    stderr: "",
+    stray: "",
+    staleResults: 0,
+    countStaleResults: () => 0,
+    write: () => true,
+    nextEvent: async () => null,
+    kill: () => {},
+  };
+  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
+  a.acquire = async () => ({ prep, proc }) as any;
+  a.reconnectIfStale = async () => {};
+  a.watchTranscript = (async () => {}) as any;
+  a.pumpMirror = (async () => {}) as any;
+  try {
+    for await (const _ of a.stream({
+      sessionId: "sdrain",
+      model: "m",
+      messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+      signal: new AbortController().signal,
+    } as any));
+  } catch {
+    // the fake process ends at once; only the turn's start matters here
+  }
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(removed, ["n1"], "a prompt turn takes back the queued drain notice");
+  assert.equal(ClaudeCodeAdapter.drainNotices.has("sdrain"), false);
+  console.log("prompt turn withdraws drain notices ok");
 }
 
 // Stop while a batch is still being gathered: dsh ends the step with `return()` at a yield inside

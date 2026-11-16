@@ -1,6 +1,7 @@
 import type { Spawner, SubprocessHandle, CliModel } from "../process.js";
 import { type PluginLoadError } from "../plugins.js";
 import { LlmAdapter, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
+import { type ContextSource } from "../context-sources.js";
 import { type PickerRow } from "../sessions.js";
 import { type OmcEvent } from "../events.js";
 import { readUsage } from "../usage.js";
@@ -19,7 +20,7 @@ import { Config, type CustomModel } from "./config.js";
 import { type Route } from "./routing.js";
 import { type AsideEntry, type AsidesReply, type AwaitingRow, Continuation, ControlRequestEvent, type ControlReply, type ContextUsageReply, type Decision, type HeldSteer, type HoldReply, type IdleReply, type LoginNeed, type LiveTurnReply, type McpAuthReply, type McpStatusReply, type PermissionModeInfo, type PermissionModeReply, type PermissionModeState, type PermissionReadoutReply, type RewindReply, type SessionOptions, type SkillDoctorReply, type SteerCardState, type SteerEditReply, type WorkspaceDiffReply } from "./types.js";
 import { type MirrorQueue, type StreamState, type TranscriptWatch } from "./transcript-watch.js";
-import { type LoadedImage } from "./prompt.js";
+import { type LoadedImage, type LooseMessage, type NativeCopies } from "./prompt.js";
 import { CommandRows } from "./lane.js";
 import { type IdleTarget, type LiveTurn, type ResultFrame, type TurnRecord, type TurnsReply, type UltracodeState } from "./turn.js";
 /** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
@@ -59,6 +60,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Probe targets already written to resume.log, so the line lands once per binary, not per turn. */
     probeTraced: Set<string>;
     sessionController?: SessionController;
+    /** Drain notices (`WAKE_TEXT`, `RECONNECT_TEXT`) still waiting in a session's inbox, with the agent
+     *  that holds them. dsh gives every followup a turn of its own, so a notice whose output another
+     *  turn already drew would open an empty turn later; `withdrawDrainNotices` takes them back.
+     *  Shared by every adapter instance, like `wokeThroughParent`: after a hot reload the new
+     *  instance runs the turn that should take back what the old one queued. */
+    static readonly drainNotices: Map<string, {
+        agent: Agent;
+        ids: Set<string>;
+    }>;
     /** Subagent sessions this process continued through their parent, by parent id, so the parent's
      *  own restart notice can name them and the parent does not hand them the work again. Shared by
      *  every adapter instance like `wokeThroughParent`: a child on a box's model wakes under that
@@ -404,6 +414,18 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** A dsh fork of a Claude session becomes a Claude fork: the parent's transcript is copied under
      *  the new id, cut at the forked turn. True when a copy was made. */
     forkTranscript(options: GenerateOptions, cwd: string, id: string): Promise<boolean>;
+    /**
+     * Write dsh's log as the Claude transcript `id` resumes from (`seed.ts`), for a turn that would
+     * otherwise send the whole history as one prompt. A transcript already there (a fresh start
+     * forced over it) is moved aside first, never deleted. True when a seed was written; false when
+     * the log has no reply yet or the write failed, and the turn then starts the old way.
+     */
+    seedTranscript(messages: LooseMessage[], cwd: string, id: string, version: string | undefined, o: {
+        drops?: ReadonlySet<ContextSource>;
+        copies?: NativeCopies;
+        developer?: boolean;
+        cap?: number;
+    }): Promise<boolean>;
     /** Sessions whose last turn ended on a refusal under `refusalAsFailure`, with the transcript
      *  cleanup still running; `prepare` waits for it before it looks for a session to resume. */
     readonly refused: Map<string, Promise<void>>;
@@ -1403,6 +1425,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
      *  instead of riding on top of the user's next prompt. */
     wake(sessionId: string, proc: ClaudeProcess | undefined, text?: string): Promise<boolean>;
+    /**
+     * A prompt turn is starting on `sessionId`: it reads everything the process queued, so drain
+     * notices still pending for that output have nothing left to show. Taken out of dsh's inbox they
+     * open no turn; left there, each became an empty turn of its own after the one that drew the
+     * output (2026-11-15: a restart's background-task wake and reconnect notice landed while the turn
+     * for a waiting subagent message was starting, and showed as two blank turns after it). The
+     * notice that opened this turn is no longer pending, so `remove` passes over it.
+     */
+    withdrawDrainNotices(sessionId: string): Promise<void>;
     /** The parent of a subagent's session, and whether a restart notice already waits in its inbox;
      *  undefined for any other session (a fork carries a parent too, but dsh resumes it like any
      *  root). Read from the live session when dsh holds it, else from the log without loading it. */

@@ -24,7 +24,12 @@ import {
 import { repairStoredTurns } from "../turn-repair.js";
 import { firstPartyKnown, firstPartyMode, wantsFirstParty } from "../first-party.js";
 import { readCompactSummary } from "../compact-summary.js";
-import { CONTEXT_SIZE_KEYS, contextDrops, type ContextSizes } from "../context-sources.js";
+import {
+  CONTEXT_SIZE_KEYS,
+  contextDrops,
+  type ContextSizes,
+  type ContextSource,
+} from "../context-sources.js";
 import {
   accountIdentity,
   forgetIdentity,
@@ -321,6 +326,7 @@ import {
   type LoadedImage,
   type LooseMessage,
   MAX_IMAGE_SIDE,
+  type NativeCopies,
   oversize,
   relayFileHandles,
   selectTurns,
@@ -330,6 +336,7 @@ import {
   steerKey,
   textOf,
 } from "./prompt.js";
+import { seedTranscriptText } from "./seed.js";
 import { busyEnterOf, CommandRows, commandNameOf, leavesQueue, lineReceipt } from "./lane.js";
 import {
   accessModeOf,
@@ -451,6 +458,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Probe targets already written to resume.log, so the line lands once per binary, not per turn. */
   probeTraced = new Set<string>();
   sessionController?: SessionController;
+  /** Drain notices (`WAKE_TEXT`, `RECONNECT_TEXT`) still waiting in a session's inbox, with the agent
+   *  that holds them. dsh gives every followup a turn of its own, so a notice whose output another
+   *  turn already drew would open an empty turn later; `withdrawDrainNotices` takes them back.
+   *  Shared by every adapter instance, like `wokeThroughParent`: after a hot reload the new
+   *  instance runs the turn that should take back what the old one queued. */
+  static readonly drainNotices = new Map<string, { agent: Agent; ids: Set<string> }>();
   /** Subagent sessions this process continued through their parent, by parent id, so the parent's
    *  own restart notice can name them and the parent does not hand them the work again. Shared by
    *  every adapter instance like `wokeThroughParent`: a child on a box's model wakes under that
@@ -1544,6 +1557,56 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return true;
   }
 
+  /**
+   * Write dsh's log as the Claude transcript `id` resumes from (`seed.ts`), for a turn that would
+   * otherwise send the whole history as one prompt. A transcript already there (a fresh start
+   * forced over it) is moved aside first, never deleted. True when a seed was written; false when
+   * the log has no reply yet or the write failed, and the turn then starts the old way.
+   */
+  async seedTranscript(
+    messages: LooseMessage[],
+    cwd: string,
+    id: string,
+    version: string | undefined,
+    o: {
+      drops?: ReadonlySet<ContextSource>;
+      copies?: NativeCopies;
+      developer?: boolean;
+      cap?: number;
+    },
+  ): Promise<boolean> {
+    const text = seedTranscriptText(messages, {
+      sessionId: id,
+      cwd,
+      // The probe answers "2.1.325 (Claude Code)"; the CLI stamps its rows with the number alone.
+      version: /\d+\.\d+\.\d+/.exec(version ?? "")?.[0] ?? "",
+      ...o,
+    });
+    if (text === "") return false;
+    const dir = join(this.claudeHome, "projects", projectDirName(cwd));
+    const dest = join(dir, `${id}.jsonl`);
+    try {
+      await mkdir(dir, { recursive: true });
+      // Only a missing transcript may be passed over: any other failure to move one aside would
+      // have the write below replace it.
+      try {
+        await rename(dest, `${dest}.replaced-${Date.now()}`);
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+      }
+      await writeFile(dest, text);
+    } catch (error) {
+      this.log("warn", `seeding claude session ${id} from dsh's log failed: ${errorText(error)}`);
+      return false;
+    }
+    await rememberStarted(id, true);
+    this.log(
+      "info",
+      `seeded claude session ${id} from dsh's log (${text.split("\n").length - 1} rows)`,
+    );
+    return true;
+  }
+
   /** Sessions whose last turn ended on a refusal under `refusalAsFailure`, with the transcript
    *  cleanup still running; `prepare` waits for it before it looks for a session to resume. */
   readonly refused = new Map<string, Promise<void>>();
@@ -1630,10 +1693,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // A dsh session opened from a Claude Code transcript carries the Claude id itself.
       const own = await claudeSessionExists(this.claudeHome, cwd, options.sessionId);
       const id = own ? options.sessionId : claudeSessionId(options.sessionId);
-      let known =
-        own ||
-        (await loadStarted()).has(id) ||
-        (await claudeSessionExists(this.claudeHome, cwd, id));
+      const onDisk = own || (await claudeSessionExists(this.claudeHome, cwd, id));
+      // A box's transcripts are on the box, so only the started mark says one is there.
+      let known = onDisk || (targetHost !== undefined && (await loadStarted()).has(id));
       // Not after a refusal: the transcript just moved aside, and a fork would resume the parent's
       // conversation in its place instead of starting fresh from dsh's log.
       if (!known && !forceFresh && !refused) known = await this.forkTranscript(options, cwd, id);
@@ -1673,12 +1735,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // compaction) keeps the plugin's own config.
     const cfg = options.purpose ? this.config : await this.sessionConfigOf(options.sessionId);
     const dshMode = cfg.systemPrompt === "dsh" && !options.purpose;
-    const turns = selectTurns(
-      options.messages,
-      session?.resuming ?? false,
-      this.providerId,
-      dshMode,
-    );
     // Under `systemPrompt: dsh` the prompt dsh wrote replaces Claude Code's (`buildArgs`).
     const dshSystem = dshMode ? dshSystemPrompt(options.messages, options.system) : undefined;
     // `isolate` covers local spawns only: its environment (no CLAUDE.md, no telemetry) goes into
@@ -1689,6 +1745,24 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Claude Code loads no CLAUDE.md under `isolate` and expands no `/skill` line under
     // `verbatimPrompts`, so dsh's copies of those are then the only ones and are kept.
     const copies = { claudeMd: !engineConfig.isolate, skills: !cfg.verbatimPrompts };
+    // No transcript to resume: dsh's log becomes one, so the CLI resumes the conversation as turns
+    // and only the new turn goes as the prompt. Every earlier reply then counts, whichever route
+    // wrote it, so the prompt starts after the last of them.
+    let seeded = false;
+    if (session && !session.resuming && !targetHost)
+      seeded = await this.seedTranscript(options.messages ?? [], cwd, session.id, cli.version, {
+        drops,
+        copies,
+        developer: dshMode,
+        cap: cfg.replayToolTextLimit,
+      });
+    if (session && seeded) session = { id: session.id, resuming: true };
+    const turns = selectTurns(
+      options.messages,
+      session?.resuming ?? false,
+      seeded ? undefined : this.providerId,
+      dshMode,
+    );
     let prompt = buildPrompt(turns, drops, cfg.replayToolTextLimit, copies);
     // A turn on a box reads that box's disk, so what was attached here follows it there.
     if (targetHost)
@@ -6105,6 +6179,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     };
     options.signal?.addEventListener("abort", onAbort, { once: true });
     proc.busy = true;
+    if (cont.mode === "prompt") void this.withdrawDrainNotices(options.sessionId);
     proc.claimed = false;
     proc.lastUsed = Date.now();
     this.clearLimitWait(options.sessionId); // a prompt (or our own notice) supersedes the wait
@@ -6898,21 +6973,29 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       } catch {
         // no goal service or inactive scope: plain notice
       }
-      agent.followup(
-        createUserMessage({
-          // The extra line rides in a block of its own, so the notice block stays exactly `text`
-          // and the pending-notice check still knows it.
-          content: [
-            { type: "text", text },
-            ...(extra ? [{ type: "text" as const, text: extra }] : []),
-          ],
-          // SAFETY: the plugin builds against dsh-llm 0.1.6 types, whose MessageSource still spells
-          // the v3 `{ kind: "plugin", plugin }` wrapper; dsh 0.1.7's v4 log refuses exactly that
-          // shape at runtime and takes the producer-owned kind instead. The runtime is the
-          // authority here, so the v4 shape goes through the stale type.
-          source: noticeSource(text, goalActive, logVersion) as MessageSource,
-        }),
-      );
+      const notice = createUserMessage({
+        // The extra line rides in a block of its own, so the notice block stays exactly `text`
+        // and the pending-notice check still knows it.
+        content: [
+          { type: "text", text },
+          ...(extra ? [{ type: "text" as const, text: extra }] : []),
+        ],
+        // SAFETY: the plugin builds against dsh-llm 0.1.6 types, whose MessageSource still spells
+        // the v3 `{ kind: "plugin", plugin }` wrapper; dsh 0.1.7's v4 log refuses exactly that
+        // shape at runtime and takes the producer-owned kind instead. The runtime is the
+        // authority here, so the v4 shape goes through the stale type.
+        source: noticeSource(text, goalActive, logVersion) as MessageSource,
+      });
+      agent.followup(notice);
+      if (text === WAKE_TEXT || text === RECONNECT_TEXT) {
+        const held = ClaudeCodeAdapter.drainNotices.get(sessionId);
+        if (held?.agent === agent) held.ids.add(String(notice.id));
+        else
+          ClaudeCodeAdapter.drainNotices.set(sessionId, {
+            agent,
+            ids: new Set([String(notice.id)]),
+          });
+      }
     } catch (error) {
       this.log("warn", `wake after idle reply failed: ${errorText(error)}`);
       await note(`followup failed: ${errorText(error)}`);
@@ -6947,6 +7030,32 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
     }
     return true;
+  }
+
+  /**
+   * A prompt turn is starting on `sessionId`: it reads everything the process queued, so drain
+   * notices still pending for that output have nothing left to show. Taken out of dsh's inbox they
+   * open no turn; left there, each became an empty turn of its own after the one that drew the
+   * output (2026-11-15: a restart's background-task wake and reconnect notice landed while the turn
+   * for a waiting subagent message was starting, and showed as two blank turns after it). The
+   * notice that opened this turn is no longer pending, so `remove` passes over it.
+   */
+  async withdrawDrainNotices(sessionId: string): Promise<void> {
+    const held = ClaudeCodeAdapter.drainNotices.get(sessionId);
+    if (!held) return;
+    ClaudeCodeAdapter.drainNotices.delete(sessionId);
+    let withdrawn = 0;
+    for (const id of held.ids)
+      try {
+        if (held.agent.inbox?.remove(id)) withdrawn++;
+      } catch (error) {
+        this.log("warn", `withdraw drain notice: ${errorText(error)}`);
+      }
+    if (withdrawn > 0)
+      await trace(
+        join(this.stateDir, "resume.log"),
+        `wake ${sessionId}: withdrew ${withdrawn} drain notice(s), this turn draws the output`,
+      );
   }
 
   /** The parent of a subagent's session, and whether a restart notice already waits in its inbox;
