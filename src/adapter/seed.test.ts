@@ -51,20 +51,20 @@ const history: LooseMessage[] = [
   { role: "system", content: text("You are Sakina."), source: { kind: "system-prompt" } },
   {
     role: "user",
-    content: text("[Telegram message from Lia]"),
+    content: text("[Telegram message from Sam]"),
     source: { kind: "telegram-sender" },
   },
-  person("帮我查一下包裹"),
+  person("帮我看看构建"),
   // A relayed dsh call: the plugin mints its id.
-  call("6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f", "bash", '{"command":"amazon-ca order 1"}', "我看看"),
-  result("6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f", "Delivery attempted today at 6:14 a.m."),
-  reply("包裹今天早上 6:14 来过一次，没送成。"),
-  person("白天送呗你帮我改"),
-  call("c2", "subagent", '{"prompt":"Move the redelivery to daytime."}'),
+  call("6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f", "bash", '{"command":"ci status 1"}', "我看看"),
+  result("6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f", "Build 1 failed at the lint step."),
+  reply("构建在 lint 那一步失败了。"),
+  person("你帮我修一下"),
+  call("c2", "subagent", '{"prompt":"Fix the lint failure."}'),
   result("c2", "started subagent 086518b8"),
   call("c3", "edit", "{not json"),
   // c3 never got a result: the turn was cut off.
-  reply("派了一只小猫猫去改。", "other-route"),
+  reply("已经派人去修了。", "other-route"),
   person("怎么样了"),
 ];
 
@@ -106,13 +106,13 @@ assert.deepEqual(
 );
 assert.equal(
   seed[1].message.content[0].text,
-  "帮我查一下包裹",
+  "帮我看看构建",
   "the person's own words, unlabelled",
 );
 assert.ok(!JSON.stringify(seed).includes("You are Sakina."), "the system prompt rides on its flag");
 assert.ok(!JSON.stringify(seed).includes("[assistant]"), "no role labels inside a message");
 assert.equal(seed[2].message.content[1].name, "mcp__dsh__bash", "named as Claude saw it");
-assert.deepEqual(seed[2].message.content[1].input, { command: "amazon-ca order 1" });
+assert.deepEqual(seed[2].message.content[1].input, { command: "ci status 1" });
 assert.deepEqual(
   seed[8].message.content[0].input,
   { input: "{not json" },
@@ -123,7 +123,7 @@ assert.equal(seed[9].message.content[0].content[0].text, NO_RESULT, "an unanswer
 assert.equal(seed[9].message.content[0].is_error, true);
 assert.equal(
   seed[10].message.content[0].text,
-  "派了一只小猫猫去改。",
+  "已经派人去修了。",
   "another route's reply counts",
 );
 // A chain the CLI walks back from the last row, with the fields its loader reads.
