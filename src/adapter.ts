@@ -266,7 +266,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     // a hot reload disposes the registrations); `sshAdapters` is the shared registry the resume walks.
     const sshMounts = new Map<string, SshBoxMount>();
     const sshAdapters = (g[ADAPTER_CURRENT] ??= new Map());
-    registerMcpBridge(ctx, {
+    adapter.mcpMounting = registerMcpBridge(ctx, {
       keyFile: join(STATE_DIR, "mcp.key"),
       log: (level, msg) => adapter.log(level, msg),
       version: "0.9.0",

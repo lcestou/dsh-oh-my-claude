@@ -53,6 +53,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Per session, the timer that continues the task once its usage limit resets. */
     limitTimers: Map<string, ReturnType<typeof setTimeout>>;
     mcp?: McpBridge;
+    /** On the instance that mounts the bridge: settles once `mcp` is set or the mount failed. */
+    mcpMounting?: Promise<unknown>;
     warnedNoSeam: boolean;
     /** Set once a session read has thrown, so the line lands one time and not per routed message. */
     warnedNoSessionRead: boolean;
@@ -1194,11 +1196,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /**
      * After a reattach, the surviving Claude still holds an MCP session against the previous dsh's
      * bridge. `mcp_reconnect` for the `dsh` server makes it open a fresh one; without it the first
-     * dsh tool call after a restart can fail once. No bridge mounted (non-default instance, or the
-     * bridge not up yet) means nothing to reconnect to. Retries every retryMs for attempts tries, since the web server listens several seconds after adoption.
+     * dsh tool call after a restart can fail once, and a process that called a dsh tool while dsh was
+     * down has dropped the server and stays without it. A mount with no bridge of its own
+     * (non-default instance) has nothing to reconnect to; on the default one a bridge still mounting
+     * is waited for. Retries every retryMs for attempts tries, since the web server listens several
+     * seconds after adoption. The reconnect is owed (`bridgeStale`) from the first call until one
+     * lands, so a turn that starts while these retries still run reconnects before its prompt.
      */
     reconnectBridge(proc: ClaudeProcess, sessionId: string, retryMs?: number, attempts?: number): Promise<boolean>;
-    /** A stale bridge gets one more reconnect, at a turn boundary, when dsh does have the agent. */
+    /** An owed reconnect is made at a turn boundary, when dsh does have the agent. */
     reconnectIfStale(proc: ClaudeProcess, sessionId: string): Promise<void>;
     /** The box a session's turn runs on (an SSH box, or a remote workspace's host), or undefined for a
      * local turn. Mirrors prepare()'s targetHost so a logged-out error names the right machine: a

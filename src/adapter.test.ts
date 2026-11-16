@@ -6429,6 +6429,103 @@ console.log("interrupt-on-abort ok");
   console.log("mcp-reconnect ok");
 }
 
+// reconnectBridge at boot: keepers are adopted before the bridge is mounted. The reconnect waits
+// for the mount instead of giving up silently; a bridge that is still not up marks the process
+// stale, so the resumed turn reconnects before it runs.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const written: string[] = [];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    controlListener: undefined,
+    write(line: string) {
+      written.push(line);
+      const r = JSON.parse(line);
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          request_id: r.request_id,
+          response: { subtype: "success", request_id: r.request_id, response: {} },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  let mount!: () => void;
+  adapter.mcpMounting = new Promise<void>((resolve) => {
+    mount = () => {
+      (adapter as any).mcp = { url: "http://x", key: "k" };
+      resolve();
+    };
+  });
+  const pending = adapter.reconnectBridge(proc, "s", 5, 20);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(written.length, 0, "nothing sent before the bridge exists");
+  mount();
+  assert.equal(await pending, true, "reconnects once the bridge is mounted");
+  assert.deepEqual(JSON.parse(written[0]!).request, {
+    subtype: "mcp_reconnect",
+    serverName: "dsh",
+  });
+
+  // The mount outlasts the retry window: the process is marked stale, and the turn boundary
+  // reconnects it once the bridge is there.
+  (adapter as any).mcp = undefined;
+  adapter.mcpMounting = new Promise(() => {});
+  written.length = 0;
+  proc.bridgeStale = false;
+  assert.equal(await adapter.reconnectBridge(proc, "s", 1, 2), false);
+  assert.equal(written.length, 0);
+  assert.equal(proc.bridgeStale, true, "an unmounted bridge is left for the next turn");
+  (adapter as any).mcp = { url: "http://x", key: "k" };
+  await adapter.reconnectIfStale(proc, "s");
+  assert.equal(written.length, 1, "the turn boundary reconnects");
+  assert.equal(proc.bridgeStale, false);
+  console.log("mcp-reconnect waits for the bridge ok");
+}
+
+// A turn that starts while the post-adoption reconnect is still retrying (dsh had no live agent for
+// the session until this turn) reconnects before its prompt, and the background retries then stop.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  (adapter as any).mcp = { url: "http://x", key: "k" };
+  let agentLive = false;
+  const written: string[] = [];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    bridgeStale: false,
+    controlListener: undefined,
+    write(line: string) {
+      written.push(line);
+      const r = JSON.parse(line);
+      const ok = agentLive;
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          request_id: r.request_id,
+          response: ok
+            ? { subtype: "success", request_id: r.request_id, response: {} }
+            : { subtype: "error", request_id: r.request_id, error: "no live agent" },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  const background = adapter.reconnectBridge(proc, "s", 30, 100);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(written.length, 1, "the first background try failed");
+  assert.equal(proc.bridgeStale, true, "a reconnect still retrying is owed");
+  agentLive = true;
+  await adapter.reconnectIfStale(proc, "s");
+  assert.equal(written.length, 2, "the turn boundary reconnects at once");
+  assert.equal(proc.bridgeStale, false);
+  assert.equal(await background, true, "the background retries end with the turn's reconnect");
+  assert.equal(written.length, 2, "no further tries after it landed");
+  console.log("mcp-reconnect owed while retrying ok");
+}
+
 // mcpStatus and mcpReconnect: decode the server list; reconnect names the server.
 {
   const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
