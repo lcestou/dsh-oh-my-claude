@@ -19,7 +19,7 @@ import { loadStarted } from "../state.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
 import { buildPrompt, type LooseMessage, selectTurns } from "./prompt.js";
-import { bridgedName, historyEnd, NO_RESULT, seedTranscriptText } from "./seed.js";
+import { announcementOf, bridgedName, historyEnd, NO_RESULT, seedTranscriptText } from "./seed.js";
 import { projectDirName } from "./transcript-watch.js";
 
 const text = (t: string) => [{ type: "text" as const, text: t }];
@@ -188,6 +188,30 @@ assert.match(buildPrompt(selectTurns(history, false)), /^\[user\]\n/);
   assert.ok(opened[0].timestamp < opened[1].timestamp, "the opening row sorts first");
 }
 assert.equal(bridgedName("bash"), "mcp__dsh__bash");
+// The writer's mark and the reader agree: what the plugin announces names back the way Claude
+// called it.
+assert.deepEqual(announcementOf("t1", "Bash"), { id: "t1:call", name: "bash" });
+assert.deepEqual(announcementOf("t2", "mcp__dsh__bash"), { id: "t2:dsh", name: "bash" });
+assert.deepEqual(announcementOf("t3", "ToolSearch"), { id: "t3:call", name: "ToolSearch" });
+{
+  const named = (callId: string, toolName: string) => {
+    const a = announcementOf(callId, toolName);
+    return rows(
+      seedTranscriptText(
+        [
+          person("go"),
+          { ...call(callId, a.name, "{}"), id: a.id },
+          result(callId, "ok"),
+          reply("done"),
+        ],
+        { sessionId: "s", cwd: "/w", version: "2.1.325" },
+      ),
+    )[1].message.content[0].name;
+  };
+  assert.equal(named("toolu_a", "Bash"), "Bash");
+  assert.equal(named("toolu_b", "mcp__dsh__bash"), "mcp__dsh__bash");
+  assert.equal(named("toolu_c", "Edit"), "Edit");
+}
 // One of Claude's own tool calls, logged by the plugin as `<callId>:call` under dsh's name, goes
 // back under the name Claude called it by; a relayed dsh call keeps its bridge name.
 {
@@ -265,6 +289,69 @@ assert.equal(bridgedName("bash"), "mcp__dsh__bash");
     ],
   );
   assert.ok(!JSON.stringify(parallel).includes(NO_RESULT), "both results kept");
+  // A history that ends on such a batch keeps both results: they belong to the history, not to
+  // the new turn, whichever of the calls they answer.
+  const endsParallel = [
+    person("go"),
+    native("q1", "bash"),
+    native("q2", "read"),
+    result("q1", "one"),
+    result("q2", "two"),
+  ];
+  assert.equal(historyEnd(endsParallel), 5);
+  assert.ok(
+    !seedTranscriptText(endsParallel, { sessionId: "s", cwd: "/w", version: "2.1.325" }).includes(
+      NO_RESULT,
+    ),
+    "a batch at the end keeps its results",
+  );
+  // A dsh call that ran inside the bridge is announced as `<callId>:dsh`: a dsh tool, whatever
+  // its id looks like.
+  const bridgedRun = rows(
+    seedTranscriptText(
+      [
+        person("go"),
+        { ...call("toolu_03Ghi", "bash", "{}"), id: "toolu_03Ghi:dsh" },
+        result("toolu_03Ghi", "ok"),
+        reply("done"),
+      ],
+      { sessionId: "s", cwd: "/w", version: "2.1.325" },
+    ),
+  )
+    .flatMap((r) => r.message.content)
+    .filter((b: { type: string }) => b.type === "tool_use")
+    .map((b: { name: string }) => b.name);
+  assert.deepEqual(bridgedRun, ["mcp__dsh__bash"]);
+  // A developer message between side-by-side calls and a result closes the calls, as a person's
+  // message does: the merge does not reach across it.
+  const developerBetween = rows(
+    seedTranscriptText(
+      [
+        person("go"),
+        native("d1", "bash"),
+        { role: "developer", content: [{ type: "text", text: "note" }] } as unknown as LooseMessage,
+        native("d2", "read"),
+        result("d1", "late"),
+        result("d2", "two"),
+        reply("done"),
+      ],
+      { sessionId: "s", cwd: "/w", version: "2.1.325", developer: true },
+    ),
+  );
+  assert.deepEqual(
+    developerBetween.map(
+      (r) => `${r.type}:${r.message.content.map((b: { type: string }) => b.type).join("+")}`,
+    ),
+    [
+      "user:text",
+      "assistant:tool_use",
+      "user:tool_result",
+      "user:text",
+      "assistant:tool_use",
+      "user:tool_result",
+      "assistant:text",
+    ],
+  );
 }
 assert.equal(bridgedName("ToolSearch"), "ToolSearch");
 assert.equal(bridgedName("mcp__other__x"), "mcp__other__x");

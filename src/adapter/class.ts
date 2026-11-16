@@ -350,7 +350,6 @@ import {
   dshToolsGuidance,
   mcpToolsByServer,
   modeForAccess,
-  NATIVE_TOOL_MAP,
   permissionModeFor,
   defaultModesFor,
   probeCli,
@@ -418,6 +417,7 @@ import {
   WATCH_LOOKBACK_BYTES,
 } from "./turn.js";
 import { subagentLinkOf } from "./wake-subagent.js";
+import { announcementOf } from "./seed.js";
 
 /** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
 export class ClaudeCodeAdapter extends LlmAdapter {
@@ -6001,8 +6001,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       onToolCall:
         turnStep && rowMode.rows
           ? (callId: string, toolName: string, args: string) => {
-              // SAFETY: NATIVE_TOOL_MAP is a readonly const object; keyof typeof narrows to known keys only
-              const mapped = NATIVE_TOOL_MAP[toolName as keyof typeof NATIVE_TOOL_MAP] ?? toolName;
+              // Claude's own tools and dsh calls that ran inside the bridge are marked apart, so a
+              // rebuilt transcript names each the way Claude called it (`seed.ts`).
+              const { id: announced, name: mapped } = announcementOf(callId, toolName);
               try {
                 const session = this.ctx?.sessions?.get?.(asSessionId(options.sessionId));
                 // dsh 0.1.7 loads a session only if every tool/call row was announced by a
@@ -6022,7 +6023,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
                     message: {
                       role: "assistant",
                       source: { kind: "model", provider: this.providerId, model: options.model },
-                      id: `${callId}:call`,
+                      id: announced,
                       content: [{ type: "tool-call", id: callId, name: mapped, arguments: args }],
                     },
                     stream: [],

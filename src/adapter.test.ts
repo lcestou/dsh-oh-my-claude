@@ -4101,7 +4101,11 @@ console.log("ok");
     [],
     "no answer text for a bridge-run call",
   );
-  assert.deepEqual(calls, [["tl1", "list_agents", '{"scope":"children"}']], "a call row");
+  assert.deepEqual(
+    calls,
+    [["tl1", "mcp__dsh__list_agents", '{"scope":"children"}']],
+    "a call row, under its bridge name so the writer marks it as dsh's",
+  );
   assert.deepEqual(results, [["tl1", "a1 [inactive]", false]], "and its result row");
   assert.equal(tr.dshCalls.size, 0, "the call is forgotten once drawn");
 }
