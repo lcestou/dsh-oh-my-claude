@@ -377,8 +377,10 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
   });
   const busy = Object.assign(new Error("busy"), { code: "busy" });
   /** Waits for the retry a `busy` answer starts in the background. The retry marks the session as
-   *  syncing before its first await, so it is done once the mark is gone; a fixed sleep lost that
-   *  race when the suite's parallel files slowed the retry's log write. */
+   *  syncing before its first await and holds it until its log line is written, so it is done
+   *  once the mark is gone. A fixed sleep lost that race under the parallel suite: a retry still
+   *  writing its log line made the next block's sync return at once (a slow `whenIdle` would miss
+   *  the retry's own call instead). */
   const retried = async () => {
     for (let i = 0; i < 1000 && a.syncingCompactions.has("s1"); i++)
       await new Promise((r) => setTimeout(r, 5));
