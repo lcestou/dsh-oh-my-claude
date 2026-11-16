@@ -55,16 +55,42 @@ const NATIVE_NAMES = new Map<string, string>(
     .map(([native, dsh]) => [dsh, native]),
 );
 
-/** The name Claude called a logged tool by. The plugin writes each of Claude's own tool calls as a
- *  message of its own with the id `<callId>:call`; dsh's relayed calls never carry that id, so they
- *  keep their bridge name. A call logged by the Import seed carries Claude's message id instead, so
- *  it keeps the bridge name; shortcut: an imported session rebuilt from its log names native calls
- *  as dsh's, mark them at import if that turns up. */
+/** The id and the dsh name of the message that announces a tool call the plugin draws itself:
+ *  `<callId>:call` for one of Claude's own tools (named as dsh draws it), `<callId>:dsh` for a dsh
+ *  call that ran inside the bridge, which arrives under its `mcp__dsh__` name. `isNativeCall`
+ *  reads the mark back when a transcript is rebuilt. */
+export function announcementOf(callId: string, toolName: string) {
+  if (toolName.startsWith("mcp__dsh__"))
+    return { id: `${callId}:dsh`, name: toolName.slice("mcp__dsh__".length) };
+  // SAFETY: NATIVE_TOOL_MAP is a closed literal type; an unlisted name reads as undefined
+  const name = NATIVE_TOOL_MAP[toolName as keyof typeof NATIVE_TOOL_MAP] ?? toolName;
+  return { id: `${callId}:call`, name };
+}
+
+/** The id shape the plugin mints for a relayed dsh call (`randomUUID`); Claude's own calls carry
+ *  the API's tool_use id instead. */
+const RELAY_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+
+/** Whether a logged call is one of Claude's own tools. The plugin writes each live one as a message
+ *  of its own with the id `<callId>:call` (a dsh call that ran inside the bridge, `<callId>:dsh`).
+ *  The Import seed writes them inside Claude's reply under
+ *  dsh's name, where only the id tells them apart: a relayed dsh call has a minted id, Claude's
+ *  call keeps its tool_use id, and a dsh tool Claude called over the bridge keeps its
+ *  `mcp__dsh__` name. */
+const isNativeCall = (m: LooseMessage, call: { id: string; name: string }): boolean =>
+  m.id === `${call.id}:call` ||
+  (m.id !== `${call.id}:dsh` &&
+    m.source?.provider === "claude-code" &&
+    NATIVE_NAMES.has(call.name) &&
+    !RELAY_ID.test(call.id));
+
+/** The name Claude called a logged tool by: its own name for one of its own tools, the bridge
+ *  name for a dsh tool. */
 const calledName = (
   m: LooseMessage,
   call: { id: string; name: string; arguments: string },
 ): string => {
-  if (m.id !== `${call.id}:call`) return bridgedName(call.name);
+  if (!isNativeCall(m, call)) return bridgedName(call.name);
   // MultiEdit logs as `edit` too; its input is the one that carries an `edits` list.
   if (call.name === "edit" && /"edits"\s*:\s*\[/.test(call.arguments)) return "MultiEdit";
   return NATIVE_NAMES.get(call.name) ?? call.name;
@@ -112,13 +138,19 @@ export function historyEnd(messages: readonly LooseMessage[]): number {
   messages.forEach((m, i) => {
     if (m.role === "assistant") last = i;
   });
-  const lastReply = messages[last];
-  if (lastReply === undefined) return 0;
-  const calls = new Set(callIdsOf(lastReply));
+  if (last < 0) return 0;
+  // Calls made side by side are logged as consecutive messages, all before their results: the
+  // results that follow answer any of them.
+  let first = last;
+  while (messages[first - 1]?.role === "assistant") first--;
+  const calls = new Set(messages.slice(first, last + 1).flatMap(callIdsOf));
+  // A developer message dsh puts between a call and its result does not cut the result off.
   let end = last + 1;
-  for (let m = messages[end]; m !== undefined; m = messages[++end]) {
+  for (let i = last + 1; i < messages.length; i++) {
+    const m = messages[i]!;
     const id = resultCallId(m);
-    if (id === undefined || !calls.has(id)) break;
+    if (id !== undefined && calls.has(id)) end = i + 1;
+    else if (m.role !== "developer") break;
   }
   return end;
 }
@@ -186,7 +218,23 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
       ]);
     open = [];
   };
-  for (const m of messages.slice(0, end)) {
+  /** A message the conversation shows as someone speaking: a person, or dsh's developer messages
+   *  when they count. Either closes the calls still open. */
+  const isConversation = (m: LooseMessage) =>
+    (m.role === "user" && m.source?.kind !== "tool") ||
+    (o.developer === true && m.role === "developer");
+  const history = messages.slice(0, end);
+  /** Whether a result for one of the open calls still comes after `from`, before the person speaks
+   *  again: then the calls are running side by side, not cut off. */
+  const answeredLater = (from: number) => {
+    for (const later of history.slice(from + 1)) {
+      const id = resultCallId(later);
+      if (id !== undefined && open.includes(id)) return true;
+      if (isConversation(later)) return false;
+    }
+    return false;
+  };
+  for (const [i, m] of history.entries()) {
     const callId = resultCallId(m);
     if (callId !== undefined) {
       if (!open.includes(callId)) continue; // its call is not in the seed, or already answered
@@ -209,8 +257,13 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
       continue;
     }
     if (m.role === "assistant") {
-      closeOpen();
-      const content: Block[] = [];
+      // Claude runs a message's tool calls side by side, and the plugin logs each as a message of
+      // its own before any result: those calls belong in the one reply that made them, or the
+      // first would be closed as unanswered and its real result dropped.
+      const last = rows.at(-1);
+      const together = open.length > 0 && last?.type === "assistant" && answeredLater(i);
+      if (!together) closeOpen();
+      const content: Block[] = together && last ? last.message.content : [];
       if (Array.isArray(m.content)) {
         for (const b of m.content) {
           if (b.type === "text" && b.text.trim() !== "")
@@ -228,13 +281,10 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
       } else if (m.content !== undefined && m.content.trim() !== "") {
         content.push({ type: "text", text: m.content });
       }
-      if (content.length > 0) push("assistant", content);
+      if (content.length > 0 && !together) push("assistant", content);
       continue;
     }
-    const conversation =
-      (m.role === "user" && m.source?.kind !== "tool") ||
-      (o.developer === true && m.role === "developer");
-    if (!conversation) continue;
+    if (!isConversation(m)) continue;
     const text = [promptTextOf(m, drops, o.copies), ...attachmentLines(m.content)]
       .filter((t) => t.trim() !== "")
       .join("\n");

@@ -19,7 +19,7 @@ import { loadStarted } from "../state.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
 import { buildPrompt, type LooseMessage, selectTurns } from "./prompt.js";
-import { bridgedName, historyEnd, NO_RESULT, seedTranscriptText } from "./seed.js";
+import { announcementOf, bridgedName, historyEnd, NO_RESULT, seedTranscriptText } from "./seed.js";
 import { projectDirName } from "./transcript-watch.js";
 
 const text = (t: string) => [{ type: "text" as const, text: t }];
@@ -55,8 +55,9 @@ const history: LooseMessage[] = [
     source: { kind: "telegram-sender" },
   },
   person("帮我查一下包裹"),
-  call("c1", "bash", '{"command":"amazon-ca order 1"}', "我看看"),
-  result("c1", "Delivery attempted today at 6:14 a.m."),
+  // A relayed dsh call: the plugin mints its id.
+  call("6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f", "bash", '{"command":"amazon-ca order 1"}', "我看看"),
+  result("6f1c2d3e-4a5b-4c6d-8e7f-0a1b2c3d4e5f", "Delivery attempted today at 6:14 a.m."),
   reply("包裹今天早上 6:14 来过一次，没送成。"),
   person("白天送呗你帮我改"),
   call("c2", "subagent", '{"prompt":"Move the redelivery to daytime."}'),
@@ -187,6 +188,30 @@ assert.match(buildPrompt(selectTurns(history, false)), /^\[user\]\n/);
   assert.ok(opened[0].timestamp < opened[1].timestamp, "the opening row sorts first");
 }
 assert.equal(bridgedName("bash"), "mcp__dsh__bash");
+// The writer's mark and the reader agree: what the plugin announces names back the way Claude
+// called it.
+assert.deepEqual(announcementOf("t1", "Bash"), { id: "t1:call", name: "bash" });
+assert.deepEqual(announcementOf("t2", "mcp__dsh__bash"), { id: "t2:dsh", name: "bash" });
+assert.deepEqual(announcementOf("t3", "ToolSearch"), { id: "t3:call", name: "ToolSearch" });
+{
+  const named = (callId: string, toolName: string) => {
+    const a = announcementOf(callId, toolName);
+    return rows(
+      seedTranscriptText(
+        [
+          person("go"),
+          { ...call(callId, a.name, "{}"), id: a.id },
+          result(callId, "ok"),
+          reply("done"),
+        ],
+        { sessionId: "s", cwd: "/w", version: "2.1.325" },
+      ),
+    )[1].message.content[0].name;
+  };
+  assert.equal(named("toolu_a", "Bash"), "Bash");
+  assert.equal(named("toolu_b", "mcp__dsh__bash"), "mcp__dsh__bash");
+  assert.equal(named("toolu_c", "Edit"), "Edit");
+}
 // One of Claude's own tool calls, logged by the plugin as `<callId>:call` under dsh's name, goes
 // back under the name Claude called it by; a relayed dsh call keeps its bridge name.
 {
@@ -204,8 +229,8 @@ assert.equal(bridgedName("bash"), "mcp__dsh__bash");
         result("n2", "ok"),
         native("n3", "edit", '{"file_path":"f","edits":[]}'),
         result("n3", "ok"),
-        call("r1", "bash", "{}"),
-        result("r1", "ok"),
+        call("9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a", "bash", "{}"),
+        result("9d8c7b6a-5f4e-4d3c-8b2a-1f0e9d8c7b6a", "ok"),
         reply("done"),
       ],
       { sessionId: "s", cwd: "/w", version: "2.1.325" },
@@ -215,6 +240,132 @@ assert.equal(bridgedName("bash"), "mcp__dsh__bash");
     .filter((b: { type: string }) => b.type === "tool_use")
     .map((b: { name: string }) => b.name);
   assert.deepEqual(named, ["Bash", "Edit", "MultiEdit", "mcp__dsh__bash"]);
+  // The Import seed writes Claude's calls inside its reply, under dsh's name and Claude's
+  // tool_use id; a relayed call in a live reply has the id the plugin minted for it.
+  const imported = rows(
+    seedTranscriptText(
+      [
+        person("go"),
+        call("toolu_01Abc", "bash", "{}"),
+        result("toolu_01Abc", "ok"),
+        call("0b6a5c1e-3f2d-4c8e-9a7b-1d2e3f4a5b6c", "bash", "{}"),
+        result("0b6a5c1e-3f2d-4c8e-9a7b-1d2e3f4a5b6c", "ok"),
+        call("toolu_02Def", "mcp__dsh__subagent", "{}"),
+        result("toolu_02Def", "ok"),
+        reply("done"),
+      ],
+      { sessionId: "s", cwd: "/w", version: "2.1.325" },
+    ),
+  )
+    .flatMap((r) => r.message.content)
+    .filter((b: { type: string }) => b.type === "tool_use")
+    .map((b: { name: string }) => b.name);
+  assert.deepEqual(imported, ["Bash", "mcp__dsh__bash", "mcp__dsh__subagent"]);
+  // Two calls Claude made side by side are logged as two messages before either result: they go
+  // back as one reply with both results after it, not as a first call closed unanswered.
+  const parallel = rows(
+    seedTranscriptText(
+      [
+        person("go"),
+        native("p1", "bash"),
+        native("p2", "read"),
+        result("p1", "one"),
+        result("p2", "two"),
+        reply("done"),
+      ],
+      { sessionId: "s", cwd: "/w", version: "2.1.325" },
+    ),
+  );
+  assert.deepEqual(
+    parallel.map(
+      (r) => `${r.type}:${r.message.content.map((b: { type: string }) => b.type).join("+")}`,
+    ),
+    [
+      "user:text",
+      "assistant:tool_use+tool_use",
+      "user:tool_result",
+      "user:tool_result",
+      "assistant:text",
+    ],
+  );
+  assert.ok(!JSON.stringify(parallel).includes(NO_RESULT), "both results kept");
+  // A history that ends on such a batch keeps both results: they belong to the history, not to
+  // the new turn, whichever of the calls they answer.
+  const endsParallel = [
+    person("go"),
+    native("q1", "bash"),
+    native("q2", "read"),
+    result("q1", "one"),
+    result("q2", "two"),
+  ];
+  assert.equal(historyEnd(endsParallel), 5);
+  const dev = {
+    role: "developer",
+    content: [{ type: "text", text: "note" }],
+  } as unknown as LooseMessage;
+  assert.equal(
+    historyEnd([person("go"), native("e1", "bash"), dev, result("e1", "one")]),
+    4,
+    "a developer message does not cut a result off",
+  );
+  assert.equal(
+    historyEnd([person("go"), native("e2", "bash"), result("e2", "one"), dev]),
+    3,
+    "nor joins the history after the last result",
+  );
+  assert.ok(
+    !seedTranscriptText(endsParallel, { sessionId: "s", cwd: "/w", version: "2.1.325" }).includes(
+      NO_RESULT,
+    ),
+    "a batch at the end keeps its results",
+  );
+  // A dsh call that ran inside the bridge is announced as `<callId>:dsh`: a dsh tool, whatever
+  // its id looks like.
+  const bridgedRun = rows(
+    seedTranscriptText(
+      [
+        person("go"),
+        { ...call("toolu_03Ghi", "bash", "{}"), id: "toolu_03Ghi:dsh" },
+        result("toolu_03Ghi", "ok"),
+        reply("done"),
+      ],
+      { sessionId: "s", cwd: "/w", version: "2.1.325" },
+    ),
+  )
+    .flatMap((r) => r.message.content)
+    .filter((b: { type: string }) => b.type === "tool_use")
+    .map((b: { name: string }) => b.name);
+  assert.deepEqual(bridgedRun, ["mcp__dsh__bash"]);
+  // A developer message between side-by-side calls and a result closes the calls, as a person's
+  // message does: the merge does not reach across it.
+  const developerBetween = rows(
+    seedTranscriptText(
+      [
+        person("go"),
+        native("d1", "bash"),
+        { role: "developer", content: [{ type: "text", text: "note" }] } as unknown as LooseMessage,
+        native("d2", "read"),
+        result("d1", "late"),
+        result("d2", "two"),
+        reply("done"),
+      ],
+      { sessionId: "s", cwd: "/w", version: "2.1.325", developer: true },
+    ),
+  );
+  assert.deepEqual(
+    developerBetween.map(
+      (r) => `${r.type}:${r.message.content.map((b: { type: string }) => b.type).join("+")}`,
+    ),
+    [
+      "user:text",
+      "assistant:tool_use",
+      "user:tool_result",
+      "user:text",
+      "assistant:tool_use",
+      "user:tool_result",
+      "assistant:text",
+    ],
+  );
 }
 assert.equal(bridgedName("ToolSearch"), "ToolSearch");
 assert.equal(bridgedName("mcp__other__x"), "mcp__other__x");

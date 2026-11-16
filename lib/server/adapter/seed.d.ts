@@ -5,6 +5,14 @@ export declare const NO_RESULT = "No result was recorded for this call.";
 /** The tool name Claude saw: dsh's tools reach it over the bridge as `mcp__dsh__<name>`; a name
  *  that already has a server prefix, and Claude Code's own PascalCase tools, stay as they are. */
 export declare const bridgedName: (name: string) => string;
+/** The id and the dsh name of the message that announces a tool call the plugin draws itself:
+ *  `<callId>:call` for one of Claude's own tools (named as dsh draws it), `<callId>:dsh` for a dsh
+ *  call that ran inside the bridge, which arrives under its `mcp__dsh__` name. `isNativeCall`
+ *  reads the mark back when a transcript is rebuilt. */
+export declare function announcementOf(callId: string, toolName: string): {
+    id: string;
+    name: string;
+};
 /** Where the history a seed holds ends: just past the last assistant message and the results that
  *  answer its calls. Everything after it is the new turn the prompt carries. 0 when no assistant
  *  message exists, which leaves nothing to seed. */

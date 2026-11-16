@@ -350,7 +350,6 @@ import {
   dshToolsGuidance,
   mcpToolsByServer,
   modeForAccess,
-  NATIVE_TOOL_MAP,
   permissionModeFor,
   defaultModesFor,
   probeCli,
@@ -418,6 +417,7 @@ import {
   WATCH_LOOKBACK_BYTES,
 } from "./turn.js";
 import { subagentLinkOf } from "./wake-subagent.js";
+import { announcementOf } from "./seed.js";
 
 /** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
 export class ClaudeCodeAdapter extends LlmAdapter {
@@ -458,12 +458,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Probe targets already written to resume.log, so the line lands once per binary, not per turn. */
   probeTraced = new Set<string>();
   sessionController?: SessionController;
-  /** Drain notices (`WAKE_TEXT`, `RECONNECT_TEXT`) still waiting in a session's inbox, with the agent
-   *  that holds them. dsh gives every followup a turn of its own, so a notice whose output another
+  /** Ids of the drain notices (`WAKE_TEXT`, `RECONNECT_TEXT`) still waiting in a session's inbox. Ids
+   *  only: the agent is looked up when they are taken back, so an entry never keeps a session's
+   *  agent alive after dsh unloads it. dsh gives every followup a turn of its own, so a notice whose output another
    *  turn already drew would open an empty turn later; `withdrawDrainNotices` takes them back.
    *  Shared by every adapter instance, like `wokeThroughParent`: after a hot reload the new
    *  instance runs the turn that should take back what the old one queued. */
-  static readonly drainNotices = new Map<string, { agent: Agent; ids: Set<string> }>();
+  static readonly drainNotices = new Map<string, Set<string>>();
   /** Subagent sessions this process continued through their parent, by parent id, so the parent's
    *  own restart notice can name them and the parent does not hand them the work again. Shared by
    *  every adapter instance like `wokeThroughParent`: a child on a box's model wakes under that
@@ -6000,8 +6001,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       onToolCall:
         turnStep && rowMode.rows
           ? (callId: string, toolName: string, args: string) => {
-              // SAFETY: NATIVE_TOOL_MAP is a readonly const object; keyof typeof narrows to known keys only
-              const mapped = NATIVE_TOOL_MAP[toolName as keyof typeof NATIVE_TOOL_MAP] ?? toolName;
+              // Claude's own tools and dsh calls that ran inside the bridge are marked apart, so a
+              // rebuilt transcript names each the way Claude called it (`seed.ts`).
+              const { id: announced, name: mapped } = announcementOf(callId, toolName);
               try {
                 const session = this.ctx?.sessions?.get?.(asSessionId(options.sessionId));
                 // dsh 0.1.7 loads a session only if every tool/call row was announced by a
@@ -6021,7 +6023,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
                     message: {
                       role: "assistant",
                       source: { kind: "model", provider: this.providerId, model: options.model },
-                      id: `${callId}:call`,
+                      id: announced,
                       content: [{ type: "tool-call", id: callId, name: mapped, arguments: args }],
                     },
                     stream: [],
@@ -6988,13 +6990,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       });
       agent.followup(notice);
       if (text === WAKE_TEXT || text === RECONNECT_TEXT) {
-        const held = ClaudeCodeAdapter.drainNotices.get(sessionId);
-        if (held?.agent === agent) held.ids.add(String(notice.id));
-        else
-          ClaudeCodeAdapter.drainNotices.set(sessionId, {
-            agent,
-            ids: new Set([String(notice.id)]),
-          });
+        const ids = ClaudeCodeAdapter.drainNotices.get(sessionId) ?? new Set<string>();
+        ClaudeCodeAdapter.drainNotices.set(sessionId, ids.add(String(notice.id)));
       }
     } catch (error) {
       this.log("warn", `wake after idle reply failed: ${errorText(error)}`);
@@ -7041,13 +7038,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * notice that opened this turn is no longer pending, so `remove` passes over it.
    */
   async withdrawDrainNotices(sessionId: string): Promise<void> {
-    const held = ClaudeCodeAdapter.drainNotices.get(sessionId);
-    if (!held) return;
+    const ids = ClaudeCodeAdapter.drainNotices.get(sessionId);
+    if (!ids) return;
     ClaudeCodeAdapter.drainNotices.delete(sessionId);
     let withdrawn = 0;
-    for (const id of held.ids)
+    for (const id of ids)
       try {
-        if (held.agent.inbox?.remove(id)) withdrawn++;
+        // The session's agent now: one dsh reloaded since holds none of these ids, and remove
+        // answers false for each.
+        if (this.ctx?.agents?.get?.(asSessionId(sessionId))?.inbox?.remove(id)) withdrawn++;
       } catch (error) {
         this.log("warn", `withdraw drain notice: ${errorText(error)}`);
       }
