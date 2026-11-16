@@ -184,13 +184,14 @@ assert.match(buildPrompt(selectTurns(history, false)), /^\[user\]\n/);
   assert.equal(opened[0].type, "user");
   assert.equal(opened[0].parentUuid, null);
   assert.equal(opened[1].parentUuid, opened[0].uuid);
+  assert.ok(opened[0].timestamp < opened[1].timestamp, "the opening row sorts first");
 }
 assert.equal(bridgedName("bash"), "mcp__dsh__bash");
 // One of Claude's own tool calls, logged by the plugin as `<callId>:call` under dsh's name, goes
 // back under the name Claude called it by; a relayed dsh call keeps its bridge name.
 {
-  const native = (id: string, name: string): LooseMessage => ({
-    ...call(id, name, "{}"),
+  const native = (id: string, name: string, args = "{}"): LooseMessage => ({
+    ...call(id, name, args),
     id: `${id}:call`,
   });
   const named = rows(
@@ -201,6 +202,8 @@ assert.equal(bridgedName("bash"), "mcp__dsh__bash");
         result("n1", "ok"),
         native("n2", "edit"),
         result("n2", "ok"),
+        native("n3", "edit", '{"file_path":"f","edits":[]}'),
+        result("n3", "ok"),
         call("r1", "bash", "{}"),
         result("r1", "ok"),
         reply("done"),
@@ -211,7 +214,7 @@ assert.equal(bridgedName("bash"), "mcp__dsh__bash");
     .flatMap((r) => r.message.content)
     .filter((b: { type: string }) => b.type === "tool_use")
     .map((b: { name: string }) => b.name);
-  assert.deepEqual(named, ["Bash", "Edit", "mcp__dsh__bash"]);
+  assert.deepEqual(named, ["Bash", "Edit", "MultiEdit", "mcp__dsh__bash"]);
 }
 assert.equal(bridgedName("ToolSearch"), "ToolSearch");
 assert.equal(bridgedName("mcp__other__x"), "mcp__other__x");
@@ -242,14 +245,17 @@ assert.equal(bridgedName("mcp__other__x"), "mcp__other__x");
     "the old one kept",
   );
   // A transcript that cannot be moved aside is never written over: the seed gives up instead.
-  writeFileSync(join(dir, "s3.jsonl"), "{}\n");
-  chmodSync(dir, 0o555);
-  try {
-    assert.equal(await adapter.seedTranscript(history, "/w", "s3", "2.1.325", {}), false);
-  } finally {
-    chmodSync(dir, 0o755);
+  // Root ignores a read-only directory, so the check only holds for an ordinary user.
+  if (process.getuid?.() !== 0) {
+    writeFileSync(join(dir, "s3.jsonl"), "{}\n");
+    chmodSync(dir, 0o555);
+    try {
+      assert.equal(await adapter.seedTranscript(history, "/w", "s3", "2.1.325", {}), false);
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+    assert.equal(readFileSync(join(dir, "s3.jsonl"), "utf8"), "{}\n", "the old one untouched");
   }
-  assert.equal(readFileSync(join(dir, "s3.jsonl"), "utf8"), "{}\n", "the old one untouched");
   rmSync(home, { recursive: true, force: true });
 }
 

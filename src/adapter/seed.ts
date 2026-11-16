@@ -57,9 +57,18 @@ const NATIVE_NAMES = new Map<string, string>(
 
 /** The name Claude called a logged tool by. The plugin writes each of Claude's own tool calls as a
  *  message of its own with the id `<callId>:call`; dsh's relayed calls never carry that id, so they
- *  keep their bridge name. */
-const calledName = (m: LooseMessage, call: { id: string; name: string }): string =>
-  m.id === `${call.id}:call` ? (NATIVE_NAMES.get(call.name) ?? call.name) : bridgedName(call.name);
+ *  keep their bridge name. A call logged by the Import seed carries Claude's message id instead, so
+ *  it keeps the bridge name; shortcut: an imported session rebuilt from its log names native calls
+ *  as dsh's, mark them at import if that turns up. */
+const calledName = (
+  m: LooseMessage,
+  call: { id: string; name: string; arguments: string },
+): string => {
+  if (m.id !== `${call.id}:call`) return bridgedName(call.name);
+  // MultiEdit logs as `edit` too; its input is the one that carries an `edits` list.
+  if (call.name === "edit" && /"edits"\s*:\s*\[/.test(call.arguments)) return "MultiEdit";
+  return NATIVE_NAMES.get(call.name) ?? call.name;
+};
 
 /** A tool call's arguments (dsh keeps them as JSON text) as the object a `tool_use` block carries;
  *  anything that does not parse to an object is kept whole under `input`. */
