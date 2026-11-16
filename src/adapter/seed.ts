@@ -9,6 +9,7 @@
 import { randomUUID } from "node:crypto";
 import type { ContextSource } from "../context-sources.js";
 import type { JsonValue } from "../dsh.js";
+import { NATIVE_TOOL_MAP } from "./cli.js";
 import { type LooseMessage, type NativeCopies, promptTextOf, textOf } from "./prompt.js";
 
 /** One transcript row the CLI's `--resume` loads. */
@@ -45,6 +46,20 @@ export const NO_RESULT = "No result was recorded for this call.";
  *  that already has a server prefix, and Claude Code's own PascalCase tools, stay as they are. */
 export const bridgedName = (name: string): string =>
   name.includes("__") || /^[A-Z]/.test(name) ? name : `mcp__dsh__${name}`;
+
+/** Claude Code's own tool names, by the dsh name the plugin logs each one under. Where two share a
+ *  dsh name (Edit and MultiEdit both log as `edit`) the first in `NATIVE_TOOL_MAP` wins. */
+const NATIVE_NAMES = new Map<string, string>(
+  Object.entries(NATIVE_TOOL_MAP)
+    .toReversed()
+    .map(([native, dsh]) => [dsh, native]),
+);
+
+/** The name Claude called a logged tool by. The plugin writes each of Claude's own tool calls as a
+ *  message of its own with the id `<callId>:call`; dsh's relayed calls never carry that id, so they
+ *  keep their bridge name. */
+const calledName = (m: LooseMessage, call: { id: string; name: string }): string =>
+  m.id === `${call.id}:call` ? (NATIVE_NAMES.get(call.name) ?? call.name) : bridgedName(call.name);
 
 /** A tool call's arguments (dsh keeps them as JSON text) as the object a `tool_use` block carries;
  *  anything that does not parse to an object is kept whole under `input`. */
@@ -195,7 +210,7 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
             content.push({
               type: "tool_use",
               id: b.id,
-              name: bridgedName(b.name),
+              name: calledName(m, b),
               input: inputOf(b.arguments),
             });
             open.push(b.id);

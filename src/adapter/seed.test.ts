@@ -186,6 +186,33 @@ assert.match(buildPrompt(selectTurns(history, false)), /^\[user\]\n/);
   assert.equal(opened[1].parentUuid, opened[0].uuid);
 }
 assert.equal(bridgedName("bash"), "mcp__dsh__bash");
+// One of Claude's own tool calls, logged by the plugin as `<callId>:call` under dsh's name, goes
+// back under the name Claude called it by; a relayed dsh call keeps its bridge name.
+{
+  const native = (id: string, name: string): LooseMessage => ({
+    ...call(id, name, "{}"),
+    id: `${id}:call`,
+  });
+  const named = rows(
+    seedTranscriptText(
+      [
+        person("go"),
+        native("n1", "bash"),
+        result("n1", "ok"),
+        native("n2", "edit"),
+        result("n2", "ok"),
+        call("r1", "bash", "{}"),
+        result("r1", "ok"),
+        reply("done"),
+      ],
+      { sessionId: "s", cwd: "/w", version: "2.1.325" },
+    ),
+  )
+    .flatMap((r) => r.message.content)
+    .filter((b: { type: string }) => b.type === "tool_use")
+    .map((b: { name: string }) => b.name);
+  assert.deepEqual(named, ["Bash", "Edit", "mcp__dsh__bash"]);
+}
 assert.equal(bridgedName("ToolSearch"), "ToolSearch");
 assert.equal(bridgedName("mcp__other__x"), "mcp__other__x");
 
