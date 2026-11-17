@@ -91,29 +91,42 @@ export function watchSessionNotices(ctx: ClientCtx) {
   readHints();
   window.addEventListener(HINTS_EVENT, readHints);
   whenContextGone(() => window.removeEventListener(HINTS_EVENT, readHints));
+  // dsh's session list is an immutable snapshot store: a retention, a projection or a row change
+  // each hands out a new object. An unchanged object means no session's running flag moved, so the
+  // walk over every session (hundreds on a busy box, once a second, and a phone pays for each one)
+  // runs only when the list moved. Whether a running session is Claude also rests on its model
+  // directory, which can settle without a list write, so that is asked each tick of the few
+  // running ids only.
+  let lastSnap: unknown;
+  let runningIds: string[] = [];
   const tick = () => {
     const snap = ctx.sessions.list.getSnapshot();
     if (!snap) return;
     const current = openSessionId(ctx);
-    // Copy the compared fields into fresh rows: dsh's store may reuse row objects between calls, and
-    // a shared reference would make every field read `was === now`, so no transition would ever fire.
-    const byId: NoticeSnapshot["byId"] = {};
-    for (const [id, s] of Object.entries(snap.byId))
-      byId[id] = { running: s.running, completed: s.completed, displayTitle: s.displayTitle };
-    const next: NoticeSnapshot = { byId, current };
-    const stopped = newlyWaiting(prev, next).filter((id) => isClaudeSession(ctx, id));
-    for (const id of stopped) {
-      waiting.add(id);
-      void announceStop(ctx, id, snap.byId[id]?.displayTitle ?? id, seenFallback);
+    let stopped: string[] = [];
+    if (snap !== lastSnap) {
+      lastSnap = snap;
+      // Copy the compared fields into fresh rows, so `prev` never shares a row object with the
+      // snapshot it is compared against.
+      const byId: NoticeSnapshot["byId"] = {};
+      for (const [id, s] of Object.entries(snap.byId))
+        byId[id] = { running: s.running, completed: s.completed, displayTitle: s.displayTitle };
+      const next: NoticeSnapshot = { byId, current };
+      stopped = newlyWaiting(prev, next).filter((id) => isClaudeSession(ctx, id));
+      for (const id of stopped) {
+        waiting.add(id);
+        void announceStop(ctx, id, snap.byId[id]?.displayTitle ?? id, seenFallback);
+      }
+      prev = next;
+      runningIds = Object.entries(snap.byId)
+        .filter(([, s]) => s.running === true)
+        .map(([id]) => id);
     }
-    prev = next;
     // A session waiting on a permission prompt keeps its stream open, so it still reads as running
     // and `newlyWaiting` never sees it stop. Poll the adapter's own map instead, and only while a
     // Claude session is running: a running dsh session cannot hold a Claude prompt, and an idle box
     // should make no requests.
-    const anyClaudeRunning = Object.entries(snap.byId).some(
-      ([id, s]) => s.running === true && isClaudeSession(ctx, id),
-    );
+    const anyClaudeRunning = runningIds.some((id) => isClaudeSession(ctx, id));
     // A hidden tab keeps its bookkeeping but makes no request: this was the one unconditional
     // one-a-second poll a background tab still paid.
     if (anyClaudeRunning && !document.hidden) {

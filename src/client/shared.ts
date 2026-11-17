@@ -658,6 +658,12 @@ export const guard = <A extends unknown[]>(fn: (...args: A) => void): ((...args:
     }
   };
 };
+/** The last list snapshot `openSessionId` scanned and what it found there. */
+interface OpenCache {
+  snap: unknown;
+  id: string | undefined;
+}
+let openCache: OpenCache = { snap: undefined, id: undefined };
 /**
  * The session the main view is showing. The main view retains its session through the Session
  * Controller, which shows up on the row as `retainedBy.mainView`. Exactly one row carries it, so
@@ -668,10 +674,21 @@ export const openSessionId = (ctx: ClientCtx): string | undefined => {
   if (gone) return undefined;
   try {
     const snap = ctx.sessions.list.getSnapshot();
+    // The scan walks every session dsh lists, hundreds on a busy box, and a dozen components ask
+    // on every render: typing in the composer re-renders them, and on a phone this walk was most
+    // of the plugin's cost per keystroke (owner, 2026-11-17: about 35 ms a character at a Pixel
+    // 3a's speed). dsh hands out a new snapshot object whenever the list changes, so the answer
+    // holds for as long as the object does.
+    if (snap !== undefined && snap === openCache.snap) return openCache.id;
+    let found: string | undefined;
     for (const [id, summary] of Object.entries(snap?.byId ?? {})) {
-      if ((summary.retainedBy?.mainView ?? 0) > 0) return id;
+      if ((summary.retainedBy?.mainView ?? 0) > 0) {
+        found = id;
+        break;
+      }
     }
-    return undefined;
+    openCache = { snap, id: found };
+    return found;
   } catch (e) {
     // Only a disposed context retires the bundle. Any other throw (a store dsh is rebuilding, say
     // mid language switch) used to retire it too, and every loop went quiet until a refresh: new
