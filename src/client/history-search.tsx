@@ -302,7 +302,9 @@ export function HistorySearch({
             setScope(nextScope(scope));
             setAt(0);
           }}
-          style={{ ...rowBtn, flex: "none", fontSize: 12, padding: "4px 10px" }}
+          // `rowBtn` is a full-width list row; left at 100% here it took the whole line and
+          // squeezed the search field beside it to its 50 px of padding, hiding what was typed.
+          style={{ ...rowBtn, width: "auto", flex: "none", fontSize: 12, padding: "4px 10px" }}
         >
           {t(SCOPE_KEY[scope])}
         </button>
