@@ -336,10 +336,7 @@ export function HistorySearch({
                 height: 28,
                 padding: "0 8px",
                 fontSize: 13,
-                background:
-                  row === picked
-                    ? "var(--dsw-alias-bg-hover, rgba(128,128,128,.12))"
-                    : "transparent",
+                background: row === picked ? T.hover : "transparent",
               }}
             >
               <span

@@ -181,9 +181,6 @@ const STATS_ANCHOR = ":scope > span[data-composer-stat]";
  */
 export const isStatsRow = (el: HTMLElement): boolean => {
   if (!el.isConnected || el.children.length < 1) return false;
-  // dsh 0.1.5 draws the row as pills and marks it (`StatsPills`, ui-chat); the shape checks below
-  // are for the earlier row of groups with a bar between them.
-  if (el.hasAttribute("data-composer-stats")) return true;
   if (el.querySelector(STATS_ANCHOR)) return true;
   // dsh 0.1.6-alpha.2 draws the same pills and dropped the marker, so the row is recognised by the
   // shape instead: anchor spans holding one popover pill each. Asked for as direct children, which
@@ -462,14 +459,10 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       // which it does on a settled step, and that is exactly when this runs, the footer it hangs
       // in is still the same node, so the second try searches that instead of the document. Only a
       // conversation that was never hooked, or a footer that went away, pays for the full walk.
-      // dsh 0.1.5 marks the row, so ask for it by name first: one indexed attribute query against
-      // a conversation where the `div` walk below is thousands of nodes.
+      // dsh marks each pill, so ask for those first: one indexed attribute query against a
+      // conversation where the `div` walk below is thousands of nodes. The row is the last marked
+      // pill's parent.
       const rowIn = (root: ParentNode) => {
-        const marked = [...root.querySelectorAll<HTMLDivElement>("div[data-composer-stats]")].at(
-          -1,
-        );
-        if (marked?.isConnected) return marked;
-        // dsh 0.2.1 marks each pill instead of the row; the row is the last marked pill's parent.
         const anchored = [...root.querySelectorAll<HTMLElement>("span[data-composer-stat]")].at(-1);
         if (anchored?.parentElement) return anchored.parentElement;
         const divs = [...root.querySelectorAll<HTMLDivElement>("div")];

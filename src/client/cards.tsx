@@ -605,7 +605,7 @@ export function CompactCard({
             data-omc-compact-now=""
             onClick={onCompact}
             style={{
-              background: "var(--dsw-alias-bg-elevated, transparent)",
+              background: "transparent",
               border: `0.5px solid ${T.border}`,
               borderRadius: 6,
               padding: "2px 8px",
