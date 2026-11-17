@@ -45,13 +45,41 @@ export const ULTRACODE_DARK = "rgb(175,135,255)";
 export const ULTRACODE_LIGHT = "rgb(135,0,255)";
 export const ULTRACODE_SHIMMER = "rgb(208,180,255)";
 export const ULTRACODE_INDEX = RAINBOW.length;
-export const RAINBOW_CSS =
-  RAINBOW.map((c, i) => `::highlight(omc-rainbow-${i}){color:${c}}`).join("") +
-  RAINBOW_SHIMMER.map((c, i) => `::highlight(omc-rainbow-s${i}){color:${c}}`).join("") +
-  `::highlight(omc-rainbow-${ULTRACODE_INDEX}){color:var(--omc-ultracode,${ULTRACODE_DARK})}` +
-  `::highlight(omc-rainbow-s${ULTRACODE_INDEX}){color:${ULTRACODE_SHIMMER}}` +
-  // Quoted lines in the composer, the way a Markdown quote reads: dimmed, the marker more so.
-  `::highlight(omc-quote){color:${T.muted}}::highlight(omc-quote-mark){color:${T.faint}}`;
+/** Each highlight name this module registers, with the declaration that colours it. Quoted lines in
+ *  the composer read the way a Markdown quote does: dimmed, the marker more so. */
+export const HIGHLIGHT_RULES: Readonly<Record<string, string>> = Object.fromEntries([
+  ...RAINBOW.map((c, i) => [`omc-rainbow-${i}`, `color:${c}`]),
+  ...RAINBOW_SHIMMER.map((c, i) => [`omc-rainbow-s${i}`, `color:${c}`]),
+  [`omc-rainbow-${ULTRACODE_INDEX}`, `color:var(--omc-ultracode,${ULTRACODE_DARK})`],
+  [`omc-rainbow-s${ULTRACODE_INDEX}`, `color:${ULTRACODE_SHIMMER}`],
+  ["omc-quote", `color:${T.muted}`],
+  ["omc-quote-mark", `color:${T.faint}`],
+]);
+
+/**
+ * The stylesheet for just the highlight names in `live`, in a stable order; "" when none of ours.
+ * While any `::highlight()` rule is in the page, Chrome works out every element's highlight styles
+ * on each style recalc, at about 1.6 ms a rule per recalc on a phone-speed CPU in a long session:
+ * all eighteen doubled the cost of every recalc during a turn, with nothing painted at all
+ * (measured 2026-11-17). So only the names actually registered get a rule.
+ */
+export const highlightCss = (live: Iterable<string>): string =>
+  [...live]
+    .filter((k) => k in HIGHLIGHT_RULES)
+    .toSorted()
+    .map((k) => `::highlight(${k}){${HIGHLIGHT_RULES[k]}}`)
+    .join("");
+
+const HIGHLIGHT_STYLE_ID = "dsh-oh-my-claude-highlights";
+/** Writes the highlight sheet's text, creating the element on first use. */
+const writeHighlightSheet = (css: string): void => {
+  const existing = document.getElementById(HIGHLIGHT_STYLE_ID);
+  const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
+  el.id = HIGHLIGHT_STYLE_ID;
+  el.textContent = css;
+  if (el !== existing) document.head.append(el);
+};
+
 export const ULTRATHINK = /\bultrathink\b/gi;
 /** One character of a match: where it sits, which colour it takes, and its index in the
  *  composer's text (the sweep runs over those indices, as the CLI's does over its input string). */
@@ -135,7 +163,31 @@ export const segsIn = (host: Element): HostText => {
 export function watchUltrathink(ctx: ClientCtx) {
   // A browser without the Highlight API paints nothing; every Chromium since 105 has it.
   if (!("highlights" in CSS) || !("Highlight" in globalThis)) return;
-  const registry = CSS.highlights;
+  // Every set and delete goes through here, so the sheet always carries a rule for each name that
+  // is painting and none for the rest (see `highlightCss`).
+  //
+  // The rules only grow while anything of ours is painted and drop to none once nothing is: a
+  // stylesheet rewrite makes the browser recheck every element's style, and the composer's sweep
+  // moves its shimmer names every 50 ms, so a sheet that followed each move would cost more than
+  // the rules it saves.
+  const painted = new Set<string>();
+  const registry = {
+    set(key: string, h: Highlight) {
+      CSS.highlights.set(key, h);
+      if (painted.has(key) || !(key in HIGHLIGHT_RULES)) return;
+      painted.add(key);
+      writeHighlightSheet(highlightCss(painted));
+    },
+    delete(key: string) {
+      const had = CSS.highlights.delete(key);
+      if (painted.size > 0 && ![...CSS.highlights.keys()].some((k) => k in HIGHLIGHT_RULES)) {
+        painted.clear();
+        writeHighlightSheet("");
+      }
+      return had;
+    },
+  };
+  writeHighlightSheet("");
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const colours = RAINBOW.length + 1; // the seven, then ultracode's purple
   const names = Array.from({ length: colours }, (_, i) => `omc-rainbow-${i}`);
