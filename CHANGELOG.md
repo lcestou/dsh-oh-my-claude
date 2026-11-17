@@ -8,6 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- Typing in the composer costs less with many sessions in the sidebar. Every render asked which session is open by walking all of dsh's sessions, and typing re-renders a dozen components per keystroke; on a phone-speed CPU that walk was about 35 ms of each character. The answer is now kept until dsh's session list changes, and the once-a-second session-notice check skips its walk the same way.
 - After a dsh restart, a kept Claude process whose session has no open tab keeps its working `dsh` tools. The plugin used to send Claude Code a reconnect while dsh had no agent for the session yet; it failed, and Claude Code then marked a connection that would have worked as failed until the next turn. The reconnect now waits until dsh has the session's agent, and otherwise is made at the next turn as before. Thanks to @soffits (#313)
 - A Claude session no longer flickers to dsh's blue and back while dsh catches up after a reconnect. On a slow phone link, or when the box is busy, dsh briefly reloads a session's model information; the plugin read that gap as "not a Claude session" every second until it filled, sometimes for several seconds. It now keeps the session's last known model until dsh says otherwise.
 - The composer's stop button is the Claude colour from the moment a turn starts. It used to show dsh's blue for up to a second after pressing send, until a once-a-second pass repainted it; the colour now comes from a stylesheet rule.

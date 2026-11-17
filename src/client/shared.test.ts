@@ -174,6 +174,22 @@ assert.equal(
 // A retention the main view has let go of is not a selection.
 assert.equal(openSessionId(listCtx({ byId: { s1: { retainedBy: {} } } })), undefined);
 assert.equal(openSessionId(listCtx(undefined)), undefined);
+// The same snapshot object is scanned once; a new one (the list changed) is scanned again.
+{
+  let reads = 0;
+  const rows = { a: { retainedBy: { mainView: 1 } } };
+  const snap = {
+    get byId() {
+      reads++;
+      return rows;
+    },
+  };
+  const ctx = listCtx(snap);
+  assert.equal(openSessionId(ctx), "a");
+  assert.equal(openSessionId(ctx), "a");
+  assert.equal(reads, 1, "one scan per snapshot");
+  assert.equal(openSessionId(listCtx({ byId: { b: { retainedBy: { mainView: 1 } } } })), "b");
+}
 // A throw that is not a disposed context answers undefined and leaves the bundle live: the next
 // read still works. It used to retire everything until a refresh (owner, 2026-09-22: new sessions
 // lost the Claude look after switching languages back and forth).
