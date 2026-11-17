@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.6.6] - 2026-11-17
+
+dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.4; built and tested on 0.2.2-rc.4.
+
 ### Fixed
 
 - The prompt history search (Ctrl+R in the composer) shows what you type again. The scope button beside the search box took the whole line, which squeezed the box down to its magnifier, so typed text was hidden.
