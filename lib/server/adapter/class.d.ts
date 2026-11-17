@@ -1195,13 +1195,15 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     takeOverReloadedTurn(sessionId: string): Promise<void>;
     /**
      * After a reattach, the surviving Claude still holds an MCP session against the previous dsh's
-     * bridge. `mcp_reconnect` for the `dsh` server makes it open a fresh one; without it the first
-     * dsh tool call after a restart can fail once, and a process that called a dsh tool while dsh was
-     * down has dropped the server and stays without it. A mount with no bridge of its own
+     * bridge. The bridge keeps no per-client state, so that session answers again as soon as dsh has
+     * a live agent for the session; but a process that called a dsh tool while dsh was down has
+     * dropped the server, and only `mcp_reconnect` brings it back. A mount with no bridge of its own
      * (non-default instance) has nothing to reconnect to; on the default one a bridge still mounting
-     * is waited for. Retries every retryMs for attempts tries, since the web server listens several
-     * seconds after adoption. The reconnect is owed (`bridgeStale`) from the first call until one
-     * lands, so a turn that starts while these retries still run reconnects before its prompt.
+     * is waited for. The reconnect is sent only while dsh has a live agent for the session: before
+     * that the bridge answers 404, and a failed `mcp_reconnect` turns a server that was still
+     * connected into a failed one that stays failed. Looks every retryMs for attempts tries, then
+     * leaves it owed (`bridgeStale`) to the next turn, which is when an agent exists; a turn that
+     * starts while these retries still run reconnects before its prompt.
      */
     reconnectBridge(proc: ClaudeProcess, sessionId: string, retryMs?: number, attempts?: number): Promise<boolean>;
     /** An owed reconnect is made at a turn boundary, when dsh does have the agent. */
