@@ -226,9 +226,26 @@ export declare const WAKE_THROUGH_PARENT_HOLD_MS = 10000;
 export declare const RESUME_DELAY_MS = 10000;
 /** Slack after a usage limit's reset instant before the continue notice goes out. */
 export declare const LIMIT_GRACE_MS = 5000;
-/** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
- *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
-export declare function wakeOnlyTurn(messages: LooseMessage[] | undefined): boolean;
+/** What a turn knows about the messages it would send: the ones already written to Claude's stdin
+ *  live (by `steerKey`), and the context blocks and native copies that are withheld. */
+export interface PendingFilter {
+    sent?: ReadonlySet<string>;
+    drops?: ReadonlySet<ContextSource>;
+    copies?: NativeCopies;
+}
+/** Whether anything dsh delivered after the last assistant step still has to reach Claude. The
+ *  turns that answer on their own (a wake's drain, an aside) go on to a normal turn when it does.
+ *  A terminal mirror does not use this: only a person's prompt may start a turn there. Counting only `user`-kind messages dropped an Agent Team notice (#311). */
+export declare function hasPendingInput(messages: LooseMessage[] | undefined, filter?: PendingFilter): boolean;
+/** Whether a person typed something beside a terminal mirror turn, which then goes on to a real
+ *  Claude turn. Only a `user`-kind message counts, never an automated notice (a job line, a
+ *  subagent report, a Team notice): the session belongs to a terminal, and a real turn there runs
+ *  the model against someone else's conversation, which is why `wake()` leaves such sessions alone
+ *  (the 2026-09-11 incident it records). The wake and the aside count every producer instead. */
+export declare const typedAfterMirror: (messages: LooseMessage[] | undefined) => boolean;
+/** A turn opened by our own wake notice with nothing else to send: only drain what Claude already
+ *  wrote. Anything else waiting in the same batch, whoever produced it, makes it a normal turn. */
+export declare function wakeOnlyTurn(messages: LooseMessage[] | undefined, filter?: PendingFilter): boolean;
 /** Drop messages Claude already received live on stdin (matched by `steerKey`). */
 export declare function dropSent<T extends LooseMessage>(messages: T[] | undefined, sent: Set<string> | undefined): T[];
 /** What dsh delivered at this step boundary besides the tool result: steers the user sent while

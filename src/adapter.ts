@@ -155,6 +155,7 @@ export {
   userPromptCount,
   WAKE_TEXT,
   wakeOnlyTurn,
+  hasPendingInput,
   wantedUltracode,
 } from "./adapter/turn.js";
 

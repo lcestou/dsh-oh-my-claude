@@ -32,6 +32,9 @@ export type LooseMessage = {
     rpcId?: string;
     clientTimeZone?: string;
     name?: string;
+    /** dsh's shape for the block: `snapshot` for context injected before a step, `notice` for a
+     *  notice a producer sends. */
+    form?: string;
   };
   content?: string | ContentBlock[];
   /** dsh 0.1.7 answers a tool result as its own `role: "tool"` message and carries the call id on
