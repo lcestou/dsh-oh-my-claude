@@ -45,13 +45,91 @@ export const ULTRACODE_DARK = "rgb(175,135,255)";
 export const ULTRACODE_LIGHT = "rgb(135,0,255)";
 export const ULTRACODE_SHIMMER = "rgb(208,180,255)";
 export const ULTRACODE_INDEX = RAINBOW.length;
-export const RAINBOW_CSS =
-  RAINBOW.map((c, i) => `::highlight(omc-rainbow-${i}){color:${c}}`).join("") +
-  RAINBOW_SHIMMER.map((c, i) => `::highlight(omc-rainbow-s${i}){color:${c}}`).join("") +
-  `::highlight(omc-rainbow-${ULTRACODE_INDEX}){color:var(--omc-ultracode,${ULTRACODE_DARK})}` +
-  `::highlight(omc-rainbow-s${ULTRACODE_INDEX}){color:${ULTRACODE_SHIMMER}}` +
-  // Quoted lines in the composer, the way a Markdown quote reads: dimmed, the marker more so.
-  `::highlight(omc-quote){color:${T.muted}}::highlight(omc-quote-mark){color:${T.faint}}`;
+/** Each highlight name this module registers, with the declaration that colours it. Quoted lines in
+ *  the composer read the way a Markdown quote does: dimmed, the marker more so. */
+export const HIGHLIGHT_RULES: Readonly<Record<string, string>> = Object.fromEntries([
+  ...RAINBOW.map((c, i) => [`omc-rainbow-${i}`, `color:${c}`]),
+  ...RAINBOW_SHIMMER.map((c, i) => [`omc-rainbow-s${i}`, `color:${c}`]),
+  [`omc-rainbow-${ULTRACODE_INDEX}`, `color:var(--omc-ultracode,${ULTRACODE_DARK})`],
+  [`omc-rainbow-s${ULTRACODE_INDEX}`, `color:${ULTRACODE_SHIMMER}`],
+  ["omc-quote", `color:${T.muted}`],
+  ["omc-quote-mark", `color:${T.faint}`],
+]);
+
+/**
+ * The stylesheet for just the highlight names in `live`, in a stable order; "" when none of ours.
+ * While any `::highlight()` rule is in the page, Chrome works out every element's highlight styles
+ * on each style recalc, at about 1.6 ms a rule per recalc on a phone-speed CPU in a long session:
+ * all eighteen doubled the cost of every recalc during a turn, with nothing painted at all
+ * (measured 2026-11-17). So only the names actually registered get a rule.
+ */
+export const highlightCss = (live: Iterable<string>): string =>
+  [...live]
+    .filter((k) => k in HIGHLIGHT_RULES)
+    .toSorted()
+    .map((k) => `::highlight(${k}){${HIGHLIGHT_RULES[k]}}`)
+    .join("");
+
+const HIGHLIGHT_STYLE_ID = "dsh-oh-my-claude-highlights";
+/** Writes the highlight sheet's text, creating the element on first use. */
+const writeHighlightSheet = (css: string): void => {
+  const existing = document.getElementById(HIGHLIGHT_STYLE_ID);
+  const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
+  el.id = HIGHLIGHT_STYLE_ID;
+  el.textContent = css;
+  if (el !== existing) document.head.append(el);
+};
+
+/** The slice of `CSS.highlights` the painter uses; a Map stands in for it in tests. */
+export interface HighlightTarget {
+  set(key: string, h: Highlight): void;
+  delete(key: string): boolean;
+  keys(): Iterable<string>;
+}
+
+/**
+ * The registry the painter writes through: every set and delete reaches `target`, and `write` gets
+ * the sheet text for the names of ours that are registered (see `highlightCss`). The sweep's shimmer
+ * names (`omc-rainbow-s*`) come and go every 50 ms and a stylesheet rewrite restyles every element,
+ * so their removal never shrinks the sheet on its own; any other removal recomputes it from what is
+ * still registered, and the last of ours going empties it. Starts from whatever is already
+ * registered, so a hot reload keeps the rules for highlights the old bundle left painted.
+ */
+export function createHighlightRegistry(target: HighlightTarget, write: (css: string) => void) {
+  const ours = () => [...target.keys()].filter((k) => k in HIGHLIGHT_RULES);
+  let painted = new Set(ours());
+  let written = highlightCss(painted);
+  write(written);
+  /** Writes the sheet for `painted` when its text changed. */
+  const flush = () => {
+    const css = highlightCss(painted);
+    if (css === written) return;
+    written = css;
+    write(css);
+  };
+  return {
+    /** Registers `h` under `key`, and adds that name's rule when it has none yet. */
+    set(key: string, h: Highlight) {
+      target.set(key, h);
+      if (painted.has(key) || !(key in HIGHLIGHT_RULES)) return;
+      painted.add(key);
+      flush();
+    },
+    /** Unregisters `key`; answers whether it was there. A shimmer name leaves its rule until the
+     *  next other removal or until nothing of ours is left. */
+    delete(key: string): boolean {
+      const had = target.delete(key);
+      if (!had || !painted.has(key)) return had;
+      const left = ours();
+      if (left.length === 0 || !key.startsWith("omc-rainbow-s")) {
+        painted = new Set(left);
+        flush();
+      }
+      return had;
+    },
+  };
+}
+
 export const ULTRATHINK = /\bultrathink\b/gi;
 /** One character of a match: where it sits, which colour it takes, and its index in the
  *  composer's text (the sweep runs over those indices, as the CLI's does over its input string). */
@@ -133,9 +211,13 @@ export const segsIn = (host: Element): HostText => {
  * first match to ten past the last and wraps. Sent messages never shimmer, as in the CLI.
  */
 export function watchUltrathink(ctx: ClientCtx) {
-  // A browser without the Highlight API paints nothing; every Chromium since 105 has it.
+  // A browser without the Highlight API paints nothing. The plugin as a whole needs a far newer
+  // Chromium than the API does (its sheets use `:has()` and `@position-try`, Chrome 125), so the
+  // newer array methods below are safe wherever this runs.
   if (!("highlights" in CSS) || !("Highlight" in globalThis)) return;
-  const registry = CSS.highlights;
+  // Every set and delete goes through here, so the sheet carries a rule for each name that is
+  // painting (see `createHighlightRegistry`).
+  const registry = createHighlightRegistry(CSS.highlights, writeHighlightSheet);
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const colours = RAINBOW.length + 1; // the seven, then ultracode's purple
   const names = Array.from({ length: colours }, (_, i) => `omc-rainbow-${i}`);
@@ -321,5 +403,7 @@ export function watchUltrathink(ctx: ClientCtx) {
     document.removeEventListener("visibilitychange", request);
     stopSweep();
     clear();
+    registry.delete("omc-quote");
+    registry.delete("omc-quote-mark");
   });
 }
