@@ -94,6 +94,63 @@ assert.equal(
   claudeProviderOf(liveCtx("claude-code-nova", { lastUsed: { provider: "deepseek" } }), "s1"),
   "claude-code-nova",
 );
+/** A tab with session `id` open on `provider` and nothing on its list row. */
+const liveCtxFor = (id: string, provider: string): ClientCtx =>
+  ({
+    modelDirectories: {
+      directoryFor: () => ({ store: { getSnapshot: () => ({ current: { provider } }) } }),
+    },
+    sessions: { list: { getSnapshot: () => ({ byId: { [id]: { id } } }) } },
+  }) as unknown as ClientCtx;
+
+// After a reconnect dsh resyncs: the directory's `current` is null while the catalog loads and the
+// list row arrives before its projections. Unknown keeps the last answer instead of reading as
+// "not Claude", which flickered the open session to dsh's blue on a slow link.
+const resyncing = (row: object | undefined): ClientCtx =>
+  ({
+    modelDirectories: {
+      directoryFor: () => ({
+        store: { getSnapshot: () => ({ current: null, status: "loading" }) },
+      }),
+    },
+    sessions: { list: { getSnapshot: () => ({ byId: row ? { r1: row } : {} }) } },
+  }) as unknown as ClientCtx;
+assert.equal(claudeProviderOf(resyncing(undefined), "r1"), undefined, "never seen: no answer");
+assert.equal(claudeProviderOf(liveCtxFor("r1", "claude-code"), "r1"), "claude-code");
+assert.equal(
+  claudeProviderOf(resyncing({ id: "r1" }), "r1"),
+  "claude-code",
+  "row without projections",
+);
+assert.equal(claudeProviderOf(resyncing(undefined), "r1"), "claude-code", "row not resent yet");
+assert.equal(
+  claudeProviderOf(
+    resyncing({ id: "r1", projectionValues: { modelSelection: { lastUsed: null, next: null } } }),
+    "r1",
+  ),
+  "claude-code",
+  "the projection's empty initial state is not a switch",
+);
+// A real answer still moves it, both ways.
+assert.equal(claudeProviderOf(liveCtxFor("r1", "deepseek"), "r1"), undefined);
+assert.equal(
+  claudeProviderOf(resyncing({ id: "r1" }), "r1"),
+  undefined,
+  "a known switch away holds",
+);
+assert.equal(
+  claudeProviderOf(
+    resyncing({
+      id: "r1",
+      projectionValues: {
+        modelSelection: { lastUsed: null, next: { provider: "claude-code-nova" } },
+      },
+    }),
+    "r1",
+  ),
+  "claude-code-nova",
+  "a selection on the row answers even while the directory loads",
+);
 
 assert.equal(numberOr(5), 5);
 assert.equal(numberOr(true), undefined);

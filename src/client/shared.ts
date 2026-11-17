@@ -519,16 +519,28 @@ export const isRingRoot = (el: HTMLElement | null) => !!el?.querySelector(`:scop
  */
 export const claudeMount = (provider: string | undefined): string | undefined =>
   provider?.startsWith("claude-code") === true ? provider : undefined;
+/** Per session, the last mount dsh actually reported (undefined: a known non-Claude session), for
+ *  the moments dsh reports nothing. Capped so a long-lived tab does not keep every id it ever saw. */
+const lastMount = new Map<string, string | undefined>();
+const LAST_MOUNT_KEEP = 10_000;
+/** Record `mount` as what dsh said about `id`, and return it. */
+const remember = (id: string, mount: string | undefined): string | undefined => {
+  lastMount.delete(id);
+  lastMount.set(id, mount);
+  if (lastMount.size > LAST_MOUNT_KEEP) lastMount.delete(lastMount.keys().next().value ?? "");
+  return mount;
+};
+
 /** The Claude mount for a session, open or not: read the live model directory first and the list
  *  projection after, so a sidebar session this tab never opened still resolves, undefined for a
- *  non-Claude session. */
+ *  non-Claude session. When neither says anything, the last answer stands (see the end). */
 export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined => {
   try {
     const live = ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider;
     // A live provider is the answer, Claude or not. Falling through on a non-Claude one used to
     // land on `lastUsed` below, so a session that had run a Claude turn and then switched to
     // another provider kept the Claude control and the ✻ button (owner, 2026-09-23).
-    if (live !== undefined) return claudeMount(live);
+    if (live !== undefined) return remember(id, claudeMount(live));
   } catch {
     // `directoryFor` needs a scope and a binding, and dsh only holds those for a session this tab
     // has opened. A session running in the sidebar and never clicked throws here, which used to
@@ -538,8 +550,17 @@ export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined
   // projection so a session can be described without being activated. A pending pick outranks the
   // last request for the same reason as above: it is the newer truth, whichever provider it names.
   const sel = ctx.sessions.list.getSnapshot()?.byId[id]?.projectionValues?.modelSelection;
-  if (sel?.next?.provider !== undefined) return claudeMount(sel.next.provider);
-  return claudeMount(sel?.lastUsed?.provider);
+  if (sel?.next?.provider !== undefined) return remember(id, claudeMount(sel.next.provider));
+  if (sel?.lastUsed?.provider !== undefined)
+    return remember(id, claudeMount(sel.lastUsed.provider));
+  // Nothing to read: after a reconnect dsh reloads the model catalog (the directory's `current` is
+  // null while it loads) and resends list rows before their projections (or with the projection's
+  // empty initial state, both selections null), so for a moment neither
+  // source knows the session's model. Reading that as "not Claude" painted the open session in
+  // dsh's blue and back once a second, for up to several seconds on a slow phone link or a busy
+  // box (owner, 2026-11-17; reproduced on throttled 3G with 750 sessions in the list). Unknown is
+  // not a switch: keep the last answer dsh gave for this session.
+  return lastMount.get(id);
 };
 
 /**
