@@ -123,6 +123,14 @@ assert.equal(
   "row without projections",
 );
 assert.equal(claudeProviderOf(resyncing(undefined), "r1"), "claude-code", "row not resent yet");
+assert.equal(
+  claudeProviderOf(
+    resyncing({ id: "r1", projectionValues: { modelSelection: { lastUsed: null, next: null } } }),
+    "r1",
+  ),
+  "claude-code",
+  "the projection's empty initial state is not a switch",
+);
 // A real answer still moves it, both ways.
 assert.equal(claudeProviderOf(liveCtxFor("r1", "deepseek"), "r1"), undefined);
 assert.equal(

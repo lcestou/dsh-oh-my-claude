@@ -522,7 +522,7 @@ export const claudeMount = (provider: string | undefined): string | undefined =>
 /** Per session, the last mount dsh actually reported (undefined: a known non-Claude session), for
  *  the moments dsh reports nothing. Capped so a long-lived tab does not keep every id it ever saw. */
 const lastMount = new Map<string, string | undefined>();
-const LAST_MOUNT_KEEP = 1000;
+const LAST_MOUNT_KEEP = 10_000;
 /** Record `mount` as what dsh said about `id`, and return it. */
 const remember = (id: string, mount: string | undefined): string | undefined => {
   lastMount.delete(id);
@@ -551,9 +551,11 @@ export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined
   // last request for the same reason as above: it is the newer truth, whichever provider it names.
   const sel = ctx.sessions.list.getSnapshot()?.byId[id]?.projectionValues?.modelSelection;
   if (sel?.next?.provider !== undefined) return remember(id, claudeMount(sel.next.provider));
-  if (sel !== undefined && sel !== null) return remember(id, claudeMount(sel.lastUsed?.provider));
+  if (sel?.lastUsed?.provider !== undefined)
+    return remember(id, claudeMount(sel.lastUsed.provider));
   // Nothing to read: after a reconnect dsh reloads the model catalog (the directory's `current` is
-  // null while it loads) and resends list rows before their projections, so for a moment neither
+  // null while it loads) and resends list rows before their projections (or with the projection's
+  // empty initial state, both selections null), so for a moment neither
   // source knows the session's model. Reading that as "not Claude" painted the open session in
   // dsh's blue and back once a second, for up to several seconds on a slow phone link or a busy
   // box (owner, 2026-11-17; reproduced on throttled 3G with 750 sessions in the list). Unknown is

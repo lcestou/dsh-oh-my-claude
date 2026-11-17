@@ -14,7 +14,9 @@ const OLD_MARK = "data-omc-send";
  * next pass caught it (owner, 2026-11-17). A rule matches the new element on its first frame. The
  * composer's button is the `_primary` one in the card that holds the message box (dsh draws no
  * form there: the card is the nearest element holding both); a settings view has a `_primary`
- * button too, outside any such card. Both are CSS-module suffixes, the way the scan matched them. Rewritten on every call, so a hot reload
+ * button too, outside any such card. Both are CSS-module suffixes, the way the scan matched them:
+ * this is dsh's own button, so a `data-omc-*` hook of ours could only be set a tick after it
+ * mounts, which is the lag this rule removes. The Playwright theme checks find it by ancestry. Rewritten on every call, so a hot reload
  * replaces the rule, and inline paint left by an older bundle is cleared once.
  */
 export function ensureSendButtonStyle(): void {
