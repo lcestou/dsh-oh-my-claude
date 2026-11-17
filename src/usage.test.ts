@@ -505,15 +505,27 @@ console.log("breakdown-cache ok");
   clock += 10 * 60_000;
   const failed = await third(home);
   assert.ok(failed.ok && failed.stale === true);
+  // a failure is remembered for a minute, so polls inside it do not reach the endpoint
+  const before = calls;
+  clock += 30_000;
+  await third(home);
+  assert.equal(calls, before);
+  clock += 31_000;
+  await third(home);
+  assert.equal(calls, before + 1);
   const other = await third(join(dir, "other-home"));
   assert.equal(other.ok, false);
 
   // nothing known: the error is all there is
-  const fresh = createUsageReader(join(dir, "none.json"), async () => ({
-    status: 429,
-    headers: { get: () => null },
-    json: async () => ({}),
-  }), () => clock);
+  const fresh = createUsageReader(
+    join(dir, "none.json"),
+    async () => ({
+      status: 429,
+      headers: { get: () => null },
+      json: async () => ({}),
+    }),
+    () => clock,
+  );
   const bare = await fresh(home);
   assert.deepEqual(bare.ok === false && bare.error, "usage endpoint rate limited");
 

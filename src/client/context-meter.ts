@@ -134,16 +134,24 @@ export const loadUsage = (provider?: string): Promise<UsageReply> => {
   return pending;
 };
 
-/** "Could not refresh, showing figures as of 8:12 PM" over the last good figures; "" for a fresh reply. */
-export const staleNote = (r: UsageReply): string =>
-  r.ok && r.stale
-    ? t("main.usage.stale", {
-        time: new Date(r.fetchedAt).toLocaleTimeString(undefined, {
+/** "Could not refresh, showing figures as of 8:12 PM" over the last good figures; "" for a fresh
+ *  reply. Figures from before today carry their date too: the memo survives restarts, so they can
+ *  be days old. */
+export const staleNote = (r: UsageReply): string => {
+  if (!r.ok || !r.stale) return "";
+  const at = new Date(r.fetchedAt);
+  const sameDay = at.toDateString() === new Date().toDateString();
+  return t("main.usage.stale", {
+    time: sameDay
+      ? at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+      : at.toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
           hour: "numeric",
           minute: "2-digit",
         }),
-      })
-    : "";
+  });
+};
 
 export type ContextReply =
   | {
@@ -462,6 +470,7 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
   if (stale) {
     const p = document.createElement("div");
     p.textContent = stale;
+    p.dataset.omcUsageStale = "";
     p.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;padding-top:3px`;
     block.append(p);
   }

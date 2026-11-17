@@ -104,11 +104,7 @@ assert.deepEqual(
     "assistant:text",
   ],
 );
-assert.equal(
-  seed[1].message.content[0].text,
-  "帮我看看构建",
-  "the person's own words, unlabelled",
-);
+assert.equal(seed[1].message.content[0].text, "帮我看看构建", "the person's own words, unlabelled");
 assert.ok(!JSON.stringify(seed).includes("You are Sakina."), "the system prompt rides on its flag");
 assert.ok(!JSON.stringify(seed).includes("[assistant]"), "no role labels inside a message");
 assert.equal(seed[2].message.content[1].name, "mcp__dsh__bash", "named as Claude saw it");
@@ -121,11 +117,7 @@ assert.deepEqual(
 assert.equal(seed[9].message.content[0].tool_use_id, "c3");
 assert.equal(seed[9].message.content[0].content[0].text, NO_RESULT, "an unanswered call is closed");
 assert.equal(seed[9].message.content[0].is_error, true);
-assert.equal(
-  seed[10].message.content[0].text,
-  "已经派人去修了。",
-  "another route's reply counts",
-);
+assert.equal(seed[10].message.content[0].text, "已经派人去修了。", "another route's reply counts");
 // A chain the CLI walks back from the last row, with the fields its loader reads.
 for (const [i, r] of seed.entries()) {
   assert.equal(r.parentUuid, i === 0 ? null : seed[i - 1].uuid);

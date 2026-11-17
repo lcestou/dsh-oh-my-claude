@@ -16,6 +16,8 @@ const ROUTE = "/dsh-oh-my-claude/usage";
 /** Answers are served from cache this long, however many tabs, browsers and boxes ask. */
 const CACHE_MS = 5 * 60_000;
 const FORCE_MIN_AGE_MS = 30_000;
+/** A failed read (not a 429, which backs off on its own) is answered from memory this long. */
+const FAIL_MS = 60_000;
 /** After a 429 with no usable Retry-After, wait at least this long before touching the endpoint. */
 const RATE_LIMIT_FLOOR_MS = 60_000;
 /** Repeated 429s double the wait up to this; the endpoint's budget is the account's, shared with
@@ -506,7 +508,11 @@ export function parseUsageMemo(text: string): Record<string, UsageMemo> | undefi
   const out: Record<string, UsageMemo> = {};
   for (const [key, e] of Object.entries(raw.entries)) {
     if (!isRec(e)) continue;
-    const entry: UsageMemo = { at: finite(e.at), limitedUntil: finite(e.limitedUntil), strikes: finite(e.strikes) };
+    const entry: UsageMemo = {
+      at: finite(e.at),
+      limitedUntil: finite(e.limitedUntil),
+      strikes: finite(e.strikes),
+    };
     const r = e.reply;
     if (
       isRec(r) &&
@@ -549,6 +555,9 @@ export function createUsageReader(
   // while the endpoint was still rate limited, had no figures to show and answered a bare error.
   const memo = new Map<string, UsageMemo>();
   const inFlight = new Map<string, Promise<UsageReply>>();
+  // A failure that is not a 429 (a 401, a 5xx, the network down) has no backoff of its own; without
+  // this every tab's poll would ask Anthropic again. Memory only: a restart may try once at once.
+  const failed = new Map<string, { at: number; reply: UsageReply }>();
   let usageLoaded: Promise<void> | undefined;
   const usageLoad = (): Promise<void> =>
     (usageLoaded ??= readFile(file, "utf8")
@@ -578,6 +587,8 @@ export function createUsageReader(
     if (t0 < m.limitedUntil)
       return fallback(m, { ok: false, error: "usage endpoint rate limited" });
     if (m.reply && t0 - m.at < CACHE_MS) return m.reply;
+    const miss = failed.get(key);
+    if (miss && t0 - miss.at < FAIL_MS) return miss.reply;
     if (!inFlight.has(key)) {
       inFlight.set(
         key,
@@ -588,6 +599,7 @@ export function createUsageReader(
             m.at = now();
             m.limitedUntil = 0;
             m.strikes = 0;
+            failed.delete(key);
             usageSave();
             return reply;
           }
@@ -596,7 +608,9 @@ export function createUsageReader(
             m.limitedUntil = now() + backoffMs(reply.retryAfterMs, m.strikes);
             usageSave();
           }
-          return fallback(m, reply);
+          const out = fallback(m, reply);
+          failed.set(key, { at: now(), reply: out });
+          return out;
         }),
       );
     }
