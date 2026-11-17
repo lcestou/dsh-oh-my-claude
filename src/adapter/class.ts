@@ -451,6 +451,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Per session, the timer that continues the task once its usage limit resets. */
   limitTimers: Map<string, ReturnType<typeof setTimeout>>;
   mcp?: McpBridge;
+  /** On the instance that mounts the bridge: settles once `mcp` is set or the mount failed. */
+  mcpMounting?: Promise<unknown>;
   warnedNoSeam = false;
   /** Set once a session read has thrown, so the line lands one time and not per routed message. */
   warnedNoSessionRead = false;
@@ -4582,8 +4584,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /**
    * After a reattach, the surviving Claude still holds an MCP session against the previous dsh's
    * bridge. `mcp_reconnect` for the `dsh` server makes it open a fresh one; without it the first
-   * dsh tool call after a restart can fail once. No bridge mounted (non-default instance, or the
-   * bridge not up yet) means nothing to reconnect to. Retries every retryMs for attempts tries, since the web server listens several seconds after adoption.
+   * dsh tool call after a restart can fail once, and a process that called a dsh tool while dsh was
+   * down has dropped the server and stays without it. A mount with no bridge of its own
+   * (non-default instance) has nothing to reconnect to; on the default one a bridge still mounting
+   * is waited for. Retries every retryMs for attempts tries, since the web server listens several
+   * seconds after adoption. The reconnect is owed (`bridgeStale`) from the first call until one
+   * lands, so a turn that starts while these retries still run reconnects before its prompt.
    */
   async reconnectBridge(
     proc: ClaudeProcess,
@@ -4591,17 +4597,43 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     retryMs = 5000,
     attempts = 12,
   ): Promise<boolean> {
-    if (!this.mcp || !proc.alive) return false;
+    if (!proc.alive || (!this.mcp && !this.mcpMounting)) return false;
+    proc.bridgeStale = true;
+    // At boot the keepers are adopted before dsh's web server and tool registry exist, so the
+    // bridge is usually not mounted yet when this first runs. Wait for it within the same window
+    // the retries below give the web server; returning early here left a process whose `dsh`
+    // server dropped during the restart without tools for good.
+    if (!this.mcp) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        this.mcpMounting,
+        new Promise((r) => {
+          timer = setTimeout(r, retryMs * attempts);
+          timer.unref?.();
+        }),
+      ]);
+      clearTimeout(timer);
+    }
+    if (!proc.alive) return false;
+    if (!this.mcp) {
+      await trace(
+        join(this.stateDir, "resume.log"),
+        `mcp_reconnect dsh for ${sessionId}: bridge not mounted yet, left for the next turn`,
+      );
+      return false;
+    }
     // The web server listens several seconds after adoption (2026-09-05: 40:47 adopt, 40:56 up),
-    // so the first tries answer "MCP endpoint not found"; keep asking for about a minute.
+    // so the first tries answer "MCP endpoint not found"; keep asking for about a minute, unless a
+    // turn's own reconnect lands first.
     let last = "";
-    for (let i = 0; i < attempts && proc.alive; i++) {
+    for (let i = 0; i < attempts && proc.alive && proc.bridgeStale; i++) {
       const reply = await this.control(
         proc,
         { subtype: "mcp_reconnect", serverName: "dsh" },
         10_000,
       );
       if (reply.ok) {
+        proc.bridgeStale = false;
         await trace(
           join(this.stateDir, "resume.log"),
           `mcp_reconnect dsh for ${sessionId}: ok (try ${i + 1})`,
@@ -4609,22 +4641,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         return true;
       }
       last = reply.error;
-      await new Promise((r) => setTimeout(r, retryMs));
+      if (i + 1 < attempts) await new Promise((r) => setTimeout(r, retryMs));
     }
+    if (!proc.bridgeStale) return true;
+    // The usual reason: the session is not open in any tab, so dsh has no live agent for it and the
+    // bridge answers "no live agent". A turn is the moment there is one.
     await trace(
       join(this.stateDir, "resume.log"),
       `mcp_reconnect dsh for ${sessionId}: gave up: ${last}`,
     );
-    // The usual reason: the session is not open in any tab, so dsh has no live agent for it and the
-    // bridge answers "no live agent". A turn is the moment there is one.
-    proc.bridgeStale = true;
     return false;
   }
 
-  /** A stale bridge gets one more reconnect, at a turn boundary, when dsh does have the agent. */
+  /** An owed reconnect is made at a turn boundary, when dsh does have the agent. */
   async reconnectIfStale(proc: ClaudeProcess, sessionId: string): Promise<void> {
     if (!proc.bridgeStale) return;
-    proc.bridgeStale = false;
     // One try, no wait: the web server is up (this request came through it) and a miss now is a
     // real miss, not the boot race the post-adoption retries cover.
     await this.reconnectBridge(proc, sessionId, 0, 1);

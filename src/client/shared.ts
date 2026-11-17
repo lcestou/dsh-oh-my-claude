@@ -1075,9 +1075,8 @@ export type UsageBreakdownReply =
 // Per provider: a second account is a second answer. The breakdown is a spawn on the box, so this
 // 60 s memo keeps a popover reopen from re-running `claude -p /usage`.
 //
-// No `force=1` here, unlike loadUsage. On the route, `force` shortens the server cache from five
-// minutes to thirty seconds, which is right for the plan windows (one HTTP call to Anthropic) and
-// wrong for this one: the breakdown spawns `claude -p "/usage"` on the box, measured at 3.6 s on
+// No `force=1` here except from Refresh. On the breakdown route, `force` makes the box read again,
+// and the breakdown spawns `claude -p "/usage"` on the box, measured at 3.6 s on
 // 2026-09-20. With force on, every reopen past this memo's minute paid that spawn again, and a
 // second tab paid it whenever it was first to ask. Without it the server answers from its
 // five-minute cache and the figures, which cover a 24 h and a 7 d window, lose nothing.

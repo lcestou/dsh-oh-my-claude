@@ -58,6 +58,8 @@ export type UsageReply =
       loginEndsAt?: number;
       /** The box's Claude Code talks to a router: its turns do not spend these windows. */
       routed?: true;
+      /** The endpoint could not be read just now: these are the last good figures, as of `fetchedAt`. */
+      stale?: true;
     }
   | { ok: false; error: string; windows?: undefined; host?: string; email?: string | null };
 /** "m*****@example.com on <host>" or whichever half is known; the usage is this box's login. */
@@ -106,17 +108,49 @@ export const resetText = (at: number | null): string => {
 
 // Per provider: two plugin instances are two accounts, so two answers.
 export const usageCache = new Map<string, { at: number; reply: UsageReply }>();
-/** Fetches a provider's usage, cached 60 s, so a repeat call returns the cached value. */
-export const loadUsage = async (provider?: string): Promise<UsageReply> => {
+const usageInFlight = new Map<string, Promise<UsageReply>>();
+/** Fetches a provider's usage, remembered in this tab for a minute, and shared between callers that
+ *  ask while a fetch is out. Never forced: the route answers from its own cache (which survives a
+ *  restart and backs off a rate limit), and the endpoint behind it is the account's, shared with
+ *  every other tab, browser and CLI. */
+export const loadUsage = (provider?: string): Promise<UsageReply> => {
   const key = provider ?? "";
   const hit = usageCache.get(key);
-  if (hit && Date.now() - hit.at < 60_000) return hit.reply;
-  const url = provider
-    ? `${ROUTE}/usage?force=1&provider=${encodeURIComponent(provider)}`
-    : `${ROUTE}/usage?force=1`;
-  const reply = await readJson<UsageReply>(await fetch(url));
-  usageCache.set(key, { at: Date.now(), reply });
-  return reply;
+  if (hit && Date.now() - hit.at < 60_000) return Promise.resolve(hit.reply);
+  let pending = usageInFlight.get(key);
+  if (!pending) {
+    const url = provider
+      ? `${ROUTE}/usage?provider=${encodeURIComponent(provider)}`
+      : `${ROUTE}/usage`;
+    pending = fetch(url)
+      .then((r) => readJson<UsageReply>(r))
+      .then((reply) => {
+        usageCache.set(key, { at: Date.now(), reply });
+        return reply;
+      })
+      .finally(() => usageInFlight.delete(key));
+    usageInFlight.set(key, pending);
+  }
+  return pending;
+};
+
+/** "Could not refresh, showing figures as of 8:12 PM" over the last good figures; "" for a fresh
+ *  reply. Figures from before today carry their date too: the memo survives restarts, so they can
+ *  be days old. */
+export const staleNote = (r: UsageReply): string => {
+  if (!r.ok || !r.stale) return "";
+  const at = new Date(r.fetchedAt);
+  const sameDay = at.toDateString() === new Date().toDateString();
+  return t("main.usage.stale", {
+    time: sameDay
+      ? at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+      : at.toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        }),
+  });
 };
 
 export type ContextReply =
@@ -432,6 +466,14 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
   }
   // Last, whether or not any window was reported: a user with no limits still plans around credits.
   if (reply.credits) block.append(creditsRow(reply.credits));
+  const stale = staleNote(reply);
+  if (stale) {
+    const p = document.createElement("div");
+    p.textContent = stale;
+    p.dataset.omcUsageStale = "";
+    p.style.cssText = `color:${T.faint};font-size:11px;line-height:16px;padding-top:3px`;
+    block.append(p);
+  }
 }
 
 /**
@@ -589,9 +631,11 @@ export function watchContextMeter(ctx: ClientCtx) {
         const windows = reply.windows
           .map((w) => `${windowLabel(w).toLowerCase()} ${Math.round(w.usedPercent)}%`)
           .join(" · ");
-        text.textContent = windows
+        const summary = windows
           ? t("main.usage.bubbleWindows", { windows, who })
           : t("main.usage.bubbleNoLimits", { who });
+        const stale = staleNote(reply);
+        text.textContent = stale ? `${summary} · ${stale}` : summary;
       },
       (e: Error) => {
         text.textContent = t("main.usage.usageErr", { error: e.message });
