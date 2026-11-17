@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UsageCredits } from "./usage.js";
 import {
+  backoffMs,
+  createUsageReader,
   extraUsageOn,
+  parseUsageMemo,
   parseBreakdownCache,
   parseUsageBreakdown,
   readUsage,
@@ -437,3 +440,94 @@ console.log("usage-breakdown ok");
   );
 }
 console.log("breakdown-cache ok");
+
+// The route's reader: one endpoint read per cache life, the last good reply and the backoff on disk,
+// and the last good reply (flagged stale) instead of an error while the endpoint is limited.
+{
+  const dir = tempDir("omc-usage-memo-");
+  const file = join(dir, "usage-plan.json");
+  let clock = 1_000_000;
+  let calls = 0;
+  let mode: "ok" | "limited" | "down" = "ok";
+  const fake = async () => {
+    calls++;
+    if (mode === "limited")
+      return { status: 429, headers: { get: () => null }, json: async () => ({}) };
+    if (mode === "down") throw new Error("ECONNREFUSED");
+    return {
+      status: 200,
+      json: async () => ({ limits: [{ kind: "session", percent: 40, resets_at: 1_900_000_000 }] }),
+    };
+  };
+  const reader = () => createUsageReader(file, fake, () => clock);
+  const flush = () => new Promise((r) => setTimeout(r, 30));
+
+  const first = reader();
+  // many tabs asking at once share one read; later asks inside the cache life read nothing
+  const all = await Promise.all([first(home), first(home), first(home)]);
+  assert.equal(calls, 1);
+  assert.ok(all.every((r) => r.ok && !r.stale));
+  clock += 60_000;
+  await first(home);
+  assert.equal(calls, 1);
+  await flush();
+
+  // a restart (new reader, same file) with the endpoint limited: last good figures, not an error
+  mode = "limited";
+  clock += 10 * 60_000;
+  const second = reader();
+  const stale = await second(home);
+  assert.equal(calls, 2);
+  assert.ok(stale.ok && stale.stale === true && stale.windows.length === 1);
+  // inside the backoff the endpoint is not touched, however often it is asked
+  await second(home);
+  await second(home);
+  assert.equal(calls, 2);
+  await flush();
+
+  // the backoff deadline survived a second restart too
+  const third = reader();
+  const still = await third(home);
+  assert.equal(calls, 2);
+  assert.ok(still.ok && still.stale === true);
+
+  // after the deadline it tries again, and a success clears the limit and the staleness
+  mode = "ok";
+  clock += 60 * 60_000;
+  const back = await third(home);
+  assert.equal(calls, 3);
+  assert.ok(back.ok && back.stale === undefined);
+  await flush();
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).entries[home].limitedUntil, 0);
+
+  // any failure with a good reply known shows it, stale; another login's figures are never lent
+  mode = "down";
+  clock += 10 * 60_000;
+  const failed = await third(home);
+  assert.ok(failed.ok && failed.stale === true);
+  const other = await third(join(dir, "other-home"));
+  assert.equal(other.ok, false);
+
+  // nothing known: the error is all there is
+  const fresh = createUsageReader(join(dir, "none.json"), async () => ({
+    status: 429,
+    headers: { get: () => null },
+    json: async () => ({}),
+  }), () => clock);
+  const bare = await fresh(home);
+  assert.deepEqual(bare.ok === false && bare.error, "usage endpoint rate limited");
+
+  // repeated 429s back off longer, up to a ceiling; a long Retry-After wins
+  assert.equal(backoffMs(undefined, 1), 60_000);
+  assert.equal(backoffMs(60_000, 3), 240_000);
+  assert.equal(backoffMs(60_000, 20), 15 * 60_000);
+  assert.equal(backoffMs(3_600_000, 1), 3_600_000);
+
+  // a damaged file is no memo, not a crash
+  assert.equal(parseUsageMemo("{not json"), undefined);
+  assert.equal(parseUsageMemo('{"entries":[]}'), undefined);
+  assert.deepEqual(parseUsageMemo('{"entries":{"h":{"reply":{"ok":false},"limitedUntil":5}}}'), {
+    h: { at: 0, limitedUntil: 5, strikes: 0 },
+  });
+  console.log("usage reader ok");
+}
