@@ -6633,6 +6633,19 @@ console.log("interrupt-on-abort ok");
   proc.alive = false;
   assert.equal(await replaced, false);
   assert.equal(written.length, 0, "a replaced process is never asked");
+
+  // The turn boundary asks once with no wait: no agent yet leaves it owed, an agent settles it.
+  proc.alive = true;
+  proc.bridgeStale = true;
+  agentLive = false;
+  written.length = 0;
+  await adapter.reconnectIfStale(proc, "s");
+  assert.equal(written.length, 0, "turn boundary: nothing sent before the agent exists");
+  assert.equal(proc.bridgeStale, true, "and the reconnect stays owed");
+  agentLive = true;
+  await adapter.reconnectIfStale(proc, "s");
+  assert.equal(written.length, 1, "turn boundary with the agent: one reconnect");
+  assert.equal(proc.bridgeStale, false);
   console.log("mcp-reconnect waits for a live agent ok");
 }
 
