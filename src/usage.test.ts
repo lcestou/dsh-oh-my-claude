@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { UsageCredits } from "./usage.js";
 import {
@@ -515,6 +515,18 @@ console.log("breakdown-cache ok");
   assert.equal(calls, before + 1);
   const other = await third(join(dir, "other-home"));
   assert.equal(other.ok, false);
+
+  // a box logged out since: its old figures are not shown, the missing login is
+  mode = "ok";
+  const leaving = tempDir("omc-usage-leaving-");
+  const creds = join(leaving, ".credentials.json");
+  writeFileSync(creds, readFileSync(join(home, ".credentials.json")));
+  assert.ok((await third(leaving)).ok);
+  rmSync(creds);
+  clock += 10 * 60_000;
+  const loggedOut = await third(leaving);
+  assert.ok(!loggedOut.ok && loggedOut.error === "needs a Claude Code login");
+  mode = "down";
 
   // nothing known: the error is all there is
   const fresh = createUsageReader(

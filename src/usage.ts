@@ -535,7 +535,7 @@ export function parseUsageMemo(text: string): Record<string, UsageMemo> | undefi
 /** The last good reply of this memo, flagged stale, in place of `error`; the error itself when
  *  nothing is known, or when the login is gone (that one the panel must say). */
 const fallback = (m: UsageMemo, error: UsageReply): UsageReply =>
-  m.reply && !(!error.ok && error.error.startsWith("login expired"))
+  m.reply && !(!error.ok && /^(login expired|needs a Claude Code login)/.test(error.error))
     ? { ...m.reply, stale: true as const }
     : error;
 
@@ -559,6 +559,8 @@ export function createUsageReader(
   // this every tab's poll would ask Anthropic again. Memory only: a restart may try once at once.
   const failed = new Map<string, { at: number; reply: UsageReply }>();
   let usageLoaded: Promise<void> | undefined;
+  /** Reads the file once per reader; a missing or damaged file leaves the memo empty, never throws,
+   *  and an entry already in memory wins over the one on disk. */
   const usageLoad = (): Promise<void> =>
     (usageLoaded ??= readFile(file, "utf8")
       .then(parseUsageMemo)
@@ -567,18 +569,21 @@ export function createUsageReader(
         for (const [key, entry] of Object.entries(entries ?? {}))
           if (!memo.has(key)) memo.set(key, entry);
       }));
+  /** Writes the whole memo in the background; a failed write is dropped, not retried. */
   const usageSave = () => {
     void writeJson(file, { entries: Object.fromEntries(memo) }).catch(() => {
       // Still works in memory; the next restart just starts blind again.
     });
   };
+  /** This key's memo entry, created empty (and so never on disk until a read sets it) if new. */
   const slot = (key: string): UsageMemo => {
     let m = memo.get(key);
     if (!m) memo.set(key, (m = { at: 0, limitedUntil: 0, strikes: 0 }));
     return m;
   };
-  // Background polls never force: the endpoint's budget is the account's, shared by every tab,
-  // browser and CLI, so one read per CACHE_MS serves them all.
+  /** One box's plan usage. Never forces: the endpoint's budget is the account's, shared by every
+   *  tab, browser and CLI, so one read per CACHE_MS serves them all. Answers stale figures, not an
+   *  error, while limited or failing, unless the login itself is gone. */
   const read = async (home: string, sshHost?: string): Promise<UsageReply> => {
     await usageLoad();
     const key = sshHost ? `ssh:${sshHost}` : home;
