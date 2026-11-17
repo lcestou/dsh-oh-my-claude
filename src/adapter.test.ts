@@ -2639,7 +2639,11 @@ console.log("ok");
   const team = message({
     role: "user",
     id: "team-1",
-    source: { kind: "@contexera/dsh-agent-team" },
+    source: {
+      kind: "@contexera/dsh-agent-team",
+      form: "notice",
+      summary: "Team Inbox has unread work.",
+    },
     content: [{ type: "text", text: "Team Inbox has unread work." }],
   });
   assert.equal(wakeOnlyTurn([user, asst, wakeV4, team]), false, "a pending Team notice is sent");
@@ -10139,7 +10143,11 @@ console.log("watch-save-race ok");
   const team = {
     role: "user",
     id: "team-2",
-    source: { kind: "@contexera/dsh-agent-team" },
+    source: {
+      kind: "@contexera/dsh-agent-team",
+      form: "notice",
+      summary: "Team Inbox has unread work.",
+    },
     content: [{ type: "text", text: "Team Inbox has unread work." }],
   };
   const history = [
