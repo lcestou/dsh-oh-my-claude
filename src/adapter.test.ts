@@ -2683,8 +2683,8 @@ console.log("ok");
     content: [{ type: "text", text: "Current time: 2026-11-16T22:10:00-05:00" }],
   });
   assert.equal(wakeOnlyTurn([user, asst, wake, clock]), true, "a time snapshot is not input");
-  // The aside and mirror turns ask the same question with no wake in the batch.
-  assert.equal(hasPendingInput([user, asst, team]), true, "a Team notice beside a mirror is sent");
+  // The aside turn asks the same question with no wake in the batch.
+  assert.equal(hasPendingInput([user, asst, team]), true, "a Team notice beside an aside is sent");
   assert.equal(hasPendingInput([user, asst, clock, catalog]), false, "context alone is not");
   assert.equal(hasPendingInput([user, asst, user]), true, "a person's prompt is");
   assert.equal(hasPendingInput([user, asst, team], { sent: new Set(["team-1"]) }), false);

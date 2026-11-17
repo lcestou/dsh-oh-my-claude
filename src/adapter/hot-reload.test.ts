@@ -409,6 +409,9 @@ const busyIn = (dir: string): string[] => {
   assert.match(JSON.stringify(last), /"kind":"error"/, "the step itself still fails");
   for (let i = 0; i < 50 && handed.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(handed, ["s-orphan"], "the new instance takes the session over");
+  // The mark is a queued file write too; wait for it rather than read it the same tick.
+  for (let i = 0; i < 100 && busyIn(a.stateDir).length === 0; i++)
+    await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(busyIn(a.stateDir), ["s-orphan"], "the mark stays for it, or for the next boot");
   rmSync(a.stateDir, { recursive: true, force: true });
   if (b) mounts.delete(b.providerId);
@@ -426,6 +429,10 @@ const busyIn = (dir: string): string[] => {
   const { proc } = await runStep(c, "s-plain", () => {});
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(resumed, 0, "no reload, no resume");
+  // The clear is a file write queued behind the others; under the parallel suite it can land past
+  // a fixed wait, so wait for it, up to two seconds.
+  for (let i = 0; i < 100 && busyIn(c.stateDir).length > 0; i++)
+    await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(busyIn(c.stateDir), [], "the busy mark is cleared");
   assert.equal(proc.killed, 1, "and the dead process is cleaned up as before");
   rmSync(c.stateDir, { recursive: true, force: true });

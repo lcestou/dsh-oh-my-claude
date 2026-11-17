@@ -234,9 +234,15 @@ export interface PendingFilter {
     copies?: NativeCopies;
 }
 /** Whether anything dsh delivered after the last assistant step still has to reach Claude. The
- *  turns that answer on their own (a wake's drain, an aside, a terminal mirror) go on to a normal
- *  turn when it does. Counting only `user`-kind messages dropped an Agent Team notice (#311). */
+ *  turns that answer on their own (a wake's drain, an aside) go on to a normal turn when it does.
+ *  A terminal mirror does not use this: only a person's prompt may start a turn there. Counting only `user`-kind messages dropped an Agent Team notice (#311). */
 export declare function hasPendingInput(messages: LooseMessage[] | undefined, filter?: PendingFilter): boolean;
+/** Whether a person typed something beside a terminal mirror turn, which then goes on to a real
+ *  Claude turn. Only a `user`-kind message counts, never an automated notice (a job line, a
+ *  subagent report, a Team notice): the session belongs to a terminal, and a real turn there runs
+ *  the model against someone else's conversation, which is why `wake()` leaves such sessions alone
+ *  (the 2026-09-11 incident it records). The wake and the aside count every producer instead. */
+export declare const typedAfterMirror: (messages: LooseMessage[] | undefined) => boolean;
 /** A turn opened by our own wake notice with nothing else to send: only drain what Claude already
  *  wrote. Anything else waiting in the same batch, whoever produced it, makes it a normal turn. */
 export declare function wakeOnlyTurn(messages: LooseMessage[] | undefined, filter?: PendingFilter): boolean;
