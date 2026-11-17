@@ -413,6 +413,7 @@ import {
   userPromptCount,
   WAKE_TEXT,
   wakeOnlyTurn,
+  hasPendingInput,
   wantedUltracode,
   WATCH_LOOKBACK_BYTES,
 } from "./turn.js";
@@ -5796,7 +5797,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       options = { ...options, messages };
       // Nothing else was typed and no step is waiting on us: the aside is the whole turn.
       const midTurn = held?.alive === true && (held.relays.size > 0 || held.parked !== undefined);
-      if (!midTurn && !afterLastAssistant(messages).some((m) => m.source?.kind === "user")) {
+      if (!midTurn && !hasPendingInput(messages, { sent: held?.sent })) {
         yield* new Translator({ toolActivity: false }).wholeBlock(
           "text",
           `Asked as a side question. The answer opens in the ✻ aside bubble.`,
@@ -5807,6 +5808,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // A streamed mirror turn: the followup openStream sent carries the running terminal exchange's
     // prompt; the reply fills live from the transcript as it grows. Nothing goes to Claude.
+    // Messages Claude already got live, which a mirror turn must not mistake for something to send.
+    const sentLive = this.processes.get(registryKey(this.providerId, options.sessionId))?.sent;
     const stream = this.streaming.get(options.sessionId);
     const streamMine =
       stream && afterLastAssistant(options.messages).find((m) => m.id === stream.id);
@@ -5814,7 +5817,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const messages = (options.messages ?? []).filter((m) => m !== streamMine);
       options = { ...options, messages };
       yield* this.streamMirror(options.sessionId, stream);
-      if (!afterLastAssistant(messages).some((m) => m.source?.kind === "user")) {
+      if (!hasPendingInput(messages, { sent: sentLive })) {
         yield { type: "finish", reason: { kind: "stop" } };
         setTimeout(() => void this.pumpMirror(options.sessionId), 1000).unref?.();
         return;
@@ -5834,7 +5837,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         "text",
         mirrorReply(flight.turn, this.config.toolTextLimit),
       );
-      if (!afterLastAssistant(messages).some((m) => m.source?.kind === "user")) {
+      if (!hasPendingInput(messages, { sent: sentLive })) {
         yield { type: "finish", reason: { kind: "stop" } };
         // The next exchange, once dsh has closed this turn: a followup sent while it closes would
         // ride in as a steer. ponytail: a fixed second stands in for a turn/end hook dsh does not

@@ -233,9 +233,12 @@ export interface PendingFilter {
     drops?: ReadonlySet<ContextSource>;
     copies?: NativeCopies;
 }
+/** Whether anything dsh delivered after the last assistant step still has to reach Claude. The
+ *  turns that answer on their own (a wake's drain, an aside, a terminal mirror) go on to a normal
+ *  turn when it does. Counting only `user`-kind messages dropped an Agent Team notice (#311). */
+export declare function hasPendingInput(messages: LooseMessage[] | undefined, filter?: PendingFilter): boolean;
 /** A turn opened by our own wake notice with nothing else to send: only drain what Claude already
- *  wrote. Anything else waiting in the same batch, whoever produced it (#311: an Agent Team notice
- *  beside the wake was dropped, since only a `user`-kind message counted), makes it a normal turn. */
+ *  wrote. Anything else waiting in the same batch, whoever produced it, makes it a normal turn. */
 export declare function wakeOnlyTurn(messages: LooseMessage[] | undefined, filter?: PendingFilter): boolean;
 /** Drop messages Claude already received live on stdin (matched by `steerKey`). */
 export declare function dropSent<T extends LooseMessage>(messages: T[] | undefined, sent: Set<string> | undefined): T[];

@@ -58,6 +58,7 @@ import {
   steerKey,
   afterLastAssistant,
   wakeOnlyTurn,
+  hasPendingInput,
   WAKE_TEXT,
   withoutNativeInstructions,
   finishReason,
@@ -2675,6 +2676,18 @@ console.log("ok");
     content: [{ type: "image", attachment: { bytes: 10 } }],
   });
   assert.equal(wakeOnlyTurn([user, asst, wake, picture]), false, "an image alone is input");
+  // dsh-time-context adds this before a step once ten minutes have passed since its last one.
+  const clock = message({
+    role: "user",
+    source: { kind: "time-context", form: "snapshot" },
+    content: [{ type: "text", text: "Current time: 2026-11-16T22:10:00-05:00" }],
+  });
+  assert.equal(wakeOnlyTurn([user, asst, wake, clock]), true, "a time snapshot is not input");
+  // The aside and mirror turns ask the same question with no wake in the batch.
+  assert.equal(hasPendingInput([user, asst, team]), true, "a Team notice beside a mirror is sent");
+  assert.equal(hasPendingInput([user, asst, clock, catalog]), false, "context alone is not");
+  assert.equal(hasPendingInput([user, asst, user]), true, "a person's prompt is");
+  assert.equal(hasPendingInput([user, asst, team], { sent: new Set(["team-1"]) }), false);
 }
 {
   // Claude Code's own compaction shows as one line; other system events stay silent.
