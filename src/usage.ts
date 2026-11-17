@@ -543,12 +543,13 @@ const fallback = (m: UsageMemo, error: UsageReply): UsageReply =>
  * The plan-usage reader behind the route: one read of the endpoint per CACHE_MS per login however
  * many tabs, browsers and boxes ask, the last good reply and the 429 backoff kept in `file` so a
  * restart does not start blind, and the last good reply (flagged `stale`) served instead of an error
- * when the endpoint cannot be read. `fetchImpl` and `now` are for tests.
+ * when the endpoint cannot be read. `fetchImpl`, `now` and `write` are for tests.
  */
 export function createUsageReader(
   file: string,
   fetchImpl: UsageFetch = fetch,
   now: () => number = Date.now,
+  write: (file: string, value: unknown) => Promise<void> = writeJson,
 ): (home: string, sshHost?: string) => Promise<UsageReply> {
   // Per-key memo (a home, or an ssh box) so different instances keep their own answers. It is also
   // written to disk: a restart used to leave the route blind, so the first read after it, made
@@ -569,11 +570,14 @@ export function createUsageReader(
         for (const [key, entry] of Object.entries(entries ?? {}))
           if (!memo.has(key)) memo.set(key, entry);
       }));
-  /** Writes the whole memo in the background; a failed write is dropped, not retried. */
+  let saving: Promise<void> = Promise.resolve();
+  /** Writes the whole memo in the background, one write at a time and each snapshotting the memo
+   *  as it starts, so a slow earlier write can never land over a later one. A failed write is
+   *  dropped, not retried: the memo still works in memory and the next restart starts blind. */
   const usageSave = () => {
-    void writeJson(file, { entries: Object.fromEntries(memo) }).catch(() => {
-      // Still works in memory; the next restart just starts blind again.
-    });
+    saving = saving
+      .then(() => write(file, { entries: Object.fromEntries(memo) }))
+      .catch(() => undefined);
   };
   /** This key's memo entry, created empty (and so never on disk until a read sets it) if new. */
   const slot = (key: string): UsageMemo => {
@@ -671,10 +675,14 @@ export function registerUsageRoute(
     for (const [key, entry] of Object.entries(entries))
       if (!bdCached.has(key)) bdCached.set(key, entry);
   };
+  let bdSaving: Promise<void> = Promise.resolve();
+  /** Writes the breakdown cache one write at a time, each snapshotting it as it starts, so an
+   *  older snapshot never lands last. A failed write is dropped: the cache still works in memory
+   *  and the next restart just pays the spawn again. */
   const bdSave = () => {
-    void writeJson(bdFile, { entries: Object.fromEntries(bdCached) }).catch(() => {
-      // A cache that cannot be written still works in memory; the next restart just pays again.
-    });
+    bdSaving = bdSaving
+      .then(() => writeJson(bdFile, { entries: Object.fromEntries(bdCached) }))
+      .catch(() => undefined);
   };
   const readBd = (
     force: boolean,

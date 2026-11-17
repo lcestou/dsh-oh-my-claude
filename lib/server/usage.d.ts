@@ -163,9 +163,9 @@ export declare function parseUsageMemo(text: string): Record<string, UsageMemo> 
  * The plan-usage reader behind the route: one read of the endpoint per CACHE_MS per login however
  * many tabs, browsers and boxes ask, the last good reply and the 429 backoff kept in `file` so a
  * restart does not start blind, and the last good reply (flagged `stale`) served instead of an error
- * when the endpoint cannot be read. `fetchImpl` and `now` are for tests.
+ * when the endpoint cannot be read. `fetchImpl`, `now` and `write` are for tests.
  */
-export declare function createUsageReader(file: string, fetchImpl?: UsageFetch, now?: () => number): (home: string, sshHost?: string) => Promise<UsageReply>;
+export declare function createUsageReader(file: string, fetchImpl?: UsageFetch, now?: () => number, write?: (file: string, value: unknown) => Promise<void>): (home: string, sshHost?: string) => Promise<UsageReply>;
 /** Serve `/dsh-oh-my-claude/usage` from a cache that survives a restart; `/usage/breakdown?force=1` refreshes sooner. */
 export declare function registerUsageRoute(ctx: PluginContext, log: (level: string, msg: string) => void, identity: (home?: string, sshHost?: string) => Promise<{
     host: string;
