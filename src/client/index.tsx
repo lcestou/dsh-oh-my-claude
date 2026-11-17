@@ -14,7 +14,6 @@ import {
   T,
   readJson,
   ACCENT,
-  SHIMMER,
   SessionData,
   isOwnedActive,
   activeClaudeSession,
@@ -26,6 +25,7 @@ import {
   retire,
   revive,
 } from "./shared.js";
+import { ensureSendButtonStyle } from "./send-button.js";
 import { themeSplitPatch, hasTheme } from "./theme.js";
 import { PluginUpdateBadge } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
@@ -148,33 +148,16 @@ const spinnerRowTitle = (dot: Element): string | null =>
  *  the title match on a dsh without the row-action slot. */
 let markActive = false;
 
-/** The composer's primary send/stop button shares the local CSS-module class `_primary` with one
- *  button in a settings view, so class alone is not enough. The real one shares an ancestor with
- *  the message box (a contenteditable). Walk up until an ancestor holds one; null means it is not
- *  the composer button. Structural, so no hashed class is needed. */
-const inComposer = (node: Element, box: Element | null): boolean => {
-  // `contains` per level, against a message box the caller looked up once. The walk used to run a
-  // fresh subtree query at every ancestor, which is the whole document by the time it reaches the
-  // top; the query then moved out here, and now out again to the scan, which checks several
-  // buttons per pass and was paying for one lookup each.
-  if (box === null) return false;
-  for (let p = node.parentElement; p && p !== document.body; p = p.parentElement)
-    if (p.contains(box)) return true;
-  return false;
-};
-
-/** Keep the composer's send button on the accent while the open session is Claude, and, only on a
- *  dsh without the row-action slot, tint the running Claude rows' sidebar glyphs by title match.
- *  Runs once a second while the tab is visible, waking on visibilitychange; everywhere else the
- *  running glyphs are coloured by the stylesheet off the body and row marks, with no walk. */
+/** Only on a dsh without the row-action slot, tint the running Claude rows' sidebar glyphs by title
+ *  match. Runs once a second while the tab is visible, waking on visibilitychange; everywhere else
+ *  the running glyphs are coloured by the stylesheet off the body and row marks, with no walk. The
+ *  send button is a stylesheet rule now (`send-button.ts`). */
 function watchSessionSpinners(ctx: ClientCtx) {
   const MARK = "data-omc-spinner";
-  const SEND_MARK = "data-omc-send";
   const scan = () => {
     // A hidden tab is not being looked at, and this pass is two document-wide queries a second. The
     // visibility listener below runs it once the moment the tab comes back.
     if (document.hidden) return;
-    const openClaude = activeClaudeSession(ctx) !== undefined;
     // The glyphs are tinted by the stylesheet: the ones inside the open conversation off
     // `body[data-omc-claude]`, a sidebar row's off the `data-omc-claude` mark the row-action slot
     // paints on its own row. Only a dsh without that slot needs this walk, which tints the running
@@ -194,27 +177,6 @@ function watchSessionSpinners(ctx: ClientCtx) {
           dot.style.color = "";
           dot.removeAttribute(MARK);
         }
-      }
-    }
-    // The composer's send/stop button (one button, aria-label toggles). dsh fills it from
-    // `--dsw-alias-button-info-*`; overriding those two vars on the button recolours both the base
-    // and hover states in one place, and clearing them hands it back to dsh's blue on the next pass.
-    // One message-box lookup for the pass: `inComposer` is asked about every primary button dsh
-    // draws, and each ask used to run its own subtree query for the same element.
-    const box = document.querySelector("[contenteditable]");
-    // Only the composer's own button is wanted, so only its form is searched: a substring class
-    // match over the whole document, once a second, is the kind of query a browser cannot index.
-    const composerRoot = box?.closest("form") ?? document;
-    for (const sendBtn of composerRoot.querySelectorAll<HTMLElement>('button[class*="_primary"]')) {
-      const sendWant = openClaude && hasTheme("send") && inComposer(sendBtn, box);
-      if (sendWant) {
-        sendBtn.style.setProperty("--dsw-alias-button-info-fill", ACCENT);
-        sendBtn.style.setProperty("--dsw-alias-button-info-hover", SHIMMER);
-        sendBtn.setAttribute(SEND_MARK, "1");
-      } else if (sendBtn.hasAttribute(SEND_MARK)) {
-        sendBtn.style.removeProperty("--dsw-alias-button-info-fill");
-        sendBtn.style.removeProperty("--dsw-alias-button-info-hover");
-        sendBtn.removeAttribute(SEND_MARK);
       }
     }
   };
@@ -265,6 +227,7 @@ export function apply(ctx: ClientCtx) {
   watchRunButtons(ctx);
   watchSessionNotices(ctx);
   watchSessionSpinners(ctx);
+  ensureSendButtonStyle();
   watchUltrathink(ctx);
   watchToolFolds();
   watchPluginsPage(ctx);
