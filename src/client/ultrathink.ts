@@ -211,7 +211,9 @@ export const segsIn = (host: Element): HostText => {
  * first match to ten past the last and wraps. Sent messages never shimmer, as in the CLI.
  */
 export function watchUltrathink(ctx: ClientCtx) {
-  // A browser without the Highlight API paints nothing; every Chromium since 105 has it.
+  // A browser without the Highlight API paints nothing. The plugin as a whole needs a far newer
+  // Chromium than the API does (its sheets use `:has()` and `@position-try`, Chrome 125), so the
+  // newer array methods below are safe wherever this runs.
   if (!("highlights" in CSS) || !("Highlight" in globalThis)) return;
   // Every set and delete goes through here, so the sheet carries a rule for each name that is
   // painting (see `createHighlightRegistry`).
