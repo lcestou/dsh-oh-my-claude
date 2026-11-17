@@ -32,7 +32,9 @@ import {
 import { type FsBox } from "../remote-fs.js";
 import { type LiveMode, type Translator } from "../translator.js";
 import {
+  attachmentsOf,
   CLI_COPIES,
+  contextSourceOf,
   promptTextOf,
   steerKey,
   textOf,
@@ -435,11 +437,36 @@ const isWake = (m: LooseMessage) => {
   const last = m.content.at(-1);
   return last?.type === "text" && last.text === WAKE_TEXT;
 };
-/** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
- *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
-export function wakeOnlyTurn(messages: LooseMessage[] | undefined): boolean {
+/** What a turn knows about the messages it would send: the ones already written to Claude's stdin
+ *  live (by `steerKey`), and the context blocks and native copies that are withheld. */
+export interface PendingFilter {
+  sent?: ReadonlySet<string>;
+  drops?: ReadonlySet<ContextSource>;
+  copies?: NativeCopies;
+}
+
+/** A message this turn would still have to hand Claude, from any producer: a person's prompt, an
+ *  Agent Team notice, another plugin's message, one of our own notices other than the wake (a
+ *  reconnect notice is a prompt). Not our wake itself, a tool result, a context block (instructions,
+ *  skill catalog, runtime snapshot: those ride along with the next real prompt), a message already
+ *  written to stdin live, or one left with neither text nor an image once withheld parts are cut. */
+const pendingInput = (m: LooseMessage, f: PendingFilter): boolean =>
+  m.role === "user" &&
+  !isWake(m) &&
+  m.source?.kind !== "tool" &&
+  contextSourceOf(m) === undefined &&
+  !f.sent?.has(steerKey(m) ?? "") &&
+  (promptTextOf(m, f.drops, f.copies) !== "" || attachmentsOf(m.content).length > 0);
+
+/** A turn opened by our own wake notice with nothing else to send: only drain what Claude already
+ *  wrote. Anything else waiting in the same batch, whoever produced it (#311: an Agent Team notice
+ *  beside the wake was dropped, since only a `user`-kind message counted), makes it a normal turn. */
+export function wakeOnlyTurn(
+  messages: LooseMessage[] | undefined,
+  filter: PendingFilter = {},
+): boolean {
   const fresh = afterLastAssistant(messages);
-  return fresh.some(isWake) && !fresh.some((m) => m.source?.kind === "user");
+  return fresh.some(isWake) && !fresh.some((m) => pendingInput(m, filter));
 }
 
 /** Drop messages Claude already received live on stdin (matched by `steerKey`). */

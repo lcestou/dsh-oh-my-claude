@@ -226,9 +226,17 @@ export declare const WAKE_THROUGH_PARENT_HOLD_MS = 10000;
 export declare const RESUME_DELAY_MS = 10000;
 /** Slack after a usage limit's reset instant before the continue notice goes out. */
 export declare const LIMIT_GRACE_MS = 5000;
-/** A turn opened by our own wake notice, with no user prompt to send: only drain what Claude
- *  already wrote. A user prompt in the same batch takes precedence and is sent normally. */
-export declare function wakeOnlyTurn(messages: LooseMessage[] | undefined): boolean;
+/** What a turn knows about the messages it would send: the ones already written to Claude's stdin
+ *  live (by `steerKey`), and the context blocks and native copies that are withheld. */
+export interface PendingFilter {
+    sent?: ReadonlySet<string>;
+    drops?: ReadonlySet<ContextSource>;
+    copies?: NativeCopies;
+}
+/** A turn opened by our own wake notice with nothing else to send: only drain what Claude already
+ *  wrote. Anything else waiting in the same batch, whoever produced it (#311: an Agent Team notice
+ *  beside the wake was dropped, since only a `user`-kind message counted), makes it a normal turn. */
+export declare function wakeOnlyTurn(messages: LooseMessage[] | undefined, filter?: PendingFilter): boolean;
 /** Drop messages Claude already received live on stdin (matched by `steerKey`). */
 export declare function dropSent<T extends LooseMessage>(messages: T[] | undefined, sent: Set<string> | undefined): T[];
 /** What dsh delivered at this step boundary besides the tool result: steers the user sent while

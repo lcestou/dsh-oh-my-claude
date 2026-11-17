@@ -4819,6 +4819,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const key = specKey(prep.spec);
     const key2 = registryKey(this.providerId, options.sessionId);
     let proc = this.processes.get(key2);
+    // What a wake turn must not mistake for pending input: messages already written live, and the
+    // context blocks and native copies the prompt would withhold.
+    const pendingFilter = { sent: proc?.sent, drops: prep.drops, copies: prep.copies };
     // A turn is in flight on this session and this caller is not its continuation. A mid-turn
     // relay or steer arrives with `cont.proc` and never reaches here. Killing the process would
     // end that running turn to make room for this one, so the second caller is refused instead;
@@ -4829,7 +4832,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // context stops where the transcript did not. Replace it, so the `--resume` below reads the
     // terminal turns back in. Not on a wake turn: that one exists to drain what the live process
     // already holds, and a kill here would lose it.
-    if (proc?.alive && proc.staleContext && !wakeOnlyTurn(options.messages)) {
+    if (proc?.alive && proc.staleContext && !wakeOnlyTurn(options.messages, pendingFilter)) {
       proc.kill();
       proc = undefined;
     }
@@ -4839,7 +4842,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const keepForDrain =
       proc?.alive === true &&
       flipOnly(proc.key, proc.spec?.child, prep.spec) &&
-      (wakeOnlyTurn(options.messages) || proc.hasTurnOutput());
+      (wakeOnlyTurn(options.messages, pendingFilter) || proc.hasTurnOutput());
     if (proc?.alive && proc.key !== key && !keepForDrain) await this.retarget(proc, prep.spec);
     if (proc && (!proc.alive || (proc.key !== key && !keepForDrain))) {
       proc.kill();
@@ -6176,7 +6179,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Set once this step starts gathering a relay batch; from then on it ends on that relay.
     let relaying = false;
     let outcome: Outcome = "ended"; // ended | finished | relayed | parked | retry
-    const wakeOnly = cont.mode === "prompt" && wakeOnlyTurn(options.messages);
+    // `options` is the continuation's: messages Claude already got live are dropped from it.
+    const wakeOnly =
+      cont.mode === "prompt" &&
+      wakeOnlyTurn(options.messages, { drops: prep.drops, copies: prep.copies });
     const onAbort = () => {
       // A dsh shutdown in keeper mode: leave Claude alone. It finishes the turn into the keeper's
       // buffer and the next boot drains it (2026-09-05: the interrupt here cancelled the reply that

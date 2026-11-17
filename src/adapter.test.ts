@@ -2634,6 +2634,47 @@ console.log("ok");
     content: [{ type: "text", text: WAKE_TEXT }],
   });
   assert.equal(wakeOnlyTurn([user, asst, wakeV4]), true, "the v4 producer kind is our notice too");
+  // #311: any producer's pending message beside the wake makes a normal turn, not only `user`.
+  const team = message({
+    role: "user",
+    id: "team-1",
+    source: { kind: "@contexera/dsh-agent-team" },
+    content: [{ type: "text", text: "Team Inbox has unread work." }],
+  });
+  assert.equal(wakeOnlyTurn([user, asst, wakeV4, team]), false, "a pending Team notice is sent");
+  assert.equal(
+    wakeOnlyTurn([user, asst, wakeV4, team], { sent: new Set(["team-1"]) }),
+    true,
+    "a notice Claude already got live is not sent twice",
+  );
+  const reconnect = message({
+    role: "user",
+    source: { kind: "plugin:dsh-oh-my-claude", form: "notice" },
+    content: [{ type: "text", text: RECONNECT_TEXT }],
+  });
+  assert.equal(
+    wakeOnlyTurn([user, asst, wake, reconnect]),
+    false,
+    "our reconnect notice is a prompt",
+  );
+  const catalog = message({
+    role: "user",
+    source: { kind: "skill-catalog" },
+    content: [{ type: "text", text: "Skills: deploy, review" }],
+  });
+  assert.equal(wakeOnlyTurn([user, asst, wake, catalog]), true, "a context block is not input");
+  const tool = message({
+    role: "user",
+    source: { kind: "tool" },
+    content: [{ type: "text", text: "done" }],
+  });
+  assert.equal(wakeOnlyTurn([user, asst, wake, tool]), true, "a tool result is not input");
+  const picture = message({
+    role: "user",
+    source: { kind: "@contexera/dsh-agent-team" },
+    content: [{ type: "image", attachment: { bytes: 10 } }],
+  });
+  assert.equal(wakeOnlyTurn([user, asst, wake, picture]), false, "an image alone is input");
 }
 {
   // Claude Code's own compaction shows as one line; other system events stay silent.
@@ -8476,6 +8517,11 @@ console.log("interrupt-on-abort ok");
       message?: { content?: Array<Record<string, unknown>> };
     };
   const settle = () => new Promise((r) => setTimeout(r, 10));
+  /** Waits up to two seconds for the nth stdin line: an image steer saves a copy to disk first,
+   *  which a loaded machine (the gate runs eight test files at once) can take past a fixed 10 ms. */
+  const written = async (n: number) => {
+    for (let i = 0; i < 400 && writes.length < n; i++) await new Promise((r) => setTimeout(r, 5));
+  };
 
   splice("m1", [
     {
@@ -8487,7 +8533,7 @@ console.log("interrupt-on-abort ok");
   assert.ok(proc.sent.has("r-m1"), "marked sent at once, so a park during the load skips it");
   assert.equal(proc.steerPending, true, "the step still parks, so dsh draws it in the chat");
   assert.equal(proc.forwarded, 1);
-  await settle();
+  await written(1);
   assert.equal(writes.length, 1, "file and text: written live");
   const fileLine = lineOf(0);
   assert.equal(
@@ -8509,7 +8555,7 @@ console.log("interrupt-on-abort ok");
       attachment: { attachmentId: "sha256:def", mediaType: "image/png" },
     },
   ]);
-  await settle();
+  await written(2);
   const imageLine = lineOf(1).message?.content ?? [];
   assert.equal(imageLine[1]?.type, "image", "an image alone: written live with its bytes");
   assert.ok(String(imageLine[0]?.text).includes('saved at "'), "and its saved-copy note");
@@ -8524,7 +8570,7 @@ console.log("interrupt-on-abort ok");
     },
   ]);
   proc.steerPending = false;
-  await settle();
+  await written(3);
   assert.equal(writes.length, 3, "still written");
   assert.equal(proc.steers.has("m3"), false, "but not listed once a park has passed");
 
@@ -10025,6 +10071,87 @@ console.log("watch-save-race ok");
     "the placeholder carries the pending note",
   );
   console.log("flush-on-death ok");
+}
+
+// #311 through the real stream() loop: a wake with output queued only drains it, and a wake with
+// an Agent Team notice beside it opens a turn so the notice reaches Claude. acquire and openTurn
+// are stubbed, so no process is spawned and the test reads whether the prompt went out.
+{
+  const session = {
+    header: { version: 0 },
+    snapshotEvents: () => [],
+    append: () => ({ seq: 1 }),
+  };
+  const a = new ClaudeCodeAdapter(
+    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    Config({ resume: true, dshTools: false }),
+  );
+  a.stateDir = joinPath(tmpdir(), "omc-wake-team-nowrite");
+  const opened: string[] = [];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    parked: undefined,
+    steerPending: false,
+    relays: new Map(),
+    dshIds: new Set(),
+    relayed: new Set(),
+    sent: new Set(),
+    queue: { lines: [] },
+    queuedIndexes: [],
+    idleKilled: false,
+    exitCode: 0,
+    stderr: "",
+    stray: "",
+    staleResults: 0,
+    // Claude replied on its own while dsh was idle: one turn's output waits to be drained.
+    countStaleResults: () => 1,
+    write: () => true,
+    nextEvent: async () => null,
+    kill: () => {},
+  };
+  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
+  a.acquire = async () => ({ prep, proc }) as any;
+  a.reconnectIfStale = async () => {};
+  a.watchTranscript = (async () => {}) as any;
+  a.pumpMirror = (async () => {}) as any;
+  a.openTurn = (async (_cont: unknown, _proc: unknown, p: { input: string }) => {
+    opened.push(p.input);
+  }) as any;
+  const wake = {
+    role: "user",
+    source: { kind: "plugin:dsh-oh-my-claude", form: "notice" },
+    content: [{ type: "text", text: WAKE_TEXT }],
+  };
+  const team = {
+    role: "user",
+    id: "team-2",
+    source: { kind: "@contexera/dsh-agent-team" },
+    content: [{ type: "text", text: "Team Inbox has unread work." }],
+  };
+  const history = [
+    { role: "user", source: { kind: "user" }, content: [{ type: "text", text: "start" }] },
+    { role: "assistant", content: [{ type: "text", text: "on it" }] },
+  ];
+  /** Runs one turn over `extra` after the history; a dead process ending the drain is expected. */
+  const turn = async (extra: object[]) => {
+    try {
+      for await (const _ of a.stream({
+        sessionId: "s311",
+        model: "m",
+        messages: messageList([...history, ...extra]),
+        signal: new AbortController().signal,
+      } as any))
+        void _;
+    } catch {
+      // nextEvent answers null at once, which the loop reads as the process ending
+    }
+  };
+  await turn([wake]);
+  assert.deepEqual(opened, [], "a wake alone drains what Claude wrote, no prompt");
+  await turn([wake, team]);
+  assert.equal(opened.length, 1, "a wake with a pending Team notice opens a turn");
+  console.log("wake-with-team-notice ok");
 }
 
 // Regression: Claude calls wait_session and a subagent in one message. wait_session answers inside
