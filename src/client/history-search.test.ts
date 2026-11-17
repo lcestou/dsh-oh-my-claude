@@ -1,7 +1,7 @@
 // Offline self-check: bun src/client/history-search.test.ts. The match rule and the scope cycle
 // without a DOM.
 import assert from "node:assert/strict";
-import { SCOPES, historyMatches, nextScope, prevScope } from "./history-search.js";
+import { SCOPES, SCOPE_BUTTON, historyMatches, nextScope, prevScope } from "./history-search.js";
 
 const rows = [
   { text: "run the test then fix it", time: 3 },
@@ -32,3 +32,8 @@ assert.equal(prevScope("box"), "workspace");
 assert.equal(prevScope("workspace"), "session");
 assert.equal(SCOPES.length, 3);
 console.log("history-search: ok");
+
+// The scope button sizes to its label. At the list row's 100% it took the whole line beside the
+// search field and squeezed the field to its padding, so typed text was hidden.
+assert.equal(SCOPE_BUTTON.width, "auto");
+assert.equal(SCOPE_BUTTON.flex, "none");

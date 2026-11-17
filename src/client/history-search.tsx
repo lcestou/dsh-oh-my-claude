@@ -4,7 +4,13 @@
 // workspace, everywhere on the box); Enter sends the row, Tab writes it into the composer and
 // Escape closes. The match rule is a pure function (`historyMatches`) so it is testable without
 // a DOM; the component owns the key listener, the list and the fetch.
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { t, useLocale, type OmcKey } from "./i18n.js";
 import { useHintFlag } from "./hints.js";
 import { SearchField } from "./search-field.js";
@@ -19,6 +25,16 @@ import {
   rowBtn,
   type ClientCtx,
 } from "./shared.js";
+
+/** The scope button beside the search field. `rowBtn` is a full-width list row; left at 100% here
+ *  it took the whole line and squeezed the field to its 50 px of padding, hiding what was typed. */
+export const SCOPE_BUTTON: CSSProperties = {
+  ...rowBtn,
+  width: "auto",
+  flex: "none",
+  fontSize: 12,
+  padding: "4px 10px",
+};
 
 /** Where the search looks: one session, every transcript of the workspace, or the whole box. */
 export type HistoryScope = "session" | "workspace" | "box";
@@ -302,7 +318,7 @@ export function HistorySearch({
             setScope(nextScope(scope));
             setAt(0);
           }}
-          style={{ ...rowBtn, flex: "none", fontSize: 12, padding: "4px 10px" }}
+          style={SCOPE_BUTTON}
         >
           {t(SCOPE_KEY[scope])}
         </button>
@@ -336,10 +352,7 @@ export function HistorySearch({
                 height: 28,
                 padding: "0 8px",
                 fontSize: 13,
-                background:
-                  row === picked
-                    ? "var(--dsw-alias-bg-hover, rgba(128,128,128,.12))"
-                    : "transparent",
+                background: row === picked ? T.hover : "transparent",
               }}
             >
               <span

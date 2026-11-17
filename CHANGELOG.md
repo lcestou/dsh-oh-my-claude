@@ -8,6 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The prompt history search (Ctrl+R in the composer) shows what you type again. The scope button beside the search box took the whole line, which squeezed the box down to its magnifier, so typed text was hidden.
 - Pages with long sessions stay lighter on slow devices during a turn. The stylesheet carried the rainbow and quote colours for the composer all the time, and while any such rule is in the page the browser works out highlight styles for every element on each style pass, which doubled the cost of every pass on a phone. The colours are now added only while something on screen uses them.
 - Typing in the composer costs less with many sessions in the sidebar. Every render asked which session is open by walking all of dsh's sessions, and typing re-renders a dozen components per keystroke; on a phone-speed CPU that walk was about 35 ms of each character. The answer is now kept until dsh's session list changes, and the once-a-second session-notice check skips its walk the same way.
 - After a dsh restart, a kept Claude process whose session has no open tab keeps its working `dsh` tools. The plugin used to send Claude Code a reconnect while dsh had no agent for the session yet; it failed, and Claude Code then marked a connection that would have worked as failed until the next turn. The reconnect now waits until dsh has the session's agent, and otherwise is made at the next turn as before. Thanks to @soffits (#313)

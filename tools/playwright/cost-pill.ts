@@ -27,7 +27,7 @@ async function within(p: Page, box: Box | null): Promise<boolean> {
 async function openCostSession(p: Page): Promise<boolean> {
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
   await p.waitForTimeout(2500);
-  const sidebar = p.getByRole("button", { name: "Open sidebar" });
+  const sidebar = p.getByRole("button", { name: /^(Open sidebar|打开侧边栏)$/ });
   const showTree = async () => {
     if (await sidebar.count()) {
       await sidebar.click({ force: true });

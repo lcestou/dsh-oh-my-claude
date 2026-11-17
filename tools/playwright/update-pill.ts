@@ -31,7 +31,7 @@ for (const [label, width] of [
   const notice = p.getByRole("button", { name: /^Continue$/ });
   if (await notice.count()) await notice.first().click();
   // A phone keeps the sidebar, and with it the Account menu, folded away until it is opened.
-  const sidebar = p.getByRole("button", { name: /^Open sidebar$/ });
+  const sidebar = p.getByRole("button", { name: /^(Open sidebar|打开侧边栏)$/ });
   if (width < 600 && (await sidebar.count())) await sidebar.first().click();
   // Since dsh 0.2.2 Settings sits in the Account menu at the foot of the sidebar.
   await p
