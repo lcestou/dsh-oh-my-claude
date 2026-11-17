@@ -24,7 +24,7 @@ export function ensureSendButtonStyle(): void {
   const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
   el.id = STYLE_ID;
   el.textContent = `${gated("send", '[class*="_card"]:has([contenteditable]) button[class*="_primary"]')} { --dsw-alias-button-info-fill: ${ACCENT}; --dsw-alias-button-info-hover: ${SHIMMER}; }`;
-  if (!existing) document.head.append(el);
+  if (el !== existing) document.head.append(el);
   for (const old of document.querySelectorAll<HTMLElement>(`[${OLD_MARK}]`)) {
     old.style.removeProperty("--dsw-alias-button-info-fill");
     old.style.removeProperty("--dsw-alias-button-info-hover");
