@@ -1,4 +1,6 @@
 import type { PluginContext } from "./dsh.js";
+/** How long to stay off the endpoint after the `strikes`-th 429 in a row. */
+export declare function backoffMs(retryAfter: number | undefined, strikes: number): number;
 /** One rate-limit window as the panel shows it. */
 export interface UsageWindow {
     label: string;
@@ -41,6 +43,9 @@ export type UsageReply = {
     /** The box's Claude Code talks to a router, not to Anthropic: the windows are still the
      *  login's, but the session's turns do not spend them, so the client warns about none. */
     routed?: true;
+    /** Set when the endpoint could not be read just now (rate limited, unreachable) and these are
+     *  the last good figures, as of `fetchedAt`. */
+    stale?: true;
 } | {
     ok: false;
     error: string;
@@ -138,7 +143,30 @@ export declare function parseBreakdownCache(text: string): Record<string, {
     at: number;
     reply: UsageBreakdownReply;
 }> | undefined;
-/** Serve `/dsh-oh-my-claude/usage` (`?force=1` refreshes sooner) from a small cache. */
+/** What the plan-usage route remembers per login across a restart: the last good reply and how far
+ *  the endpoint is backed off. */
+export interface UsageMemo {
+    reply?: Extract<UsageReply, {
+        ok: true;
+    }>;
+    /** When `reply` was read, by this reader's clock. */
+    at: number;
+    limitedUntil: number;
+    strikes: number;
+}
+/** The persisted plan-usage memo, or undefined when the file is not the shape the reader needs: an
+ *  older build's, a torn write, a hand edit. Checked by hand rather than by schema because most
+ *  window fields are optional; a reply is kept only once its `ok`, `fetchedAt` and window list are
+ *  sound, and anything else about an entry degrades to "nothing known". */
+export declare function parseUsageMemo(text: string): Record<string, UsageMemo> | undefined;
+/**
+ * The plan-usage reader behind the route: one read of the endpoint per CACHE_MS per login however
+ * many tabs, browsers and boxes ask, the last good reply and the 429 backoff kept in `file` so a
+ * restart does not start blind, and the last good reply (flagged `stale`) served instead of an error
+ * when the endpoint cannot be read. `fetchImpl` and `now` are for tests.
+ */
+export declare function createUsageReader(file: string, fetchImpl?: UsageFetch, now?: () => number): (home: string, sshHost?: string) => Promise<UsageReply>;
+/** Serve `/dsh-oh-my-claude/usage` from a cache that survives a restart; `/usage/breakdown?force=1` refreshes sooner. */
 export declare function registerUsageRoute(ctx: PluginContext, log: (level: string, msg: string) => void, identity: (home?: string, sshHost?: string) => Promise<{
     host: string;
     email: string | null;

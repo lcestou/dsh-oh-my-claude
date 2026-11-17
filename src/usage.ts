@@ -13,11 +13,20 @@ import { join } from "node:path";
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const ROUTE = "/dsh-oh-my-claude/usage";
-/** Background answers are served from cache this long; a popover open may force a refresh sooner. */
+/** Answers are served from cache this long, however many tabs, browsers and boxes ask. */
 const CACHE_MS = 5 * 60_000;
 const FORCE_MIN_AGE_MS = 30_000;
 /** After a 429 with no usable Retry-After, wait at least this long before touching the endpoint. */
 const RATE_LIMIT_FLOOR_MS = 60_000;
+/** Repeated 429s double the wait up to this; the endpoint's budget is the account's, shared with
+ *  every other caller, so hammering it on a minute clock only prolongs the limit. */
+const RATE_LIMIT_CEILING_MS = 15 * 60_000;
+
+/** How long to stay off the endpoint after the `strikes`-th 429 in a row. */
+export function backoffMs(retryAfter: number | undefined, strikes: number): number {
+  const doubled = RATE_LIMIT_FLOOR_MS * 2 ** Math.max(0, strikes - 1);
+  return Math.max(retryAfter ?? 0, Math.min(doubled, RATE_LIMIT_CEILING_MS));
+}
 
 /** Retry-After (seconds, or an HTTP-date) → ms; the floor when the header is missing or unparsable. */
 function retryAfterMs(header: string | null | undefined): number {
@@ -73,6 +82,9 @@ export type UsageReply =
       /** The box's Claude Code talks to a router, not to Anthropic: the windows are still the
        *  login's, but the session's turns do not spend them, so the client warns about none. */
       routed?: true;
+      /** Set when the endpoint could not be read just now (rate limited, unreachable) and these are
+       *  the last good figures, as of `fetchedAt`. */
+      stale?: true;
     }
   | {
       ok: false;
@@ -466,7 +478,134 @@ export function parseBreakdownCache(
   return out;
 }
 
-/** Serve `/dsh-oh-my-claude/usage` (`?force=1` refreshes sooner) from a small cache. */
+/** What the plan-usage route remembers per login across a restart: the last good reply and how far
+ *  the endpoint is backed off. */
+export interface UsageMemo {
+  reply?: Extract<UsageReply, { ok: true }>;
+  /** When `reply` was read, by this reader's clock. */
+  at: number;
+  limitedUntil: number;
+  strikes: number;
+}
+
+/** A persisted number, or 0 for anything that is not a finite one. */
+const finite = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+/** The persisted plan-usage memo, or undefined when the file is not the shape the reader needs: an
+ *  older build's, a torn write, a hand edit. Checked by hand rather than by schema because most
+ *  window fields are optional; a reply is kept only once its `ok`, `fetchedAt` and window list are
+ *  sound, and anything else about an entry degrades to "nothing known". */
+export function parseUsageMemo(text: string): Record<string, UsageMemo> | undefined {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!isRec(raw) || !isRec(raw.entries)) return undefined;
+  const out: Record<string, UsageMemo> = {};
+  for (const [key, e] of Object.entries(raw.entries)) {
+    if (!isRec(e)) continue;
+    const entry: UsageMemo = { at: finite(e.at), limitedUntil: finite(e.limitedUntil), strikes: finite(e.strikes) };
+    const r = e.reply;
+    if (
+      isRec(r) &&
+      r.ok === true &&
+      typeof r.fetchedAt === "number" &&
+      Array.isArray(r.windows) &&
+      r.windows.every(
+        (w) => isRec(w) && typeof w.label === "string" && typeof w.usedPercent === "number",
+      )
+    ) {
+      // SAFETY: ok, fetchedAt and every window's label and percent were checked just above; the
+      // other window fields are optional and the client reads them defensively.
+      entry.reply = r as Extract<UsageReply, { ok: true }>;
+    }
+    out[key] = entry;
+  }
+  return out;
+}
+
+/** The last good reply of this memo, flagged stale, in place of `error`; the error itself when
+ *  nothing is known, or when the login is gone (that one the panel must say). */
+const fallback = (m: UsageMemo, error: UsageReply): UsageReply =>
+  m.reply && !(!error.ok && error.error.startsWith("login expired"))
+    ? { ...m.reply, stale: true as const }
+    : error;
+
+/**
+ * The plan-usage reader behind the route: one read of the endpoint per CACHE_MS per login however
+ * many tabs, browsers and boxes ask, the last good reply and the 429 backoff kept in `file` so a
+ * restart does not start blind, and the last good reply (flagged `stale`) served instead of an error
+ * when the endpoint cannot be read. `fetchImpl` and `now` are for tests.
+ */
+export function createUsageReader(
+  file: string,
+  fetchImpl: UsageFetch = fetch,
+  now: () => number = Date.now,
+): (home: string, sshHost?: string) => Promise<UsageReply> {
+  // Per-key memo (a home, or an ssh box) so different instances keep their own answers. It is also
+  // written to disk: a restart used to leave the route blind, so the first read after it, made
+  // while the endpoint was still rate limited, had no figures to show and answered a bare error.
+  const memo = new Map<string, UsageMemo>();
+  const inFlight = new Map<string, Promise<UsageReply>>();
+  let usageLoaded: Promise<void> | undefined;
+  const usageLoad = (): Promise<void> =>
+    (usageLoaded ??= readFile(file, "utf8")
+      .then(parseUsageMemo)
+      .catch(() => undefined)
+      .then((entries) => {
+        for (const [key, entry] of Object.entries(entries ?? {}))
+          if (!memo.has(key)) memo.set(key, entry);
+      }));
+  const usageSave = () => {
+    void writeJson(file, { entries: Object.fromEntries(memo) }).catch(() => {
+      // Still works in memory; the next restart just starts blind again.
+    });
+  };
+  const slot = (key: string): UsageMemo => {
+    let m = memo.get(key);
+    if (!m) memo.set(key, (m = { at: 0, limitedUntil: 0, strikes: 0 }));
+    return m;
+  };
+  // Background polls never force: the endpoint's budget is the account's, shared by every tab,
+  // browser and CLI, so one read per CACHE_MS serves them all.
+  const read = async (home: string, sshHost?: string): Promise<UsageReply> => {
+    await usageLoad();
+    const key = sshHost ? `ssh:${sshHost}` : home;
+    const m = slot(key);
+    const t0 = now();
+    if (t0 < m.limitedUntil)
+      return fallback(m, { ok: false, error: "usage endpoint rate limited" });
+    if (m.reply && t0 - m.at < CACHE_MS) return m.reply;
+    if (!inFlight.has(key)) {
+      inFlight.set(
+        key,
+        readUsage(fetchImpl, home, sshHost).then((reply) => {
+          inFlight.delete(key);
+          if (reply.ok) {
+            m.reply = reply;
+            m.at = now();
+            m.limitedUntil = 0;
+            m.strikes = 0;
+            usageSave();
+            return reply;
+          }
+          if (reply.retryAfterMs) {
+            m.strikes += 1;
+            m.limitedUntil = now() + backoffMs(reply.retryAfterMs, m.strikes);
+            usageSave();
+          }
+          return fallback(m, reply);
+        }),
+      );
+    }
+    return inFlight.get(key)!;
+  };
+  return read;
+}
+
+/** Serve `/dsh-oh-my-claude/usage` from a cache that survives a restart; `/usage/breakdown?force=1` refreshes sooner. */
 export function registerUsageRoute(
   ctx: PluginContext,
   log: (level: string, msg: string) => void,
@@ -492,44 +631,7 @@ export function registerUsageRoute(
 ) {
   const defaultHome = options?.home;
   const boxFor = options?.boxFor;
-  // Per-home caches so different instances keep their own answers.
-  const cached = new Map<string, { at: number; reply: UsageReply }>();
-  const inFlight = new Map<string, Promise<UsageReply>>();
-  // A 429 backs the endpoint off until here, even when the client keeps forcing; serve cache meanwhile.
-  // Per home: a 429 on one login must not silence another instance's reads.
-  const rateLimitedUntil = new Map<string, number>();
-  // Only this home's last good answer: another instance's numbers are another account's.
-  const rateLimited = (home: string): UsageReply =>
-    cached.get(home)?.reply.ok
-      ? cached.get(home)!.reply
-      : { ok: false, error: "usage endpoint rate limited" };
-  // Keyed per box: an ssh box's login is its own, whichever local dir its mount names.
-  const read = (force: boolean, home: string, sshHost?: string): Promise<UsageReply> => {
-    const key = sshHost ? `ssh:${sshHost}` : home;
-    if (Date.now() < (rateLimitedUntil.get(key) ?? 0)) return Promise.resolve(rateLimited(key));
-    const entry = cached.get(key);
-    const age = entry ? Date.now() - entry.at : Infinity;
-    if (entry && age < (force ? FORCE_MIN_AGE_MS : CACHE_MS)) return Promise.resolve(entry.reply);
-    if (!inFlight.has(key)) {
-      inFlight.set(
-        key,
-        readUsage(undefined, home, sshHost).then((reply) => {
-          if (!reply.ok && reply.retryAfterMs)
-            rateLimitedUntil.set(
-              key,
-              Date.now() + Math.max(reply.retryAfterMs, RATE_LIMIT_FLOOR_MS),
-            );
-          // One transient failure keeps the last good answer for its remaining cache life; the
-          // fetch time is not refreshed, so a failure that persists surfaces once that life is over.
-          if (reply.ok || !entry?.reply.ok || age >= CACHE_MS)
-            cached.set(key, { at: Date.now(), reply });
-          inFlight.delete(key);
-          return cached.get(key)!.reply;
-        }),
-      );
-    }
-    return inFlight.get(key)!;
-  };
+  const read = createUsageReader(join(STATE_DIR, "usage-plan.json"));
   // Breakdown answers are cached per box, and unlike the plan windows this cache is also written
   // to disk. The read is a `claude -p "/usage"` spawn, measured at 3.6 s on the author's box, and
   // an in-memory cache alone meant every dsh restart threw the answer away and the next person to
@@ -632,7 +734,7 @@ export function registerUsageRoute(
               }
               // The usage belongs to that box's login; say so, the browser hops between boxes.
               const [reply, who, routed] = await Promise.all([
-                read(force, realHome, box.sshHost),
+                read(realHome, box.sshHost),
                 identity(box.home, box.sshHost),
                 options?.routed?.(provider ?? undefined).catch(() => false) ?? false,
               ]);

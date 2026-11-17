@@ -8,6 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The Claude usage panel no longer shows "usage endpoint rate limited" when it has seen figures before. The route keeps the last good reply and its 429 backoff on disk, so a dsh restart does not start blind, and while the endpoint is limited or unreachable it answers those figures marked as of their time instead of an error. Repeated 429s back off longer (up to 15 minutes). The page no longer forces a refresh on every poll: it asks the route's five-minute cache, and tabs and sessions share one fetch, so several tabs or computers cost the account's usage budget one read per five minutes.
 - The context ring's popup shows the Claude usage block again while a subagent is running. dsh's subagent button also opens a dialog, and its activity dot made it look like the ring, so the plugin claimed that button instead: the real popup opened as dsh's own, and the subagent button was read out as "N% of context used".
 
 ## [1.6.5] - 2026-11-16
