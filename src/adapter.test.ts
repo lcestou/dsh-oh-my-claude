@@ -6443,7 +6443,7 @@ console.log("interrupt-on-abort ok");
   };
   assert.equal(await adapter.reconnectBridge(proc, "s"), false, "no bridge: nothing sent");
   assert.equal(written.length, 0);
-  (adapter as any).mcp = { url: "http://x", key: "k" };
+  (adapter as any).mcp = { url: "http://x", key: "k", toolsFor: () => [] };
   assert.equal(await adapter.reconnectBridge(proc, "s"), true);
   const req = JSON.parse(written[0]!).request;
   assert.deepEqual(req, { subtype: "mcp_reconnect", serverName: "dsh" });
@@ -6513,7 +6513,7 @@ console.log("interrupt-on-abort ok");
   let mount!: () => void;
   adapter.mcpMounting = new Promise<void>((resolve) => {
     mount = () => {
-      (adapter as any).mcp = { url: "http://x", key: "k" };
+      (adapter as any).mcp = { url: "http://x", key: "k", toolsFor: () => [] };
       resolve();
     };
   });
@@ -6536,7 +6536,7 @@ console.log("interrupt-on-abort ok");
   assert.equal(await adapter.reconnectBridge(proc, "s", 1, 2), false);
   assert.equal(written.length, 0);
   assert.equal(proc.bridgeStale, true, "an unmounted bridge is left for the next turn");
-  (adapter as any).mcp = { url: "http://x", key: "k" };
+  (adapter as any).mcp = { url: "http://x", key: "k", toolsFor: () => [] };
   await adapter.reconnectIfStale(proc, "s");
   assert.equal(written.length, 1, "the turn boundary reconnects");
   assert.equal(proc.bridgeStale, false);
@@ -6547,7 +6547,7 @@ console.log("interrupt-on-abort ok");
 // the session until this turn) reconnects before its prompt, and the background retries then stop.
 {
   const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  (adapter as any).mcp = { url: "http://x", key: "k" };
+  (adapter as any).mcp = { url: "http://x", key: "k", toolsFor: () => [] };
   let agentLive = false;
   const written: string[] = [];
   const proc: any = {
@@ -6582,6 +6582,71 @@ console.log("interrupt-on-abort ok");
   assert.equal(await background, true, "the background retries end with the turn's reconnect");
   assert.equal(written.length, 2, "no further tries after it landed");
   console.log("mcp-reconnect owed while retrying ok");
+}
+
+// A reconnect sent while dsh has no live agent for the session gets the bridge's 404, and Claude
+// Code then marks a `dsh` server that was still connected as failed, for good. So nothing is sent
+// until the agent exists; a process replaced meanwhile is let go without a reconnect.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  let agentLive = false;
+  (adapter as any).mcp = {
+    url: "http://x",
+    key: "k",
+    toolsFor: () => (agentLive ? [] : undefined),
+  };
+  const written: string[] = [];
+  const proc: any = {
+    alive: true,
+    busy: false,
+    bridgeStale: false,
+    controlListener: undefined,
+    write(line: string) {
+      written.push(line);
+      const r = JSON.parse(line);
+      const ok = agentLive;
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          request_id: r.request_id,
+          response: ok
+            ? { subtype: "success", request_id: r.request_id, response: {} }
+            : { subtype: "error", request_id: r.request_id, error: "MCP endpoint not found" },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  const background = adapter.reconnectBridge(proc, "s", 5, 40);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(written.length, 0, "no reconnect while dsh has no agent for the session");
+  assert.equal(proc.bridgeStale, true);
+  agentLive = true;
+  assert.equal(await background, true, "reconnects once the agent is live");
+  assert.equal(written.length, 1);
+
+  agentLive = false;
+  written.length = 0;
+  proc.bridgeStale = false;
+  const replaced = adapter.reconnectBridge(proc, "s", 5, 40);
+  await new Promise((r) => setTimeout(r, 12));
+  proc.alive = false;
+  assert.equal(await replaced, false);
+  assert.equal(written.length, 0, "a replaced process is never asked");
+
+  // The turn boundary asks once with no wait: no agent yet leaves it owed, an agent settles it.
+  proc.alive = true;
+  proc.bridgeStale = true;
+  agentLive = false;
+  written.length = 0;
+  await adapter.reconnectIfStale(proc, "s");
+  assert.equal(written.length, 0, "turn boundary: nothing sent before the agent exists");
+  assert.equal(proc.bridgeStale, true, "and the reconnect stays owed");
+  agentLive = true;
+  await adapter.reconnectIfStale(proc, "s");
+  assert.equal(written.length, 1, "turn boundary with the agent: one reconnect");
+  assert.equal(proc.bridgeStale, false);
+  console.log("mcp-reconnect waits for a live agent ok");
 }
 
 // mcpStatus and mcpReconnect: decode the server list; reconnect names the server.

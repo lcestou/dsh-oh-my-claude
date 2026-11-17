@@ -4479,8 +4479,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         `adopted keeper ${basename(dir)} for ${spec.sessionId} (claude pid ${info.claudePid})`,
       );
       // Anything Claude wrote while dsh was away sits in the keeper's buffer and now in our queue;
-      // a wake opens a dsh turn that reads it out. The bridge's MCP client session died with the
-      // old dsh, so ask the CLI to reconnect its `dsh` server against the new one first.
+      // a wake opens a dsh turn that reads it out. The CLI's `dsh` server still points at the
+      // bridge URL, which answers again once dsh has the session's agent; reconnectBridge asks the
+      // CLI to reconnect only then, and otherwise leaves it owed to the next turn.
       setTimeout(() => void this.reconnectBridge(proc, spec.sessionId), 1500).unref();
       // The first look at 1.5 s found dsh's agent scope still inactive (2026-09-05 23:53: the
       // reply Claude wrote during the restart sat in the queue until the next typed prompt), so
@@ -4585,13 +4586,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /**
    * After a reattach, the surviving Claude still holds an MCP session against the previous dsh's
-   * bridge. `mcp_reconnect` for the `dsh` server makes it open a fresh one; without it the first
-   * dsh tool call after a restart can fail once, and a process that called a dsh tool while dsh was
-   * down has dropped the server and stays without it. A mount with no bridge of its own
+   * bridge. The bridge keeps no per-client state, so that session answers again as soon as dsh has
+   * a live agent for the session; but a process that called a dsh tool while dsh was down has
+   * dropped the server, and only `mcp_reconnect` brings it back. A mount with no bridge of its own
    * (non-default instance) has nothing to reconnect to; on the default one a bridge still mounting
-   * is waited for. Retries every retryMs for attempts tries, since the web server listens several
-   * seconds after adoption. The reconnect is owed (`bridgeStale`) from the first call until one
-   * lands, so a turn that starts while these retries still run reconnects before its prompt.
+   * is waited for. The reconnect is sent only while dsh has a live agent for the session: before
+   * that the bridge answers 404, and a failed `mcp_reconnect` turns a server that was still
+   * connected into a failed one that stays failed. Looks every retryMs for attempts tries, then
+   * leaves it owed (`bridgeStale`) to the next turn, which is when an agent exists; a turn that
+   * starts while these retries still run reconnects before its prompt.
    */
   async reconnectBridge(
     proc: ClaudeProcess,
@@ -4624,11 +4627,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       );
       return false;
     }
-    // The web server listens several seconds after adoption (2026-09-05: 40:47 adopt, 40:56 up),
-    // so the first tries answer "MCP endpoint not found"; keep asking for about a minute, unless a
-    // turn's own reconnect lands first.
+    const bridge = this.mcp;
     let last = "";
     for (let i = 0; i < attempts && proc.alive && proc.bridgeStale; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, retryMs));
+      if (!proc.alive || !proc.bridgeStale) break;
+      if (bridge.toolsFor(sessionId) === undefined) {
+        last = "no live agent for the session yet";
+        continue;
+      }
       const reply = await this.control(
         proc,
         { subtype: "mcp_reconnect", serverName: "dsh" },
@@ -4643,14 +4650,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         return true;
       }
       last = reply.error;
-      if (i + 1 < attempts) await new Promise((r) => setTimeout(r, retryMs));
     }
     if (!proc.bridgeStale) return true;
-    // The usual reason: the session is not open in any tab, so dsh has no live agent for it and the
-    // bridge answers "no live agent". A turn is the moment there is one.
+    // A process replaced while this waited (its next turn respawned it) has nothing left to fix.
+    if (!proc.alive) return false;
     await trace(
       join(this.stateDir, "resume.log"),
-      `mcp_reconnect dsh for ${sessionId}: gave up: ${last}`,
+      `mcp_reconnect dsh for ${sessionId}: left for the next turn: ${last}`,
     );
     return false;
   }
