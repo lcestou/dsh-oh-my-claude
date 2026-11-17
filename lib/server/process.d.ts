@@ -989,9 +989,10 @@ export declare class ClaudeProcess {
      *  take. Holding a steer for an edit lowers it; at zero nothing is left to park on. */
     forwarded: number;
     parked: "steer" | undefined;
-    /** The CLI's `dsh` MCP session belongs to a dsh that is gone (adopted after a restart) and the
-     *  reconnect after adoption gave up, because dsh had no live agent for the session yet. The next
-     *  turn, which implies one, asks once more before its prompt goes out. */
+    /** The CLI's `dsh` MCP session belongs to a dsh that is gone (adopted after a restart) and no
+     *  reconnect has landed yet: the one after adoption is still retrying, or gave up because dsh had
+     *  no live agent for the session. The next turn, which implies one, reconnects before its prompt
+     *  goes out. */
     bridgeStale: boolean;
     /** Set by the idle watchdog when it kills the process. */
     idleKilled: boolean;
