@@ -128,6 +128,7 @@ import {
   loadTurnRecords,
   saveLimitWait,
   markBusy,
+  peekInterrupted,
   modesUpTo,
   noteBoot,
   PERMISSION_MODES,
@@ -4274,6 +4275,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // In every mode, not only keeper: a hold left from before the switch went off still runs on its
     // box, and adopting it lets its next turn respawn it as a child and the idle reaper end it.
     const all = await loadHolds(this.stateDir);
+    const interrupted = await this.busyAtBoot();
     for (const [sessionId, raw] of Object.entries(all)) {
       const record = asHoldRecord(raw);
       if (!record || record.sessionId !== sessionId) {
@@ -4318,7 +4320,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         `adopted hold ${record.name} for ${sessionId} on ${record.host} (offset ${record.offset})`,
       );
       setTimeout(() => void this.reconnectBridge(proc, sessionId), 1500).unref();
-      void this.drainAdopted(proc, sessionId);
+      this.reattachWake(proc, sessionId, interrupted);
     }
   }
 
@@ -4332,6 +4334,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    */
   async adoptKeepers(only?: Set<string>): Promise<Set<string>> {
     const left = new Set<string>();
+    const interrupted = await this.busyAtBoot();
     // In every mode, not only keeper: a keeper left from before the switch went off is still running
     // Claude, and adopting it lets its next turn respawn it as a child (the spec key differs) and the
     // idle reaper end it. Returning early here, as this did, left it running with nobody attached.
@@ -4487,7 +4490,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // The first look at 1.5 s found dsh's agent scope still inactive (2026-09-05 23:53: the
       // reply Claude wrote during the restart sat in the queue until the next typed prompt), so
       // keep looking for a minute and stop at the first wake that opened a turn.
-      void this.drainAdopted(proc, spec.sessionId);
+      this.reattachWake(proc, spec.sessionId, interrupted);
     }
     if (!only && left.size > 0) void this.readoptLeft(left);
     return left;
@@ -4506,21 +4509,54 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
   }
 
+  /** The busy file as this instance's first adoption found it, read once and kept. The boot resume
+   *  takes the file at 10 s, while `readoptLeft` keeps adopting for a minute; a fresh read on a
+   *  later pass would find it empty and leave a turn that was running at shutdown un-woken. */
+  busyAtBoot(): Promise<ReadonlySet<string>> {
+    this.bootBusy ??= peekInterrupted(join(this.stateDir, "busy.json")).then((ids) => new Set(ids));
+    return this.bootBusy;
+  }
+  private bootBusy: Promise<ReadonlySet<string>> | undefined;
+
+  /** After a boot reattach: a session whose turn was running when the last dsh went down (its busy
+   *  mark is still set) is woken with the reconnect notice to show what it did meanwhile. One whose
+   *  turn had ended, by a Stop, an abort or on its own, gets no "continue": a wake here opened a
+   *  turn nobody asked for (2026-11-16: a subagent its parent had interrupted resumed its cancelled
+   *  task). A reply Claude finished on its own in the gap (a background task done, answered) is
+   *  still shown, with the background-task notice the live `onIdleResult` wake sends: that wake
+   *  also fires on the replay, but before dsh's agent is up, and does not retry. Anything else it
+   *  queued is read by the next turn. `interrupted` is read before the boot resume clears the file. */
+  reattachWake(proc: ClaudeProcess, sessionId: string, interrupted: ReadonlySet<string>): void {
+    if (interrupted.has(sessionId)) {
+      void this.drainAdopted(proc, sessionId);
+      return;
+    }
+    void trace(
+      join(this.stateDir, "resume.log"),
+      `reattached ${sessionId}: no turn was running at shutdown, waking only for a reply of its own`,
+    );
+    void this.drainAdopted(proc, sessionId, undefined, undefined, WAKE_TEXT, () =>
+      proc.hasIdleReply(),
+    );
+  }
+
   /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn, and the
    *  answer says whether a turn took it (that wake, or a prompt that got there first). A
    *  `system` notice on its own is no reply and wakes nobody; the next turn reads it. The one
-   *  notice that wakes is `task_notification`, a background task that finished while dsh was away. */
+   *  notice that wakes is `task_notification`, a background task that finished while dsh was away.
+   *  `ready` narrows what counts as worth a wake (default: any turn output). */
   async drainAdopted(
     proc: ClaudeProcess,
     sessionId: string,
     everyMs = 2000,
     tries = 30,
     text = RECONNECT_TEXT,
+    ready = () => proc.hasTurnOutput(),
   ): Promise<boolean> {
     for (let i = 0; i < tries && proc.alive; i++) {
       await new Promise((r) => setTimeout(r, everyMs));
       if (proc.busy) return true; // a prompt got there first; the turn drains the queue itself
-      if (!proc.hasTurnOutput()) continue;
+      if (!ready()) continue;
       if (await this.wake(sessionId, proc, text)) return true;
     }
     return false;
@@ -4845,13 +4881,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.kill();
       proc = undefined;
     }
-    // A spawn-mode flip never ends a process that still holds output from the gap: a wake turn, or
-    // any turn with turn frames queued, keeps it, and the session's next turn replaces it. A
-    // respawn here killed an adopted keeper mid-reply and lost what it wrote (#241 review).
+    // A process that still holds output from the gap is not ended for a spec that differs: a wake
+    // turn exists only to show that output, so it keeps the process whatever changed since it was
+    // spawned (after a restart the stored spec rarely equals the new one: an instructions edit
+    // is enough), and the session's next turn replaces it. A spawn-mode flip is kept for any turn
+    // with turn frames queued. A respawn here killed an adopted keeper mid-reply and lost what it
+    // wrote while dsh was away (#241 review).
     const keepForDrain =
       proc?.alive === true &&
-      flipOnly(proc.key, proc.spec?.child, prep.spec) &&
-      (wakeOnlyTurn(options.messages, pendingFilter) || proc.hasTurnOutput());
+      (wakeOnlyTurn(options.messages, pendingFilter) ||
+        (flipOnly(proc.key, proc.spec?.child, prep.spec) && proc.hasTurnOutput()));
     if (proc?.alive && proc.key !== key && !keepForDrain) await this.retarget(proc, prep.spec);
     if (proc && (!proc.alive || (proc.key !== key && !keepForDrain))) {
       proc.kill();

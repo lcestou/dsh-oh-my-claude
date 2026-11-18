@@ -1170,11 +1170,26 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  Stops when this instance's scope is disposed, so a short-lived second dsh (`dsh web --help`)
      *  never comes back for them. Keepers whose holder outlives the minute stay theirs. */
     readoptLeft(left: Set<string>, everyMs?: number, tries?: number): Promise<void>;
+    /** The busy file as this instance's first adoption found it, read once and kept. The boot resume
+     *  takes the file at 10 s, while `readoptLeft` keeps adopting for a minute; a fresh read on a
+     *  later pass would find it empty and leave a turn that was running at shutdown un-woken. */
+    busyAtBoot(): Promise<ReadonlySet<string>>;
+    private bootBusy;
+    /** After a boot reattach: a session whose turn was running when the last dsh went down (its busy
+     *  mark is still set) is woken with the reconnect notice to show what it did meanwhile. One whose
+     *  turn had ended, by a Stop, an abort or on its own, gets no "continue": a wake here opened a
+     *  turn nobody asked for (2026-11-16: a subagent its parent had interrupted resumed its cancelled
+     *  task). A reply Claude finished on its own in the gap (a background task done, answered) is
+     *  still shown, with the background-task notice the live `onIdleResult` wake sends: that wake
+     *  also fires on the replay, but before dsh's agent is up, and does not retry. Anything else it
+     *  queued is read by the next turn. `interrupted` is read before the boot resume clears the file. */
+    reattachWake(proc: ClaudeProcess, sessionId: string, interrupted: ReadonlySet<string>): void;
     /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn, and the
      *  answer says whether a turn took it (that wake, or a prompt that got there first). A
      *  `system` notice on its own is no reply and wakes nobody; the next turn reads it. The one
-     *  notice that wakes is `task_notification`, a background task that finished while dsh was away. */
-    drainAdopted(proc: ClaudeProcess, sessionId: string, everyMs?: number, tries?: number, text?: string): Promise<boolean>;
+     *  notice that wakes is `task_notification`, a background task that finished while dsh was away.
+     *  `ready` narrows what counts as worth a wake (default: any turn output). */
+    drainAdopted(proc: ClaudeProcess, sessionId: string, everyMs?: number, tries?: number, text?: string, ready?: () => boolean): Promise<boolean>;
     /** Whether the scope `apply` mounted this instance in is still live; false once a hot reload or
      *  a toggle disposed it, while a step it was streaming may still be running. */
     scopeActive(): boolean;

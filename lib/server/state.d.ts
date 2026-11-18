@@ -31,6 +31,9 @@ export declare function markBusy(id: string, on: boolean, path?: string): Promis
  *  `markBusy`'s writes: read and cleared on its own, it could empty the file between a mark's read
  *  and its write, or wipe a mark a turn had just made. */
 export declare function takeInterrupted(path?: string): Promise<string[]>;
+/** The sessions the busy file lists now, left in place for the boot resume to take. Queued behind
+ *  `markBusy` like `takeInterrupted`, so it never reads between a mark's read and write. */
+export declare function peekInterrupted(path?: string): Promise<string[]>;
 /** A `model/selection` no request has run on yet: the newest selection after the last
  *  `request/header`, if any. dsh treats a pick as spent once a request runs (its
  *  modelSelection projection), and a fork child carries its parent's spent picks, so a selection

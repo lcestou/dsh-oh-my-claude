@@ -1101,6 +1101,9 @@ export declare class ClaudeProcess {
     /** Count buffered `result` events with no turn reading them, so the loop can tell a real reply
      *  from a stale background-task completion. */
     countStaleResults(): number;
+    /** Whether the queue holds a turn Claude finished on its own (a successful `result`, as
+     *  `noteIdleResult` would wake for), not only a notice it has yet to answer. */
+    hasIdleReply(): boolean;
     /** True when the queue holds a frame a turn has to read out: a frame of a turn Claude ran while
      *  dsh was away (TURN_FRAMES), a relayed call injected for a turn, or the `task_notification` of
      *  a background task that finished meanwhile, which the translator draws as a completion line.
