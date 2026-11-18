@@ -402,6 +402,14 @@ export type ClaudeEvent =
   | { type: "idle_warning"; silentSeconds: number; leftSeconds: number }
   | RelayEvent;
 
+/** A background task's `task_notification` still in the queue: the CLI's id, status word and
+ *  summary, the summary empty when it sent none. */
+export interface FinishedTask {
+  taskId: string;
+  status: string;
+  summary: string;
+}
+
 /** What dsh hands back for a relayed tool call: the text Claude gets, and whether it failed. */
 export interface RelayResult {
   text: string;
@@ -2396,6 +2404,31 @@ export class ClaudeProcess {
         return false;
       }
     });
+  }
+
+  /** The background tasks whose `task_notification` waits in the queue, oldest first: what Claude
+   *  is answering when it replies with no turn reading. Empty when it replied for another reason
+   *  (a scheduled wakeup), or when a turn already read the frames. */
+  finishedTasks(): FinishedTask[] {
+    const tasks: FinishedTask[] = [];
+    for (const line of this.queue.lines) {
+      if (typeof line !== "string" || !line.includes("task_notification")) continue;
+      try {
+        const parsed: unknown = JSON.parse(line);
+        if (typeof parsed !== "object" || parsed === null) continue;
+        // SAFETY: a non-null object; each field is checked for its type before use
+        const r = parsed as { type?: unknown; subtype?: unknown } & Record<string, unknown>;
+        if (r.type !== "system" || r.subtype !== "task_notification") continue;
+        tasks.push({
+          taskId: typeof r.task_id === "string" ? r.task_id : "",
+          status: typeof r.status === "string" ? r.status : "completed",
+          summary: typeof r.summary === "string" ? r.summary.trim() : "",
+        });
+      } catch {
+        // not JSON: nothing to name
+      }
+    }
+    return tasks;
   }
 
   /** Tell the child a stdout line was used: a keeper keeps a line until then, so a line a dsh

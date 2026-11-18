@@ -182,8 +182,17 @@ export declare function afterLastAssistant(messages: LooseMessage[] | undefined)
  *  `followup`, and every wake of an unloaded session fails on it. The controller's error is thrown
  *  so the caller reports it like any other failed resume. */
 export declare function resolvedAgent(found: ResolvedAgent): Agent;
-/** Notice this plugin drops into a session's inbox to open a turn after Claude replied on its own. */
-export declare const WAKE_TEXT = "Claude Code finished a background task and replied.";
+/** Notice this plugin drops into a session's inbox to open a turn after Claude replied on its own.
+ *  It is read later by models going through the session's history, so it says who wrote it, that
+ *  nobody sent a message, and where the reply is; with the old bare line ("Claude Code finished a
+ *  background task and replied.") they took it for an empty message from another session. */
+export declare const WAKE_TEXT = "[Oh My Claude] Claude Code replied on its own while this session was idle. Nobody sent a message: this notice only opens the turn, and Claude's reply follows it.";
+/** The block beside `WAKE_TEXT` that names the background tasks Claude was answering, each by the
+ *  description it started with (else the CLI's summary, else its id) and its status word. */
+export declare function finishedTasksText(tasks: readonly {
+    name: string;
+    status: string;
+}[]): string;
 /** A mirror turn whose followup never opened a turn (the agent went away) is put back after this. */
 export declare const MIRROR_TURN_TIMEOUT_MS = 120000;
 /** How long the transcript must stay still before the watcher reads it: the CLI writes a reply as

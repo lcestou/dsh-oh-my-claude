@@ -1427,6 +1427,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Run `/compact` on the session's idle Claude Code, started on the last turn's spec when it is
      *  not running, and read back its summary. Undefined when the CLI could not or did not compact. */
     compactOnCli(sessionId: string, signal?: AbortSignal): Promise<string | undefined>;
+    /** The line naming the background tasks an idle reply answers, from the notifications still
+     *  queued on `proc`, each by the description the session's task list kept for it. Undefined
+     *  when none waits there: Claude replied for another reason, or there is no process. */
+    finishedTasksLine(sessionId: string, proc: ClaudeProcess | undefined): string | undefined;
     /** Claude finished a turn of its own (a background task it launched completed) while dsh was
      *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
      *  instead of riding on top of the user's next prompt. */
@@ -1455,10 +1459,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     wakeThroughParent(sessionId: string, child: {
         parentId: string;
         noticePending: boolean;
-    }, text: string): Promise<boolean>;
-    /** Send `text` to a subagent's session as a message from its parent, loading the parent first
-     *  when dsh had dropped it. False, with the reason noted, when it could not be sent. */
-    sendThroughParent(sessionId: string, parentId: string, text: string, note: (line: string) => Promise<void>): Promise<boolean>;
+    }, text: string, extra?: string): Promise<boolean>;
+    /** Send `texts` to a subagent's session as a message from its parent, one text block each,
+     *  loading the parent first when dsh had dropped it. False, with the reason noted, when it could
+     *  not be sent. */
+    sendThroughParent(sessionId: string, parentId: string, texts: readonly string[], note: (line: string) => Promise<void>): Promise<boolean>;
     /** Offer a dsh tool call from the MCP bridge to the session's live turn. Undefined when no turn
      *  can take it (idle process, a relay already pending); the bridge then executes it directly. */
     relay(sessionId: string, toolName: string, args: Record<string, JsonValue>, signal: AbortSignal, toolUseId?: string): Promise<RelayResult> | undefined;
