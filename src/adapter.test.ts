@@ -60,6 +60,7 @@ import {
   wakeOnlyTurn,
   hasPendingInput,
   WAKE_TEXT,
+  finishedTasksText,
   withoutNativeInstructions,
   finishReason,
   isLoginFailure,
@@ -2635,6 +2636,15 @@ console.log("ok");
     content: [{ type: "text", text: WAKE_TEXT }],
   });
   assert.equal(wakeOnlyTurn([user, asst, wakeV4]), true, "the v4 producer kind is our notice too");
+  const named = message({
+    role: "user",
+    source: { kind: "plugin:dsh-oh-my-claude", form: "notice", summary: WAKE_TEXT },
+    content: [
+      { type: "text", text: WAKE_TEXT },
+      { type: "text", text: finishedTasksText([{ name: "lint", status: "completed" }]) },
+    ],
+  });
+  assert.equal(wakeOnlyTurn([user, asst, named]), true, "naming the task keeps it a drain turn");
   // #311: any producer's pending message beside the wake makes a normal turn, not only `user`.
   const team = message({
     role: "user",
@@ -3599,7 +3609,35 @@ console.log("ok");
     ["plugin", "dsh-oh-my-claude", "notice"],
   );
   assert.equal(firstMsg.content?.[0]?.text, WAKE_TEXT);
+  assert.equal(firstMsg.content?.length, 1, "no queued notification, no task line");
   ctx.agents.get = () => agent;
+  // A queued notification is named by the description the session's task list kept, else by the
+  // CLI's summary, else by its id.
+  a.noteTask("s1", "t1", { description: "Build the docs", status: "running" });
+  await a.wake(
+    "s1",
+    fakeProc({
+      busy: false,
+      finishedTasks: () => [
+        { taskId: "t1", status: "completed", summary: "done" },
+        { taskId: "t2", status: "failed", summary: "Background command failed" },
+        { taskId: "t3", status: "completed", summary: "" },
+      ],
+    }),
+  );
+  const named = sent.at(-1) as { content?: Array<{ text?: string }> };
+  assert.deepEqual(
+    named.content?.map((b) => b.text),
+    [
+      WAKE_TEXT,
+      finishedTasksText([
+        { name: "Build the docs", status: "completed" },
+        { name: "Background command failed", status: "failed" },
+        { name: "t3", status: "completed" },
+      ]),
+    ],
+  );
+  sent.length = 1;
   await a.wake("s1", fakeProc({ busy: false }));
   assert.equal(resumed, 1, "live agent: no resume");
   assert.equal(sent.length, 2);

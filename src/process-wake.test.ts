@@ -62,6 +62,21 @@ assert.ok(proc.lastUsed > 0, "tool_progress counts as use, so the idle reaper wa
 
 await feed({ type: "system", subtype: "task_notification", status: "completed" });
 assert.equal(proc.hasTurnOutput(), true, "a finished background task wakes");
+await feed({
+  type: "system",
+  subtype: "task_notification",
+  task_id: "b7",
+  status: "failed",
+  summary: " exit 1 ",
+});
+assert.deepEqual(
+  proc.finishedTasks(),
+  [
+    { taskId: "", status: "completed", summary: "" },
+    { taskId: "b7", status: "failed", summary: "exit 1" },
+  ],
+  "each queued notification, in order, with what it carries",
+);
 for (const type of [
   "assistant",
   "user",

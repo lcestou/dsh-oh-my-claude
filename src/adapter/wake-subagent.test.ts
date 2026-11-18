@@ -9,7 +9,14 @@ import type { Agent, PluginContext } from "../dsh.js";
 import { markBusy } from "../state.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
-import { childrenContinuedText, RESTART_TEXT, WAKE_TEXT, wakeOnlyTurn } from "./turn.js";
+import { ClaudeProcess } from "../process.js";
+import {
+  childrenContinuedText,
+  finishedTasksText,
+  RESTART_TEXT,
+  WAKE_TEXT,
+  wakeOnlyTurn,
+} from "./turn.js";
 
 interface Sent {
   sender: string;
@@ -126,6 +133,22 @@ function world(
 }
 
 {
+  // The finished task is named beside the notice, in the same message through the parent.
+  const w = world({ parentLive: true });
+  w.adapter.noteTask("c1", "t1", { description: "Run the test suite", status: "running" });
+  // SAFETY: partial fake; wake reads busy and the queued task notifications
+  const proc = {
+    busy: false,
+    finishedTasks: () => [{ taskId: "t1", status: "completed", summary: "exit 0" }],
+  } as unknown as ClaudeProcess;
+  assert.equal(await w.adapter.wake("c1", proc, WAKE_TEXT), true);
+  assert.equal(
+    w.sent[0]?.text,
+    WAKE_TEXT + finishedTasksText([{ name: "Run the test suite", status: "completed" }]),
+  );
+}
+
+{
   // Two wakes in the same moment (an adopted keeper's drain and its idle result) send once, also
   // while the parent is still being loaded.
   const w = world();
@@ -211,6 +234,14 @@ function world(
     ],
   };
   assert.equal(wakeOnlyTurn([relayed]), true);
+  const named = {
+    ...relayed,
+    content: [
+      ...relayed.content,
+      { type: "text" as const, text: finishedTasksText([{ name: "build", status: "failed" }]) },
+    ],
+  };
+  assert.equal(wakeOnlyTurn([named]), true, "the line naming the task leaves it a wake");
   const prompt = { ...relayed, content: [{ type: "text" as const, text: "do more" }] };
   assert.equal(wakeOnlyTurn([prompt]), false, "a real message from the parent is a prompt");
 }

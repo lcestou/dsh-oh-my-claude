@@ -412,6 +412,7 @@ import {
   ultracodeStatus,
   userPromptCount,
   WAKE_TEXT,
+  finishedTasksText,
   wakeOnlyTurn,
   hasPendingInput,
   typedAfterMirror,
@@ -6937,6 +6938,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return this.compactSummary(cwd, claudeId, preTokens);
   }
 
+  /** The line naming the background tasks an idle reply answers, from the notifications still
+   *  queued on `proc`, each by the description the session's task list kept for it. Undefined
+   *  when none waits there: Claude replied for another reason, or there is no process. */
+  finishedTasksLine(sessionId: string, proc: ClaudeProcess | undefined): string | undefined {
+    const known = this.sessionTasks.get(sessionId);
+    const tasks = (proc?.finishedTasks?.() ?? []).flatMap(({ taskId, status, summary }) => {
+      const name = known?.get(taskId)?.description || summary || taskId;
+      return name ? [{ name, status }] : [];
+    });
+    return tasks.length > 0 ? finishedTasksText(tasks) : undefined;
+  }
+
   /** Claude finished a turn of its own (a background task it launched completed) while dsh was
    *  idle. Drop a notice into the session's inbox so dsh opens a turn now and the reply shows,
    *  instead of riding on top of the user's next prompt. */
@@ -6960,8 +6973,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const note = (line: string) =>
       trace(join(this.stateDir, "resume.log"), `wake ${sessionId}: ${line}`);
     if (text === RESTART_TEXT) await trace(`wake ${sessionId}: start`);
+    const finished = text === WAKE_TEXT ? this.finishedTasksLine(sessionId, proc) : undefined;
     const child = await this.subagentLink(sessionId);
-    if (child) return this.wakeThroughParent(sessionId, child, text);
+    if (child) return this.wakeThroughParent(sessionId, child, text, finished);
     const found = await this.agentFor(sessionId);
     if (!found) return false;
     const { agent, how } = found;
@@ -7002,7 +7016,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       text === RESTART_TEXT || text === RECONNECT_TEXT || text === RELOAD_TEXT
         ? ClaudeCodeAdapter.continuedChildren.get(sessionId)
         : undefined;
-    const extra = continued?.size ? childrenContinuedText([...continued]) : undefined;
+    const extra = continued?.size ? childrenContinuedText([...continued]) : finished;
     try {
       this.log("info", `wake: idle reply in session ${sessionId} (agent ${how})`);
       // Restart and reconnect notices stand in for the owner who configured hands-free resume, so
@@ -7043,7 +7057,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       await note(`followup failed: ${errorText(error)}`);
       return false;
     }
-    if (extra) {
+    if (continued?.size) {
       ClaudeCodeAdapter.continuedChildren.delete(sessionId);
       await note(`told it about continued subagents ${[...(continued ?? [])].join(", ")}`);
     }
@@ -7132,11 +7146,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  routing (`resolveAgent` refuses one: "owned by subagent routing"), so the notice goes as a
    *  message from the exact live parent, which cold-resumes the child from its log on the child's
    *  own model and preset. The child reports back to that parent when it finishes, as it would
-   *  have without the restart. */
+   *  have without the restart. `extra`, when given, rides as a second text block in the same
+   *  message (the finished-task line beside a wake notice). */
   async wakeThroughParent(
     sessionId: string,
     child: { parentId: string; noticePending: boolean },
     text: string,
+    extra?: string,
   ): Promise<boolean> {
     const note = (line: string) =>
       trace(join(this.stateDir, "resume.log"), `wake ${sessionId}: ${line}`);
@@ -7152,7 +7168,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     // Claimed before the first await: a second wake in the same moment stops at the check above.
     waking.add(sessionId);
-    const sent = await this.sendThroughParent(sessionId, child.parentId, text, note);
+    const blocks = extra ? [text, extra] : [text];
+    const sent = await this.sendThroughParent(sessionId, child.parentId, blocks, note);
     if (!sent) {
       waking.delete(sessionId);
       return false;
@@ -7167,12 +7184,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     return true;
   }
 
-  /** Send `text` to a subagent's session as a message from its parent, loading the parent first
-   *  when dsh had dropped it. False, with the reason noted, when it could not be sent. */
+  /** Send `texts` to a subagent's session as a message from its parent, one text block each,
+   *  loading the parent first when dsh had dropped it. False, with the reason noted, when it could
+   *  not be sent. */
   async sendThroughParent(
     sessionId: string,
     parentId: string,
-    text: string,
+    texts: readonly string[],
     note: (line: string) => Promise<void>,
   ): Promise<boolean> {
     const subagents = this.ctx?.get?.("subagents");
@@ -7196,7 +7214,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return false;
     }
     try {
-      await subagents.sendMessage(parent, asSessionId(sessionId), [{ type: "text", text }], {
+      const content = texts.map((text) => ({ type: "text" as const, text }));
+      await subagents.sendMessage(parent, asSessionId(sessionId), content, {
         signal: AbortSignal.timeout(30_000),
       });
       return true;

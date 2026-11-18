@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Changed
+
+- The notice that opens a turn when Claude replies on its own after a background task now says it comes from Oh My Claude, that nobody sent a message, and names the task that finished by the description it started with. The old one-line notice read like an empty message from someone when a model went back through the session's history. Thanks to @soffits (#320)
+
 ## [1.6.6] - 2026-11-17
 
 dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.4; built and tested on 0.2.2-rc.4.

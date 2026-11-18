@@ -154,6 +154,7 @@ export {
   ultracodeStatus,
   userPromptCount,
   WAKE_TEXT,
+  finishedTasksText,
   wakeOnlyTurn,
   hasPendingInput,
   wantedUltracode,

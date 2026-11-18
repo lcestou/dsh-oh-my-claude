@@ -278,6 +278,13 @@ export type ClaudeEvent = {
     silentSeconds: number;
     leftSeconds: number;
 } | RelayEvent;
+/** A background task's `task_notification` still in the queue: the CLI's id, status word and
+ *  summary, the summary empty when it sent none. */
+export interface FinishedTask {
+    taskId: string;
+    status: string;
+    summary: string;
+}
 /** What dsh hands back for a relayed tool call: the text Claude gets, and whether it failed. */
 export interface RelayResult {
     text: string;
@@ -1103,6 +1110,10 @@ export declare class ClaudeProcess {
      *  woke an idle session after a restart. Wrong for a frame type a later CLI adds for real output:
      *  it waits for the next prompt instead of opening a turn. */
     hasTurnOutput(): boolean;
+    /** The background tasks whose `task_notification` waits in the queue, oldest first: what Claude
+     *  is answering when it replies with no turn reading. Empty when it replied for another reason
+     *  (a scheduled wakeup), or when a turn already read the frames. */
+    finishedTasks(): FinishedTask[];
     /** Tell the child a stdout line was used: a keeper keeps a line until then, so a line a dsh
      *  read but never used (its turn ended as it shut down) reaches the next dsh (automagik#62). */
     used(index: number): void;
