@@ -1455,7 +1455,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  routing (`resolveAgent` refuses one: "owned by subagent routing"), so the notice goes as a
      *  message from the exact live parent, which cold-resumes the child from its log on the child's
      *  own model and preset. The child reports back to that parent when it finishes, as it would
-     *  have without the restart. */
+     *  have without the restart. `extra`, when given, rides as a second text block in the same
+     *  message (the finished-task line beside a wake notice). */
     wakeThroughParent(sessionId: string, child: {
         parentId: string;
         noticePending: boolean;
