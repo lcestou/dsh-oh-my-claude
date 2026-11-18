@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.6.7] - 2026-11-18
+
+dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.5; built and tested on 0.2.2-rc.5.
+
 ### Fixed
 
 - A restart no longer wakes a session whose turn had already ended. When the plugin reattached to a Claude process that kept running, a finished background job queued in it was enough to send the "dsh restarted and reattached ... Continue where you are" notice, and a subagent its parent had interrupted went back to the task it was told to drop. Only a turn that was still running when dsh went down is resumed now; after a Stop, an abort or a finished turn the session stays attached and is not told to continue. A reply Claude finished on its own while dsh was away still shows, under the background-task notice, and a turn still running when dsh went down is woken even when its Claude is reattached late. Thanks to @soffits (#321)
