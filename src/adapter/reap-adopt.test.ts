@@ -99,6 +99,8 @@ const WEB = "/home/u/.dsh/profiles/web";
   };
   const foreign = keeper("0123456789abcdef-a", "s-foreign", "/home/u/.dsh/profiles/desktop");
   const old = keeper("fedcba9876543210-b", "s-old");
+  // s-running had a turn going when the last dsh went down; its keeper only turns up for a later pass.
+  await markBusy("s-running", true, join(adapter.stateDir, "busy.json"));
   await adapter.adoptKeepers();
   assert.equal(
     adapter.processes.has(registryKey("claude-code", "s-foreign")),
@@ -113,11 +115,19 @@ const WEB = "/home/u/.dsh/profiles/web";
     "and takes this dsh's tag",
   );
 
+  // The boot resume takes the busy file at 10 s; adoption only read it.
+  assert.deepEqual(
+    await takeInterrupted(join(adapter.stateDir, "busy.json")),
+    ["s-running"],
+    "the boot resume still finds its mark: adoption only reads it",
+  );
+
   // Reattach wakes only a turn that was running at shutdown: the session whose turn ended (a
-  // Stop, an abort) has no busy mark and stays idle, however long its keeper kept running.
+  // Stop, an abort) has no busy mark and stays idle, however long its keeper kept running. These
+  // keepers are found by a readopt pass after the boot resume emptied the file, so the mark comes
+  // from what the first adoption read.
   const running = keeper("1111111111111111-c", "s-running");
   const stopped = keeper("2222222222222222-d", "s-stopped");
-  await markBusy("s-running", true, join(adapter.stateDir, "busy.json"));
   const drained: string[] = [];
   adapter.drainAdopted = async (_proc, id) => {
     drained.push(id);
@@ -127,11 +137,6 @@ const WEB = "/home/u/.dsh/profiles/web";
   assert.ok(adapter.processes.has(registryKey("claude-code", "s-stopped")), "still attached");
   assert.deepEqual(drained, ["s-running"], "only the running turn is looked at for a wake");
   assert.ok(existsSync(running) && existsSync(stopped));
-  assert.deepEqual(
-    await takeInterrupted(join(adapter.stateDir, "busy.json")),
-    ["s-running"],
-    "the boot resume still finds its mark: adoption only reads it",
-  );
 
   // The boot nudge: the foreign session's turn runs under the other dsh, so it is neither woken
   // here nor dropped from the list that dsh reads at its own boot.

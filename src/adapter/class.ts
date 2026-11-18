@@ -4275,7 +4275,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // In every mode, not only keeper: a hold left from before the switch went off still runs on its
     // box, and adopting it lets its next turn respawn it as a child and the idle reaper end it.
     const all = await loadHolds(this.stateDir);
-    const interrupted = new Set(await peekInterrupted(join(this.stateDir, "busy.json")));
+    const interrupted = await this.busyAtBoot();
     for (const [sessionId, raw] of Object.entries(all)) {
       const record = asHoldRecord(raw);
       if (!record || record.sessionId !== sessionId) {
@@ -4334,7 +4334,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    */
   async adoptKeepers(only?: Set<string>): Promise<Set<string>> {
     const left = new Set<string>();
-    const interrupted = new Set(await peekInterrupted(join(this.stateDir, "busy.json")));
+    const interrupted = await this.busyAtBoot();
     // In every mode, not only keeper: a keeper left from before the switch went off is still running
     // Claude, and adopting it lets its next turn respawn it as a child (the spec key differs) and the
     // idle reaper end it. Returning early here, as this did, left it running with nobody attached.
@@ -4508,6 +4508,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       pending = await this.adoptKeepers(pending);
     }
   }
+
+  /** The busy file as this instance's first adoption found it, read once and kept. The boot resume
+   *  takes the file at 10 s, while `readoptLeft` keeps adopting for a minute; a fresh read on a
+   *  later pass would find it empty and leave a turn that was running at shutdown un-woken. */
+  busyAtBoot(): Promise<ReadonlySet<string>> {
+    this.bootBusy ??= peekInterrupted(join(this.stateDir, "busy.json")).then((ids) => new Set(ids));
+    return this.bootBusy;
+  }
+  private bootBusy: Promise<ReadonlySet<string>> | undefined;
 
   /** After a boot reattach: look for output to wake with only when the session's turn was running
    *  when the last dsh went down (its busy mark is still set). A turn that ended before, by a Stop,

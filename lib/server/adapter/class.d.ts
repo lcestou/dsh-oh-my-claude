@@ -1170,6 +1170,11 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  Stops when this instance's scope is disposed, so a short-lived second dsh (`dsh web --help`)
      *  never comes back for them. Keepers whose holder outlives the minute stay theirs. */
     readoptLeft(left: Set<string>, everyMs?: number, tries?: number): Promise<void>;
+    /** The busy file as this instance's first adoption found it, read once and kept. The boot resume
+     *  takes the file at 10 s, while `readoptLeft` keeps adopting for a minute; a fresh read on a
+     *  later pass would find it empty and leave a turn that was running at shutdown un-woken. */
+    busyAtBoot(): Promise<ReadonlySet<string>>;
+    private bootBusy;
     /** After a boot reattach: look for output to wake with only when the session's turn was running
      *  when the last dsh went down (its busy mark is still set). A turn that ended before, by a Stop,
      *  an abort or on its own, leaves the session idle: the process stays attached and anything it
