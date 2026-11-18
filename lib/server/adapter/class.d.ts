@@ -1170,6 +1170,13 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  Stops when this instance's scope is disposed, so a short-lived second dsh (`dsh web --help`)
      *  never comes back for them. Keepers whose holder outlives the minute stay theirs. */
     readoptLeft(left: Set<string>, everyMs?: number, tries?: number): Promise<void>;
+    /** After a boot reattach: look for output to wake with only when the session's turn was running
+     *  when the last dsh went down (its busy mark is still set). A turn that ended before, by a Stop,
+     *  an abort or on its own, leaves the session idle: the process stays attached and anything it
+     *  queued is read by the next turn someone starts, as for any idle session. A wake here would
+     *  open a turn nobody asked for (2026-11-16: a subagent its parent had interrupted resumed its
+     *  cancelled task). `interrupted` is read before the boot resume clears the file. */
+    reattachWake(proc: ClaudeProcess, sessionId: string, interrupted: ReadonlySet<string>): void;
     /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn, and the
      *  answer says whether a turn took it (that wake, or a prompt that got there first). A
      *  `system` notice on its own is no reply and wakes nobody; the next turn reads it. The one

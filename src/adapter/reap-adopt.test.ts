@@ -113,6 +113,26 @@ const WEB = "/home/u/.dsh/profiles/web";
     "and takes this dsh's tag",
   );
 
+  // Reattach wakes only a turn that was running at shutdown: the session whose turn ended (a
+  // Stop, an abort) has no busy mark and stays idle, however long its keeper kept running.
+  const running = keeper("1111111111111111-c", "s-running");
+  const stopped = keeper("2222222222222222-d", "s-stopped");
+  await markBusy("s-running", true, join(adapter.stateDir, "busy.json"));
+  const drained: string[] = [];
+  adapter.drainAdopted = async (_proc, id) => {
+    drained.push(id);
+    return false;
+  };
+  await adapter.adoptKeepers();
+  assert.ok(adapter.processes.has(registryKey("claude-code", "s-stopped")), "still attached");
+  assert.deepEqual(drained, ["s-running"], "only the running turn is looked at for a wake");
+  assert.ok(existsSync(running) && existsSync(stopped));
+  assert.deepEqual(
+    await takeInterrupted(join(adapter.stateDir, "busy.json")),
+    ["s-running"],
+    "the boot resume still finds its mark: adoption only reads it",
+  );
+
   // The boot nudge: the foreign session's turn runs under the other dsh, so it is neither woken
   // here nor dropped from the list that dsh reads at its own boot.
   const busyPath = join(adapter.stateDir, "busy.json");

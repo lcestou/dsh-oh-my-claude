@@ -4563,6 +4563,63 @@ console.log("schema-guard ok");
   assert.equal(killed, 0, "the running turn's process is left alone");
   assert.equal(a.processes.get(registryKey("claude-code", "s1")), running);
 }
+// acquire(): a wake turn exists to show what an adopted process wrote while dsh was away, so it
+// keeps that process whatever differs between its stored spec and the new one (an edited
+// instructions file after a restart is enough). A prompt turn still replaces it.
+{
+  const old = { ...emptySpec, system: "old" };
+  const wake = message({
+    role: "user",
+    source: { kind: "plugin:dsh-oh-my-claude", form: "notice", summary: WAKE_TEXT },
+    content: [{ type: "text", text: WAKE_TEXT }],
+  });
+  const prompt = message({
+    role: "user",
+    source: { kind: "user" },
+    content: [{ type: "text", text: "hi" }],
+  });
+  const setup = () => {
+    const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+    let killed = 0;
+    const held = fakeProc({
+      alive: true,
+      busy: false,
+      key: JSON.stringify(old),
+      spec: old,
+      hasTurnOutput: () => true,
+      kill: () => {
+        killed += 1;
+      },
+    });
+    a.processes.set(registryKey("claude-code", "s1"), held);
+    // SAFETY: acquire only reads what prepare returns; the spawn path is never reached here.
+    a.prepare = async () =>
+      ({
+        input: "{}",
+        args: [],
+        cwd: "/tmp",
+        spec: { ...emptySpec, system: "new" },
+      }) as unknown as TurnPrep;
+    a.evict = () => {
+      throw new Error("respawn");
+    };
+    // SAFETY: acquire reads sessionId and messages only
+    const options = (messages: LooseMessage[]) =>
+      ({ sessionId: "s1", messages }) as unknown as Parameters<ClaudeCodeAdapter["acquire"]>[0];
+    return { a, held, options, killedCount: () => killed };
+  };
+  {
+    const { a, held, options, killedCount } = setup();
+    const got = await a.acquire(options([wake]));
+    assert.equal(got.proc, held, "the wake turn keeps the process that holds the output");
+    assert.equal(killedCount(), 0);
+  }
+  {
+    const { a, options, killedCount } = setup();
+    await assert.rejects(async () => a.acquire(options([prompt])), /respawn/);
+    assert.equal(killedCount(), 1, "a prompt turn replaces a process whose spec changed");
+  }
+}
 // --- native tool rows: onToolCall / onToolResult callbacks fire for Bash and Edit ---
 {
   const calls: Array<{ callId: string; name: string; args: string }> = [];
@@ -6451,6 +6508,39 @@ console.log("interrupt-on-abort ok");
   await adapter.drainAdopted(proc, "d", 1, 5);
   assert.equal(calls.length, 0, "busy: a turn is already draining");
   console.log("drain-adopted ok");
+}
+
+// reattachWake: after a restart only a session whose turn was running when dsh went down is woken
+// with the reconnect notice. One whose last turn ended by a Stop or abort, or that was idle, stays
+// idle even with a finished background job queued in its process; nothing starts a turn for it.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const sent: Array<[string, string | undefined]> = [];
+  adapter.wake = async (id, _proc, text) => {
+    sent.push([id, text]);
+    return true;
+  };
+  const queued = () => {
+    const proc: any = { alive: true, busy: false, queue: new LineQueue() };
+    proc.hasTurnOutput = ClaudeProcess.prototype.hasTurnOutput;
+    proc.queue.push(
+      JSON.stringify({ type: "system", subtype: "task_notification", status: "completed" }),
+    );
+    return proc;
+  };
+  adapter.reattachWake(queued(), "stopped", new Set(["running"]));
+  adapter.reattachWake(queued(), "running", new Set(["running"]));
+  await new Promise((r) => setTimeout(r, 2500));
+  assert.deepEqual(
+    sent.filter(([id]) => id === "stopped"),
+    [],
+    "a session whose turn had ended is not woken",
+  );
+  assert.ok(
+    sent.some(([id, text]) => id === "running" && text === RECONNECT_TEXT),
+    "a turn that was running at shutdown still gets the reconnect notice",
+  );
+  console.log("reattach wake ok");
 }
 
 // reconnectBridge: with the bridge mounted, a reattached process is told mcp_reconnect for the

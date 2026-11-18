@@ -6,6 +6,11 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- A restart no longer wakes a session whose turn had already ended. When the plugin reattached to a Claude process that kept running, a finished background job queued in it was enough to send the "dsh restarted and reattached ... Continue where you are" notice, and a subagent its parent had interrupted went back to the task it was told to drop. Only a turn that was still running when dsh went down is resumed now; after a Stop, an abort or a finished turn the session stays attached and idle, and what its process queued is read by the next turn.
+- A restart no longer throws away what a reattached Claude wrote while dsh was away when anything in its start settings had changed (an instructions file edit is enough). The turn that exists to show that output replaced the process first, so the reply was lost and the turn came out blank; it now keeps the process and the next prompt replaces it.
+
 ### Changed
 
 - The notice that opens a turn when Claude replies on its own after a background task now says it comes from Oh My Claude, that nobody sent a message, and names the task that finished by the description it started with. The old one-line notice read like an empty message from someone when a model went back through the session's history. Thanks to @soffits (#320)

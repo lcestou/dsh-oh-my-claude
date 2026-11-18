@@ -153,6 +153,24 @@ export function takeInterrupted(path = BUSY_FILE): Promise<string[]> {
   return run;
 }
 
+/** The sessions the busy file lists now, left in place for the boot resume to take. Queued behind
+ *  `markBusy` like `takeInterrupted`, so it never reads between a mark's read and write. */
+export function peekInterrupted(path = BUSY_FILE): Promise<string[]> {
+  const run = busyChain.then(async () => {
+    try {
+      const ids: unknown = JSON.parse(await readFile(path, "utf8"));
+      return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  busyChain = run.then(
+    () => {},
+    () => {},
+  );
+  return run;
+}
+
 /** A `model/selection` no request has run on yet: the newest selection after the last
  *  `request/header`, if any. dsh treats a pick as spent once a request runs (its
  *  modelSelection projection), and a fork child carries its parent's spent picks, so a selection
