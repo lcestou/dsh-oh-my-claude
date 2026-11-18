@@ -10,6 +10,7 @@ import { markBusy, takeInterrupted } from "../state.js";
 import type { LiveTask } from "../translator.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
+import { WAKE_TEXT } from "./turn.js";
 import { registryKey } from "./types.js";
 
 // SAFETY: partial fake; nothing here reaches past `on`
@@ -128,14 +129,26 @@ const WEB = "/home/u/.dsh/profiles/web";
   // from what the first adoption read.
   const running = keeper("1111111111111111-c", "s-running");
   const stopped = keeper("2222222222222222-d", "s-stopped");
-  const drained: string[] = [];
-  adapter.drainAdopted = async (_proc, id) => {
-    drained.push(id);
+  const drained: Array<[string, string | undefined, boolean | undefined]> = [];
+  adapter.drainAdopted = async (_proc, id, _every, _tries, text, ready) => {
+    drained.push([id, text, ready?.()]);
     return false;
   };
   await adapter.adoptKeepers();
   assert.ok(adapter.processes.has(registryKey("claude-code", "s-stopped")), "still attached");
-  assert.deepEqual(drained, ["s-running"], "only the running turn is looked at for a wake");
+  assert.deepEqual(
+    drained.map(([id, text]) => [id, text]).toSorted(),
+    [
+      ["s-running", undefined],
+      ["s-stopped", WAKE_TEXT],
+    ],
+    "the running turn gets the reconnect drain; the stopped one waits only for a reply of its own",
+  );
+  assert.equal(
+    drained.find(([id]) => id === "s-stopped")?.[2],
+    false,
+    "and an empty queue holds no such reply",
+  );
   assert.ok(existsSync(running) && existsSync(stopped));
 
   // The boot nudge: the foreign session's turn runs under the other dsh, so it is neither woken

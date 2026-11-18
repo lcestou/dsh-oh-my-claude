@@ -6511,8 +6511,9 @@ console.log("interrupt-on-abort ok");
 }
 
 // reattachWake: after a restart only a session whose turn was running when dsh went down is woken
-// with the reconnect notice. One whose last turn ended by a Stop or abort, or that was idle, stays
-// idle even with a finished background job queued in its process; nothing starts a turn for it.
+// with the reconnect notice. One whose last turn ended by a Stop or abort, or that was idle, is not
+// told to continue: a finished background job Claude has yet to answer starts nothing. A reply it
+// finished on its own while dsh was away is still shown, with the background-task notice.
 {
   const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
   const sent: Array<[string, string | undefined]> = [];
@@ -6520,17 +6521,22 @@ console.log("interrupt-on-abort ok");
     sent.push([id, text]);
     return true;
   };
-  const queued = () => {
+  const procs: any[] = [];
+  const queued = (...lines: object[]) => {
     const proc: any = { alive: true, busy: false, queue: new LineQueue() };
     proc.hasTurnOutput = ClaudeProcess.prototype.hasTurnOutput;
-    proc.queue.push(
-      JSON.stringify({ type: "system", subtype: "task_notification", status: "completed" }),
-    );
+    proc.hasIdleReply = ClaudeProcess.prototype.hasIdleReply;
+    for (const line of lines) proc.queue.push(JSON.stringify(line));
+    procs.push(proc);
     return proc;
   };
-  adapter.reattachWake(queued(), "stopped", new Set(["running"]));
-  adapter.reattachWake(queued(), "running", new Set(["running"]));
+  const notice = { type: "system", subtype: "task_notification", status: "completed" };
+  const reply = { type: "result", subtype: "success", is_error: false, result: "bg-done" };
+  adapter.reattachWake(queued(notice), "stopped", new Set(["running"]));
+  adapter.reattachWake(queued(notice), "running", new Set(["running"]));
+  adapter.reattachWake(queued(notice, reply), "answered", new Set(["running"]));
   await new Promise((r) => setTimeout(r, 2500));
+  for (const proc of procs) proc.alive = false; // ends the drains still polling
   assert.deepEqual(
     sent.filter(([id]) => id === "stopped"),
     [],
@@ -6539,6 +6545,11 @@ console.log("interrupt-on-abort ok");
   assert.ok(
     sent.some(([id, text]) => id === "running" && text === RECONNECT_TEXT),
     "a turn that was running at shutdown still gets the reconnect notice",
+  );
+  assert.deepEqual(
+    sent.filter(([id]) => id === "answered"),
+    [["answered", WAKE_TEXT]],
+    "a reply Claude finished on its own is shown, without the reconnect notice",
   );
   console.log("reattach wake ok");
 }

@@ -4518,12 +4518,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
   private bootBusy: Promise<ReadonlySet<string>> | undefined;
 
-  /** After a boot reattach: look for output to wake with only when the session's turn was running
-   *  when the last dsh went down (its busy mark is still set). A turn that ended before, by a Stop,
-   *  an abort or on its own, leaves the session idle: the process stays attached and anything it
-   *  queued is read by the next turn someone starts, as for any idle session. A wake here would
-   *  open a turn nobody asked for (2026-11-16: a subagent its parent had interrupted resumed its
-   *  cancelled task). `interrupted` is read before the boot resume clears the file. */
+  /** After a boot reattach: a session whose turn was running when the last dsh went down (its busy
+   *  mark is still set) is woken with the reconnect notice to show what it did meanwhile. One whose
+   *  turn had ended, by a Stop, an abort or on its own, gets no "continue": a wake here opened a
+   *  turn nobody asked for (2026-11-16: a subagent its parent had interrupted resumed its cancelled
+   *  task). A reply Claude finished on its own in the gap (a background task done, answered) is
+   *  still shown, with the background-task notice the live `onIdleResult` wake sends: that wake
+   *  also fires on the replay, but before dsh's agent is up, and does not retry. Anything else it
+   *  queued is read by the next turn. `interrupted` is read before the boot resume clears the file. */
   reattachWake(proc: ClaudeProcess, sessionId: string, interrupted: ReadonlySet<string>): void {
     if (interrupted.has(sessionId)) {
       void this.drainAdopted(proc, sessionId);
@@ -4531,25 +4533,30 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
     void trace(
       join(this.stateDir, "resume.log"),
-      `reattached ${sessionId}: no turn was running at shutdown, left idle`,
+      `reattached ${sessionId}: no turn was running at shutdown, waking only for a reply of its own`,
+    );
+    void this.drainAdopted(proc, sessionId, undefined, undefined, WAKE_TEXT, () =>
+      proc.hasIdleReply(),
     );
   }
 
   /** Every 2 s for a minute: a reply waiting in an adopted process's queue opens a dsh turn, and the
    *  answer says whether a turn took it (that wake, or a prompt that got there first). A
    *  `system` notice on its own is no reply and wakes nobody; the next turn reads it. The one
-   *  notice that wakes is `task_notification`, a background task that finished while dsh was away. */
+   *  notice that wakes is `task_notification`, a background task that finished while dsh was away.
+   *  `ready` narrows what counts as worth a wake (default: any turn output). */
   async drainAdopted(
     proc: ClaudeProcess,
     sessionId: string,
     everyMs = 2000,
     tries = 30,
     text = RECONNECT_TEXT,
+    ready = () => proc.hasTurnOutput(),
   ): Promise<boolean> {
     for (let i = 0; i < tries && proc.alive; i++) {
       await new Promise((r) => setTimeout(r, everyMs));
       if (proc.busy) return true; // a prompt got there first; the turn drains the queue itself
-      if (!proc.hasTurnOutput()) continue;
+      if (!ready()) continue;
       if (await this.wake(sessionId, proc, text)) return true;
     }
     return false;
