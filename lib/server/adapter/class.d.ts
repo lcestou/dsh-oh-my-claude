@@ -1218,13 +1218,16 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * (non-default instance) has nothing to reconnect to; on the default one a bridge still mounting
      * is waited for. The reconnect is sent only while dsh has a live agent for the session: before
      * that the bridge answers 404, and a failed `mcp_reconnect` turns a server that was still
-     * connected into a failed one that stays failed. A server the process still reports connected is
-     * left alone: the bridge holds calls until the agent is back, so the server usually survives
-     * the restart, and a reconnect would fail the cut turn's call in flight. Looks every retryMs for
-     * attempts tries, then leaves it owed (`bridgeStale`) to the next turn, which is when an agent
-     * exists; a turn that starts while these retries still run reconnects before its prompt.
+     * connected into a failed one that stays failed. With `cutTurn` (the restart cut a turn that
+     * is still running in the process) a server the process still reports connected is left alone
+     * for now: the bridge holds calls until the agent is back, so the server usually survives the
+     * restart, and a reconnect would fail the cut turn's call in flight. That reconnect stays owed
+     * to the next prompt, which is a turn boundary, so the tool list is still refreshed there.
+     * Looks every retryMs for attempts tries, then leaves it owed (`bridgeStale`) to the next turn,
+     * which is when an agent exists; a turn that starts while these retries still run reconnects
+     * before its prompt. True once the server is usable: reconnected, or connected and left alone.
      */
-    reconnectBridge(proc: ClaudeProcess, sessionId: string, retryMs?: number, attempts?: number): Promise<boolean>;
+    reconnectBridge(proc: ClaudeProcess, sessionId: string, retryMs?: number, attempts?: number, cutTurn?: boolean): Promise<boolean>;
     /** Whether the process reports its `dsh` server connected (`mcp_status`); false when it says
      *  otherwise or does not answer. */
     dshConnected(proc: ClaudeProcess): Promise<boolean>;

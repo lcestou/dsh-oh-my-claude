@@ -948,11 +948,16 @@ export function registerMcpBridge(
           const promptHost: PromptHost = { sessionController, llm: ctx.llm };
           // Calls waiting for their session's agent, woken when dsh creates one.
           const waiting = new Map<string, Set<() => void>>();
+          // Sessions whose wait ran out with no agent: their later calls are refused at once, so a
+          // Claude process dsh dropped for good (its session deleted under a keeper) pays one wait,
+          // not one per call. An agent created for the session clears it.
+          const gaveUp = new Set<string>();
           host.on?.(
             "agent/created",
             (payload) => {
               // SAFETY: dsh's agent/created carries { agent, source }; only the agent's id is read
               const id = (payload as { agent?: { id?: string } } | undefined)?.agent?.id;
+              if (id !== undefined) gaveUp.delete(id);
               // Each wake removes itself from the set; a Set iterates safely past that.
               for (const wake of id === undefined ? [] : (waiting.get(id) ?? [])) wake();
             },
@@ -963,8 +968,10 @@ export function registerMcpBridge(
           const agentFor = async (sessionId: string, signal: AbortSignal) => {
             const id = asSessionId(sessionId);
             const now = agents.get(id);
-            if (now || signal.aborted || !awaitsAgent?.(sessionId)) return now;
+            if (now || signal.aborted || gaveUp.has(sessionId) || !awaitsAgent?.(sessionId))
+              return now;
             const since = Date.now();
+            let timedOut = false;
             const agent = await new Promise<ReturnType<typeof agents.get>>((settle) => {
               const set = waiting.get(sessionId) ?? new Set<() => void>();
               waiting.set(sessionId, set);
@@ -975,11 +982,15 @@ export function registerMcpBridge(
                 if (set.size === 0) waiting.delete(sessionId);
                 settle(agents.get(id));
               };
-              const timer = setTimeout(done, agentWaitMs);
+              const timer = setTimeout(() => {
+                timedOut = true;
+                done();
+              }, agentWaitMs);
               timer.unref?.();
               signal.addEventListener("abort", done, { once: true });
               set.add(done);
             });
+            if (!agent && timedOut) gaveUp.add(sessionId);
             log(
               "info",
               `mcp bridge: a call for ${sessionId} waited ${Date.now() - since} ms for its agent: ${agent ? "served" : "none came"}`,

@@ -6747,9 +6747,11 @@ const statusAnswered = (proc: any, line: string, status = "failed"): boolean => 
 }
 
 // After a restart the bridge holds the calls of a process dsh has no agent for, so its `dsh`
-// server usually comes through connected, maybe with a call of the cut turn still in flight. The
-// reconnect asks first and leaves a connected server alone: a reconnect would close that
-// connection and fail the call the bridge was holding for the resumed turn.
+// server usually comes through connected, maybe with a call of the cut turn still in flight. When
+// the restart cut a running turn, the reconnect asks first and leaves a connected server alone: a
+// reconnect would close that connection and fail the call the bridge was holding. It stays owed
+// to the next prompt, a turn boundary, which still reconnects so the tool list is refreshed; and
+// a process that was idle at shutdown is reconnected as before.
 {
   const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
   (adapter as any).mcp = { url: "http://x", key: "k", toolsFor: () => [] };
@@ -6774,13 +6776,18 @@ const statusAnswered = (proc: any, line: string, status = "failed"): boolean => 
       return true;
     },
   };
+  assert.equal(await adapter.reconnectBridge(proc, "s", 1, 3, true), true);
+  assert.equal(reconnects.length, 0, "a connected dsh server mid-turn gets no mcp_reconnect");
+  assert.equal(proc.bridgeStale, true, "the reconnect stays owed to the next prompt");
+  await adapter.reconnectIfStale(proc, "s");
+  assert.equal(reconnects.length, 1, "the next prompt reconnects, refreshing the tool list");
+  assert.equal(proc.bridgeStale, false);
   assert.equal(await adapter.reconnectBridge(proc, "s", 1, 3), true);
-  assert.equal(reconnects.length, 0, "a connected dsh server gets no mcp_reconnect");
-  assert.equal(proc.bridgeStale, false, "and nothing stays owed to the next turn");
+  assert.equal(reconnects.length, 2, "a process idle at shutdown is reconnected even if connected");
   status = "failed";
-  assert.equal(await adapter.reconnectBridge(proc, "s", 1, 3), true);
-  assert.equal(reconnects.length, 1, "a dropped one is reconnected");
-  console.log("mcp-reconnect leaves a connected server alone ok");
+  assert.equal(await adapter.reconnectBridge(proc, "s", 1, 3, true), true);
+  assert.equal(reconnects.length, 3, "a dropped one is reconnected mid-turn too");
+  console.log("mcp-reconnect leaves a connected server alone mid-turn ok");
 }
 
 // A reconnect sent while dsh has no live agent for the session gets the bridge's 404, and Claude
