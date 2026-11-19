@@ -4326,17 +4326,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         join(this.stateDir, "resume.log"),
         `adopted hold ${record.name} for ${sessionId} on ${record.host} (offset ${record.offset})`,
       );
-      setTimeout(
-        () =>
-          void this.reconnectBridge(
-            proc,
-            sessionId,
-            undefined,
-            undefined,
-            interrupted.has(sessionId),
-          ),
-        1500,
-      ).unref();
+      setTimeout(() => void this.reconnectBridge(proc, sessionId), 1500).unref();
       this.reattachWake(proc, sessionId, interrupted);
     }
   }
@@ -4503,17 +4493,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // a wake opens a dsh turn that reads it out. The CLI's `dsh` server still points at the
       // bridge URL, which answers again once dsh has the session's agent; reconnectBridge asks the
       // CLI to reconnect only then, and otherwise leaves it owed to the next turn.
-      setTimeout(
-        () =>
-          void this.reconnectBridge(
-            proc,
-            spec.sessionId,
-            undefined,
-            undefined,
-            interrupted.has(spec.sessionId),
-          ),
-        1500,
-      ).unref();
+      setTimeout(() => void this.reconnectBridge(proc, spec.sessionId), 1500).unref();
       // The first look at 1.5 s found dsh's agent scope still inactive (2026-09-05 23:53: the
       // reply Claude wrote during the restart sat in the queue until the next typed prompt), so
       // keep looking for a minute and stop at the first wake that opened a turn.
@@ -4656,21 +4636,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * (non-default instance) has nothing to reconnect to; on the default one a bridge still mounting
    * is waited for. The reconnect is sent only while dsh has a live agent for the session: before
    * that the bridge answers 404, and a failed `mcp_reconnect` turns a server that was still
-   * connected into a failed one that stays failed. With `cutTurn` (the restart cut a turn that
-   * is still running in the process) a server the process still reports connected is left alone
-   * for now: the bridge holds calls until the agent is back, so the server usually survives the
-   * restart, and a reconnect would fail the cut turn's call in flight. That reconnect stays owed
-   * to the next prompt, which is a turn boundary, so the tool list is still refreshed there.
-   * Looks every retryMs for attempts tries, then leaves it owed (`bridgeStale`) to the next turn,
-   * which is when an agent exists; a turn that starts while these retries still run reconnects
-   * before its prompt. True once the server is usable: reconnected, or connected and left alone.
+   * connected into a failed one that stays failed. While the bridge has a call of the session open
+   * (it holds calls until the agent is back, so after a restart the cut turn's call often still
+   * is), the reconnect waits: it would close the connection and fail that call. Looks every
+   * retryMs for attempts tries, then leaves it owed (`bridgeStale`) to the next turn, which is
+   * when an agent exists; a turn that starts while these retries still run reconnects before its
+   * prompt. True once reconnected, or when a call left open shows the server is talking to us.
    */
   async reconnectBridge(
     proc: ClaudeProcess,
     sessionId: string,
     retryMs = 5000,
     attempts = 12,
-    cutTurn = false,
   ): Promise<boolean> {
     if (!proc.alive || (!this.mcp && !this.mcpMounting)) return false;
     proc.bridgeStale = true;
@@ -4706,14 +4683,14 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         last = "no live agent for the session yet";
         continue;
       }
-      // The bridge holds a call from a process dsh has no agent for until the agent comes back,
-      // so the server usually came through the restart connected, possibly with a call of the
-      // cut turn in flight. A reconnect closes that connection and fails the call; leave it be
-      // until the next prompt, where `bridgeStale` still owes it.
-      if (cutTurn && (await this.dshConnected(proc))) {
+      // A call open on the bridge rides the connection a reconnect closes, and fails with it: a
+      // held call of the cut turn, or one it made since. Its server is evidently connected, so
+      // the reconnect (it also refreshes the tool list) stays owed to the next prompt.
+      const open = bridge.openCalls(sessionId);
+      if (open > 0) {
         await trace(
           join(this.stateDir, "resume.log"),
-          `mcp_reconnect dsh for ${sessionId}: still connected mid-turn, left for the next prompt (try ${i + 1})`,
+          `mcp_reconnect dsh for ${sessionId}: ${open} call(s) open, left for the next prompt (try ${i + 1})`,
         );
         return true;
       }
@@ -4740,16 +4717,6 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       `mcp_reconnect dsh for ${sessionId}: left for the next turn: ${last}`,
     );
     return false;
-  }
-
-  /** Whether the process reports its `dsh` server connected (`mcp_status`); false when it says
-   *  otherwise or does not answer. */
-  async dshConnected(proc: ClaudeProcess): Promise<boolean> {
-    const reply = await this.control(proc, { subtype: "mcp_status" }, 10_000);
-    return (
-      reply.ok &&
-      decodeMcpStatus(reply.response).some((s) => s.name === "dsh" && s.status === "connected")
-    );
   }
 
   /** An owed reconnect is made at a turn boundary, when dsh does have the agent. */

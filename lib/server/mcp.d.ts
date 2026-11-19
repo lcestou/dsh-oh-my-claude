@@ -136,6 +136,9 @@ export interface McpBridge {
      *  prompt can name the ones that are really there. Undefined when the session has no live agent
      *  or dsh refuses the listing; the bridge has nothing for that session either. */
     toolsFor: (sessionId: string) => ToolSchema[] | undefined;
+    /** How many requests from that session the bridge is answering or holding right now. A
+     *  `mcp_reconnect` closes the connection they ride on and fails each of them. */
+    openCalls: (sessionId: string) => number;
 }
 /**
  * Where a local Claude reaches the web server route. A server bound to every interface (no host, or

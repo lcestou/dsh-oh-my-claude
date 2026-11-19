@@ -818,6 +818,9 @@ export interface McpBridge {
    *  prompt can name the ones that are really there. Undefined when the session has no live agent
    *  or dsh refuses the listing; the bridge has nothing for that session either. */
   toolsFor: (sessionId: string) => ToolSchema[] | undefined;
+  /** How many requests from that session the bridge is answering or holding right now. A
+   *  `mcp_reconnect` closes the connection they ride on and fails each of them. */
+  openCalls: (sessionId: string) => number;
 }
 
 /** The loopback port remembered from the previous mount, else undefined. */
@@ -952,6 +955,8 @@ export function registerMcpBridge(
           // Claude process dsh dropped for good (its session deleted under a keeper) pays one wait,
           // not one per call. An agent created for the session clears it.
           const gaveUp = new Set<string>();
+          // Requests being answered or held, by session, for `openCalls`.
+          const open = new Map<string, number>();
           host.on?.(
             "agent/created",
             (payload) => {
@@ -1009,6 +1014,7 @@ export function registerMcpBridge(
             res.on("close", () => {
               if (!res.writableFinished) controller.abort();
             });
+            open.set(sessionId, (open.get(sessionId) ?? 0) + 1);
             try {
               // The body is read before any wait for the agent, so the server's request timeout
               // never cuts a call that is only waiting.
@@ -1040,6 +1046,10 @@ export function registerMcpBridge(
             } catch (e) {
               log("warn", `mcp bridge: ${errorText(e)}`);
               return send(res, 400, { error: errorText(e) });
+            } finally {
+              const left = (open.get(sessionId) ?? 1) - 1;
+              if (left > 0) open.set(sessionId, left);
+              else open.delete(sessionId);
             }
           };
           // Desktop provides this service from its launcher, before any profile plugin loads, and
@@ -1092,6 +1102,7 @@ export function registerMcpBridge(
                 return undefined;
               }
             },
+            openCalls: (sessionId) => open.get(sessionId) ?? 0,
           });
         })(),
     );
