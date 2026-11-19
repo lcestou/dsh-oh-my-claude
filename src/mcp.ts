@@ -963,7 +963,7 @@ export function registerMcpBridge(
           const agentFor = async (sessionId: string, signal: AbortSignal) => {
             const id = asSessionId(sessionId);
             const now = agents.get(id);
-            if (now || !awaitsAgent?.(sessionId)) return now;
+            if (now || signal.aborted || !awaitsAgent?.(sessionId)) return now;
             const since = Date.now();
             const agent = await new Promise<ReturnType<typeof agents.get>>((settle) => {
               const set = waiting.get(sessionId) ?? new Set<() => void>();
