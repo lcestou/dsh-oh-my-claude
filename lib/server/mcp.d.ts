@@ -117,6 +117,12 @@ export interface BridgeOptions {
      *  keeper-mode Claude processes keep their URL. Defaults to `mcp-port` next to `keyFile`.
      *  Pass `null` to take a fresh ephemeral port on every mount. */
     portFile?: string | null;
+    /** Whether dsh is expected to bring back an agent for a session it has none for: this plugin still
+     *  runs a Claude process there (a keeper adopted after a restart, before its turn is
+     *  continued). A call from such a session waits for the agent instead of failing. */
+    awaitsAgent?: (sessionId: string) => boolean;
+    /** How long such a call waits for the agent before it is refused after all. */
+    agentWaitMs?: number;
 }
 /** The mounted bridge, as the adapter holds it. */
 export interface McpBridge {
@@ -130,6 +136,9 @@ export interface McpBridge {
      *  prompt can name the ones that are really there. Undefined when the session has no live agent
      *  or dsh refuses the listing; the bridge has nothing for that session either. */
     toolsFor: (sessionId: string) => ToolSchema[] | undefined;
+    /** How many requests from that session the bridge is answering or holding right now. A
+     *  `mcp_reconnect` closes the connection they ride on and fails each of them. */
+    openCalls: (sessionId: string) => number;
 }
 /**
  * Where a local Claude reaches the web server route. A server bound to every interface (no host, or
@@ -144,4 +153,4 @@ export declare function webServerBase(webServer: Pick<WebServer, "port" | "host"
  *  routes. Everywhere else they get the web server route as before, and no listener is started:
  *  a process that outlives a restart can only reconnect to the URL it was started with, and the
  *  web port is the one address that is fixed by configuration. */
-export declare function registerMcpBridge(ctx: PluginContext, { log, version, relay, mode, builtins, dshLoading, keyFile, portFile }: BridgeOptions): Promise<McpBridge>;
+export declare function registerMcpBridge(ctx: PluginContext, { log, version, relay, mode, builtins, dshLoading, keyFile, portFile, awaitsAgent, agentWaitMs, }: BridgeOptions): Promise<McpBridge>;

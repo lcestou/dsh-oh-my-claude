@@ -581,8 +581,9 @@ export interface PluginContext {
   sessionPersistence?: SessionPersistence;
   webServer?: WebServer;
   connection?: ConnectionPolicy;
-  // Cordis proxy methods mixed onto ctx
-  on?(event: string, cb: (...args: unknown[]) => void): void;
+  // Cordis proxy methods mixed onto ctx. `global` hears events emitted in other scopes too (an
+  // agent's `agent/created` is emitted in that agent's own).
+  on?(event: string, cb: (...args: unknown[]) => void, options?: { global?: boolean }): void;
   emit?(event: string, ...args: unknown[]): void;
   /** Runs `cb` once every named service is mounted; `host` is the scoped context. */
   inject?(deps: string[], cb: (host: PluginContext) => void): void;
