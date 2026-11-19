@@ -371,14 +371,17 @@ console.log("mcp ok");
     });
   const gone = await call("gone", 1);
   assert.equal(gone.status, 404, "a session nobody brings back is refused at once");
+  assert.equal(held.openCalls("gone"), 0, "a refused call leaves nothing counted open");
   const started = Date.now();
   const pending = call("held", 2);
   await new Promise((r) => setTimeout(r, 50));
+  assert.equal(held.openCalls("held"), 1, "a held call counts as open");
   live = agent;
   for (const fn of listeners) fn({ agent: { id: "other" } });
   for (const fn of listeners) fn({ agent: { id: "held" } });
   const answered = await pending;
   assert.equal(answered.status, 200, "the held call is served once dsh has the agent");
+  assert.equal(held.openCalls("held"), 0, "and no longer counts once answered");
   // SAFETY: tools/list always returns a response
   const body = (await answered.json()) as { result: { tools: Array<{ name: string }> } };
   assert.ok(body.result.tools.some((t) => t.name === "subagent_local"));
