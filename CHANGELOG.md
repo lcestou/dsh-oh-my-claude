@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.6.8] - 2026-11-19
+
+dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.5; built and tested on 0.2.2-rc.5.
+
 ### Fixed
 
 - A Claude process that keeps working through a dsh restart no longer burns its turn on refused dsh calls. Until its turn was continued, dsh had no agent for the session and the bridge answered every call with "no live agent for session", so the model retried a few times and ended the turn reporting that its tools were gone. The bridge now holds such a call (from a session whose Claude process this plugin still runs) until dsh has the agent again, for up to three minutes, and the post-restart reconnect waits while the bridge has a call of the session open, so it no longer cuts the held call. A session dsh never brings back waits once; its later calls are refused at once. Thanks to @soffits (#323)
