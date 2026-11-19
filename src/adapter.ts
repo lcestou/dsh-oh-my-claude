@@ -285,6 +285,9 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       builtins: (sessionId) => adapter.ownerFor(sessionId).configFor(sessionId).builtinTools,
       dshLoading: (sessionId) =>
         adapter.ownerFor(sessionId).configFor(sessionId).toolLoading === "dsh",
+      // A Claude process still running for a session dsh has no agent for (a keeper that outlived
+      // a restart): dsh brings the agent back when the turn is continued.
+      awaitsAgent: (sessionId) => adapter.hasLiveProcess(sessionId),
     }).then(
       (mcp) => {
         adapter.mcp = mcp;

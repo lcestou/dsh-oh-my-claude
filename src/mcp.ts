@@ -760,7 +760,17 @@ export interface BridgeOptions {
    *  keeper-mode Claude processes keep their URL. Defaults to `mcp-port` next to `keyFile`.
    *  Pass `null` to take a fresh ephemeral port on every mount. */
   portFile?: string | null;
+  /** Whether dsh is expected to bring back an agent for a session it has none for: this plugin still
+   *  runs a Claude process there (a keeper adopted after a restart, before its turn is
+   *  continued). A call from such a session waits for the agent instead of failing. */
+  awaitsAgent?: (sessionId: string) => boolean;
+  /** How long such a call waits for the agent before it is refused after all. */
+  agentWaitMs?: number;
 }
+
+/** A cut turn can be continued a minute or more after dsh is back (seen: 70 to 105 s from the
+ *  keeper's adoption, with a restart resumer), so a call held for the agent waits well past that. */
+const AGENT_WAIT_MS = 180_000;
 
 /** A JSON-RPC body is any JSON object; the bridge reads three fields off it. */
 const asRpc = (body: Record<string, JsonValue>): JsonRpcRequest => ({
@@ -903,7 +913,18 @@ async function startLoopback(
  *  web port is the one address that is fixed by configuration. */
 export function registerMcpBridge(
   ctx: PluginContext,
-  { log, version, relay, mode, builtins, dshLoading, keyFile, portFile }: BridgeOptions,
+  {
+    log,
+    version,
+    relay,
+    mode,
+    builtins,
+    dshLoading,
+    keyFile,
+    portFile,
+    awaitsAgent,
+    agentWaitMs = AGENT_WAIT_MS,
+  }: BridgeOptions,
 ): Promise<McpBridge> {
   // SAFETY: the key symbol is this plugin's own key on globalThis, typed here once
   const g = globalThis as typeof globalThis & { [KEY_REGISTRY]?: string };
@@ -925,14 +946,52 @@ export function registerMcpBridge(
           const openHost: OpenHost = { sessions, workspaceRegistry, sessionController };
           // The plugin's own context, as adapter.ts reads it: `llm` is in its inject list.
           const promptHost: PromptHost = { sessionController, llm: ctx.llm };
+          // Calls waiting for their session's agent, woken when dsh creates one.
+          const waiting = new Map<string, Set<() => void>>();
+          host.on?.(
+            "agent/created",
+            (payload) => {
+              // SAFETY: dsh's agent/created carries { agent, source }; only the agent's id is read
+              const id = (payload as { agent?: { id?: string } } | undefined)?.agent?.id;
+              // Each wake removes itself from the set; a Set iterates safely past that.
+              for (const wake of id === undefined ? [] : (waiting.get(id) ?? [])) wake();
+            },
+            { global: true },
+          );
+          /** The session's agent once dsh has it again, or undefined past the wait or when the
+           *  client gives up. Only sessions dsh is expected to bring back wait at all. */
+          const agentFor = async (sessionId: string, signal: AbortSignal) => {
+            const id = asSessionId(sessionId);
+            const now = agents.get(id);
+            if (now || !awaitsAgent?.(sessionId)) return now;
+            const since = Date.now();
+            const agent = await new Promise<ReturnType<typeof agents.get>>((settle) => {
+              const set = waiting.get(sessionId) ?? new Set<() => void>();
+              waiting.set(sessionId, set);
+              const done = () => {
+                clearTimeout(timer);
+                signal.removeEventListener("abort", done);
+                set.delete(done);
+                if (set.size === 0) waiting.delete(sessionId);
+                settle(agents.get(id));
+              };
+              const timer = setTimeout(done, agentWaitMs);
+              timer.unref?.();
+              signal.addEventListener("abort", done, { once: true });
+              set.add(done);
+            });
+            log(
+              "info",
+              `mcp bridge: a call for ${sessionId} waited ${Date.now() - since} ms for its agent: ${agent ? "served" : "none came"}`,
+            );
+            return agent;
+          };
           const serve = async (req: IncomingMessage, res: ServerResponse) => {
             if (req.headers[KEY_HEADER] !== key) return send(res, 403, { error: "forbidden" });
             if (req.method !== "POST") return send(res, 405, { error: "POST only" });
             const sessionId = decodeURIComponent(
               (req.url ?? "").slice(MCP_PATH.length + 1).split("?")[0] ?? "",
             );
-            const agent = agents.get(asSessionId(sessionId));
-            if (!agent) return send(res, 404, { error: `no live agent for session ${sessionId}` });
             const controller = new AbortController();
             // Node fires the request's own "close" once the body is consumed; the response's
             // fires when the client actually goes away.
@@ -940,7 +999,15 @@ export function registerMcpBridge(
               if (!res.writableFinished) controller.abort();
             });
             try {
+              // The body is read before any wait for the agent, so the server's request timeout
+              // never cuts a call that is only waiting.
               const msg = asRpc(await readBody(req, BODY_LIMIT));
+              // Right after a restart dsh has no agent for a session until its turn is continued,
+              // while the Claude process that outlived dsh is still mid-turn.
+              // Answering its calls 404 meanwhile made it give up its own turn for broken tools.
+              const agent = await agentFor(sessionId, controller.signal);
+              if (!agent)
+                return send(res, 404, { error: `no live agent for session ${sessionId}` });
               const out = await handleRpc(msg, {
                 tools,
                 agent,

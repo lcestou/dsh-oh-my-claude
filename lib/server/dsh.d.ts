@@ -634,7 +634,9 @@ export interface PluginContext {
     sessionPersistence?: SessionPersistence;
     webServer?: WebServer;
     connection?: ConnectionPolicy;
-    on?(event: string, cb: (...args: unknown[]) => void): void;
+    on?(event: string, cb: (...args: unknown[]) => void, options?: {
+        global?: boolean;
+    }): void;
     emit?(event: string, ...args: unknown[]): void;
     /** Runs `cb` once every named service is mounted; `host` is the scoped context. */
     inject?(deps: string[], cb: (host: PluginContext) => void): void;

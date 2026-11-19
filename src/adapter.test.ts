@@ -6554,6 +6554,25 @@ console.log("interrupt-on-abort ok");
   console.log("reattach wake ok");
 }
 
+// The reconnect asks `mcp_status` first; these fakes report the `dsh` server dropped, so every
+// try goes on to `mcp_reconnect`, which is what `written` counts.
+const statusAnswered = (proc: any, line: string, status = "failed"): boolean => {
+  const r = JSON.parse(line);
+  if (r.request?.subtype !== "mcp_status") return false;
+  setTimeout(() => {
+    proc.controlListener({
+      type: "control_response",
+      request_id: r.request_id,
+      response: {
+        subtype: "success",
+        request_id: r.request_id,
+        response: { mcpServers: [{ name: "dsh", status }] },
+      },
+    });
+  }, 0);
+  return true;
+};
+
 // reconnectBridge: with the bridge mounted, a reattached process is told mcp_reconnect for the
 // `dsh` server; without a bridge nothing is sent.
 {
@@ -6564,6 +6583,7 @@ console.log("interrupt-on-abort ok");
     busy: false,
     controlListener: undefined,
     write(line: string) {
+      if (statusAnswered(proc, line)) return true;
       written.push(line);
       const req = JSON.parse(line);
       setTimeout(() => {
@@ -6589,6 +6609,7 @@ console.log("interrupt-on-abort ok");
   // The bridge is not listening yet for the first two tries: keep asking, succeed on the third.
   let failures = 2;
   proc.write = (line: string) => {
+    if (statusAnswered(proc, line)) return true;
     written.push(line);
     const r = JSON.parse(line);
     const fail = failures-- > 0;
@@ -6637,6 +6658,7 @@ console.log("interrupt-on-abort ok");
     busy: false,
     controlListener: undefined,
     write(line: string) {
+      if (statusAnswered(proc, line)) return true;
       written.push(line);
       const r = JSON.parse(line);
       setTimeout(() => {
@@ -6695,6 +6717,7 @@ console.log("interrupt-on-abort ok");
     bridgeStale: false,
     controlListener: undefined,
     write(line: string) {
+      if (statusAnswered(proc, line)) return true;
       written.push(line);
       const r = JSON.parse(line);
       const ok = agentLive;
@@ -6723,6 +6746,43 @@ console.log("interrupt-on-abort ok");
   console.log("mcp-reconnect owed while retrying ok");
 }
 
+// After a restart the bridge holds the calls of a process dsh has no agent for, so its `dsh`
+// server usually comes through connected, maybe with a call of the cut turn still in flight. The
+// reconnect asks first and leaves a connected server alone: a reconnect would close that
+// connection and fail the call the bridge was holding for the resumed turn.
+{
+  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  (adapter as any).mcp = { url: "http://x", key: "k", toolsFor: () => [] };
+  const reconnects: string[] = [];
+  let status = "connected";
+  const proc: any = {
+    alive: true,
+    busy: false,
+    bridgeStale: false,
+    controlListener: undefined,
+    write(line: string) {
+      if (statusAnswered(proc, line, status)) return true;
+      reconnects.push(line);
+      const r = JSON.parse(line);
+      setTimeout(() => {
+        proc.controlListener({
+          type: "control_response",
+          request_id: r.request_id,
+          response: { subtype: "success", request_id: r.request_id, response: {} },
+        });
+      }, 0);
+      return true;
+    },
+  };
+  assert.equal(await adapter.reconnectBridge(proc, "s", 1, 3), true);
+  assert.equal(reconnects.length, 0, "a connected dsh server gets no mcp_reconnect");
+  assert.equal(proc.bridgeStale, false, "and nothing stays owed to the next turn");
+  status = "failed";
+  assert.equal(await adapter.reconnectBridge(proc, "s", 1, 3), true);
+  assert.equal(reconnects.length, 1, "a dropped one is reconnected");
+  console.log("mcp-reconnect leaves a connected server alone ok");
+}
+
 // A reconnect sent while dsh has no live agent for the session gets the bridge's 404, and Claude
 // Code then marks a `dsh` server that was still connected as failed, for good. So nothing is sent
 // until the agent exists; a process replaced meanwhile is let go without a reconnect.
@@ -6741,6 +6801,7 @@ console.log("interrupt-on-abort ok");
     bridgeStale: false,
     controlListener: undefined,
     write(line: string) {
+      if (statusAnswered(proc, line)) return true;
       written.push(line);
       const r = JSON.parse(line);
       const ok = agentLive;

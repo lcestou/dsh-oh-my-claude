@@ -333,6 +333,64 @@ assert.equal(bridge.key, plain.key, "one key whichever way the bridge is reached
 for (const fn of cleanups) fn();
 console.log("mcp ok");
 
+// Right after a restart, dsh has no agent for a session until its turn is continued, while the
+// Claude process that outlived dsh keeps working. The bridge holds that session's calls until dsh
+// creates the agent instead of answering 404, which made the turn retry a few times and then
+// report its tools gone.
+{
+  let live: typeof agent | undefined;
+  const listeners: Array<(payload: unknown) => void> = [];
+  const heldHost = {
+    ...fakeHost(true),
+    inject: (_names: string[], cb: (host: never) => void) =>
+      fakeHost(true).inject(_names, (host) =>
+        cb({
+          ...host,
+          agents: { get: (id: unknown) => (id === "held" && live ? live : undefined) },
+          on: (event: string, fn: (payload: unknown) => void, opts?: { global?: boolean }) => {
+            assert.equal(event, "agent/created");
+            assert.equal(opts?.global, true, "agents are created in their own scope");
+            listeners.push(fn);
+          },
+        } as never),
+      ),
+  };
+  // SAFETY: host double above carries the services registerMcpBridge needs
+  const held = await registerMcpBridge(heldHost as never, {
+    log: () => {},
+    version: "t",
+    keyFile: join(tmp, "mcp.key"),
+    awaitsAgent: (sessionId) => sessionId !== "gone",
+    agentWaitMs: 300,
+  });
+  const call = (sessionId: string, id: number) =>
+    fetch(`${held.base}${MCP_PATH}/${sessionId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", [KEY_HEADER]: held.key },
+      body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/list" }),
+    });
+  const gone = await call("gone", 1);
+  assert.equal(gone.status, 404, "a session nobody brings back is refused at once");
+  const started = Date.now();
+  const pending = call("held", 2);
+  await new Promise((r) => setTimeout(r, 50));
+  live = agent;
+  for (const fn of listeners) fn({ agent: { id: "other" } });
+  for (const fn of listeners) fn({ agent: { id: "held" } });
+  const answered = await pending;
+  assert.equal(answered.status, 200, "the held call is served once dsh has the agent");
+  // SAFETY: tools/list always returns a response
+  const body = (await answered.json()) as { result: { tools: Array<{ name: string }> } };
+  assert.ok(body.result.tools.some((t) => t.name === "subagent_local"));
+  assert.ok(Date.now() - started >= 45, "it waited for the agent");
+  live = undefined;
+  const late = await call("held", 3);
+  assert.equal(late.status, 404, "past the wait the call is refused after all");
+  for (const fn of cleanups) fn();
+  cleanups.length = 0;
+  console.log("mcp holds calls until the agent is back ok");
+}
+
 // Code mode: when dsh offers the model only run_code, the bridge offers exactly that and refuses
 // direct calls to anything else, so Claude reaches every tool from a run_code program.
 {
