@@ -699,7 +699,22 @@ export function BoxRow({
           buttons on a line of their own under an unbroken one. */}
       <div style={{ flex: "1 1 160px", minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
-          <span style={{ color: T.text, fontWeight: 600, fontSize: 13 }}>{title}</span>
+          {/* The name stays whole and the kind beside it is what truncates: at 390 px a narrow
+              column broke "Omc Check" over two lines while the dir kept its room. */}
+          <span
+            style={{
+              color: T.text,
+              fontWeight: 600,
+              fontSize: 13,
+              flexShrink: 0,
+              maxWidth: "100%",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {title}
+          </span>
           {kind && (
             <span
               style={{

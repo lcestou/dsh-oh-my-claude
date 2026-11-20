@@ -110,7 +110,9 @@ try {
     "a relative dir is refused on screen",
     (await a.locator('[data-omc-accounts] [role="alert"]').count()) === 1,
   );
-  await a.locator("[data-omc-account-dir]").fill("");
+  // A dir under /tmp, not the suggested ~/.claude-<slug>: the CLI creates the dir the first time
+  // the status probe runs in it, and a check must leave the home folder as it found it.
+  await a.locator("[data-omc-account-dir]").fill("/tmp/omc-accounts-check-cfg");
   await a.locator("[data-omc-account-add]").click();
   await a.waitForTimeout(2500);
   expect("tab A shows the new row", (await a.locator(ROW).count()) === 1);
@@ -153,9 +155,16 @@ try {
     [390, "light"],
     [390, "dark"],
   ] as const) {
-    const shot = await b.newContext({ viewport: { width: w, height: 900 }, colorScheme: scheme });
+    // Opened at desktop width, then narrowed: at phone width dsh folds the sidebar away, and the
+    // account menu that holds Settings goes with it.
+    const shot = await b.newContext({
+      viewport: { width: 1400, height: 900 },
+      colorScheme: scheme,
+    });
     const p = await shot.newPage();
     await openBoxes(p);
+    await p.setViewportSize({ width: w, height: 900 });
+    await p.waitForTimeout(800);
     await p.locator(ROW).first().scrollIntoViewIfNeeded();
     await p.screenshot({ path: `${shots}/accounts-${w}-${scheme}.png`, fullPage: true });
     const width = await p.evaluate(() => document.documentElement.scrollWidth);
