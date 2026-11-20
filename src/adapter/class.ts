@@ -4396,6 +4396,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             if (l) await trace(join(this.stateDir, "resume.log"), `  keeper.log: ${l}`);
           }
         } catch {}
+        // A socket moved out of the directory (keeper-socket.ts) outlives a keeper that was killed
+        // before its exit handler ran; only a name that function makes is removed.
+        if (spec?.sock && /^k-[0-9a-f]{24}\.sock$/.test(basename(spec.sock)))
+          await rm(spec.sock, { force: true }).catch(() => {});
         await rm(dir, { recursive: true, force: true }).catch(() => {});
         continue;
       }

@@ -866,6 +866,9 @@ export interface KeeperSpec {
     owner?: string;
     /** keeper.ts ends Claude after this long with no dsh attached and no output; absent, never. */
     orphanMs?: number;
+    /** The socket the keeper listens on (`keeperSocketPath`), set by spawnKeeper; absent in a spec
+     *  written before #328, whose keeper listens at `<dir>/keeper.sock`. */
+    sock?: string;
 }
 /** The spawn arguments a keeper was started with, for adopting or respawning it after a restart. */
 export declare function readKeeperSpec(dir: string): KeeperSpec | undefined;

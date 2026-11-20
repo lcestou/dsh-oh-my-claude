@@ -24,6 +24,7 @@ import type {
 } from "./dsh.js";
 import type { ContextSizes, ContextSource } from "./context-sources.js";
 import { STATE_DIR } from "./state.js";
+import { SOCKET_PATH_MAX, keeperSocketPath } from "./keeper-socket.js";
 export type { JsonValue } from "./dsh.js";
 
 /** Errors reach us as `unknown`; this is the one place they become text. */
@@ -578,8 +579,6 @@ export function isSshHost(host: string): boolean {
   return host.length > 0 && host.length <= 253 && !host.startsWith("-") && !/[\s\0]/.test(host);
 }
 
-/** A Unix socket path holds 108 bytes on Linux, and the last one is the terminator. */
-const SOCKET_PATH_MAX = 107;
 /** `%C` is a SHA-1 in hex, and ssh appends `.` plus 16 random characters while it builds the master. */
 const CONTROL_NAME = "cm-".length + 40 + ".XXXXXXXXXXXXXXXX".length;
 
@@ -1695,6 +1694,24 @@ export function keeperHolder(dir: string): number | undefined {
   return pid;
 }
 
+/** The last line of a keeper's `keeper.log` other than its closing `exit code=` record, as
+ *  `: <line>` for an error message, or "" when it wrote none. That line says why a keeper never
+ *  listened (a socket path too long, a bind refused), which the turn's error otherwise leaves to a
+ *  hunt through the state dir. */
+function keeperLogTail(dir: string): string {
+  try {
+    const last = readFileSync(join(dir, "keeper.log"), "utf8")
+      .trimEnd()
+      .split("\n")
+      // drop the ISO timestamp the keeper puts on every line
+      .map((l) => l.replace(/^\S+ /, ""))
+      .filter((l) => l && !l.startsWith("exit code="))
+      .pop();
+    return last ? `: ${last}` : "";
+  } catch {
+    return "";
+  }
+}
 /**
  * Attach to a keeper's socket and present it as a SubprocessHandle: stdin lines become `in`
  * messages, `out`/`err` lines feed the readable sides, `exit` settles `done`, terminate sends
@@ -1703,12 +1720,14 @@ export function keeperHolder(dir: string): number | undefined {
  */
 export function attachKeeper(dir: string, timeoutMs = 5000): Promise<SubprocessHandle> {
   const paths = keeperPaths(dir);
+  const sockPath = readKeeperSpec(dir)?.sock ?? paths.sock;
   return new Promise((resolve, reject) => {
     const started = Date.now();
     const tryConnect = () => {
-      const sock = connect(paths.sock);
+      const sock = connect(sockPath);
       sock.once("error", () => {
-        if (Date.now() - started > timeoutMs) reject(new Error(`keeper at ${dir} did not answer`));
+        if (Date.now() - started > timeoutMs)
+          reject(new Error(`keeper at ${dir} did not answer${keeperLogTail(dir)}`));
         else setTimeout(tryConnect, 150);
       });
       sock.once("connect", () => {
@@ -1850,6 +1869,9 @@ export interface KeeperSpec {
   owner?: string;
   /** keeper.ts ends Claude after this long with no dsh attached and no output; absent, never. */
   orphanMs?: number;
+  /** The socket the keeper listens on (`keeperSocketPath`), set by spawnKeeper; absent in a spec
+   *  written before #328, whose keeper listens at `<dir>/keeper.sock`. */
+  sock?: string;
 }
 
 /** The spawn arguments a keeper was started with, for adopting or respawning it after a restart. */
@@ -1918,11 +1940,11 @@ export async function spawnKeeper(
   spec: KeeperSpec,
   launch: (argv: string[]) => void,
 ): Promise<SubprocessHandle> {
-  const paths = keeperPaths(dir);
+  const paths = { ...keeperPaths(dir), sock: keeperSocketPath(dir) };
   // Owner-only: the spec holds the child's whole environment, a login token and the bridge key
   // among it, and the socket beside it takes stdin lines from whoever can open it.
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  writeFileSync(paths.spec, JSON.stringify(spec), { mode: 0o600 });
+  writeFileSync(paths.spec, JSON.stringify({ ...spec, sock: paths.sock }), { mode: 0o600 });
   // A respawn reuses the session's directory while the previous keeper still listens for up to
   // 3 s after its Claude died. Left in place, that socket is what attachKeeper connects to first,
   // binding the new handle to the dying process (2026-09-06 21:27: "claude exited 143" on a model
