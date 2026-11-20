@@ -101,14 +101,15 @@ export function useBoxColours(): { boxes: BoxEntry[]; colours: Map<string, strin
   return state;
 }
 
-/** The round swatch: a native colour input clipped to a circle, so it opens the system picker and
- *  takes the keyboard like any input. */
+/** The swatch: a native colour input in a small rounded square, so it opens the system picker and
+ *  takes the keyboard like any input. Square, not round: a round one beside a Boxes row's name read
+ *  as a second status dot over the green or red one under it. */
 const SWATCH: CSSProperties = {
   width: 16,
   height: 16,
   padding: 0,
   border: `1px solid ${T.border}`,
-  borderRadius: "50%",
+  borderRadius: 4,
   background: "none",
   cursor: "pointer",
   flex: "none",
@@ -125,8 +126,8 @@ const ensureSwatchStyle = (): void => {
   el.id = "omc-box-swatch-style";
   el.textContent =
     "[data-omc-box-colour]::-webkit-color-swatch-wrapper{padding:0}" +
-    "[data-omc-box-colour]::-webkit-color-swatch{border:none;border-radius:50%}" +
-    "[data-omc-box-colour]::-moz-color-swatch{border:none;border-radius:50%}";
+    "[data-omc-box-colour]::-webkit-color-swatch{border:none;border-radius:3px}" +
+    "[data-omc-box-colour]::-moz-color-swatch{border:none;border-radius:3px}";
   document.head.appendChild(el);
 };
 
