@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Fixed
+
+- `open_session` called without a prompt now fails before creating anything. It used to open a new session whose first message was the text "undefined". Thanks to @soffits (#326)
+
 ## [1.6.8] - 2026-11-19
 
 dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.5; built and tested on 0.2.2-rc.5.

@@ -38,6 +38,7 @@ type PromptHost = Pick<OpenHost, "sessionController"> & Pick<PluginContext, "llm
  * with a model; either alone is ignored and the session opens on dsh's default route. A reasoning
  * effort rides on that route and is ignored without it; dsh does not check it against the model,
  * so an effort the model lacks shows up in the new session's first turn, like an unknown model.
+ * A missing or blank prompt throws BadCall before any session is created.
  */
 export declare function openSession(ctx: OpenHost, agent: Agent, args: OpenSessionArgs, signal: AbortSignal): Promise<string>;
 /**

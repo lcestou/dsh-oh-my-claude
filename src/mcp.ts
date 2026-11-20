@@ -246,6 +246,7 @@ type PromptHost = Pick<OpenHost, "sessionController"> & Pick<PluginContext, "llm
  * with a model; either alone is ignored and the session opens on dsh's default route. A reasoning
  * effort rides on that route and is ignored without it; dsh does not check it against the model,
  * so an effort the model lacks shows up in the new session's first turn, like an unknown model.
+ * A missing or blank prompt throws BadCall before any session is created.
  */
 export async function openSession(
   ctx: OpenHost,
@@ -253,6 +254,10 @@ export async function openSession(
   args: OpenSessionArgs,
   signal: AbortSignal,
 ): Promise<string> {
+  // Checked before anything is created: a call without a prompt (a model passing another tool's
+  // arguments, say) would otherwise open a session whose first message reads "undefined".
+  const prompt = str(args.prompt) ?? "";
+  if (!prompt.trim()) throw new BadCall("open_session needs a non-empty prompt");
   const sessionOf = agent.session;
   const cwd =
     sessionOf?.header?.cwd ?? (sessionOf ? ctx.sessions.get(sessionOf.id)?.header?.cwd : undefined);
@@ -296,7 +301,7 @@ export async function openSession(
       // Required from dsh 0.1.7: a prompt says whether it queues behind the running turn or
       // steers into it. A fresh child session has no turn to steer, so it queues.
       mode: "queue",
-      content: [{ type: "text", text: String(args.prompt) }],
+      content: [{ type: "text", text: prompt }],
     },
     signal,
   );
