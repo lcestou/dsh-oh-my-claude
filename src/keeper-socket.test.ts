@@ -119,7 +119,9 @@ assert.equal(ran.status, 78, "a keeper that cannot listen exits 78");
 const { claudePid } = JSON.parse(readFileSync(join(unbound, "keeper.json"), "utf8")) as {
   claudePid: number;
 };
-await new Promise((r) => setTimeout(r, 200));
+// Polled, not a fixed wait: under a loaded suite the SIGTERM'd stand-in and its reaping by init
+// can take longer than 200 ms, which failed the run now and then (reported on #332).
+for (let i = 0; i < 100 && pidAlive(claudePid); i++) await new Promise((r) => setTimeout(r, 50));
 assert.equal(pidAlive(claudePid), false, "and takes its Claude with it");
 await assert.rejects(attachKeeper(unbound, 300), /did not answer: cannot listen on /);
 console.log("keeper-socket tests passed");

@@ -25,6 +25,9 @@ export const TEMPORARY_SESSIONS = Symbol.for("dsh-oh-my-claude.temporary");
  * mount while the mount that spawns the session reads them, so the map cannot be per-instance. */
 export const PERMISSION_MODE_OVERRIDES = Symbol.for("dsh-oh-my-claude.permission-modes");
 
+/** The agents whose agent-scoped `/compact` is mounted, on globalThis: the registration lives under the agent, so it outlasts the adapter instance that made it and a reloaded instance must find it there instead of mounting a second. */
+export const COMPACT_OWNED = Symbol.for("dsh-oh-my-claude.compact-owned");
+
 /** The same brand dsh-llm puts on GenerateOptions.sessionId, so ids flow through without casts. */
 export type SessionId = NonNullable<GenerateOptions["sessionId"]>;
 /** Any JSON document; what MCP tool arguments and relay payloads are made of. */

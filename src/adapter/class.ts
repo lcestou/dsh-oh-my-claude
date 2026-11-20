@@ -103,6 +103,7 @@ import type {
 import {
   ADAPTER_CURRENT,
   COMMAND_CATALOG,
+  COMPACT_OWNED,
   PERMISSION_MODE_OVERRIDES,
   PROCESS_REGISTRY,
   TEMPORARY_SESSIONS,
@@ -674,6 +675,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       [PROCESS_REGISTRY]?: Map<string, ClaudeProcess>;
       [TURN_RECORDS]?: Map<string, TurnRecord[]>;
       [TEMPORARY_SESSIONS]?: Set<string>;
+      [COMPACT_OWNED]?: WeakSet<Agent>;
       [PERMISSION_MODE_OVERRIDES]?: Map<string, string | null>;
     };
     this.processes = registry[PROCESS_REGISTRY] ??= new Map(); // providerId:sessionId → ClaudeProcess
@@ -684,6 +686,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.permissionModes = registry[PERMISSION_MODE_OVERRIDES] ??= new Map();
     this.turnBuffer = registry[TURN_RECORDS] ??= new Map();
     this.temporary = registry[TEMPORARY_SESSIONS] ??= new Set();
+    this.compactOwned = registry[COMPACT_OWNED] ??= new WeakSet();
     // Adopted processes still point their idle-reply callback at the previous (now dead) adapter.
     for (const [key, proc] of this.processes) {
       if (!key.startsWith(`${this.providerId}:`)) continue; // another mount's process, not ours
@@ -2071,8 +2074,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   }
 
   /** The agents that already carry the plugin's agent-scoped `/compact`; a disposed agent drops
-   *  out on its own, and a session dsh reloads gets a new agent and a new mount. */
-  readonly compactOwned = new WeakSet<Agent>();
+   *  out on its own, and a session dsh reloads gets a new agent and a new mount. On globalThis
+   *  because the registration lives under the agent, not under this instance: after a hot reload
+   *  the agent still carries the old one, and a second mount fails with "already registered". */
+  readonly compactOwned: WeakSet<Agent>;
 
   /** Claude Code compaction summaries dsh has not taken yet, by dsh session id: written when the
    *  CLI compacts during a turn, taken by the next dsh compaction (`compactionFromCli`), dropped
@@ -2117,8 +2122,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
                 handler: async ({ agent: target, rawInput, signal, commandId }) => {
                   if (rawInput.trim() !== "")
                     return { kind: "error", text: serverText("compactNoArgs") };
-                  if (this.notClaude(target, "compact") === undefined) {
-                    this.compactQueued.add(target.id);
+                  // The registration outlives a hot reload of this plugin, so the instance that
+                  // made it may be a dead one: the queued mark must go where the next turn's check
+                  // reads it, on the instance mounted now.
+                  const owner = mountedInstance<ClaudeCodeAdapter>(this.providerId) ?? this;
+                  if (owner.notClaude(target, "compact") === undefined) {
+                    owner.compactQueued.add(target.id);
                     // Before the line is queued: an idle session's turn starts inside `followup`.
                     const status = target.status;
                     // Not remembered in `commandRows`: `compactQueued` already expects this row
