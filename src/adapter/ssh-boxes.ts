@@ -31,6 +31,37 @@ export function heldByOther(adapters: Map<string, ClaudeCodeAdapter>, providerId
   return held !== undefined && held[PLUGIN_MOUNT] !== true;
 }
 
+/**
+ * Register `adapter` with dsh: its settings directory row, then the adapter itself. Undefined when
+ * dsh refuses the adapter because a live mount of the other kind holds the id (an SSH box and an
+ * account saved under one name from two tabs at once, or by hand): the directory row is taken back
+ * and the refusal logged, so one bad pair never stops the rest of a reconcile. A previous scope's
+ * mount, whose registration went with that scope, is not refused and is mounted over.
+ */
+export function registerMount(
+  ctx: PluginContext,
+  adapter: ClaudeCodeAdapter,
+  log: (level: string, msg: string) => void,
+): { disposeAdapter: () => void; disposeDirectory: () => void } | undefined {
+  const disposeDirectory = ctx.llm.registerConfigurableProviders([
+    {
+      provider: adapter.providerId,
+      displayName: adapter.displayName,
+      settingsNs: adapter.settingsNs,
+      settingsPath: [],
+    },
+  ]);
+  try {
+    const disposeAdapter = ctx.llm.registerAdapter([adapter.providerId], adapter);
+    adapter.registration = disposeAdapter;
+    return { disposeAdapter, disposeDirectory };
+  } catch (e) {
+    disposeDirectory();
+    log("warn", `${adapter.providerId} not mounted: ${errorText(e)}`);
+    return undefined;
+  }
+}
+
 export interface SshBoxMount {
   adapter: ClaudeCodeAdapter;
   disposeAdapter: () => void;
@@ -86,16 +117,9 @@ export function reconcileSshBoxes(
       dshTools: false,
       configDir: "",
     });
-    const disposeDirectory = ctx.llm.registerConfigurableProviders([
-      {
-        provider: adapter.providerId,
-        displayName: adapter.displayName,
-        settingsNs: adapter.settingsNs,
-        settingsPath: [],
-      },
-    ]);
-    const disposeAdapter = ctx.llm.registerAdapter([adapter.providerId], adapter);
-    adapter.registration = disposeAdapter;
+    const registered = registerMount(ctx, adapter, log);
+    if (!registered) continue;
+    const { disposeAdapter, disposeDirectory } = registered;
     tagPluginMount(adapter);
     probeLogin(adapter);
     mounts.set(providerId, { adapter, disposeAdapter, disposeDirectory });

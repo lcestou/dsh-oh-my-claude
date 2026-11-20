@@ -7,7 +7,13 @@ import type { PluginContext } from "../dsh.js";
 import { errorText } from "../process.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
-import { heldByOther, probeLogin, type SshBoxMount, tagPluginMount } from "./ssh-boxes.js";
+import {
+  heldByOther,
+  probeLogin,
+  registerMount,
+  type SshBoxMount,
+  tagPluginMount,
+} from "./ssh-boxes.js";
 import type { LocalMount } from "../routes/accounts.js";
 
 /** One mounted account: the same three handles an SSH box keeps. */
@@ -72,16 +78,9 @@ export function reconcileAccounts(
     // relayed to this instance through ownerFor, so sharing it gives the account dsh's tools.
     adapter.mcp = bridge.mcp();
     adapter.mcpMounting = bridge.mounting();
-    const disposeDirectory = ctx.llm.registerConfigurableProviders([
-      {
-        provider: adapter.providerId,
-        displayName: adapter.displayName,
-        settingsNs: adapter.settingsNs,
-        settingsPath: [],
-      },
-    ]);
-    const disposeAdapter = ctx.llm.registerAdapter([adapter.providerId], adapter);
-    adapter.registration = disposeAdapter;
+    const registered = registerMount(ctx, adapter, log);
+    if (!registered) continue;
+    const { disposeAdapter, disposeDirectory } = registered;
     tagPluginMount(adapter);
     probeLogin(adapter);
     mounts.set(providerId, { adapter, disposeAdapter, disposeDirectory });

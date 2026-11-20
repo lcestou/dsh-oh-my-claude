@@ -13,6 +13,17 @@ export declare function tagPluginMount(adapter: ClaudeCodeAdapter): void;
 /** Whether the registry holds `providerId` for something other than this plugin's own mounts: a
  *  hand-written mount or the default, which a reconcile must not mount over. */
 export declare function heldByOther(adapters: Map<string, ClaudeCodeAdapter>, providerId: string): boolean;
+/**
+ * Register `adapter` with dsh: its settings directory row, then the adapter itself. Undefined when
+ * dsh refuses the adapter because a live mount of the other kind holds the id (an SSH box and an
+ * account saved under one name from two tabs at once, or by hand): the directory row is taken back
+ * and the refusal logged, so one bad pair never stops the rest of a reconcile. A previous scope's
+ * mount, whose registration went with that scope, is not refused and is mounted over.
+ */
+export declare function registerMount(ctx: PluginContext, adapter: ClaudeCodeAdapter, log: (level: string, msg: string) => void): {
+    disposeAdapter: () => void;
+    disposeDirectory: () => void;
+} | undefined;
 export interface SshBoxMount {
     adapter: ClaudeCodeAdapter;
     disposeAdapter: () => void;

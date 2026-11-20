@@ -177,4 +177,47 @@ assert.equal(disposed.length, 2);
   tagPluginMount(handWritten);
   assert.equal(heldByOther(loose, "claude-code-x"), false, "a tagged entry is the plugin's own");
 }
+// An SSH box saved under the account's name (two tabs at once, or a hand edit) holds the id live:
+// dsh refuses the second registration, and the account is skipped with its directory row taken
+// back, instead of the throw ending the reconcile.
+{
+  const live = new Set<string>();
+  const rows: string[] = [];
+  // SAFETY: as above, with a registry that refuses an id already live, the way dsh's does
+  const strict = {
+    on() {},
+    llm: {
+      registerConfigurableProviders: (r: Array<{ provider: string }>) => {
+        rows.push(`+${r[0]?.provider}`);
+        return () => rows.push(`-${r[0]?.provider}`);
+      },
+      registerAdapter: (ids: string[]) => {
+        const id = ids[0] ?? "";
+        if (live.has(id)) throw new Error(`DUPLICATE_ADAPTER ${id}`);
+        live.add(id);
+        return () => live.delete(id);
+      },
+    },
+  } as unknown as PluginContext;
+  const box = new ClaudeCodeAdapter(
+    strict,
+    Config({ providerId: "claude-code-work", sshHost: "nova", configDir: "" }),
+  );
+  tagPluginMount(box);
+  live.add("claude-code-work");
+  const held = new Map([["claude-code-work", box]]);
+  const seen: string[] = [];
+  reconcileAccounts(
+    strict,
+    base,
+    [{ name: "Work", configDir: "/tmp/omc-acct-r/work" }],
+    new Map(),
+    held,
+    { mcp: () => bridge, mounting: () => mounting },
+    (_l, m) => seen.push(m),
+  );
+  assert.equal(held.get("claude-code-work"), box, "the SSH box keeps its id");
+  assert.deepEqual(rows, ["+claude-code-work", "-claude-code-work"]);
+  assert.ok(seen.some((m) => m.includes("claude-code-work not mounted: DUPLICATE_ADAPTER")));
+}
 console.log("account mounts ok");
