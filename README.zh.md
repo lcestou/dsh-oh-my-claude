@@ -147,7 +147,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 10. Claude 的斜杠命令和技能以原名出现在 dsh 的斜杠菜单里，dsh 已占用的名字改为 `/claude-<name>`。dsh 自己也提供的技能在任何模型上都能运行；只有 Claude Code 才有的技能也一样：在其他模型的会话中输入时，会连同其指令一起交给该模型（可在设置中关闭）。[Command bridge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#command-bridge)
 11. Claude 可以通过 MCP 使用 dsh 的子智能体、后台任务、目标和网页搜索。它还能新开一个 dsh 会话，向它发送后续消息并读取回复（`open_session`、`prompt_session`、`wait_session`）。[dsh tools over MCP](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
 12. 在面板里编辑本机或远程主机上的 CLAUDE.md、settings.json 和 MCP 服务器，并登录需要登录的 MCP 服务器。[Instructions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#instructions)、[settings.json editor](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#settingsjson-editor)、[MCP](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#mcp)
-13. 通过 SSH 在另一台主机上运行 Claude，或挂载多个账号。[Remote boxes and accounts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md)
+13. 通过 SSH 在另一台主机上运行 Claude，或在设置中添加第二个 Claude 登录。[Remote boxes and accounts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md)
 14. 用一份已脱敏的本机报告反馈问题，可复制，也可直接提交 issue。[Report a problem](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#report-a-problem)
 15. 所有橙色都可以按组关闭，颜色也可以自选。[Claude look](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#claude-look)
 16. 选择 dsh 往你的提示词里添加哪些内容，每一块的大小都标在标签上。[dsh context](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#dsh-context)
