@@ -6,7 +6,7 @@
 // conversation as one block of text written by the user, mostly tool output, rather than as turns:
 // its own earlier replies are no longer its own, and the people it talks with are a few lines inside
 // it. Written as a transcript, the history keeps its turns, and the CLI resumes it like any other.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { ContextSource } from "../context-sources.js";
 import type { JsonValue } from "../dsh.js";
 import { NATIVE_TOOL_MAP } from "./cli.js";
@@ -70,6 +70,17 @@ export function announcementOf(callId: string, toolName: string) {
 /** The id shape the plugin mints for a relayed dsh call (`randomUUID`); Claude's own calls carry
  *  the API's tool_use id instead. */
 const RELAY_ID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+
+/** The tool_use id shape the API accepts. */
+const API_ID = /^[a-zA-Z0-9_-]{1,64}$/;
+
+/** A logged call id as the API takes it: kept when it already fits, else a stand-in hashed from it,
+ *  so a call and its result still pair. Other providers' ids do not fit: pi-ai's Responses calls
+ *  carry `<call_id>|<item_id>`, and some run to kilobytes with `+` and `/`. Only the rows written
+ *  get the stand-in; pairing and native-call checks keep comparing the logged id. From
+ *  ThirteenCh13's report and suggested fix in #325. */
+const apiId = (id: string): string =>
+  API_ID.test(id) ? id : `toolu_seed_${createHash("sha256").update(id).digest("hex").slice(0, 32)}`;
 
 /** Whether a logged call is one of Claude's own tools. The plugin writes each live one as a message
  *  of its own with the id `<callId>:call` (a dsh call that ran inside the bridge, `<callId>:dsh`).
@@ -211,7 +222,7 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
       push("user", [
         {
           type: "tool_result",
-          tool_use_id: id,
+          tool_use_id: apiId(id),
           content: [{ type: "text", text: NO_RESULT }],
           is_error: true,
         },
@@ -249,7 +260,7 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
         [kept, ...attachmentLines(m.content)].filter(Boolean).join("\n") || "(no output)";
       const block: Block = {
         type: "tool_result",
-        tool_use_id: callId,
+        tool_use_id: apiId(callId),
         content: [{ type: "text", text }],
       };
       if (m.isError) block.is_error = true;
@@ -271,7 +282,7 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
           if (b.type === "tool-call") {
             content.push({
               type: "tool_use",
-              id: b.id,
+              id: apiId(b.id),
               name: calledName(m, b),
               input: inputOf(b.arguments),
             });

@@ -8,6 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- A session switched to Claude after another provider made tool calls in it no longer fails every turn with `400 ... tool_use.id: String should match pattern`. Call ids the API refuses, such as the `call_…|fc_…` ids of Responses-API models, are rewritten to ones it takes when the history is handed to Claude. Thanks to @ThirteenCh13 (#325)
 - `open_session` called without a prompt now fails before creating anything. It used to open a new session whose first message was the text "undefined". Thanks to @soffits (#326)
 
 ## [1.6.8] - 2026-11-19
