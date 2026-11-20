@@ -25,6 +25,7 @@ import {
 import { createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { SOCKET_PATH_MAX } from "./keeper-socket.js";
 
 const BUFFER_LINES = 20_000; // ~ a long tool-heavy turn; older lines drop with a notice line
 
@@ -37,17 +38,18 @@ interface KeeperSpec {
   /** End Claude after this long with no dsh attached and no output from it. Absent in a spec an
    *  older plugin wrote, which keeps such a keeper running until Claude exits or a client kills it. */
   orphanMs?: number;
+  /** Where to listen, chosen by spawnKeeper (`keeperSocketPath`); absent in a spec written before
+   *  #328, which listened in the keeper's own directory. */
+  sock?: string;
 }
 
-/** sun_path is 108 bytes on Linux with the terminator inside it. */
-const SOCKET_PATH_MAX = 107;
-
 /** The keeper process body, run in the directory `spawnKeeper` prepared. Exits with code 78
- *  before spawning Claude when the socket path would not fit in `sun_path`. */
+ *  before spawning Claude when the socket path would not fit in `sun_path`, and with 78 after
+ *  ending Claude when the socket will not bind for any other reason. */
 function main(dir: string) {
   // SAFETY: spec.json is written by this plugin's spawnKeeper from a typed object moments earlier
   const spec = JSON.parse(readFileSync(join(dir, "spec.json"), "utf8")) as KeeperSpec;
-  const sockPath = join(dir, "keeper.sock");
+  const sockPath = spec.sock ?? join(dir, "keeper.sock");
   const infoPath = join(dir, "keeper.json");
   mkdirSync(dir, { recursive: true });
   if (existsSync(sockPath)) unlinkSync(sockPath);
@@ -60,11 +62,11 @@ function main(dir: string) {
       appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`);
     } catch {}
   };
-  // Linux caps a unix socket path at 108 bytes (sun_path), the last one the terminator, so 107
-  // is the longest path that binds. A state dir deep enough to pass that does not fail as a
-  // length error: listen answers EADDRINUSE, and dsh reads the silence as "keeper did not
-  // answer". Refuse before Claude is spawned, with the cause where it is looked for (2026-09-18:
-  // a scratch DSH_OMC_STATE_DIR under a session scratchpad, 159 bytes).
+  // A socket path past sun_path (SOCKET_PATH_MAX: 107 on Linux, 103 on macOS) does not fail as
+  // a length error: listen answers EADDRINUSE or EINVAL, and dsh reads the silence as "keeper did
+  // not answer". Refuse before Claude is spawned, with the cause where it is looked for
+  // (2026-09-18: a scratch DSH_OMC_STATE_DIR under a session scratchpad, 159 bytes). spawnKeeper
+  // moves a too-deep socket to a short directory, so this is left for a box with none.
   const sockBytes = Buffer.byteLength(sockPath);
   if (sockBytes > SOCKET_PATH_MAX) {
     log(
@@ -283,7 +285,16 @@ function main(dir: string) {
       }
     });
   });
-  server.on("error", (e) => log(`server error: ${e.message}`));
+  server.on("error", (e) => {
+    log(`server error: ${e.message}`);
+    // Claude is already running, and with no socket nothing can ever reach it: it would sit there
+    // until the orphan timer while dsh reports "keeper did not answer" (#328 on macOS).
+    if (!server.listening) {
+      log(`cannot listen on ${sockPath}; ending Claude`);
+      child.kill("SIGTERM");
+      process.exit(78);
+    }
+  });
   server.listen(sockPath);
   process.on("exit", (code) => {
     log(`exit code=${code} claudeExit=${JSON.stringify(exit ?? null)} endedBy=${endedBy}`);
