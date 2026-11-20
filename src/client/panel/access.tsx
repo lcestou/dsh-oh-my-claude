@@ -17,6 +17,7 @@ import {
 import type { FeatureSwitches } from "../../switches.js";
 import type { PermissionRules, HooksListing } from "../../process.js";
 import { clearsOverride, keepsShield, PRESET_FOR_MODE, presetForMode } from "./mode-pick.js";
+import { useStickyAnchorFix } from "./menu-anchor.js";
 
 /** The mode to show for a session: the process's own when one runs, else the one the next spawn gets. */
 const shownMode = (snap: PermissionModeState): string => snap.liveMode ?? snap.mode;
@@ -615,6 +616,8 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
   const [bypassRefusedIn, setBypassRefusedIn] = useState("");
   // The last pick's failure text, shown in the menu body; cleared on the next success.
   const [error, setError] = useState<string | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  useStickyAnchorFix(open, triggerRef);
   ensureAccessTriggerStyle();
 
   // Read the current mode and the bypass ceiling once, so the capsule and menu show the truth before
@@ -776,6 +779,7 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
     footer: footer.length > 0 ? footer : undefined,
     anchor: (
       <button
+        ref={triggerRef}
         type="button"
         data-omc-access-trigger=""
         aria-label={t("panel.access.ariaLabel", {

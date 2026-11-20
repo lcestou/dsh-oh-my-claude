@@ -11,6 +11,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - A session switched to Claude after another provider made tool calls in it no longer fails every turn with `400 ... tool_use.id: String should match pattern`. Call ids the API refuses, such as the `call_…|fc_…` ids of Responses-API models, are rewritten to ones it takes when the history is handed to Claude. Thanks to @ThirteenCh13 (#325)
 - `open_session` called without a prompt now fails before creating anything. It used to open a new session whose first message was the text "undefined". Thanks to @soffits (#326)
 - A second account mounted with its own `providerId` works on macOS. Its sessions keep their state one folder deeper, which made the keeper's socket path 107 bytes, past the 103 macOS allows, so every turn failed with "keeper ... did not answer". A socket path that will not fit now goes in a short private folder (the login's runtime dir, or the per-user temp dir). A keeper that cannot listen also ends its Claude process instead of leaving it running, and the error now carries the keeper's own reason. Thanks to @taseenb (#328)
+- The Access menu stays on its button while Claude writes a long answer. With the menu open, each streamed line scrolled the chat and Chrome carried the menu up with it, until it left the screen.
 
 ## [1.6.8] - 2026-11-19
 
