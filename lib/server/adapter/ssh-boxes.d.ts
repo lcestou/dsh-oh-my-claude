@@ -2,6 +2,17 @@ import { type SshBox } from "../sessions.js";
 import type { PluginContext } from "../dsh.js";
 import { Config } from "./config.js";
 import { ClaudeCodeAdapter } from "./class.js";
+/** The mark a mount this plugin made from its own state file (an SSH box, an account) carries in
+ *  the shared registry. `Symbol.for`, so a module loaded again still reads it. An untagged entry is
+ *  a hand-written mount or the default and is left alone; a tagged one is the previous scope's own
+ *  mount after an in-process re-apply, whose registration went with that scope, so a reconcile
+ *  mounts a fresh instance over it. */
+export declare const PLUGIN_MOUNT: unique symbol;
+/** Mark `adapter` as mounted by this plugin from its own state file. */
+export declare function tagPluginMount(adapter: ClaudeCodeAdapter): void;
+/** Whether the registry holds `providerId` for something other than this plugin's own mounts: a
+ *  hand-written mount or the default, which a reconcile must not mount over. */
+export declare function heldByOther(adapters: Map<string, ClaudeCodeAdapter>, providerId: string): boolean;
 export interface SshBoxMount {
     adapter: ClaudeCodeAdapter;
     disposeAdapter: () => void;

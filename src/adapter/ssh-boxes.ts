@@ -8,6 +8,29 @@ import { errorText } from "../process.js";
 import { Config } from "./config.js";
 import { ClaudeCodeAdapter } from "./class.js";
 
+/** The mark a mount this plugin made from its own state file (an SSH box, an account) carries in
+ *  the shared registry. `Symbol.for`, so a module loaded again still reads it. An untagged entry is
+ *  a hand-written mount or the default and is left alone; a tagged one is the previous scope's own
+ *  mount after an in-process re-apply, whose registration went with that scope, so a reconcile
+ *  mounts a fresh instance over it. */
+export const PLUGIN_MOUNT = Symbol.for("dsh-oh-my-claude.plugin-mount");
+
+/** An adapter as the registry may hold it, with or without the plugin's mark. */
+type MaybeTagged = ClaudeCodeAdapter & { [PLUGIN_MOUNT]?: true };
+
+/** Mark `adapter` as mounted by this plugin from its own state file. */
+export function tagPluginMount(adapter: ClaudeCodeAdapter): void {
+  const tagged: MaybeTagged = adapter;
+  tagged[PLUGIN_MOUNT] = true;
+}
+
+/** Whether the registry holds `providerId` for something other than this plugin's own mounts: a
+ *  hand-written mount or the default, which a reconcile must not mount over. */
+export function heldByOther(adapters: Map<string, ClaudeCodeAdapter>, providerId: string): boolean {
+  const held: MaybeTagged | undefined = adapters.get(providerId);
+  return held !== undefined && held[PLUGIN_MOUNT] !== true;
+}
+
 export interface SshBoxMount {
   adapter: ClaudeCodeAdapter;
   disposeAdapter: () => void;
@@ -48,8 +71,8 @@ export function reconcileSshBoxes(
   for (const [providerId, box] of desired) {
     if (mounts.has(providerId)) continue;
     // A hand-written mount or the default already owns this id: leave it, rather than throw
-    // DUPLICATE_ADAPTER on the registration.
-    if (adapters.has(providerId)) {
+    // DUPLICATE_ADAPTER on the registration. A previous scope's box (tagged) is mounted over.
+    if (heldByOther(adapters, providerId)) {
       log("warn", `ssh box "${box.name}" -> ${providerId} already mounted; skipped`);
       continue;
     }
@@ -73,6 +96,7 @@ export function reconcileSshBoxes(
     ]);
     const disposeAdapter = ctx.llm.registerAdapter([adapter.providerId], adapter);
     adapter.registration = disposeAdapter;
+    tagPluginMount(adapter);
     probeLogin(adapter);
     mounts.set(providerId, { adapter, disposeAdapter, disposeDirectory });
     adapters.set(providerId, adapter);
