@@ -4,7 +4,7 @@ How to run more than one login, reach more than one machine, and drive a `claude
 
 ## Several accounts
 
-Add a second Claude Code login on this box from Settings → Oh My Claude → Boxes. Add account, under This box, takes a name and a config dir; an empty dir means `~/.claude-<name>`. The account mounts at once as `claude-code-<name>`, with no dsh restart and no config edit. It shows in the model picker under its name, and its row in Boxes has Log in, Log out and Remove.
+Add a second Claude Code login on this box from Settings → Oh My Claude → Boxes. Add account, under This box, takes a name and a config dir; an empty dir means `~/.claude-<name>`, the name lower-cased with dashes for spaces (Work Team gives `~/.claude-work-team`). The account mounts at once as `claude-code-<name>`, with no dsh restart and no config edit. It shows in the model picker under its name, and its row in Boxes has Log in, Log out and Remove.
 
 Log in runs `claude auth login` with `CLAUDE_CONFIG_DIR` set to the account's dir, so the login lands in that dir, or on macOS in a Keychain entry Claude Code names after that dir. This box's login is not touched. Log out logs only that account out and stops only its sessions. Remove stops its sessions and takes it out of the picker; it deletes nothing, so the dir with its login and the plugin's state for it stay, and adding the same name back picks up where it was.
 
