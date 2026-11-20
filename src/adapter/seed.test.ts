@@ -402,4 +402,39 @@ assert.equal(bridgedName("mcp__other__x"), "mcp__other__x");
   rmSync(home, { recursive: true, force: true });
 }
 
+{
+  // Calls another provider made carry ids the API refuses (#325): pi-ai's `<call_id>|<item_id>`, or
+  // kilobytes with `+` and `/`. Each is written as a stand-in that fits, the same one on its call
+  // and its result, and an id that already fits is left alone.
+  const piped = "call_x|fc_x";
+  const huge = `g+/${"y".repeat(3000)}==`;
+  const seeded = rows(
+    seedTranscriptText(
+      [
+        person("go"),
+        call(piped, "bash", "{}"),
+        result(piped, "one"),
+        call(huge, "bash", "{}"),
+        person("stop"),
+        call("toolu_01Ok", "bash", "{}"),
+        result("toolu_01Ok", "two"),
+        reply("done"),
+      ],
+      { sessionId: "s", cwd: "/w", version: "2.1.325" },
+    ),
+  ).flatMap((r) => r.message.content);
+  const uses = seeded
+    .filter((b: { type: string }) => b.type === "tool_use")
+    .map((b: { id: string }) => b.id);
+  const answers = seeded
+    .filter((b: { type: string }) => b.type === "tool_result")
+    .map((b: { tool_use_id: string }) => b.tool_use_id);
+  assert.equal(uses.length, 3);
+  for (const id of uses)
+    assert.match(id, /^[a-zA-Z0-9_-]{1,64}$/, `${id.slice(0, 40)} fits the API`);
+  assert.deepEqual(answers, uses, "each result, the unanswered one's included, names its own call");
+  assert.equal(uses[2], "toolu_01Ok", "an id that fits is kept");
+  assert.notEqual(uses[0], uses[1], "different ids stay different");
+}
+
 console.log("seed: ok");
