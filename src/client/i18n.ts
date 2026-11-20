@@ -18,6 +18,7 @@ import * as browser from "./i18n/browser.js";
 import * as picker from "./i18n/picker.js";
 import * as updates from "./i18n/updates.js";
 import * as accounts from "./i18n/accounts.js";
+import * as boxColours from "./i18n/box-colours.js";
 
 /** The namespace this plugin registers under dsh's locale service. */
 export const LOCALE_NS = "oh-my-claude";
@@ -33,6 +34,7 @@ const OWN_EN = {
   ...picker.en,
   ...updates.en,
   ...accounts.en,
+  ...boxColours.en,
 } as const;
 /** Every English string `t()` can answer with: the plugin's own, plus the English fallback for the
  *  dsh `common` words it borrows (used only when dsh has no locale service). */
@@ -51,6 +53,7 @@ export const ZH = {
   ...picker.zh,
   ...updates.zh,
   ...accounts.zh,
+  ...boxColours.zh,
 } satisfies Record<keyof typeof OWN_EN, string>;
 
 /** Values for `{name}` placeholders. */

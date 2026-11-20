@@ -10,6 +10,7 @@ import { t, useLocale } from "./i18n.js";
 import { BOXES_EVENT } from "./picker.js";
 import { ROUTE, T, btn, btnPrimary, inputStyle, maskEmail, meta, readJson, row } from "./shared.js";
 import { ConfirmButton } from "./tune.js";
+import { BoxColourSwatch, useBoxColours } from "./box-colour-swatch.js";
 
 /** Where an account's login steps go: the accounts routes, naming the account by provider id. */
 export const ACCOUNT_LOGIN: LoginRoutes = { base: "accounts/login", field: "provider" };
@@ -50,6 +51,7 @@ const post = <T,>(path: string, body: object): Promise<T> =>
  */
 export function Accounts({ tick }: { tick: number }) {
   useLocale();
+  const { colours } = useBoxColours();
   const [rows, setRows] = useState<AccountRow[] | null>(null);
   const [status, setStatus] = useState<Record<string, AccountStatus | null>>({});
   const [busy, setBusy] = useState(false);
@@ -153,6 +155,15 @@ export function Accounts({ tick }: { tick: number }) {
             <BoxRow
               testId="dsh-oh-my-claude-account-row"
               title={a.name}
+              swatch={
+                a.mounted && colours.has(a.provider) ? (
+                  <BoxColourSwatch
+                    provider={a.provider}
+                    name={a.name}
+                    colour={colours.get(a.provider)}
+                  />
+                ) : undefined
+              }
               kind={`${t("accounts.kind")} · ${a.configDir}`}
               tone={!a.mounted ? "err" : !st ? "faint" : st.loggedIn ? "ok" : "err"}
               facts={facts}

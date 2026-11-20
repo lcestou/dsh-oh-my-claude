@@ -53,6 +53,7 @@ import {
   OFF_KEY,
 } from "../context-sources.js";
 import { HINTS_EVENT, loadHints, useHintValue, writeHints, useHintFlag } from "./hints.js";
+import { BoxColoursList } from "./box-colour-swatch.js";
 
 /** What the starter route answers: this session's own saved opener and the shared fallback. */
 interface StarterReply {
@@ -590,6 +591,7 @@ export function ThemeSwitch() {
                 </button>
               )}
             </label>
+            <BoxColoursList />
           </div>
         </details>
       )}

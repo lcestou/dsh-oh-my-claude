@@ -8,6 +8,9 @@ import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
 import { LiveNote } from "./live-note.js";
 import { useViewRead } from "./view-read.js";
 import { ConfirmButton } from "./tune.js";
+import { boxProviderId } from "../accounts.js";
+import { BoxColourSwatch, useBoxColours } from "./box-colour-swatch.js";
+import { THIS_BOX_PROVIDER } from "./box-colours.js";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -670,10 +673,14 @@ export function BoxRow({
   facts,
   note,
   actions,
+  swatch,
   children,
 }: {
   testId: string;
   title: string;
+  /** The box's colour picker (box-colour-swatch.tsx), drawn before the name; absent on rows with
+   *  no colour of their own (linked dsh boxes, remote workspaces). */
+  swatch?: ReactNode;
   /** The transport and address: `ssh · devbox`, `link · http://…`, or this box's hostname. */
   kind?: string;
   /** The dot: green when the box can take a turn, red when something stops it, grey while unknown;
@@ -699,6 +706,7 @@ export function BoxRow({
           buttons on a line of their own under an unbroken one. */}
       <div style={{ flex: "1 1 160px", minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+          {swatch && <span style={{ alignSelf: "center", display: "inline-flex" }}>{swatch}</span>}
           {/* The name stays whole and the kind beside it is what truncates: at 390 px a narrow
               column broke "Omc Check" over two lines while the dir kept its room. */}
           <span
@@ -1016,6 +1024,14 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
   const [error, setError] = useState("");
   const [openSettingsUrl, setOpenSettingsUrl] = useState<string | null>(null);
   const [me, setMe] = useState<RuntimeStatus | null>(null);
+  // Each box's colour, picked or automatic; the swatches show only once there are two boxes to
+  // tell apart.
+  const { colours } = useBoxColours();
+  /** The swatch for one box, or nothing while This box is the only one. */
+  const swatchFor = (provider: string, name: string) =>
+    colours.size > 1 ? (
+      <BoxColourSwatch provider={provider} name={name} colour={colours.get(provider)} />
+    ) : undefined;
   const [rws, setRws] = useState<RemoteWs[]>([]);
   const { login, setLogin, startLogin, submitLogin } = useLoginFlow(() => refresh());
   const dsh = useLoginFlow(() => refresh(), DSH_LOGIN);
@@ -1246,6 +1262,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
         <BoxRow
           testId="dsh-oh-my-claude-self-box-row"
           title={t("main.sessions.thisBox")}
+          swatch={swatchFor(THIS_BOX_PROVIDER, t("main.sessions.thisBox"))}
           kind={me.host}
           tone={!me.binary || !me.loggedIn ? "err" : "ok"}
           facts={[
@@ -1360,6 +1377,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
             key={`ssh:${b.host}`}
             testId="dsh-oh-my-claude-ssh-box-row"
             title={b.name}
+            swatch={swatchFor(boxProviderId(b.name), b.name)}
             kind={`${b.via ?? "ssh"} · ${b.host}`}
             tone={!st ? "faint" : up && st.loggedIn ? "ok" : "err"}
             facts={facts}
