@@ -1,5 +1,5 @@
 // dsh LLM adapter that drives the Claude Code CLI (`claude -p --input-format stream-json --output-format stream-json`).
-import { hostname } from "node:os";
+import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import { accountIdentity, readSshBoxes, registerSessionRoutes } from "./sessions.js";
 import { hub } from "./events.js";
@@ -7,7 +7,8 @@ import { registerUsageRoute } from "./usage.js";
 import { registerMcpBridge } from "./mcp.js";
 import type { PluginContext, SessionController, SubprocessRuntime } from "./dsh.js";
 import { ADAPTER_CURRENT, COMMAND_CATALOG, RESUME_TIMER, WATCH_SWEEP } from "./dsh.js";
-import { loadStarted, loadCommandCatalog, STATE_DIR, trace } from "./state.js";
+import { CLAUDE_HOME, loadStarted, loadCommandCatalog, STATE_DIR, trace } from "./state.js";
+import type { Account } from "./accounts.js";
 import { type ToolMode } from "./rows-probe.js";
 import { errorText } from "./process.js";
 import { bindServerLocale } from "./locale.js";
@@ -161,6 +162,8 @@ export {
 } from "./adapter/turn.js";
 
 import { probeLogin, reconcileSshBoxes, type SshBoxMount } from "./adapter/ssh-boxes.js";
+import { type AccountMount, localMountsOf, reconcileAccounts } from "./adapter/accounts.js";
+import { readAccounts } from "./routes/accounts.js";
 import { ClaudeCodeAdapter } from "./adapter/class.js";
 // The entry keeps its export list while the split runs.
 export { ClaudeCodeAdapter } from "./adapter/class.js";
@@ -268,6 +271,20 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     // a hot reload disposes the registrations); `sshAdapters` is the shared registry the resume walks.
     const sshMounts = new Map<string, SshBoxMount>();
     const sshAdapters = (g[ADAPTER_CURRENT] ??= new Map());
+    // The accounts beside this box's login, the same scope-local way; they share this mount's bridge.
+    const accountMounts = new Map<string, AccountMount>();
+    const accountsPath = join(STATE_DIR, "accounts.json");
+    /** Mount or withdraw the saved accounts; the bridge is read at call time, so a late one is seen. */
+    const onAccounts = (accounts: Account[]) =>
+      reconcileAccounts(
+        ctx,
+        config,
+        accounts,
+        accountMounts,
+        sshAdapters,
+        { mcp: () => adapter.mcp, mounting: () => adapter.mcpMounting },
+        (level, msg) => adapter.log(level, msg),
+      );
     adapter.mcpMounting = registerMcpBridge(ctx, {
       keyFile: join(STATE_DIR, "mcp.key"),
       log: (level, msg) => adapter.log(level, msg),
@@ -291,6 +308,8 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     }).then(
       (mcp) => {
         adapter.mcp = mcp;
+        // An account mounted before the bridge came up gets it now.
+        for (const mount of accountMounts.values()) mount.adapter.mcp = mcp;
       },
       (e) => adapter.log("warn", `mcp bridge unavailable: ${errorText(e)}`),
     );
@@ -327,6 +346,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         command: other.config.command,
         sshHost: other.config.sshHost,
         systemPrompt: other.config.systemPrompt,
+        loginKey: other.loginKey,
       };
     };
     registerUsageRoute(
@@ -374,6 +394,12 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         reconcileSshBoxes(ctx, config, boxes, sshMounts, sshAdapters, (level, msg) =>
           adapter.log(level, msg),
         ),
+      accounts: {
+        path: accountsPath,
+        onChange: onAccounts,
+        localMounts: () => localMountsOf(g[ADAPTER_CURRENT]?.values() ?? []),
+        mounted: () => new Set(accountMounts.keys()),
+      },
       remoteWorkspacesPath: join(STATE_DIR, "remote-workspaces.json"),
       onRemoteWorkspaces: setRemoteWorkspaces,
       command: adapter.config.command,
@@ -518,6 +544,10 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         reconcileSshBoxes(ctx, config, boxes, sshMounts, sshAdapters, (l, m) => adapter.log(l, m)),
       )
       .catch((e) => adapter.log("warn", `ssh boxes: ${errorText(e)}`));
+    // And the saved accounts.
+    void readAccounts(accountsPath, homedir(), CLAUDE_HOME)
+      .then(onAccounts)
+      .catch((e) => adapter.log("warn", `accounts: ${errorText(e)}`));
     // The remote-workspace redirects are fed by the routes above (`onRemoteWorkspaces`), seed read
     // included: one feed on one chain, so a row the reconcile dropped cannot be read back in here.
   }
