@@ -473,10 +473,14 @@ const busyIn = (dir: string): string[] => {
 {
   const taken = new Set<string>();
   const handlers: Array<(input: object) => Promise<{ kind: string }>> = [];
+  // Every try counts: the override catches dsh's "already registered" throw and only logs it, so a
+  // second attempt would leave one handler behind and pass a count of handlers alone.
+  let attempts = 0;
   const child = {
     effect: (fn: () => void) => fn(),
     commands: {
       register: (d: { name: string; handler: (input: object) => Promise<{ kind: string }> }) => {
+        attempts++;
         if (taken.has(d.name)) throw new Error(`command "${d.name}" is already registered`);
         taken.add(d.name);
         handlers.push(d.handler);
@@ -501,6 +505,7 @@ const busyIn = (dir: string): string[] => {
     "the new instance finds the agent already carrying it",
   );
   assert.equal(handlers.length, 1, "one registration, not two");
+  assert.equal(attempts, 1, "the new instance does not even try a second one");
   await handlers[0]!({
     agent,
     rawInput: "",
