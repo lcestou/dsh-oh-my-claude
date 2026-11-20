@@ -598,7 +598,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  both. False when dsh has no skill service or the lookup fails, so the command refuses as before. */
     dshServesSkill(agent: Agent, name: string, signal?: AbortSignal): Promise<boolean>;
     /** The agents that already carry the plugin's agent-scoped `/compact`; a disposed agent drops
-     *  out on its own, and a session dsh reloads gets a new agent and a new mount. */
+     *  out on its own, and a session dsh reloads gets a new agent and a new mount. On globalThis
+     *  because the registration lives under the agent, not under this instance: after a hot reload
+     *  the agent still carries the old one, and a second mount fails with "already registered". */
     readonly compactOwned: WeakSet<Agent>;
     /** Claude Code compaction summaries dsh has not taken yet, by dsh session id: written when the
      *  CLI compacts during a turn, taken by the next dsh compaction (`compactionFromCli`), dropped

@@ -19,6 +19,8 @@ export declare const TEMPORARY_SESSIONS: unique symbol;
 /** Per-session permission-mode overrides on globalThis: the panel writes them through the default
  * mount while the mount that spawns the session reads them, so the map cannot be per-instance. */
 export declare const PERMISSION_MODE_OVERRIDES: unique symbol;
+/** The agents whose agent-scoped `/compact` is mounted, on globalThis: the registration lives under the agent, so it outlasts the adapter instance that made it and a reloaded instance must find it there instead of mounting a second. */
+export declare const COMPACT_OWNED: unique symbol;
 /** The same brand dsh-llm puts on GenerateOptions.sessionId, so ids flow through without casts. */
 export type SessionId = NonNullable<GenerateOptions["sessionId"]>;
 /** Any JSON document; what MCP tool arguments and relay payloads are made of. */

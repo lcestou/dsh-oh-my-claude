@@ -8,7 +8,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ADAPTER_CURRENT, type PluginContext } from "../dsh.js";
+import { ADAPTER_CURRENT, type Agent, type PluginContext } from "../dsh.js";
 import { EventHub } from "../events.js";
 import type { ClaudeProcess } from "../process.js";
 import { ClaudeCodeAdapter } from "./class.js";
@@ -464,6 +464,52 @@ const busyIn = (dir: string): string[] => {
   b.processes.delete(registryKey("claude-code", "t-busy"));
   b.processes.delete(registryKey("claude-code", "t-live"));
   rmSync(b.stateDir, { recursive: true, force: true });
+}
+
+// The agent-scoped `/compact` lives under the agent, so it outlasts the instance that mounted it.
+// The instance a reload mounts next must not register a second one (dsh refuses a duplicate name in
+// a scope: 'command "compact" is already registered'), and the registration that stays must mark
+// the typed `/compact` on the live instance, where the next turn's compaction check reads it.
+{
+  const taken = new Set<string>();
+  const handlers: Array<(input: object) => Promise<{ kind: string }>> = [];
+  const child = {
+    effect: (fn: () => void) => fn(),
+    commands: {
+      register: (d: { name: string; handler: (input: object) => Promise<{ kind: string }> }) => {
+        if (taken.has(d.name)) throw new Error(`command "${d.name}" is already registered`);
+        taken.add(d.name);
+        handlers.push(d.handler);
+        return () => {};
+      },
+    },
+  };
+  const agent = {
+    id: "reloaded",
+    followup: () => 0,
+    ctx: { plugin: (def: { apply: (c: typeof child) => void }) => def.apply(child) },
+  };
+  const old = new ClaudeCodeAdapter(scoped(20).ctx, Config({}));
+  mounts.set(old.providerId, old);
+  // SAFETY: the fake carries only what the override reads: ctx.plugin and followup
+  old.mountCompactOverride(agent as unknown as Agent);
+  const next = new ClaudeCodeAdapter(scoped(21).ctx, Config({}));
+  mounts.set(next.providerId, next);
+  assert.doesNotThrow(
+    // SAFETY: as above
+    () => next.mountCompactOverride(agent as unknown as Agent),
+    "the new instance finds the agent already carrying it",
+  );
+  assert.equal(handlers.length, 1, "one registration, not two");
+  await handlers[0]!({
+    agent,
+    rawInput: "",
+    attachments: [],
+    signal: new AbortController().signal,
+  });
+  assert.equal(next.compactQueued.has("reloaded"), true, "marked on the instance mounted now");
+  assert.equal(old.compactQueued.has("reloaded"), false, "not on the dead one");
+  mounts.delete(next.providerId);
 }
 
 console.log("hot reload ok");
