@@ -22,6 +22,8 @@ A mount written by hand in the profile's `cordis.patch.yml` still loads, and Box
         configDir: ~/.claude-work
 ```
 
+Each box tints its Claude model names in its own colour: a shade of the accent until you pick one from the swatch beside its name in Boxes or under Settings → Customize → Box colours.
+
 An account and an SSH box share one list of names: both mount as `claude-code-<name>`, so Work can be one or the other.
 
 Same box, several clients (laptop, phone, another PC on the LAN): run `dsh web` where Claude Code is logged in and open that URL from anywhere.

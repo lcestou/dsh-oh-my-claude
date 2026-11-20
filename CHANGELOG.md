@@ -9,6 +9,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 ### Added
 
 - Accounts in Settings → Boxes. Add account, under This box, takes a name and a config dir and mounts a second Claude Code login at once, with no dsh restart and no edit to `cordis.patch.yml`. Each account has a row showing who is logged in, with Log in, Log out and Remove; it appears in the model picker under its name and its sessions get dsh's tools. A mount written by hand in `cordis.patch.yml` is listed too. Thanks to @taseenb (#328)
+- Box colours. Each box tints its Claude model names in the model picker and in the composer's model chip, so a session shows which box or account it runs on. Boxes nobody picked a colour for get a shade of the accent; a colour can be picked from the swatch beside each name in Boxes, or from the Box colours list under Customize.
 
 ### Fixed
 
