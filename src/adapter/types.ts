@@ -62,10 +62,13 @@ export function requirePrep(proc: ClaudeProcess): TurnPrep {
   return proc.prep;
 }
 
-/** A session whose last turn wanted a login: the box it ran on (empty for this box) and its name. */
+/** A session whose last turn wanted a login: the box it ran on (empty for this box, the mount's
+ *  loginKey for an account) and its name. `provider` is set for an account, whose login the card
+ *  runs through the accounts routes by that id. */
 export interface LoginNeed {
   host: string;
   label: string;
+  provider?: string;
 }
 
 /** Keys the shared process registry by instance so two mounts never see each other's processes. */
