@@ -96,7 +96,13 @@ export const loadSessionDefault = (): Promise<SessionDefault | undefined> =>
 /** `off` is a row the picker leaves out because of where the box's traffic goes (a model that
  *  needs a router on a box talking to Anthropic, or the reverse); absent from an older server. */
 type PickerModel = { id: string; name: string; hidden: boolean; off?: boolean };
-type PickerBox = { provider: string; host: string | null; models: PickerModel[] };
+type PickerBox = {
+  provider: string;
+  host: string | null;
+  /** An account's name; null for this box's default login and for an SSH box. */
+  name?: string | null;
+  models: PickerModel[];
+};
 
 /** Settings → Oh My Claude: the model and effort a new Claude session opens on where its
  *  workspace remembers none, plus the checkbox that also applies it to workspaces that never ran
@@ -200,7 +206,10 @@ export function NewSessionDefaultRow() {
                 </option>
               ));
             return many ? (
-              <optgroup key={box.provider} label={box.host ?? t("main.settingsUi.newDefaultLocal")}>
+              <optgroup
+                key={box.provider}
+                label={box.host ?? box.name ?? t("main.settingsUi.newDefaultLocal")}
+              >
                 {rows}
               </optgroup>
             ) : (

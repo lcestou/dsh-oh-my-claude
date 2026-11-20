@@ -20,6 +20,7 @@ import { noteWithdrawn } from "./steer-restore.js";
 import { takeDraft, subscribeDraft, noteDraft } from "./draft.js";
 import { useHintFlag } from "./hints.js";
 import { Chevron, LoginSteps, useLoginFlow } from "./boxes.js";
+import { ACCOUNT_LOGIN } from "./accounts.js";
 import { size } from "./sessions-tab.js";
 import { kTokens, loadUsage, resetText, sessionModelOf } from "./context-meter.js";
 import { StarterCard } from "./settings-card.js";
@@ -825,11 +826,15 @@ export function SuggestionCard({
 export function LoginCard({ need, onDismiss }: { need: LoginNeed; onDismiss: () => void }) {
   useLocale();
   const [done, setDone] = useState(false);
-  const { login, setLogin, startLogin, submitLogin } = useLoginFlow(() => setDone(true));
+  // An account logs in through its own routes, by provider id; a box and this box by host.
+  const { login, setLogin, startLogin, submitLogin } = useLoginFlow(
+    () => setDone(true),
+    need.provider ? ACCOUNT_LOGIN : undefined,
+  );
   const where = need.host ? need.label : t("main.boxes.thisBoxLower");
   return (
     <div
-      data-omc-login-card={need.host || "this-box"}
+      data-omc-login-card={need.provider ?? (need.host || "this-box")}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
       role="status"
       style={{
@@ -851,7 +856,7 @@ export function LoginCard({ need, onDismiss }: { need: LoginNeed; onDismiss: () 
             type="button"
             style={btn}
             data-testid="dsh-oh-my-claude-card-login"
-            onClick={() => startLogin(need.host)}
+            onClick={() => startLogin(need.provider ?? need.host)}
           >
             {t("main.boxes.logIn")}
           </button>
