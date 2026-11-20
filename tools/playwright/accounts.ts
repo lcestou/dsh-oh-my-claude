@@ -54,12 +54,23 @@ const readSsh = (p: Page): Promise<Array<{ name: string; host: string }>> =>
 const openBoxes = async (p: Page) => {
   await p.goto(dshUrl(token), { waitUntil: "load" });
   await p.waitForTimeout(2500);
-  await p
-    .locator(
-      'button[aria-label*="Settings" i], a[aria-label*="Settings" i], button[aria-label*="设置"]',
-    )
-    .first()
-    .click({ force: true });
+  // Settings sits in the account menu at the foot of the sidebar since dsh 0.2.1; an older dsh had
+  // a gear with its own label, which the first selector still covers.
+  const gear = p.locator(
+    'button[aria-label*="Settings" i], a[aria-label*="Settings" i], button[aria-label*="设置"]',
+  );
+  if ((await gear.count()) > 0) await gear.first().click({ force: true });
+  else {
+    await p
+      .locator('button[aria-label="Account menu"], button[aria-label="账户菜单"]')
+      .first()
+      .click();
+    await p.waitForTimeout(500);
+    await p
+      .getByText(/^(Settings|设置)$/)
+      .first()
+      .click();
+  }
   await p.waitForTimeout(800);
   await p
     .getByText(/^Oh My Claude$/)
