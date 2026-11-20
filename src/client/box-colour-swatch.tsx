@@ -14,13 +14,14 @@ import { ROUTE, T, btn, readJson } from "./shared.js";
  *  label is built from. */
 export type BoxEntry = { provider: string; host: string | null; name?: string | null };
 
-/** Every mounted box from `GET /models?all=1`, or [] when the read fails; the list the swatches
- *  and the sheet work from. */
-const loadBoxList = (): Promise<BoxEntry[]> =>
+/** Every mounted box from `GET /models?all=1`, the list the swatches and the sheet work from;
+ *  undefined when the read fails, so a caller keeps what it last drew rather than dropping every
+ *  box but This one until the next change. */
+const loadBoxList = (): Promise<BoxEntry[] | undefined> =>
   fetch(`${ROUTE}/models?all=1`)
     .then((r) => readJson<{ models?: BoxEntry[] }>(r))
     .then((b) => (b.models ?? []).map(({ provider, host, name }) => ({ provider, host, name })))
-    .catch(() => []);
+    .catch(() => undefined);
 
 /** The label a box goes by in the pickers: an account's name, an SSH box's host, or This box. */
 export const boxLabel = (b: BoxEntry): string => b.name ?? b.host ?? t("main.sessions.thisBox");
@@ -38,7 +39,7 @@ export function startBoxColours(): () => void {
   const paint = () => {
     const mine = ++latest;
     void Promise.all([loadHints(), loadBoxList()]).then(([hints, boxes]) => {
-      if (!live || mine !== latest) return;
+      if (!live || mine !== latest || !boxes) return;
       let el = document.getElementById("omc-box-colours");
       if (!el) {
         el = document.createElement("style");
@@ -79,7 +80,7 @@ export function useBoxColours(): { boxes: BoxEntry[]; colours: Map<string, strin
     const load = () => {
       const mine = ++latest;
       void Promise.all([loadHints(), loadBoxList()]).then(([hints, boxes]) => {
-        if (!live || mine !== latest) return;
+        if (!live || mine !== latest || !boxes) return;
         setState({
           boxes,
           colours: boxColours(
