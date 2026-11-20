@@ -1,10 +1,11 @@
 import { strict as assert } from "node:assert";
-import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 import { SOCKET_PATH_MAX, keeperSocketPath, privateSocketDir } from "./keeper-socket.js";
-import { attachKeeper, spawnKeeper } from "./process.js";
+import { attachKeeper, pidAlive, spawnKeeper } from "./process.js";
 import { tempDir } from "./test-tmp.js";
 
 const root = tempDir("omc-ksock-");
@@ -46,7 +47,9 @@ assert.equal(
 assert.equal(SOCKET_PATH_MAX, process.platform === "linux" ? 107 : 103);
 
 // The private dir is made owner-only, and one someone else could enter is refused.
-const priv = privateSocketDir(undefined, root);
+// "" and not undefined: undefined takes the default, which is this login's real XDG_RUNTIME_DIR.
+const priv = privateSocketDir("", root);
+assert.equal(priv, join(root, `omc-${process.getuid?.()}`));
 assert.ok(priv && existsSync(priv), "made in the temp dir when there is no runtime dir");
 assert.equal(
   privateSocketDir(join(root, "rt"), "/nowhere"),
@@ -93,5 +96,31 @@ again.stdin.write("again\n");
 await second; // a reattach finds the socket from spec.json
 again.terminate();
 await again.done;
+
+// A keeper whose socket will not bind ends its Claude and exits 78, and the attach error carries
+// its reason rather than the closing `exit code=` line. Before, Claude ran on with nobody able to
+// reach it, which is what a too-long path on macOS did.
+const unbound = join(root, "unbound");
+mkdirSync(unbound);
+writeFileSync(
+  join(unbound, "spec.json"),
+  JSON.stringify({
+    command: "sleep",
+    args: ["300"],
+    cwd: root,
+    env: { PATH: process.env.PATH ?? "" },
+    sessionId: "s-unbound",
+    sock: join(root, "missing", "k.sock"),
+  }),
+);
+const keeperJs = fileURLToPath(new URL("./keeper.js", import.meta.url));
+const ran = spawnSync(process.execPath, [keeperJs, unbound], { timeout: 15_000 });
+assert.equal(ran.status, 78, "a keeper that cannot listen exits 78");
+const { claudePid } = JSON.parse(readFileSync(join(unbound, "keeper.json"), "utf8")) as {
+  claudePid: number;
+};
+await new Promise((r) => setTimeout(r, 200));
+assert.equal(pidAlive(claudePid), false, "and takes its Claude with it");
+await assert.rejects(attachKeeper(unbound, 300), /did not answer: cannot listen on /);
 console.log("keeper-socket tests passed");
 process.exit(0);

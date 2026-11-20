@@ -1694,14 +1694,20 @@ export function keeperHolder(dir: string): number | undefined {
   return pid;
 }
 
-/** The last line of a keeper's `keeper.log`, as `: <line>` for an error message, or "" when it
- *  wrote none. That line says why a keeper never listened (a socket path too long, a bind
- *  refused), which the turn's error otherwise leaves to a hunt through the state dir. */
+/** The last line of a keeper's `keeper.log` other than its closing `exit code=` record, as
+ *  `: <line>` for an error message, or "" when it wrote none. That line says why a keeper never
+ *  listened (a socket path too long, a bind refused), which the turn's error otherwise leaves to a
+ *  hunt through the state dir. */
 function keeperLogTail(dir: string): string {
   try {
-    const last = readFileSync(join(dir, "keeper.log"), "utf8").trimEnd().split("\n").pop();
-    // drop the ISO timestamp the keeper puts on every line
-    return last ? `: ${last.replace(/^\S+ /, "")}` : "";
+    const last = readFileSync(join(dir, "keeper.log"), "utf8")
+      .trimEnd()
+      .split("\n")
+      // drop the ISO timestamp the keeper puts on every line
+      .map((l) => l.replace(/^\S+ /, ""))
+      .filter((l) => l && !l.startsWith("exit code="))
+      .pop();
+    return last ? `: ${last}` : "";
   } catch {
     return "";
   }
