@@ -253,6 +253,10 @@ export async function openSession(
   args: OpenSessionArgs,
   signal: AbortSignal,
 ): Promise<string> {
+  // Checked before anything is created: a call without a prompt (a model passing another tool's
+  // arguments, say) would otherwise open a session whose first message reads "undefined".
+  const prompt = str(args.prompt) ?? "";
+  if (!prompt.trim()) throw new BadCall("open_session needs a non-empty prompt");
   const sessionOf = agent.session;
   const cwd =
     sessionOf?.header?.cwd ?? (sessionOf ? ctx.sessions.get(sessionOf.id)?.header?.cwd : undefined);
@@ -296,7 +300,7 @@ export async function openSession(
       // Required from dsh 0.1.7: a prompt says whether it queues behind the running turn or
       // steers into it. A fresh child session has no turn to steer, so it queues.
       mode: "queue",
-      content: [{ type: "text", text: String(args.prompt) }],
+      content: [{ type: "text", text: prompt }],
     },
     signal,
   );

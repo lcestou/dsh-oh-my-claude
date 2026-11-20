@@ -556,6 +556,11 @@ console.log("mcp ok");
     { provider: "openai-codex", model: "gpt-6.1-sol", reasoningEffort: "high" },
   ]);
   calls.length = 0;
+  // A call with no prompt (another tool's arguments) opens nothing instead of a session saying "undefined".
+  for (const args of [{ query: "select:mcp__dsh__open_session" }, { prompt: "  " }])
+    await assert.rejects(openSession(host, caller, args, signal), /non-empty prompt/);
+  assert.deepEqual(calls, [], "nothing created without a prompt");
+  calls.length = 0;
   await openSession(host, caller, { prompt: "go", reasoningEffort: "high" }, signal);
   assert.deepEqual(calls, ["create", "prompt"], "an effort without a route sets nothing");
   calls.length = 0;
