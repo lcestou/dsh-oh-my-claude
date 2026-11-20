@@ -22,6 +22,8 @@ const profile: LocalMount = {
   command: "/opt/side/claude",
 };
 const calls: string[] = [];
+/** Config dirs the stand-in CLI has logged out. */
+const loggedOut = new Set<string>();
 let body: { [key: string]: JsonValue } = {};
 let answer: { status: number; value: unknown } = { status: 0, value: null };
 const ctx: AccountRouteCtx = {
@@ -35,10 +37,13 @@ const ctx: AccountRouteCtx = {
   },
   readBody: async () => body,
   // Logged in only under the work account's dir, as the real CLI reads its login from there.
+  // A logout takes the login away until the next run of the suite, as the real one does.
   run: async (cmd, args, env) => {
     calls.push(`${cmd} ${args.join(" ")} @${env?.CLAUDE_CONFIG_DIR ?? "-"}`);
+    const dir = env?.CLAUDE_CONFIG_DIR ?? "";
+    if (args[1] === "logout") loggedOut.add(dir);
     return {
-      out: `{"loggedIn": ${env?.CLAUDE_CONFIG_DIR === "/home/u/.claude-work" && args[0] === "auth" && args[1] === "status"}}`,
+      out: `{"loggedIn": ${dir === "/home/u/.claude-work" && !loggedOut.has(dir) && args[0] === "auth" && args[1] === "status"}}`,
     };
   },
   cliEnvFor: (d) => ({ PATH: process.env.PATH, CLAUDE_CONFIG_DIR: d }),
@@ -119,11 +124,29 @@ calls.length = 0;
 await hit("POST", "/p/accounts/login/logout", { provider: "claude-code-work" });
 assert.deepEqual(calls, [
   "claude auth logout @/home/u/.claude-work",
+  "claude auth status @/home/u/.claude-work",
   "forget",
   "logoutDone dir:/home/u/.claude-work",
   "status claude-code-work false",
   "publish",
 ]);
+// A logout the CLI did not carry out (the status still says logged in) is reported, and nothing is
+// stopped or marked logged out.
+{
+  const realRun = ctx.run;
+  ctx.run = async (cmd, args, env) => {
+    calls.push(`${cmd} ${args.join(" ")} @${env?.CLAUDE_CONFIG_DIR ?? "-"}`);
+    return args[1] === "status"
+      ? { out: '{"loggedIn": true}' }
+      : { out: "", error: "keychain locked" };
+  };
+  calls.length = 0;
+  await hit("POST", "/p/accounts/login/logout", { provider: "claude-code-work" });
+  assert.equal(answer.status, 500, "a failed logout is an error");
+  assert.ok(!calls.some((x) => x.startsWith("logoutDone")), "and stops no session");
+  ctx.run = realRun;
+}
+loggedOut.clear(); // the login cases below start from a logged-in work account again
 // A hand-written mount with a `command:` of its own logs out through that binary, not the default.
 calls.length = 0;
 await hit("POST", "/p/accounts/login/logout", { provider: "claude-code-side" });

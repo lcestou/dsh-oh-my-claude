@@ -32,6 +32,7 @@ declare const EN: {
     readonly accountDirTaken: "{dir} is already used by {name}.";
     readonly accountsMax: "At most {n} accounts.";
     readonly accountUnknown: "No account {provider} on this box.";
+    readonly accountLogoutFailed: "{name} is still logged in after Log out: {error}";
     readonly accountsUnreadable: "{path} cannot be read as a list of accounts, so nothing was saved. Fix or move the file, then try again.";
     readonly temporaryCommand: "Oh My Claude: keep no Claude transcript for this session (toggle)";
     readonly btwCommand: "Oh My Claude: ask Claude a quick side question without interrupting the turn";
