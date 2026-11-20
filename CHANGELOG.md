@@ -18,6 +18,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 - A second account mounted with its own `providerId` works on macOS. Its sessions keep their state one folder deeper, which made the keeper's socket path 107 bytes, past the 103 macOS allows, so every turn failed with "keeper ... did not answer". A socket path that will not fit now goes in a short private folder (the login's runtime dir, or the per-user temp dir). A keeper that cannot listen also ends its Claude process instead of leaving it running, and the error now carries the keeper's own reason. Thanks to @taseenb (#328)
 - Logging This box out no longer stops the sessions of a second account that has its own config dir, and the Models block and the new-session default name that account instead of showing a second "This box".
 - Plugin and MCP server changes made in a session on a second account (a toggle, an uninstall, a marketplace add or remove, an MCP server add or remove) now land in that account's config dir. They used to change This box's `~/.claude`, while the panel kept showing the account's settings unchanged.
+- The Access menu stays on its button while Claude writes a long answer. With the menu open, each streamed line scrolled the chat and Chrome carried the menu up with it, until it left the screen.
 
 ## [1.6.8] - 2026-11-19
 
