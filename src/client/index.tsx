@@ -47,6 +47,7 @@ import {
   claudeRunningTitles,
 } from "./turn-status.js";
 import { Boxes, Card, useBoxList } from "./boxes.js";
+import { Accounts } from "./accounts.js";
 import { Sessions } from "./sessions-tab.js";
 import { CostLine } from "./cost.js";
 import {
@@ -336,6 +337,7 @@ export function apply(ctx: ClientCtx) {
             loaded={loaded}
             open={openBoxes}
             onToggle={() => setOpenBoxes((v) => !v)}
+            accounts={(tick) => <Accounts tick={tick} />}
           />
         )}
         <Card

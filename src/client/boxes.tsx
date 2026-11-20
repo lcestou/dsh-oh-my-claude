@@ -616,6 +616,9 @@ interface BoxesProps {
   loaded: boolean;
   open: boolean;
   onToggle: () => void;
+  /** The account rows, rendered under This box; `tick` changes on each Refresh. index.tsx passes
+   *  them in, so this card does not import the module that imports it. */
+  accounts?: (tick: number) => ReactNode;
 }
 
 interface ProbeEntry {
@@ -659,7 +662,7 @@ interface LoginFlow {
  *  it, one status line under it (a dot for the state, facts joined by dots, problems in the error
  *  colour), and the actions in a column on the right that never wraps into the facts. Every box
  *  kind renders through this so they read the same. */
-function BoxRow({
+export function BoxRow({
   testId,
   title,
   kind,
@@ -817,9 +820,9 @@ const bad = (text: string): ReactNode => <span style={{ color: T.err }}>{text}</
 /** Where a login flow's three routes live and what names the box in their body: an ssh box (or
  *  this box, host "") under `ssh-boxes/login` by host; a linked dsh box under `boxes/login` by url,
  *  forwarded to that dsh's own copy of this plugin. */
-interface LoginRoutes {
+export interface LoginRoutes {
   base: string;
-  field: "host" | "url";
+  field: "host" | "url" | "provider";
 }
 
 const SSH_LOGIN: LoginRoutes = { base: "ssh-boxes/login", field: "host" };
@@ -935,8 +938,9 @@ export function LoginSteps({
 }
 
 /** The Boxes card: this box first, then any added machines, each probed and addable from here. */
-export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle }: BoxesProps) {
+export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }: BoxesProps) {
   useLocale();
+  const [tick, setTick] = useState(0);
   const [probe, setProbe] = useState<Record<string, ProbeEntry>>({});
   const [self, setSelf] = useState<{ plugin?: string } | null>(null);
   const [ssh, setSsh] = useState<SshBoxData[]>([]);
@@ -1027,13 +1031,21 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle }: BoxesPro
       .then((b) => setRws(b.workspaces ?? []))
       .catch(() => {});
   };
-  useEffect(() => {
+  /** The saved SSH boxes. Read on mount and again on BOXES_EVENT, which a save here, in another
+   *  tab or in another browser raises: a tab that kept an old list would PUT it back on its next add
+   *  and drop the box the other tab saved. */
+  const loadSsh = () =>
     fetch(`${ROUTE}/ssh-boxes`)
       .then((r) => readJson<{ boxes?: SshBoxData[] }>(r))
       .then((b) => setSsh(b.boxes ?? []))
       .catch((e: Error) => setError(e.message));
+  useEffect(() => {
+    void loadSsh();
     void loadMe();
     loadRws();
+    const onBoxes = () => void loadSsh();
+    window.addEventListener(BOXES_EVENT, onBoxes);
+    return () => window.removeEventListener(BOXES_EVENT, onBoxes);
   }, []);
   // The rows follow dsh's own workspace list, which changes on an add from the picker, a trash in
   // the sidebar and a box removal alike (the store carries every registry change, dsh's own or this
@@ -1063,6 +1075,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle }: BoxesPro
   const refresh = () => {
     setBusy(true);
     setError("");
+    setTick((n) => n + 1);
     const jobs: Promise<unknown>[] = [loadMe()];
     if (boxes.length)
       jobs.push(
@@ -1293,6 +1306,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle }: BoxesPro
           )}
         </BoxRow>
       )}
+      {accounts?.(tick)}
       {ssh.map((b) => {
         const st = sshProbe[b.host]?.status;
         const down = st?.reach && st.reach.stage !== "ok";
