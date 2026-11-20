@@ -206,12 +206,12 @@ DSH Web 和 DSH Desktop 使用各自的 dsh profile，因此只会重新接上�
 
 ## 远程主机和账号
 
-用不同的 `configDir` 把插件挂载两次，即可使用两个登录。在 设置 → Oh My Claude → 主机 中列出其他运行 dsh 和本插件的主机，并在它们之间切换。也可以给一台主机起个名字、填上 `user@host`，通过 SSH 驱动那里的 `claude`，远端只需要安装 CLI；Tailscale 和 WireGuard 对等节点会作为可选主机出现。详见 [docs/remote.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md)。
+在 设置 → Oh My Claude → 主机 → 添加账号 中添加第二个 Claude Code 登录；它使用独立的配置目录，并在模型选择器中有自己的条目。在 设置 → Oh My Claude → 主机 中列出其他运行 dsh 和本插件的主机，并在它们之间切换。也可以给一台主机起个名字、填上 `user@host`，通过 SSH 驱动那里的 `claude`，远端只需要安装 CLI；Tailscale 和 WireGuard 对等节点会作为可选主机出现。详见 [docs/remote.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md)。
 
 ## 它会接触什么
 
 - **运行** 你已有的 `claude` 程序，在本机或你通过 SSH 添加的主机上。
-- **读取** Claude Code 的登录信息（`~/.claude/.credentials.json`；macOS 上该文件没有有效令牌时读钥匙串里的 `Claude Code-credentials`；或已设置的 `ANTHROPIC_API_KEY`），用来获取模型列表和套餐用量。这个令牌只会发往 `api.anthropic.com`。
+- **读取** Claude Code 的登录信息（`~/.claude/.credentials.json`；macOS 上该文件没有有效令牌时读钥匙串里的 `Claude Code-credentials`，账号则读 Claude Code 以其配置目录命名的条目；或已设置的 `ANTHROPIC_API_KEY`），用来获取模型列表和套餐用量。这个令牌只会发往 `api.anthropic.com`。
 - **写入** 自己的状态到 `~/.local/state/dsh-oh-my-claude/`；SSH 主机的登录令牌保存为只有你能读取的文件。CLAUDE.md、settings.json 和 MCP 服务器只在你从面板编辑时才会改动。
 - **监听** 一个 Unix socket，供在 dsh 重启期间托管 Claude 的 keeper 使用。插件的 HTTP 路由都在 dsh 自己的服务器里，所以在 DSH Web 下不开放 TCP 端口。在 DSH Desktop 下，其 Web 服务器对非自身窗口的请求一律返回 403，因此把 dsh 工具交给 Claude 的桥接会另在 127.0.0.1 上监听，仍由同一把密钥保护。
 - **访问** `api.anthropic.com`（模型、套餐用量）、`status.anthropic.com`、`downloads.claude.ai`（CLI 的版本指针）、`registry.npmjs.org`（插件更新检查）和 `api.github.com`（仓库的 Star 数）。SSH 只连接你添加的主机。

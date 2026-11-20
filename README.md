@@ -206,12 +206,12 @@ DSH Web and DSH Desktop run separate dsh profiles, so each reattaches only to th
 
 ## Remote boxes and accounts
 
-Mount the plugin twice with different `configDir` values for two logins. List other boxes running dsh and this plugin under Settings → Oh My Claude → Boxes and jump between them. Or give a box a name and `user@host` and drive the `claude` there over SSH, with nothing on the far side but the CLI; Tailscale and WireGuard peers appear as hosts to pick from. All of it is on [docs/remote.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md).
+Add a second Claude Code login under Settings → Oh My Claude → Boxes → Add account; it gets its own config dir and its own entry in the model picker. List other boxes running dsh and this plugin under Settings → Oh My Claude → Boxes and jump between them. Or give a box a name and `user@host` and drive the `claude` there over SSH, with nothing on the far side but the CLI; Tailscale and WireGuard peers appear as hosts to pick from. All of it is on [docs/remote.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md).
 
 ## What it touches
 
 - **Runs** the `claude` binary you already have, on this box or on one you add over SSH.
-- **Reads** Claude Code's login (`~/.claude/.credentials.json`, on macOS the `Claude Code-credentials` Keychain entry when that file has no live token, or `ANTHROPIC_API_KEY` when set) to fetch the model list and your plan usage. That token goes only to `api.anthropic.com`.
+- **Reads** Claude Code's login (`~/.claude/.credentials.json`, on macOS the `Claude Code-credentials` Keychain entry, or for an account the entry Claude Code names after its config dir, when that file has no live token, or `ANTHROPIC_API_KEY` when set) to fetch the model list and your plan usage. That token goes only to `api.anthropic.com`.
 - **Writes** its own state under `~/.local/state/dsh-oh-my-claude/`; login tokens for SSH boxes are files only you can read. CLAUDE.md, settings.json and MCP servers change only when you edit them from the panel.
 - **Listens** on a Unix socket for the keeper that holds Claude across a dsh restart. Its HTTP routes live inside dsh's own server, so on DSH Web it opens no TCP port. Under DSH Desktop, whose web server answers 403 to anything but its own window, the bridge that hands dsh's tools to Claude also listens on 127.0.0.1, behind the same key.
 - **Calls out** to `api.anthropic.com` (models, plan usage), `status.anthropic.com`, `downloads.claude.ai` (the CLI's release pointer), `registry.npmjs.org` (plugin update check) and `api.github.com` (the repo's star count). SSH goes only to boxes you add.
