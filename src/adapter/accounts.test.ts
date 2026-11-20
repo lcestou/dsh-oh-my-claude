@@ -2,7 +2,7 @@
 // default mount's bridge shared, an id something else holds left alone, a dropped account withdrawn.
 import { strict as assert } from "node:assert";
 import { ADAPTER_CURRENT, type PluginContext } from "../dsh.js";
-import { type AccountMount, localMountsOf, reconcileAccounts } from "./accounts.js";
+import { type AccountMount, localMountsOf, reconcileAccounts, serialAccounts } from "./accounts.js";
 import { heldByOther, tagPluginMount } from "./ssh-boxes.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
@@ -219,5 +219,28 @@ assert.equal(disposed.length, 2);
   assert.equal(held.get("claude-code-work"), box, "the SSH box keeps its id");
   assert.deepEqual(rows, ["+claude-code-work", "-claude-code-work"]);
   assert.ok(seen.some((m) => m.includes("claude-code-work not mounted: DUPLICATE_ADAPTER")));
+}
+// The boot read and an add's reconcile queue one behind the other, each on the file as it is then,
+// so a slow boot read cannot withdraw an account added while it ran.
+{
+  type List = Array<{ name: string; configDir: string }>;
+  const added: List = [{ name: "Work", configDir: "/w" }];
+  let releaseBoot: (l: List) => void = () => {};
+  const bootRead = new Promise<List>((r) => {
+    releaseBoot = r;
+  });
+  let file: List = [];
+  const reads = [() => bootRead, async () => file];
+  const applied: List[] = [];
+  const reconcile = serialAccounts(
+    () => (reads.shift() ?? (async () => file))(),
+    (a) => applied.push(a),
+  );
+  const boot = reconcile();
+  file = added;
+  const add = reconcile();
+  releaseBoot([]);
+  await Promise.all([boot, add]);
+  assert.deepEqual(applied.at(-1), added, "the add lands last, whatever the boot read saw");
 }
 console.log("account mounts ok");

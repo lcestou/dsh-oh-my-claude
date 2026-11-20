@@ -8,7 +8,6 @@ import { registerMcpBridge } from "./mcp.js";
 import type { PluginContext, SessionController, SubprocessRuntime } from "./dsh.js";
 import { ADAPTER_CURRENT, COMMAND_CATALOG, RESUME_TIMER, WATCH_SWEEP } from "./dsh.js";
 import { CLAUDE_HOME, loadStarted, loadCommandCatalog, STATE_DIR, trace } from "./state.js";
-import type { Account } from "./accounts.js";
 import { type ToolMode } from "./rows-probe.js";
 import { errorText } from "./process.js";
 import { bindServerLocale } from "./locale.js";
@@ -162,7 +161,12 @@ export {
 } from "./adapter/turn.js";
 
 import { probeLogin, reconcileSshBoxes, type SshBoxMount } from "./adapter/ssh-boxes.js";
-import { type AccountMount, localMountsOf, reconcileAccounts } from "./adapter/accounts.js";
+import {
+  type AccountMount,
+  localMountsOf,
+  reconcileAccounts,
+  serialAccounts,
+} from "./adapter/accounts.js";
 import { readAccounts } from "./routes/accounts.js";
 import { ClaudeCodeAdapter } from "./adapter/class.js";
 // The entry keeps its export list while the split runs.
@@ -274,17 +278,21 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     // The accounts beside this box's login, the same scope-local way; they share this mount's bridge.
     const accountMounts = new Map<string, AccountMount>();
     const accountsPath = join(STATE_DIR, "accounts.json");
-    /** Mount or withdraw the saved accounts; the bridge is read at call time, so a late one is seen. */
-    const onAccounts = (accounts: Account[]) =>
-      reconcileAccounts(
-        ctx,
-        config,
-        accounts,
-        accountMounts,
-        sshAdapters,
-        { mcp: () => adapter.mcp, mounting: () => adapter.mcpMounting },
-        (level, msg) => adapter.log(level, msg),
-      );
+    /** Mount or withdraw the saved accounts, one call at a time, each on the file as it is then; the
+     *  bridge is read at call time, so a late one is seen. */
+    const onAccounts = serialAccounts(
+      () => readAccounts(accountsPath, homedir(), CLAUDE_HOME),
+      (accounts) =>
+        reconcileAccounts(
+          ctx,
+          config,
+          accounts,
+          accountMounts,
+          sshAdapters,
+          { mcp: () => adapter.mcp, mounting: () => adapter.mcpMounting },
+          (level, msg) => adapter.log(level, msg),
+        ),
+    );
     adapter.mcpMounting = registerMcpBridge(ctx, {
       keyFile: join(STATE_DIR, "mcp.key"),
       log: (level, msg) => adapter.log(level, msg),
@@ -545,9 +553,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       )
       .catch((e) => adapter.log("warn", `ssh boxes: ${errorText(e)}`));
     // And the saved accounts.
-    void readAccounts(accountsPath, homedir(), CLAUDE_HOME)
-      .then(onAccounts)
-      .catch((e) => adapter.log("warn", `accounts: ${errorText(e)}`));
+    onAccounts().catch((e) => adapter.log("warn", `accounts: ${errorText(e)}`));
     // The remote-workspace redirects are fed by the routes above (`onRemoteWorkspaces`), seed read
     // included: one feed on one chain, so a row the reconcile dropped cannot be read back in here.
   }

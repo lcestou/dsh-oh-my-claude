@@ -28,6 +28,14 @@ export interface SharedBridge {
  * not list an account's transcripts, and a mirror built at mount misses a login made after it.
  */
 export declare function reconcileAccounts(ctx: PluginContext, base: Schemastery.TypeT<typeof Config>, accounts: Account[], mounts: Map<string, AccountMount>, adapters: Map<string, ClaudeCodeAdapter>, bridge: SharedBridge, log: (level: string, msg: string) => void): void;
+/**
+ * A reconcile that applies the saved list as it is when its turn comes. Calls run one at a time and
+ * each re-reads, so a slow read started at boot cannot apply a list older than an add that was
+ * saved while it ran: the add's own call queues behind it and reads the newer file. The list a
+ * caller may pass is ignored for the same reason. A failed read or apply rejects that call only;
+ * the next one still runs.
+ */
+export declare function serialAccounts(read: () => Promise<Account[]>, apply: (accounts: Account[]) => void): () => Promise<void>;
 /** Every local mount but the default, for the accounts routes: plugin accounts and hand-written
  *  mounts alike, with the dir they hand the CLI. SSH boxes are not accounts and are left out; a
  *  hand-written mount on the default dir comes back with loginKey "" and the routes skip it. */
