@@ -169,6 +169,13 @@ try {
     await p.screenshot({ path: `${shots}/accounts-${w}-${scheme}.png`, fullPage: true });
     const width = await p.evaluate(() => document.documentElement.scrollWidth);
     expect(`no sideways scroll at ${w} ${scheme}`, width <= w);
+    // The open form too: two fields and two buttons are what a phone width squeezes first.
+    await p.locator("[data-omc-account-open]").click();
+    await p.waitForTimeout(500);
+    await p.locator("[data-omc-account-form]").scrollIntoViewIfNeeded();
+    await p.screenshot({ path: `${shots}/accounts-form-${w}-${scheme}.png` });
+    const formWidth = await p.evaluate(() => document.documentElement.scrollWidth);
+    expect(`no sideways scroll with the form open at ${w} ${scheme}`, formWidth <= w);
     await shot.close();
   }
 } finally {

@@ -7,7 +7,7 @@ export const en = {
     "Another Claude login on this box, kept in its own config dir. It shows in the model picker under its name.",
   "accounts.addAccount": "Add account…",
   "accounts.nameLabel": "Account name",
-  "accounts.namePlaceholder": "Name, such as Work",
+  "accounts.namePlaceholder": "Name, e.g. Work",
   "accounts.dirLabel": "Config dir",
   "accounts.dirPlaceholder": "~/.claude-work",
   "accounts.formHint":
