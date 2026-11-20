@@ -195,15 +195,26 @@ writeFileSync(go, "");
 await hit("POST", "/p/accounts/remove", { provider: "claude-code-work" });
 assert.equal(answer.status, 404);
 
-// An accounts.json that does not parse is never overwritten: both writes refuse with 500.
-{
-  writeFileSync(path, "{ not json");
+// Two adds at once (two tabs) both land: writes run one after the other, each on the saved list.
+await Promise.all([
+  hit("POST", "/p/accounts", { name: "A" }),
+  hit("POST", "/p/accounts", { name: "B" }),
+]);
+assert.deepEqual(
+  (JSON.parse(readFileSync(path, "utf8")) as Account[]).map((a) => a.name),
+  ["A", "B"],
+);
+
+// An accounts.json that does not parse, or parses but breaks the rules, is never overwritten:
+// both writes refuse with 500.
+for (const bad of ["{ not json", '[{"name":"x","configDir":"relative"}]']) {
+  writeFileSync(path, bad);
   await hit("POST", "/p/accounts", { name: "Later" });
   assert.equal(answer.status, 500);
   assert.match(String((answer.value as { error: string }).error), /accounts\.json/);
   await hit("POST", "/p/accounts/remove", { provider: "claude-code-later" });
   assert.equal(answer.status, 500);
-  assert.equal(readFileSync(path, "utf8"), "{ not json", "the file is left as it was");
+  assert.equal(readFileSync(path, "utf8"), bad, "the file is left as it was");
   await hit("GET", "/p/accounts");
   assert.equal(answer.status, 200, "a read still answers, with the hand-written row");
 }
