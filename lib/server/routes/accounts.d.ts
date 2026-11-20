@@ -10,6 +10,9 @@ export interface LocalMount {
     home: string;
     /** `ClaudeCodeAdapter.loginKey`: what loginDone, logoutBox and liveCount compare. */
     loginKey: string;
+    /** The `claude` the mount runs: a hand-written row's own `command`, the default otherwise. Its
+     *  login, logout and status go through the same binary its turns do. */
+    command: string;
 }
 /** One row of `GET /accounts`. `source` says who owns it: `plugin` rows come from accounts.json
  *  and can be removed here; `profile` rows are hand-written mounts, removed in cordis.patch.yml.
@@ -44,7 +47,7 @@ export interface AccountRouteCtx {
     /** `authFromStatus(out).loggedIn`: whether `claude auth status` output says logged in. */
     loggedIn: (statusOut: string) => boolean;
     /** `runtimeStatus(home, command, "")`: version, login and email for one config dir. */
-    status: (home: string) => Promise<{
+    status: (home: string, command: string) => Promise<{
         loggedIn: boolean;
         running?: number;
     }>;

@@ -122,5 +122,6 @@ export function localMountsOf(adapters: Iterable<ClaudeCodeAdapter>): LocalMount
       name: m.displayName,
       home: m.realClaudeHome,
       loginKey: m.loginKey,
+      command: m.config.command,
     }));
 }

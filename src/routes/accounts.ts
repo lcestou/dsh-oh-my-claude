@@ -27,6 +27,9 @@ export interface LocalMount {
   home: string;
   /** `ClaudeCodeAdapter.loginKey`: what loginDone, logoutBox and liveCount compare. */
   loginKey: string;
+  /** The `claude` the mount runs: a hand-written row's own `command`, the default otherwise. Its
+   *  login, logout and status go through the same binary its turns do. */
+  command: string;
 }
 
 /** One row of `GET /accounts`. `source` says who owns it: `plugin` rows come from accounts.json
@@ -62,7 +65,7 @@ export interface AccountRouteCtx {
   /** `authFromStatus(out).loggedIn`: whether `claude auth status` output says logged in. */
   loggedIn: (statusOut: string) => boolean;
   /** `runtimeStatus(home, command, "")`: version, login and email for one config dir. */
-  status: (home: string) => Promise<{ loggedIn: boolean; running?: number }>;
+  status: (home: string, command: string) => Promise<{ loggedIn: boolean; running?: number }>;
   forgetIdentity: () => void;
   /** Provider ids the saved SSH boxes mount under, so an account cannot take one. */
   sshIds: () => Promise<string[]>;
@@ -182,9 +185,10 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
   /** The local mount a login route names: a plugin account or a hand-written one. */
   const target = (provider: string) =>
     c.localMounts().find((m) => m.provider === provider && m.loginKey !== "");
-  /** Whether the CLI under that config dir says logged in now: a login's proof once it exits. */
-  const verify = (home: string) => async () =>
-    c.loggedIn((await c.run(c.command, ["auth", "status"], c.cliEnvFor(home))).out);
+  /** Whether the mount's CLI under its config dir says logged in now: a login's proof once it
+   *  exits. */
+  const verify = (m: LocalMount) => async () =>
+    c.loggedIn((await c.run(m.command || c.command, ["auth", "status"], c.cliEnvFor(m.home))).out);
 
   /** The group itself: the list and add, remove, the status read, then the four login steps.
    *  Answers `UNHANDLED` for any other path, so the next group is tried. */
@@ -234,7 +238,7 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
         list.map(async (r) => {
           const m = mounts.get(r.provider);
           if (!m) return { provider: r.provider, status: null };
-          const status = await c.status(m.home);
+          const status = await c.status(m.home, m.command || c.command);
           status.running = c.liveCount(m.loginKey);
           c.onLoginStatus(r.provider, status.loggedIn);
           return { provider: r.provider, status };
@@ -263,7 +267,7 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
       return c.json(
         res,
         200,
-        await startSshLogin(THIS_BOX, undefined, undefined, c.command, undefined, {
+        await startSshLogin(THIS_BOX, undefined, undefined, m.command || c.command, undefined, {
           key,
           env: c.cliEnvFor(m.home),
         }),
@@ -272,16 +276,16 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
       return c.json(
         res,
         200,
-        finish(await submitSshLoginCode(key, String(body.code ?? ""), verify(m.home))),
+        finish(await submitSshLoginCode(key, String(body.code ?? ""), verify(m))),
       );
     if (step === "poll") {
-      const poll = await pollSshLogin(key, verify(m.home));
+      const poll = await pollSshLogin(key, verify(m));
       return c.json(res, 200, poll.pending ? { pending: true } : finish(poll));
     }
     if (step === "logout") {
       // `claude auth logout` under the account's dir: its credentials file, or on macOS its own
       // Keychain entry, goes; This box's login is not touched. Its running sessions stop.
-      await c.run(c.command, ["auth", "logout"], c.cliEnvFor(m.home));
+      await c.run(m.command || c.command, ["auth", "logout"], c.cliEnvFor(m.home));
       c.forgetIdentity();
       c.logoutDone(m.loginKey);
       c.onLoginStatus(provider, false);

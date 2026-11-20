@@ -2868,7 +2868,7 @@ export function registerSessionRoutes(
           run,
           cliEnvFor,
           loggedIn: (out) => authFromStatus(out).loggedIn,
-          status: (home) => runtimeStatus(home, command, ""),
+          status: (home, cmd) => runtimeStatus(home, cmd, ""),
           forgetIdentity,
           sshIds: async () =>
             sshBoxesPath

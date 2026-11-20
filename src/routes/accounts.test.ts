@@ -19,6 +19,7 @@ const profile: LocalMount = {
   name: "Side",
   home: "/home/u/.claude-side",
   loginKey: "dir:/home/u/.claude-side",
+  command: "/opt/side/claude",
 };
 const calls: string[] = [];
 let body: { [key: string]: JsonValue } = {};
@@ -52,6 +53,8 @@ const ctx: AccountRouteCtx = {
       name: a.name,
       home: a.configDir.replace("~", "/home/u"),
       loginKey: `dir:${a.configDir.replace("~", "/home/u")}`,
+      // Empty: the route falls back to `c.command`, which a login case below points at a stand-in.
+      command: "",
     })),
   ],
   mounted: () => new Set(mounted.keys()),
@@ -121,6 +124,14 @@ assert.deepEqual(calls, [
   "status claude-code-work false",
   "publish",
 ]);
+// A hand-written mount with a `command:` of its own logs out through that binary, not the default.
+calls.length = 0;
+await hit("POST", "/p/accounts/login/logout", { provider: "claude-code-side" });
+assert.equal(
+  calls[0],
+  "/opt/side/claude auth logout @/home/u/.claude-side",
+  "logout runs the mount's own claude",
+);
 await hit("POST", "/p/accounts/login/start", { provider: "claude-code-default" });
 assert.equal(answer.status, 400, "an id that is no local mount is refused");
 

@@ -122,6 +122,7 @@ assert.equal(disposed.length, 2);
       providerId: "claude-code-work",
       providerName: "Work",
       configDir: "/tmp/omc-acct-r/work",
+      command: "/opt/work/claude",
     }),
   );
   assert.deepEqual(localMountsOf([main, box, own, handWritten]), [
@@ -130,12 +131,14 @@ assert.equal(disposed.length, 2);
       name: "Work",
       home: "/tmp/omc-acct-r/work",
       loginKey: "dir:/tmp/omc-acct-r/work",
+      command: "/opt/work/claude",
     },
     {
       provider: "claude-code-side",
       name: handWritten.displayName,
       home: handWritten.realClaudeHome,
       loginKey: "",
+      command: handWritten.config.command,
     },
   ]);
 }
