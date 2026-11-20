@@ -117,8 +117,11 @@ export function loginInvocation(
 
 /**
  * Start `claude auth login` on `host` (THIS_BOX for the local one) under a kept-alive PTY and
- * resolve with the sign-in URL it prints. The process is held in `logins` keyed by host until it
- * finishes or its time to live passes. A prior unfinished login for the same host is killed first.
+ * resolve with the sign-in URL it prints. The process is held in `logins` under `opts.key` (the
+ * host when absent) until it finishes or its time to live passes; poll and submit name the same
+ * key. A prior unfinished login under that key is killed first. `opts.env` replaces the process
+ * environment: an account passes its CLAUDE_CONFIG_DIR, so the CLI writes the login into that dir
+ * (on macOS, into the Keychain entry named after it) and not into this box's default one.
  */
 export function startSshLogin(
   host: string,
@@ -126,15 +129,18 @@ export function startSshLogin(
   timeoutMs = 15000,
   command = "claude",
   ttlMs = LOGIN_TTL_MS,
+  opts: { key?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<{ url?: string; error?: string }> {
-  const prev = logins.get(host);
+  const key = opts.key ?? host;
+  const prev = logins.get(key);
   if (prev && !prev.done) prev.child.kill();
   const inv = loginInvocation(host, command);
   const child = spawnFn(inv.command, inv.args, {
     stdio: ["pipe", "pipe", "pipe"],
+    env: opts.env ?? process.env,
   });
   const proc: LoginProc = { child, out: "", done: false, startedAt: Date.now() };
-  logins.set(host, proc);
+  logins.set(key, proc);
   // A login nobody finishes would otherwise hold its PTY and the CLI for the life of the server
   // (found 2026-09-13: a check that hit the start route left one running for good).
   const ttl = setTimeout(() => {
@@ -172,6 +178,14 @@ export function startSshLogin(
       }
     }, 250);
   });
+}
+
+/** Kill and forget the login held under `key`, if one is running: Remove calls it so an account
+ *  taken off the list cannot still finish a login into its dir. A key with nothing held is a no-op. */
+export function cancelSshLogin(key: string): void {
+  const proc = logins.get(key);
+  if (proc && !proc.done) proc.child.kill();
+  logins.delete(key);
 }
 
 /** How a login ended: `done` once the box's own `claude auth status` says logged in after the
