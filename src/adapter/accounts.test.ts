@@ -46,10 +46,19 @@ const run = (accounts: Array<{ name: string; configDir: string }>) =>
     (_l, m) => logs.push(m),
   );
 
+// A restart mounts each account again and must adopt the keepers still running its sessions.
+const adopted: string[] = [];
+const adoptKeepers = ClaudeCodeAdapter.prototype.adoptKeepers;
+ClaudeCodeAdapter.prototype.adoptKeepers = async function (this: ClaudeCodeAdapter) {
+  adopted.push(this.providerId);
+  return new Set<string>();
+};
 run([
   { name: "Work", configDir: "/tmp/omc-acct-r/work" },
   { name: "Side", configDir: "/tmp/omc-acct-r/side" },
 ]);
+ClaudeCodeAdapter.prototype.adoptKeepers = adoptKeepers;
+assert.deepEqual(adopted, ["claude-code-work"], "a new account mount adopts its own keepers");
 const work = adapters.get("claude-code-work");
 assert.ok(work && work !== handWritten);
 assert.equal(work.displayName, "Work");
@@ -67,8 +76,18 @@ assert.deepEqual(registered, ["dir:claude-code-work", "adapter:claude-code-work"
 assert.equal(adapters.get("claude-code-side"), handWritten, "a hand-written mount is left alone");
 assert.ok(logs.some((l) => l.includes("already mounted; skipped")));
 
-// Dropping Work withdraws it; running it again with the same list changes nothing.
+// The mount-time login probe runs: /bin/false answers no login, so the name gains the suffix.
+for (let i = 0; i < 50 && work.providerInfo("x").name === "Work"; i++)
+  await new Promise((r) => setTimeout(r, 50));
+assert.notEqual(work.providerInfo("x").name, "Work", "the new mount probes its login");
+
+// Dropping Work withdraws it and stops its running sessions; running it again with the same list
+// changes nothing.
+let killed = 0;
+// SAFETY: withdraw only calls kill on a held process
+work.processes.set("claude-code-work:s1", { kill: () => killed++, alive: true } as never);
 run([]);
+assert.equal(killed, 1, "remove stops the account's sessions");
 assert.deepEqual(disposed, ["adapter:claude-code-work", "dir:claude-code-work"]);
 assert.equal(adapters.has("claude-code-work"), false);
 assert.equal(adapters.get("claude-code-side"), handWritten, "and still is on withdraw");
