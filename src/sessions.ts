@@ -943,7 +943,9 @@ export async function probeRuntime(
             process.platform === "win32" ? [command] : ["-c", `command -v ${command}`],
           ),
       run(command, ["--version"]),
-      run(command, ["auth", "status"]),
+      // The mount's own dir: without it every local mount reported the default login (2026-11-20,
+      // an empty account dir read back as logged in with This box's email).
+      run(command, ["auth", "status"], cliEnvFor(configDir)),
     ]);
   }
   const out: RuntimeStatus = {

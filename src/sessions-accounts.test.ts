@@ -2,10 +2,10 @@
 // dispatch is saved and handed to the adapter, every tab is told, and an SSH box cannot take the
 // account's name (the two share one provider-id namespace).
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Account } from "./accounts.js";
-import { registerSessionRoutes } from "./sessions.js";
+import { probeRuntime, registerSessionRoutes } from "./sessions.js";
 import { tempDir } from "./test-tmp.js";
 
 const tmp = tempDir("omc-sess-acct-");
@@ -119,5 +119,18 @@ assert.equal(
   const own = await respond("GET", "/dsh-oh-my-claude/status");
   assert.equal(own.body.running, 1, "This box keeps its own count");
   assert.deepEqual(counted, ["dir:/w", ""]);
+}
+// The runtime probe asks `claude auth status` under the mount's own config dir. A stand-in CLI
+// reports logged in only when it sees that dir, as the real one reads its login from it.
+{
+  const dir = tempDir("omc-probe-dir-");
+  const cli = join(dir, "fake-claude");
+  writeFileSync(
+    cli,
+    `#!/bin/sh\nif [ "$1" = auth ]; then [ "$CLAUDE_CONFIG_DIR" = "${dir}/acct" ] && echo '{"loggedIn":true}' || echo '{"loggedIn":false}'; else echo 1.0; fi\n`,
+  );
+  chmodSync(cli, 0o755);
+  const st = await probeRuntime(join(dir, "acct"), cli, "");
+  assert.equal(st.loggedIn, true, "the status probe runs under the mount's config dir");
 }
 console.log("sessions accounts ok");
