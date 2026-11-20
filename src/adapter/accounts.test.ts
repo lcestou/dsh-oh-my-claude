@@ -1,7 +1,7 @@
 // Mounting accounts: one local instance per saved account, with its config dir and name, the
 // default mount's bridge shared, an id something else holds left alone, a dropped account withdrawn.
 import { strict as assert } from "node:assert";
-import type { PluginContext } from "../dsh.js";
+import { ADAPTER_CURRENT, type PluginContext } from "../dsh.js";
 import { type AccountMount, localMountsOf, reconcileAccounts } from "./accounts.js";
 import { heldByOther, tagPluginMount } from "./ssh-boxes.js";
 import { ClaudeCodeAdapter } from "./class.js";
@@ -80,6 +80,21 @@ assert.ok(logs.some((l) => l.includes("already mounted; skipped")));
 for (let i = 0; i < 50 && work.providerInfo("x").name === "Work"; i++)
   await new Promise((r) => setTimeout(r, 50));
 assert.notEqual(work.providerInfo("x").name, "Work", "the new mount probes its login");
+// Logged out, the picker's refusal names the account rather than this PC's hostname.
+await assert.rejects(work.listModels("claude-code-work"), /not logged in on Work\./);
+// The Models block and the new-session default name the account; a mount on the default dir is
+// This box and stays unnamed. `adapters` stands in for the cross-process registry, as in the plugin.
+{
+  // SAFETY: the registry symbol is this plugin's own key on globalThis
+  const g = globalThis as typeof globalThis & {
+    [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
+  };
+  g[ADAPTER_CURRENT] = adapters;
+  const boxes = await work.pickerBoxes();
+  delete g[ADAPTER_CURRENT];
+  assert.equal(boxes.find((b) => b.provider === "claude-code-work")?.name, "Work");
+  assert.equal(boxes.find((b) => b.provider === "claude-code-side")?.name, null);
+}
 
 // Dropping Work withdraws it and stops its running sessions; running it again with the same list
 // changes nothing.
