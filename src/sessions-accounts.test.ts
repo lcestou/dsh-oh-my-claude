@@ -2,7 +2,7 @@
 // dispatch is saved and handed to the adapter, every tab is told, and an SSH box cannot take the
 // account's name (the two share one provider-id namespace).
 import { strict as assert } from "node:assert";
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Account } from "./accounts.js";
 import { probeRuntime, registerSessionRoutes } from "./sessions.js";
@@ -132,5 +132,73 @@ assert.equal(
   chmodSync(cli, 0o755);
   const st = await probeRuntime(join(dir, "acct"), cli, "");
   assert.equal(st.loggedIn, true, "the status probe runs under the mount's config dir");
+}
+// Plugin and MCP writes from an account's session run under the account's config dir: the panel
+// reads that dir back, so a write to This box's dir would change the wrong login and look like a
+// no-op. A stand-in CLI records the dir it saw for each verb.
+{
+  const dir = tempDir("omc-verb-dir-");
+  const cli = join(dir, "fake-claude");
+  const seen = join(dir, "seen.log");
+  writeFileSync(cli, `#!/bin/sh\necho "$1 $2 $CLAUDE_CONFIG_DIR" >> ${seen}\n`);
+  chmodSync(cli, 0o755);
+  const project = join(dir, "project");
+  mkdirSync(project);
+  // SAFETY: partial fake of the plugin context, as above, with one session open in a directory
+  const withSession = {
+    inject: (_deps: string[], cb: (host: unknown) => void) =>
+      cb({
+        webServer: {
+          register: (r: { handler: typeof handler }) => {
+            handler = r.handler;
+            return () => {};
+          },
+        },
+        connection: { requestRejection: () => undefined },
+        sessions: { get: () => undefined },
+        sessionPersistence: { list: async () => [{ id: "s1", cwd: project }] },
+        effect: (fn: () => void) => fn(),
+      }),
+  } as never;
+  registerSessionRoutes(withSession, {
+    log: () => {},
+    projectDir: () => [join(tmp, "claude", "projects")],
+    projectsDir: [join(tmp, "claude", "projects")],
+    startedIds: async () => [],
+    claudeIdOf: (id: string) => id,
+    configDir: join(tmp, "claude"),
+    command: "/bin/false",
+    instanceFor: (p) =>
+      p === "claude-code-work" ? { configDir: join(dir, "work"), command: cli } : undefined,
+    instanceForHost: () => undefined,
+  });
+  const q = "?provider=claude-code-work";
+  const posts: [string, object][] = [
+    ["/plugins/toggle", { key: "a@m", scope: "user", enable: false }],
+    ["/plugins/uninstall", { key: "a@m", scope: "user" }],
+    ["/plugins/marketplace/add", { source: "owner/repo", scope: "user" }],
+    ["/plugins/marketplace/remove", { name: "m", scope: "user" }],
+    [
+      "/mcp-servers/add",
+      { name: "x", scope: "user", transport: "http", url: "http://x.test", session: "s1" },
+    ],
+    ["/mcp-servers/remove", { name: "x", session: "s1" }],
+  ];
+  for (const [path, body] of posts) {
+    const r = await respond("POST", `/dsh-oh-my-claude${path}${q}`, body);
+    assert.equal(r.status, 200, `${path}: ${JSON.stringify(r.body)}`);
+  }
+  assert.deepEqual(
+    readFileSync(seen, "utf8").trim().split("\n"),
+    [
+      `plugin disable ${dir}/work`,
+      `plugin uninstall ${dir}/work`,
+      `plugin marketplace ${dir}/work`,
+      `plugin marketplace ${dir}/work`,
+      `mcp add-json ${dir}/work`,
+      `mcp remove ${dir}/work`,
+    ],
+    "every plugin and MCP write runs the account's CLI under the account's config dir",
+  );
 }
 console.log("sessions accounts ok");

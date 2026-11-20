@@ -20,7 +20,6 @@ export function settingsRoutes(c: RouteCtx): RouteHandler {
       claudeHomeOf,
       cliEnvFor,
       command,
-      configDir,
       continueAfterLimit,
       isSettingsScope,
       json,
@@ -149,10 +148,11 @@ export function settingsRoutes(c: RouteCtx): RouteHandler {
       const remote = notOnBox(url, "plugin changes", target.cwd ?? null);
       if (remote) return json(res, 400, { error: remote });
       const verb = body.enable === false ? "disable" : "enable";
+      const box = boxOf(url);
       const result = await run(
-        command || "claude",
+        box.command || command || "claude",
         ["plugin", verb, body.key, "--scope", String(body.scope)],
-        cliEnvFor(configDir),
+        cliEnvFor(box.configDir),
         target.cwd,
       );
       if (result.error) return json(res, 400, { error: result.error });
@@ -167,10 +167,11 @@ export function settingsRoutes(c: RouteCtx): RouteHandler {
       const remote = notOnBox(url, "plugin changes", target.cwd ?? null);
       if (remote) return json(res, 400, { error: remote });
       // -y is required when stdout is not a TTY, which it never is here.
+      const box = boxOf(url);
       const result = await run(
-        command || "claude",
+        box.command || command || "claude",
         ["plugin", "uninstall", body.key, "--scope", String(body.scope), "-y"],
-        cliEnvFor(configDir),
+        cliEnvFor(box.configDir),
         target.cwd,
       );
       if (result.error) return json(res, 400, { error: result.error });
@@ -189,10 +190,11 @@ export function settingsRoutes(c: RouteCtx): RouteHandler {
       if ("error" in target) return json(res, 400, { error: target.error });
       const remote = notOnBox(url, "plugin changes", target.cwd ?? null);
       if (remote) return json(res, 400, { error: remote });
+      const box = boxOf(url);
       const result = await run(
-        command || "claude",
+        box.command || command || "claude",
         ["plugin", "marketplace", "add", body.source.trim(), "--scope", String(body.scope)],
-        cliEnvFor(configDir),
+        cliEnvFor(box.configDir),
         target.cwd,
         60000,
       );
@@ -207,10 +209,11 @@ export function settingsRoutes(c: RouteCtx): RouteHandler {
       if ("error" in target) return json(res, 400, { error: target.error });
       const remote = notOnBox(url, "plugin changes", target.cwd ?? null);
       if (remote) return json(res, 400, { error: remote });
+      const box = boxOf(url);
       const result = await run(
-        command || "claude",
+        box.command || command || "claude",
         ["plugin", "marketplace", "remove", body.name, "--scope", String(body.scope)],
-        cliEnvFor(configDir),
+        cliEnvFor(box.configDir),
         target.cwd,
       );
       if (result.error) return json(res, 400, { error: result.error });
