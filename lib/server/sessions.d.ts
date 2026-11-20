@@ -11,6 +11,8 @@ import { type SteerAttachment } from "./process.js";
 import { type HealHost, type RepairsSummary } from "./session-heal.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { type PluginLoadError } from "./plugins.js";
+import { type Account } from "./accounts.js";
+import { type LocalMount } from "./routes/accounts.js";
 import { EFFORTS_ALL } from "./adapter/catalog.js";
 import type { CustomModel } from "./adapter/config.js";
 import type { Route } from "./adapter/routing.js";
@@ -725,6 +727,9 @@ export interface MountBox {
     sshHost?: string;
     /** The mount's `systemPrompt` config; absent reads as `claude`, the default. */
     systemPrompt?: "claude" | "dsh";
+    /** The mount's `loginKey` (class.ts): what `liveCount` compares, so a status read for an account
+     *  counts that account's processes, not This box's. Absent for the fallback box (this box). */
+    loginKey?: string;
 }
 /**
  * That box's `~/.claude`, where its user-scope CLAUDE.md and settings both live. A mount's
@@ -777,6 +782,18 @@ export interface SessionRouteOptions {
     sshBoxesPath?: string;
     /** Mount or withdraw provider instances so they match the saved SSH-box list, without a restart. */
     onSshBoxes?: (boxes: SshBox[]) => Promise<void> | void;
+    /** The accounts beside this box's default login (Settings → Boxes, under This box). Absent in a
+     *  registration that mounts none, such as the suite's. */
+    accounts?: {
+        /** `<STATE_DIR>/accounts.json`. */
+        path: string;
+        /** Mount or withdraw account instances to match the saved list, without a restart. */
+        onChange: (accounts: Account[]) => Promise<void> | void;
+        /** Every local mount other than the default, plugin-added or hand-written. */
+        localMounts: () => LocalMount[];
+        /** Ids this plugin mounted from accounts.json. */
+        mounted: () => Set<string>;
+    };
     /** State file mapping placeholder workspaces to their box + real remote path. */
     remoteWorkspacesPath?: string;
     /** Refresh the adapter's live placeholder→remote-cwd map after the list changes, without a restart. */
@@ -1054,7 +1071,7 @@ declare function sessionTranscript(box: MountBox, dir: string, sessionId: string
 /** True when this session already had one within the gap. Records the ask when it does not. */
 declare function recapIsRepeat(sessionId: string, now: number): boolean;
 /** `projectDir(cwd)` → Claude Code project dir; `startedIds()` → ids the adapter started itself. */
-export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, spawnMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, hookRuns, askAside, mcp, permissionAsks, sideQuestions, liveTasks, stopTask, taskOutput, compactNow, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, offeredModels, pickerModels, modelsUpdated, setCustomModels, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
+export declare function registerSessionRoutes(ctx: PluginContext, { log, onHeal, projectDir, projectsDir, startedIds, claudeIdOf, settingsPath, configDir, boxesPath, importedDir, sshBoxesPath, onSshBoxes, accounts, remoteWorkspacesPath, onRemoteWorkspaces, command, boxCommand, sshHost, turnRecords, dshVersion, liveTurn, events, idle, toolMode, spawnMode, terminalSync, permissionModes, thinking, rewind, contextUsage, skillDoctor, workspaceDiff, permissionReadout, hookRuns, askAside, mcp, permissionAsks, sideQuestions, liveTasks, stopTask, taskOutput, compactNow, steersFor, holdSteers, releaseHold, sendSteerNow, loginNeeded, sessionFallbacks, boxOfSession, claudeUpdated, loginDone, logoutDone, liveCount, persistAsides, starters, setStarter, models, offeredModels, pickerModels, modelsUpdated, setCustomModels, providerId, reloadPlugins, reloadSkills, pluginErrors, pluginWarnings, awaiting, continueAfterLimit, instanceFor, instanceForHost, onLoginStatus, }: SessionRouteOptions): void;
 /** One settings file as the Diagnostics tab reports it: where it is, and why the CLI refuses it. */
 export interface DiagnosticFile {
     scope: SettingsScope;

@@ -6,7 +6,7 @@ import { livingModelId } from "./model-ids.js";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { hostname } from "node:os";
+import { homedir, hostname } from "node:os";
 import {
   chmod,
   readdir,
@@ -98,6 +98,8 @@ import {
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { isPluginScope, pluginScopeNeedsCwd, type PluginLoadError } from "./plugins.js";
 import { CLAUDE_HOME, STATE_DIR, loadWorkspaceModels, trace, writeJson } from "./state.js";
+import { boxProviderId, type Account } from "./accounts.js";
+import { accountsRoutes, type LocalMount, readAccounts } from "./routes/accounts.js";
 import { EFFORTS_ALL } from "./adapter/catalog.js";
 import type { CustomModel } from "./adapter/config.js";
 import type { Route } from "./adapter/routing.js";
@@ -479,11 +481,7 @@ export interface SshBox {
 /** The provider id a box mounts under: `claude-code-<slug of name>`, so each box is an independent
  * instance with its own login, state and process registry, the way a hand-written mount would be. */
 export function sshBoxProviderId(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return `claude-code-${slug}`;
+  return boxProviderId(name);
 }
 
 /** What validateSshBoxes hands back: the cleaned list, or why the input is not one. */
@@ -945,7 +943,9 @@ export async function probeRuntime(
             process.platform === "win32" ? [command] : ["-c", `command -v ${command}`],
           ),
       run(command, ["--version"]),
-      run(command, ["auth", "status"]),
+      // The mount's own dir: without it every local mount reported the default login (2026-11-20,
+      // an empty account dir read back as logged in with This box's email).
+      run(command, ["auth", "status"], cliEnvFor(configDir)),
     ]);
   }
   const out: RuntimeStatus = {
@@ -1953,6 +1953,9 @@ export interface MountBox {
   sshHost?: string;
   /** The mount's `systemPrompt` config; absent reads as `claude`, the default. */
   systemPrompt?: "claude" | "dsh";
+  /** The mount's `loginKey` (class.ts): what `liveCount` compares, so a status read for an account
+   *  counts that account's processes, not This box's. Absent for the fallback box (this box). */
+  loginKey?: string;
 }
 
 /**
@@ -2011,6 +2014,18 @@ export interface SessionRouteOptions {
   sshBoxesPath?: string;
   /** Mount or withdraw provider instances so they match the saved SSH-box list, without a restart. */
   onSshBoxes?: (boxes: SshBox[]) => Promise<void> | void;
+  /** The accounts beside this box's default login (Settings → Boxes, under This box). Absent in a
+   *  registration that mounts none, such as the suite's. */
+  accounts?: {
+    /** `<STATE_DIR>/accounts.json`. */
+    path: string;
+    /** Mount or withdraw account instances to match the saved list, without a restart. */
+    onChange: (accounts: Account[]) => Promise<void> | void;
+    /** Every local mount other than the default, plugin-added or hand-written. */
+    localMounts: () => LocalMount[];
+    /** Ids this plugin mounted from accounts.json. */
+    mounted: () => Set<string>;
+  };
   /** State file mapping placeholder workspaces to their box + real remote path. */
   remoteWorkspacesPath?: string;
   /** Refresh the adapter's live placeholder→remote-cwd map after the list changes, without a restart. */
@@ -2292,6 +2307,7 @@ export function registerSessionRoutes(
     importedDir,
     sshBoxesPath,
     onSshBoxes,
+    accounts,
     remoteWorkspacesPath,
     onRemoteWorkspaces,
     command,
@@ -2676,9 +2692,10 @@ export function registerSessionRoutes(
         return { error: `${scope} scope needs a session open in a directory` };
       return { cwd: cwd ?? undefined };
     };
-    // Every `claude plugin` and `claude mcp` mutation below runs this instance's binary against
-    // this instance's config dir, while the rosters they act on are read from the session's own
-    // box. On a session running over ssh that pairing writes this PC and leaves the box alone.
+    // Every `claude plugin` and `claude mcp` mutation below runs on this PC, with the binary and
+    // config dir of the session's own mount (an account's change lands in the account's dir, not
+    // This box's), while the rosters they act on are read from the session's own box. On a session
+    // running over ssh that would write this PC and leave the box alone.
     // The roster then re-reads remote and still shows the old state, so the panel reports nothing
     // happened while the wrong machine changed. Refuse instead, until the verbs run over ssh.
     // The cwd matters as much as the named provider: a remote workspace's directory is on its box
@@ -2838,6 +2855,36 @@ export function registerSessionRoutes(
       statusRoutes(routeCtx),
       controlsRoutes(routeCtx),
     ];
+    if (accounts)
+      beforeBoxes.push(
+        accountsRoutes({
+          ROUTE_PREFIX,
+          path: accounts.path,
+          home: homedir(),
+          defaultHome: CLAUDE_HOME,
+          command: command ?? "claude",
+          json,
+          readBody,
+          run,
+          cliEnvFor,
+          loggedIn: (out) => authFromStatus(out).loggedIn,
+          status: (home, cmd) => runtimeStatus(home, cmd, ""),
+          forgetIdentity,
+          sshIds: async () =>
+            sshBoxesPath
+              ? (await readSshBoxes(sshBoxesPath)).map((b) => sshBoxProviderId(b.name))
+              : [],
+          localMounts: accounts.localMounts,
+          mounted: accounts.mounted,
+          onChange: accounts.onChange,
+          liveCount: (key) => liveCount?.(key) ?? 0,
+          loginDone: (key) => loginDone?.(key),
+          logoutDone: (key) => logoutDone?.(key),
+          onLoginStatus: (provider, loggedIn) => onLoginStatus?.(provider, loggedIn),
+          publish: () => events?.hub.publish({ kind: "boxes", session: null, data: {} }),
+          log,
+        }),
+      );
     const afterBoxes = [tasksRoutes(routeCtx)];
     host.effect?.(() => {
       const dispose = webServer.register({
@@ -2881,6 +2928,17 @@ export function registerSessionRoutes(
               if (req.method === "PUT") {
                 const v = validateSshBoxes((await readBody(req)).boxes);
                 if (v.error !== undefined) return json(res, 400, { error: v.error });
+                // Boxes and accounts share one id namespace: the id names the mount.
+                const accountIds = new Set(
+                  (accounts ? await readAccounts(accounts.path, homedir(), CLAUDE_HOME) : []).map(
+                    (a) => boxProviderId(a.name),
+                  ),
+                );
+                const clash = v.boxes.find((b) => accountIds.has(sshBoxProviderId(b.name)));
+                if (clash)
+                  return json(res, 400, {
+                    error: serverText("accountTaken", { name: clash.name }),
+                  });
                 const before = await readSshBoxes(sshBoxesPath);
                 await writeJson(sshBoxesPath, v.boxes, { pretty: true });
                 // A box takes its remote workspaces with it: their sessions ran over that box's
@@ -2948,6 +3006,7 @@ export function registerSessionRoutes(
                   live = false;
                   log("warn", `ssh-boxes reconcile: ${errorText(e)}`);
                 }
+                events?.hub.publish({ kind: "boxes", session: null, data: {} });
                 return json(res, 200, { boxes: v.boxes, live });
               }
             }

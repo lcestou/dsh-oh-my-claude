@@ -47,6 +47,7 @@ import {
   claudeRunningTitles,
 } from "./turn-status.js";
 import { Boxes, Card, useBoxList } from "./boxes.js";
+import { Accounts } from "./accounts.js";
 import { Sessions } from "./sessions-tab.js";
 import { CostLine } from "./cost.js";
 import {
@@ -85,6 +86,7 @@ import { watchRunButtons } from "./run-button.js";
 import { DraftRelay, StarterSlot } from "./cards.js";
 import { AsideBubble, IdleChip } from "./dock.js";
 import { mountSelectionActions } from "./selection-actions.js";
+import { startBoxColours } from "./box-colour-swatch.js";
 export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
 // The entry keeps its export list while the split runs, re-exporting from the module that owns each.
 export { spinnerFrameAt, bracketOpen, pickVerb, mergeVerbs } from "./verbs.js";
@@ -242,6 +244,8 @@ export function apply(ctx: ClientCtx) {
   reapplyTheme();
   window.addEventListener(HINTS_EVENT, reapplyTheme);
   whenContextGone(() => window.removeEventListener(HINTS_EVENT, reapplyTheme));
+  // Each box's colour on its Claude model names, picked or automatic.
+  whenContextGone(startBoxColours());
 
   const SECTION_LABEL = "Oh My Claude";
 
@@ -336,6 +340,7 @@ export function apply(ctx: ClientCtx) {
             loaded={loaded}
             open={openBoxes}
             onToggle={() => setOpenBoxes((v) => !v)}
+            accounts={(tick) => <Accounts tick={tick} />}
           />
         )}
         <Card

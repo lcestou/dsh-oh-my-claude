@@ -38,7 +38,6 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       claudeIdOf,
       cliEnvFor,
       command,
-      configDir,
       contextUsage,
       events,
       holdSteers,
@@ -515,10 +514,11 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
         return json(res, 400, {
           error: `${built.scope} scope needs a session open in a directory`,
         });
+      const { box } = targetOf(url, cwd);
       const result = await run(
-        command || "claude",
+        box.command || command || "claude",
         ["mcp", "add-json", built.name, JSON.stringify(built.json), "-s", built.scope],
-        cliEnvFor(configDir),
+        cliEnvFor(box.configDir),
         cwd ?? undefined,
       );
       if (result.error) return json(res, 400, { error: result.error });
@@ -534,10 +534,11 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
       const remote = notOnBox(url, "MCP server changes", cwd);
       if (remote) return json(res, 400, { error: remote });
       if (cwd === null) return json(res, 400, { error: "no session open in a directory" });
+      const { box } = targetOf(url, cwd);
       const result = await run(
-        command || "claude",
+        box.command || command || "claude",
         ["mcp", "remove", body.name],
-        cliEnvFor(configDir),
+        cliEnvFor(box.configDir),
         cwd,
       );
       if (result.error) return json(res, 400, { error: result.error });

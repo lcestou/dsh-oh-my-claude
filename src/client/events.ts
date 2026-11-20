@@ -43,6 +43,8 @@ export interface AsideItem {
 export interface LoginNeed {
   host: string;
   label: string;
+  /** Set for an account: the provider id its login routes take (src/adapter/types.ts). */
+  provider?: string;
 }
 /** A file or image on a steer: its name and size for the chip, never its bytes. */
 export interface SteerAttachmentRow {
@@ -145,6 +147,8 @@ export interface EventData {
   /** The new-session default after a write from any tab; `{}` when it was cleared. */
   "new-session-default": { provider?: string; model?: string; effort?: string; all?: boolean };
   "permission-mode": PermissionModeState;
+  /** An SSH box or an account was added, removed, logged in or out; readers fetch again. */
+  boxes: Record<string, never>;
   ping: Record<string, never>;
 }
 
@@ -158,6 +162,7 @@ export const KINDS = [
   "hints",
   "new-session-default",
   "permission-mode",
+  "boxes",
   "ping",
 ] as const;
 

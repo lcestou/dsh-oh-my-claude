@@ -83,15 +83,21 @@ export declare function loadStarted(stateFile?: string): Promise<Set<string>>;
  * that was loaded earlier would erase every id another writer added in between.
  */
 export declare function rememberStarted(id: string, keep?: boolean, stateFile?: string): Promise<void>;
-/** The credentials JSON Claude Code keeps in the macOS Keychain instead of `.credentials.json`;
- *  null off macOS, when there is no entry, or when `security` does not answer. */
-declare const keychainCredentials: () => Promise<string | null>;
+/**
+ * The macOS Keychain service Claude Code keeps a config dir's login under. The CLI (2.1.328, its
+ * service-name builder) uses the plain `Claude Code-credentials` for the default dir when
+ * CLAUDE_CONFIG_DIR is unset, and otherwise appends `-` and the first 8 hex digits of the
+ * sha256 of the dir, so each account's login is an entry of its own. Gets wrong: a dir the CLI
+ * was handed in another spelling (a trailing slash, a symlink) hashes to another name; the plugin
+ * always hands it the string resolveClaudeHome gives, which is what this is called with.
+ */
+export declare function keychainService(home: string, envDir?: string | undefined): string;
 /**
  * Headers for the Anthropic Models API: an API key from the env, else Claude Code's stored OAuth
  * token. The file leads; a missing or expired one falls back to the Keychain, where the CLI keeps
- * the login on macOS, but only for the default config dir, since that entry is the default login's.
+ * the login on macOS, under the entry named for that config dir (keychainService).
  */
-export declare function authHeaders(home?: string, keychain?: typeof keychainCredentials | undefined): Promise<Record<string, string> | null>;
+export declare function authHeaders(home?: string, keychain?: (() => Promise<string | null>) | undefined): Promise<Record<string, string> | null>;
 /** The same read from the text of a credentials file already in hand: a remote box's, fetched
  *  over ssh, decodes here the way this box's does. */
 export declare function authHeadersFrom(raw: string | null): Record<string, string> | null;

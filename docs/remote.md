@@ -4,12 +4,15 @@ How to run more than one login, reach more than one machine, and drive a `claude
 
 ## Several accounts
 
-Mount the plugin more than once in the profile's `cordis.patch.yml`, with the same `name: dsh-oh-my-claude`, distinct `id` values (the bundle's own row is `oh-my-claude`), each with its own `configDir` and a `providerId` starting with `claude-code-`. The extra row goes under `insert`; a bare `- id:` entry only overrides a row that already exists and an unknown id is silently dropped:
+Add a second Claude Code login on this box from Settings → Oh My Claude → Boxes. Add account, under This box, takes a name and a config dir; an empty dir means `~/.claude-<name>`, the name lower-cased with dashes for spaces (Work Team gives `~/.claude-work-team`). The account mounts at once as `claude-code-<name>`, with no dsh restart and no config edit. It shows in the model picker under its name, and its row in Boxes has Log in, Log out and Remove.
+
+Log in runs `claude auth login` with `CLAUDE_CONFIG_DIR` set to the account's dir, so the login lands in that dir, or on macOS in a Keychain entry Claude Code names after that dir. This box's login is not touched. Log out logs only that account out and stops only its sessions. Remove stops its sessions and takes it out of the picker; it deletes nothing, so the dir with its login and the plugin's state for it stay, and adding the same name back picks up where it was.
+
+Accounts are saved in `~/.local/state/dsh-oh-my-claude/accounts.json`, and each keeps its own state in `~/.local/state/dsh-oh-my-claude/<providerId>/` (sessions, busy log, resume trace). A session on an account gets dsh's tools, the same as one on This box. Its skills, agents and settings come from the account's own config dir, so anything shared has to be copied there. The session browser lists This box's and SSH boxes' sessions, not an account's.
+
+A mount written by hand in the profile's `cordis.patch.yml` still loads, and Boxes lists it as a read-only row with Log in and Log out. Such a mount gets no dsh tools. To move one into Settings, delete its row from `cordis.patch.yml`, restart dsh, then add an account with the same name and config dir: the provider id is the same, so its sessions carry over. The hand-written form, for reference:
 
 ```yaml
-- id: oh-my-claude
-  config:
-    configDir: ~/.claude
 - insert:
     - id: oh-my-claude-work
       name: dsh-oh-my-claude
@@ -19,7 +22,9 @@ Mount the plugin more than once in the profile's `cordis.patch.yml`, with the sa
         configDir: ~/.claude-work
 ```
 
-Each mount gets its own `CLAUDE_CONFIG_DIR`, state files under `~/.local/state/dsh-oh-my-claude/<providerId>/` (sessions, busy log, resume trace), and a separate row in the process registry, so the two logins never mix. In v1 the session browser, settings editor, MCP bridge, usage route and turn-status panel all belong to the default `claude-code` instance; a non-default mount logs one info line saying so. In practice a session on an extra mount does not get dsh's tools (no `dsh` MCP server is passed to its Claude), and its skills, agents and settings come from that mount's own `configDir`, so anything shared has to be copied there.
+Each box tints its Claude model names in its own colour: a shade of the accent until you pick one from the swatch beside its name in Boxes or under Settings → Customize → Box colours.
+
+An account and an SSH box share one list of names: both mount as `claude-code-<name>`, so Work can be one or the other.
 
 Same box, several clients (laptop, phone, another PC on the LAN): run `dsh web` where Claude Code is logged in and open that URL from anywhere.
 

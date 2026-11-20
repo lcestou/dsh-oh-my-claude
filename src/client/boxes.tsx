@@ -8,6 +8,9 @@ import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
 import { LiveNote } from "./live-note.js";
 import { useViewRead } from "./view-read.js";
 import { ConfirmButton } from "./tune.js";
+import { boxProviderId } from "../accounts.js";
+import { BoxColourSwatch, useBoxColours } from "./box-colour-swatch.js";
+import { THIS_BOX_PROVIDER } from "./box-colours.js";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -616,6 +619,9 @@ interface BoxesProps {
   loaded: boolean;
   open: boolean;
   onToggle: () => void;
+  /** The account rows, rendered under This box; `tick` changes on each Refresh. index.tsx passes
+   *  them in, so this card does not import the module that imports it. */
+  accounts?: (tick: number) => ReactNode;
 }
 
 interface ProbeEntry {
@@ -659,7 +665,7 @@ interface LoginFlow {
  *  it, one status line under it (a dot for the state, facts joined by dots, problems in the error
  *  colour), and the actions in a column on the right that never wraps into the facts. Every box
  *  kind renders through this so they read the same. */
-function BoxRow({
+export function BoxRow({
   testId,
   title,
   kind,
@@ -667,10 +673,14 @@ function BoxRow({
   facts,
   note,
   actions,
+  swatch,
   children,
 }: {
   testId: string;
   title: string;
+  /** The box's colour picker (box-colour-swatch.tsx), drawn before the name; absent on rows with
+   *  no colour of their own (linked dsh boxes, remote workspaces). */
+  swatch?: ReactNode;
   /** The transport and address: `ssh · devbox`, `link · http://…`, or this box's hostname. */
   kind?: string;
   /** The dot: green when the box can take a turn, red when something stops it, grey while unknown;
@@ -696,7 +706,23 @@ function BoxRow({
           buttons on a line of their own under an unbroken one. */}
       <div style={{ flex: "1 1 160px", minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
-          <span style={{ color: T.text, fontWeight: 600, fontSize: 13 }}>{title}</span>
+          {swatch && <span style={{ alignSelf: "center", display: "inline-flex" }}>{swatch}</span>}
+          {/* The name stays whole and the kind beside it is what truncates: at 390 px a narrow
+              column broke "Omc Check" over two lines while the dir kept its room. */}
+          <span
+            style={{
+              color: T.text,
+              fontWeight: 600,
+              fontSize: 13,
+              flexShrink: 0,
+              maxWidth: "100%",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {title}
+          </span>
           {kind && (
             <span
               style={{
@@ -817,9 +843,9 @@ const bad = (text: string): ReactNode => <span style={{ color: T.err }}>{text}</
 /** Where a login flow's three routes live and what names the box in their body: an ssh box (or
  *  this box, host "") under `ssh-boxes/login` by host; a linked dsh box under `boxes/login` by url,
  *  forwarded to that dsh's own copy of this plugin. */
-interface LoginRoutes {
+export interface LoginRoutes {
   base: string;
-  field: "host" | "url";
+  field: "host" | "url" | "provider";
 }
 
 const SSH_LOGIN: LoginRoutes = { base: "ssh-boxes/login", field: "host" };
@@ -935,8 +961,9 @@ export function LoginSteps({
 }
 
 /** The Boxes card: this box first, then any added machines, each probed and addable from here. */
-export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle }: BoxesProps) {
+export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }: BoxesProps) {
   useLocale();
+  const [tick, setTick] = useState(0);
   const [probe, setProbe] = useState<Record<string, ProbeEntry>>({});
   const [self, setSelf] = useState<{ plugin?: string } | null>(null);
   const [ssh, setSsh] = useState<SshBoxData[]>([]);
@@ -997,6 +1024,14 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle }: BoxesPro
   const [error, setError] = useState("");
   const [openSettingsUrl, setOpenSettingsUrl] = useState<string | null>(null);
   const [me, setMe] = useState<RuntimeStatus | null>(null);
+  // Each box's colour, picked or automatic; the swatches show only once there are two boxes to
+  // tell apart.
+  const { colours } = useBoxColours();
+  /** The swatch for one box, or nothing while This box is the only one. */
+  const swatchFor = (provider: string, name: string) =>
+    colours.size > 1 ? (
+      <BoxColourSwatch provider={provider} name={name} colour={colours.get(provider)} />
+    ) : undefined;
   const [rws, setRws] = useState<RemoteWs[]>([]);
   const { login, setLogin, startLogin, submitLogin } = useLoginFlow(() => refresh());
   const dsh = useLoginFlow(() => refresh(), DSH_LOGIN);
@@ -1027,13 +1062,21 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle }: BoxesPro
       .then((b) => setRws(b.workspaces ?? []))
       .catch(() => {});
   };
-  useEffect(() => {
+  /** The saved SSH boxes. Read on mount and again on BOXES_EVENT, which a save here, in another
+   *  tab or in another browser raises: a tab that kept an old list would PUT it back on its next add
+   *  and drop the box the other tab saved. */
+  const loadSsh = () =>
     fetch(`${ROUTE}/ssh-boxes`)
       .then((r) => readJson<{ boxes?: SshBoxData[] }>(r))
       .then((b) => setSsh(b.boxes ?? []))
       .catch((e: Error) => setError(e.message));
+  useEffect(() => {
+    void loadSsh();
     void loadMe();
     loadRws();
+    const onBoxes = () => void loadSsh();
+    window.addEventListener(BOXES_EVENT, onBoxes);
+    return () => window.removeEventListener(BOXES_EVENT, onBoxes);
   }, []);
   // The rows follow dsh's own workspace list, which changes on an add from the picker, a trash in
   // the sidebar and a box removal alike (the store carries every registry change, dsh's own or this
@@ -1063,6 +1106,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle }: BoxesPro
   const refresh = () => {
     setBusy(true);
     setError("");
+    setTick((n) => n + 1);
     const jobs: Promise<unknown>[] = [loadMe()];
     if (boxes.length)
       jobs.push(
@@ -1218,6 +1262,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle }: BoxesPro
         <BoxRow
           testId="dsh-oh-my-claude-self-box-row"
           title={t("main.sessions.thisBox")}
+          swatch={swatchFor(THIS_BOX_PROVIDER, t("main.sessions.thisBox"))}
           kind={me.host}
           tone={!me.binary || !me.loggedIn ? "err" : "ok"}
           facts={[
@@ -1293,6 +1338,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle }: BoxesPro
           )}
         </BoxRow>
       )}
+      {accounts?.(tick)}
       {ssh.map((b) => {
         const st = sshProbe[b.host]?.status;
         const down = st?.reach && st.reach.stage !== "ok";
@@ -1331,6 +1377,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle }: BoxesPro
             key={`ssh:${b.host}`}
             testId="dsh-oh-my-claude-ssh-box-row"
             title={b.name}
+            swatch={swatchFor(boxProviderId(b.name), b.name)}
             kind={`${b.via ?? "ssh"} · ${b.host}`}
             tone={!st ? "faint" : up && st.loggedIn ? "ok" : "err"}
             facts={facts}

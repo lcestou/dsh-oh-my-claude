@@ -134,6 +134,7 @@ import {
   PERMISSION_MODES,
   loadCommandCatalog,
   rememberStarted,
+  CLAUDE_HOME,
   resolveClaudeHome,
   saveCommandCatalog,
   savePermissionMode,
@@ -1134,7 +1135,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       if (who.loggedIn) this.setLoggedIn(true);
     }
     if (this.loggedOut)
-      throw new Error(serverText("loggedOutError", { host: this.config.sshHost || hostname() }));
+      throw new Error(
+        serverText("loggedOutError", {
+          host: this.config.sshHost || (this.loginKey ? this.displayName : hostname()),
+        }),
+      );
     await this.cliSeed;
     await this.probeCliModels();
     const models = await getCatalog(
@@ -1168,6 +1173,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     Array<{
       provider: string;
       host: string | null;
+      name: string | null;
       models: PickerRow[];
       custom: CustomModel[];
       route: Route;
@@ -1177,6 +1183,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       [...ClaudeCodeAdapter.mounts(this)].map(async (mount) => ({
         provider: mount.providerId,
         host: mount.config.sshHost || null,
+        // A local mount with a login of its own (an account) is named, so the Models block and the
+        // new-session default do not show two "This box" groups.
+        name: mount.loginKey && !mount.config.sshHost ? mount.displayName : null,
         models: await mount.pickerModels().catch(() => []),
         // The entries added in Settings, each of which the block can resize and remove. Config entries
         // are not here: Settings cannot remove what the profile's config adds.
@@ -1255,9 +1264,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const held0 = this.processes.get(registryKey(this.providerId, sessionId));
     if (held0?.prep?.settingsKey || held0?.prep?.via !== undefined) return;
     const label = this.hostLabelFor(sessionId);
-    // This box is the empty string here and in loginDone/logoutBox, one spelling for the compare.
-    const host = label ?? "";
-    this.loginNeeded.set(sessionId, { host, label: label ?? hostname() });
+    // This box is the empty string here and in loginDone/logoutBox, one spelling for the compare;
+    // an account is its loginKey, and the card logs that account in by its provider id.
+    const host = label ?? this.loginKey;
+    const need: LoginNeed = { host, label: label ?? (host ? this.displayName : hostname()) };
+    if (label === undefined && host !== "") need.provider = this.providerId;
+    this.loginNeeded.set(sessionId, need);
     this.publishAsides(sessionId);
     // The process that failed carries no usable login in its environment, and it stays alive
     // between turns: reused, it fails again with the token the panel has since stored (seen
@@ -1270,7 +1282,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // ponytail: a panel token the box refused stays on disk until the owner logs out or in again;
     // deleting it here could drop a good newer token on a process spawned before it was written.
     for (const mount of ClaudeCodeAdapter.mounts(this))
-      if ((mount.config.sshHost || "") === host) mount.setLoggedIn(false);
+      if (mount.loginKey === host) mount.setLoggedIn(false);
+  }
+
+  /** Which login this mount runs on, the key the login bookkeeping compares (logoutBox, liveCount,
+   *  loginDone, the login card): an SSH box's host; "" for this box's default login, which a local
+   *  mount on the default config dir shares; `dir:<config dir>` for a local mount with a dir of its
+   *  own (an account), so logging This box out leaves that account running. No ssh host can start
+   *  with `dir:`, since validateSshBoxes refuses a "/" in one. Gets wrong: a hand-written mount that
+   *  spells the default dir differently (another CLAUDE_CONFIG_DIR) reads as a separate login. */
+  get loginKey(): string {
+    if (this.config.sshHost) return this.config.sshHost;
+    if (this.providerId === "claude-code" || this.realClaudeHome === CLAUDE_HOME) return "";
+    return `dir:${this.realClaudeHome}`;
   }
 
   /** Log out on `host` (this box when empty) cuts the cord: every live Claude on that box is killed,
@@ -1279,7 +1303,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  its next message, which then fails for want of a login and shows the card. */
   logoutBox(host: string) {
     for (const mount of ClaudeCodeAdapter.mounts(this)) {
-      if ((mount.config.sshHost || "") !== host) continue;
+      if (mount.loginKey !== host) continue;
       for (const [key, p] of mount.processes) {
         if (!key.startsWith(`${mount.providerId}:`)) continue;
         p.kill();
@@ -1294,7 +1318,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   liveCount(host: string): number {
     let n = 0;
     for (const mount of ClaudeCodeAdapter.mounts(this)) {
-      if ((mount.config.sshHost || "") !== host) continue;
+      if (mount.loginKey !== host) continue;
       for (const [key, p] of mount.processes)
         if (key.startsWith(`${mount.providerId}:`) && p.alive) n++;
     }
@@ -1304,13 +1328,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** A panel login on `host` (this box when empty) succeeded: its providers list models again and
    *  the cards for sessions on that box read done. */
   loginDone(host: string) {
-    for (const mount of ClaudeCodeAdapter.mounts(this))
-      if ((mount.config.sshHost || "") === host) mount.setLoggedIn(true);
-    for (const [sid, need] of this.loginNeeded)
-      if (need.host === host) {
-        this.loginNeeded.delete(sid);
-        this.publishAsides(sid);
-      }
+    for (const mount of ClaudeCodeAdapter.mounts(this)) {
+      if (mount.loginKey === host) mount.setLoggedIn(true);
+      // Each mount keeps the needs of the sessions it runs (noteTurnLogin), so an account's or a
+      // box's card is cleared on its own mount, not only on this one.
+      for (const [sid, need] of mount.loginNeeded)
+        if (need.host === host) {
+          mount.loginNeeded.delete(sid);
+          this.publishAsides(sid);
+        }
+    }
   }
 
   /** Every mounted instance, this one included: at boot or in a test it may not be in the shared

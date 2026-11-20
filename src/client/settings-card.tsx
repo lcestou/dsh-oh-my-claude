@@ -53,6 +53,7 @@ import {
   OFF_KEY,
 } from "../context-sources.js";
 import { HINTS_EVENT, loadHints, useHintValue, writeHints, useHintFlag } from "./hints.js";
+import { BoxColoursList } from "./box-colour-swatch.js";
 
 /** What the starter route answers: this session's own saved opener and the shared fallback. */
 interface StarterReply {
@@ -590,6 +591,7 @@ export function ThemeSwitch() {
                 </button>
               )}
             </label>
+            <BoxColoursList />
           </div>
         </details>
       )}
@@ -1446,6 +1448,8 @@ type PickerModel = {
 type PickerBox = {
   provider: string;
   host: string | null;
+  /** An account's name; null for this box's default login and for an SSH box. */
+  name?: string | null;
   models: PickerModel[];
   custom?: CustomModelEntry[];
   route?: BoxRoute;
@@ -1676,7 +1680,7 @@ export function ModelsBlock() {
                     clip: "rect(0 0 0 0)",
                   }}
                 >
-                  {box.host ?? t("main.sessions.thisBox")}
+                  {box.host ?? box.name ?? t("main.sessions.thisBox")}
                 </legend>
                 {box.models.map((m) => (
                   <ModelRow
@@ -1725,7 +1729,7 @@ export function ModelsBlock() {
                 style={{ marginBottom: 8 }}
               >
                 <summary style={{ cursor: "pointer", color: T.muted, fontSize: 13 }}>
-                  {box.host ?? t("main.sessions.thisBox")}
+                  {box.host ?? box.name ?? t("main.sessions.thisBox")}
                   <span style={{ color: T.faint, fontSize: 12 }}>
                     {` · ${modelsSummary(box.models.length, hiddenHere, waitingIn(box))}`}
                   </span>

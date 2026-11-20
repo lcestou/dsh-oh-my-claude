@@ -4,7 +4,7 @@
 // boundary: JSON from disk is decoded here and typed values leave.
 import { execFile } from "node:child_process";
 import { appendFile, copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import type { AsideEntry } from "./adapter/types.js";
@@ -344,19 +344,29 @@ export function rememberStarted(id: string, keep = true, stateFile = STATE_FILE)
   return startedChain;
 }
 
-/** The config dir whose login is the Keychain's plain `Claude Code-credentials` entry; a dir set
- *  through CLAUDE_CONFIG_DIR is not assumed to share it. */
-const KEYCHAIN_HOME = process.env.CLAUDE_CONFIG_DIR ? undefined : join(homedir(), ".claude");
+/**
+ * The macOS Keychain service Claude Code keeps a config dir's login under. The CLI (2.1.328, its
+ * service-name builder) uses the plain `Claude Code-credentials` for the default dir when
+ * CLAUDE_CONFIG_DIR is unset, and otherwise appends `-` and the first 8 hex digits of the
+ * sha256 of the dir, so each account's login is an entry of its own. Gets wrong: a dir the CLI
+ * was handed in another spelling (a trailing slash, a symlink) hashes to another name; the plugin
+ * always hands it the string resolveClaudeHome gives, which is what this is called with.
+ */
+export function keychainService(home: string, envDir = process.env.CLAUDE_CONFIG_DIR): string {
+  const plain = "Claude Code-credentials";
+  if (!envDir && home === join(homedir(), ".claude")) return plain;
+  return `${plain}-${createHash("sha256").update(home.normalize("NFC")).digest("hex").slice(0, 8)}`;
+}
 
-/** The credentials JSON Claude Code keeps in the macOS Keychain instead of `.credentials.json`;
- *  null off macOS, when there is no entry, or when `security` does not answer. */
-const keychainCredentials = (): Promise<string | null> =>
+/** The credentials JSON Claude Code keeps in the macOS Keychain under `service` instead of
+ *  `.credentials.json`; null off macOS, when there is no entry, or when `security` does not answer. */
+const keychainCredentials = (service: string): Promise<string | null> =>
   process.platform !== "darwin"
     ? Promise.resolve(null)
     : new Promise((resolve) => {
         execFile(
           "security",
-          ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
+          ["find-generic-password", "-s", service, "-w"],
           { timeout: 5_000, maxBuffer: 64 * 1024 },
           (err, stdout) => resolve(err ? null : stdout),
         );
@@ -365,11 +375,12 @@ const keychainCredentials = (): Promise<string | null> =>
 /**
  * Headers for the Anthropic Models API: an API key from the env, else Claude Code's stored OAuth
  * token. The file leads; a missing or expired one falls back to the Keychain, where the CLI keeps
- * the login on macOS, but only for the default config dir, since that entry is the default login's.
+ * the login on macOS, under the entry named for that config dir (keychainService).
  */
 export async function authHeaders(
   home = CLAUDE_HOME,
-  keychain = resolvePath(home) === KEYCHAIN_HOME ? keychainCredentials : undefined,
+  keychain: (() => Promise<string | null>) | undefined = () =>
+    keychainCredentials(keychainService(resolvePath(home))),
 ): Promise<Record<string, string> | null> {
   if (process.env.ANTHROPIC_API_KEY) return { "x-api-key": process.env.ANTHROPIC_API_KEY };
   const fromFile = authHeadersFrom(

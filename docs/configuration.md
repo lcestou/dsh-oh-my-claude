@@ -70,4 +70,4 @@ subagent-model-selection:       # let dsh subagents run on Claude Code too
       model: claude-haiku-5-5   # any model id the picker lists
 ```
 
-Mounting the plugin more than once, for a second account or an SSH box, is a `cordis.patch.yml` edit; see [Remote boxes and accounts](remote.md).
+A second account or an SSH box is added from Settings → Oh My Claude → Boxes, and a hand-written mount in `cordis.patch.yml` still works; see [Remote boxes and accounts](remote.md).

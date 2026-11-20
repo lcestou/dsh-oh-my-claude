@@ -302,6 +302,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     pickerBoxes(): Promise<Array<{
         provider: string;
         host: string | null;
+        name: string | null;
         models: PickerRow[];
         custom: CustomModel[];
         route: Route;
@@ -326,6 +327,13 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** After a `result` frame: remember a login failure for the card, and name the box's providers
      *  logged out so the picker stops offering them; a turn that succeeded clears both. */
     noteTurnLogin(sessionId: string, result: ResultFrame): void;
+    /** Which login this mount runs on, the key the login bookkeeping compares (logoutBox, liveCount,
+     *  loginDone, the login card): an SSH box's host; "" for this box's default login, which a local
+     *  mount on the default config dir shares; `dir:<config dir>` for a local mount with a dir of its
+     *  own (an account), so logging This box out leaves that account running. No ssh host can start
+     *  with `dir:`, since validateSshBoxes refuses a "/" in one. Gets wrong: a hand-written mount that
+     *  spells the default dir differently (another CLAUDE_CONFIG_DIR) reads as a separate login. */
+    get loginKey(): string;
     /** Log out on `host` (this box when empty) cuts the cord: every live Claude on that box is killed,
      *  so nothing keeps answering on a login that is gone. A process that loaded the login at start
      *  would otherwise carry it in memory until it exited. Each session resumes from its transcript on

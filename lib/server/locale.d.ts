@@ -23,6 +23,17 @@ declare const EN: {
     readonly planKeepDetail: "Stay in plan mode; your feedback goes to Claude.";
     readonly loginFailure: "Claude Code is not logged in on {host}. Use Log in above the composer, or run `claude auth login` in a terminal there, then send your message again. ({detail})";
     readonly loggedOutError: "not logged in on {host}. Log in under Settings, Oh My Claude, Boxes";
+    readonly accountName: "Give the account a name of up to 40 characters, with a letter or digit in it.";
+    readonly accountTaken: "{name} is already the name of a box or an account.";
+    readonly accountProfile: "{provider} is already set up in cordis.patch.yml. Use that row, or remove it there first.";
+    readonly accountDir: "{dir} is not a config dir. Start it with ~/ or /.";
+    readonly accountDirHome: "{dir} is a whole home folder. Pick a folder inside it, such as ~/.claude-work.";
+    readonly accountDirDefault: "{dir} is this box's own login. Pick another folder.";
+    readonly accountDirTaken: "{dir} is already used by {name}.";
+    readonly accountsMax: "At most {n} accounts.";
+    readonly accountUnknown: "No account {provider} on this box.";
+    readonly accountLogoutFailed: "{name} is still logged in after Log out: {error}";
+    readonly accountsUnreadable: "{path} cannot be read as a list of accounts, so nothing was saved. Fix or move the file, then try again.";
     readonly temporaryCommand: "Oh My Claude: keep no Claude transcript for this session (toggle)";
     readonly btwCommand: "Oh My Claude: ask Claude a quick side question without interrupting the turn";
     readonly btwHint: "<your question>";

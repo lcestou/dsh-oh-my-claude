@@ -147,7 +147,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 10. Claude 的斜杠命令和技能以原名出现在 dsh 的斜杠菜单里，dsh 已占用的名字改为 `/claude-<name>`。dsh 自己也提供的技能在任何模型上都能运行；只有 Claude Code 才有的技能也一样：在其他模型的会话中输入时，会连同其指令一起交给该模型（可在设置中关闭）。[Command bridge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#command-bridge)
 11. Claude 可以通过 MCP 使用 dsh 的子智能体、后台任务、目标和网页搜索。它还能新开一个 dsh 会话，向它发送后续消息并读取回复（`open_session`、`prompt_session`、`wait_session`）。[dsh tools over MCP](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#dsh-tools-over-mcp)
 12. 在面板里编辑本机或远程主机上的 CLAUDE.md、settings.json 和 MCP 服务器，并登录需要登录的 MCP 服务器。[Instructions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#instructions)、[settings.json editor](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#settingsjson-editor)、[MCP](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#mcp)
-13. 通过 SSH 在另一台主机上运行 Claude，或挂载多个账号。[Remote boxes and accounts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md)
+13. 通过 SSH 在另一台主机上运行 Claude，或在设置中添加第二个 Claude 登录。[Remote boxes and accounts](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md)
 14. 用一份已脱敏的本机报告反馈问题，可复制，也可直接提交 issue。[Report a problem](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#report-a-problem)
 15. 所有橙色都可以按组关闭，颜色也可以自选。[Claude look](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#claude-look)
 16. 选择 dsh 往你的提示词里添加哪些内容，每一块的大小都标在标签上。[dsh context](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#dsh-context)
@@ -206,12 +206,12 @@ DSH Web 和 DSH Desktop 使用各自的 dsh profile，因此只会重新接上�
 
 ## 远程主机和账号
 
-用不同的 `configDir` 把插件挂载两次，即可使用两个登录。在 设置 → Oh My Claude → 主机 中列出其他运行 dsh 和本插件的主机，并在它们之间切换。也可以给一台主机起个名字、填上 `user@host`，通过 SSH 驱动那里的 `claude`，远端只需要安装 CLI；Tailscale 和 WireGuard 对等节点会作为可选主机出现。详见 [docs/remote.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md)。
+在 设置 → Oh My Claude → 主机 → 添加账号 中添加第二个 Claude Code 登录；它使用独立的配置目录，并在模型选择器中有自己的条目。在 设置 → Oh My Claude → 主机 中列出其他运行 dsh 和本插件的主机，并在它们之间切换。也可以给一台主机起个名字、填上 `user@host`，通过 SSH 驱动那里的 `claude`，远端只需要安装 CLI；Tailscale 和 WireGuard 对等节点会作为可选主机出现。详见 [docs/remote.md](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/remote.md)。
 
 ## 它会接触什么
 
 - **运行** 你已有的 `claude` 程序，在本机或你通过 SSH 添加的主机上。
-- **读取** Claude Code 的登录信息（`~/.claude/.credentials.json`；macOS 上该文件没有有效令牌时读钥匙串里的 `Claude Code-credentials`；或已设置的 `ANTHROPIC_API_KEY`），用来获取模型列表和套餐用量。这个令牌只会发往 `api.anthropic.com`。
+- **读取** Claude Code 的登录信息（`~/.claude/.credentials.json`；macOS 上该文件没有有效令牌时读钥匙串里的 `Claude Code-credentials`，账号则读 Claude Code 以其配置目录命名的条目；或已设置的 `ANTHROPIC_API_KEY`），用来获取模型列表和套餐用量。这个令牌只会发往 `api.anthropic.com`。
 - **写入** 自己的状态到 `~/.local/state/dsh-oh-my-claude/`；SSH 主机的登录令牌保存为只有你能读取的文件。CLAUDE.md、settings.json 和 MCP 服务器只在你从面板编辑时才会改动。
 - **监听** 一个 Unix socket，供在 dsh 重启期间托管 Claude 的 keeper 使用。插件的 HTTP 路由都在 dsh 自己的服务器里，所以在 DSH Web 下不开放 TCP 端口。在 DSH Desktop 下，其 Web 服务器对非自身窗口的请求一律返回 403，因此把 dsh 工具交给 Claude 的桥接会另在 127.0.0.1 上监听，仍由同一把密钥保护。
 - **访问** `api.anthropic.com`（模型、套餐用量）、`status.anthropic.com`、`downloads.claude.ai`（CLI 的版本指针）、`registry.npmjs.org`（插件更新检查）和 `api.github.com`（仓库的 Star 数）。SSH 只连接你添加的主机。

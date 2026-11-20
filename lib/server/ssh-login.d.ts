@@ -24,13 +24,22 @@ export interface Invocation {
 export declare function loginInvocation(host: string, command?: string, platform?: NodeJS.Platform): Invocation;
 /**
  * Start `claude auth login` on `host` (THIS_BOX for the local one) under a kept-alive PTY and
- * resolve with the sign-in URL it prints. The process is held in `logins` keyed by host until it
- * finishes or its time to live passes. A prior unfinished login for the same host is killed first.
+ * resolve with the sign-in URL it prints. The process is held in `logins` under `opts.key` (the
+ * host when absent) until it finishes or its time to live passes; poll and submit name the same
+ * key. A prior unfinished login under that key is killed first. `opts.env` replaces the process
+ * environment: an account passes its CLAUDE_CONFIG_DIR, so the CLI writes the login into that dir
+ * (on macOS, into the Keychain entry named after it) and not into this box's default one.
  */
-export declare function startSshLogin(host: string, spawnFn?: SpawnFn, timeoutMs?: number, command?: string, ttlMs?: number): Promise<{
+export declare function startSshLogin(host: string, spawnFn?: SpawnFn, timeoutMs?: number, command?: string, ttlMs?: number, opts?: {
+    key?: string;
+    env?: NodeJS.ProcessEnv;
+}): Promise<{
     url?: string;
     error?: string;
 }>;
+/** Kill and forget the login held under `key`, if one is running: Remove calls it so an account
+ *  taken off the list cannot still finish a login into its dir. A key with nothing held is a no-op. */
+export declare function cancelSshLogin(key: string): void;
 /** How a login ended: `done` once the box's own `claude auth status` says logged in after the
  *  process exited, or not, with the CLI's last line as the error. */
 export interface LoginOutcome {

@@ -6,11 +6,18 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- Accounts in Settings → Boxes. Add account, under This box, takes a name and a config dir and mounts a second Claude Code login at once, with no dsh restart and no edit to `cordis.patch.yml`. Each account has a row showing who is logged in, with Log in, Log out and Remove; it appears in the model picker under its name and its sessions get dsh's tools. A mount written by hand in `cordis.patch.yml` is listed too. Thanks to @taseenb (#328)
+- Box colours. Each box tints its Claude model names in the model picker and in the composer's model chip, so a session shows which box or account it runs on. Boxes nobody picked a colour for get a shade of the accent; a colour can be picked from the swatch beside each name in Boxes, or from the Box colours list under Customize.
+
 ### Fixed
 
 - A session switched to Claude after another provider made tool calls in it no longer fails every turn with `400 ... tool_use.id: String should match pattern`. Call ids the API refuses, such as the `call_…|fc_…` ids of Responses-API models, are rewritten to ones it takes when the history is handed to Claude. Thanks to @ThirteenCh13 (#325)
 - `open_session` called without a prompt now fails before creating anything. It used to open a new session whose first message was the text "undefined". Thanks to @soffits (#326)
 - A second account mounted with its own `providerId` works on macOS. Its sessions keep their state one folder deeper, which made the keeper's socket path 107 bytes, past the 103 macOS allows, so every turn failed with "keeper ... did not answer". A socket path that will not fit now goes in a short private folder (the login's runtime dir, or the per-user temp dir). A keeper that cannot listen also ends its Claude process instead of leaving it running, and the error now carries the keeper's own reason. Thanks to @taseenb (#328)
+- Logging This box out no longer stops the sessions of a second account that has its own config dir, and the Models block and the new-session default name that account instead of showing a second "This box".
+- Plugin and MCP server changes made in a session on a second account (a toggle, an uninstall, a marketplace add or remove, an MCP server add or remove) now land in that account's config dir. They used to change This box's `~/.claude`, while the panel kept showing the account's settings unchanged.
 - The Access menu stays on its button while Claude writes a long answer. With the menu open, each streamed line scrolled the chat and Chrome carried the menu up with it, until it left the screen.
 
 ## [1.6.8] - 2026-11-19

@@ -46,10 +46,13 @@ export interface Decision {
 export declare const isSettled: (p: ClaudeProcess) => boolean;
 /** Throw rather than return a null prep: a process is assumed to carry the turn state acquire() set, so a missing one means it was used out of order. */
 export declare function requirePrep(proc: ClaudeProcess): TurnPrep;
-/** A session whose last turn wanted a login: the box it ran on (empty for this box) and its name. */
+/** A session whose last turn wanted a login: the box it ran on (empty for this box, the mount's
+ *  loginKey for an account) and its name. `provider` is set for an account, whose login the card
+ *  runs through the accounts routes by that id. */
 export interface LoginNeed {
     host: string;
     label: string;
+    provider?: string;
 }
 /** Keys the shared process registry by instance so two mounts never see each other's processes. */
 /** Outcome of a control request this plugin sent to the CLI; `response` is the CLI's payload. */
