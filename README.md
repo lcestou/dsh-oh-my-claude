@@ -105,7 +105,8 @@ dsh ships prereleases only and moves client APIs between them, so every release 
 
 | Plugin | Runs on dsh | Tested on dsh | npm tag |
 | --- | --- | --- | --- |
-| 1.6.8 | 0.2.2-alpha.2 through 0.2.2-rc.5 | 0.2.2-rc.5 | `latest` |
+| 1.6.9 | 0.2.2-alpha.2 through 0.2.2-rc.5 | 0.2.2-rc.5 | `latest` |
+| 1.6.8 | 0.2.2-alpha.2 through 0.2.2-rc.5 | 0.2.2-rc.5 | none, superseded by 1.6.9 |
 | 1.6.7 | 0.2.2-alpha.2 through 0.2.2-rc.5 | 0.2.2-rc.5 | none, superseded by 1.6.8 |
 | 1.6.6 | 0.2.2-alpha.2 through 0.2.2-rc.4 | 0.2.2-rc.4 | none, superseded by 1.6.7 |
 | 1.6.5 | 0.2.2-alpha.2 through 0.2.2-rc.3 | 0.2.2-rc.3 | none, superseded by 1.6.6 |
