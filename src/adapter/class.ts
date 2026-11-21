@@ -156,7 +156,7 @@ import {
 import { suggestRule } from "../permissions.js";
 import { currentLogVersion, type ToolMode, type ToolModeInfo } from "../rows-probe.js";
 import { readSshToken, THIS_BOX } from "../ssh-login.js";
-import { CHILD_ENV, childEnv, errorText } from "../process.js";
+import { CHILD_ENV, SECURE_STORAGE_ENV, childEnv, errorText } from "../process.js";
 import {
   KEEPER_OFF,
   ORPHAN_FLOOR_MS,
@@ -187,7 +187,7 @@ import {
   sshRunner,
   type HoldRecord,
 } from "../hold.js";
-import { dropHold, loadHolds, saveHold } from "../state.js";
+import { dropHold, isCliHome, loadHolds, saveHold, secureStorageDir } from "../state.js";
 import { knownRefusal } from "../session-repair.js";
 import { healLog, rawLogPath, type HealHost } from "../session-heal.js";
 import { forkTranscriptText } from "../transcript.js";
@@ -4138,8 +4138,18 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     isolate = this.config.isolate,
   ): Record<string, string> | undefined {
     const over: Record<string, string> = {};
-    if (this.config.configDir || this.config.ownTranscripts)
+    // Only a dir the CLI would not pick by itself (cliEnvFor's rule). Handed even `~/.claude`, the
+    // CLI looks for its macOS Keychain login under `Claude Code-credentials-<hash>`, misses the
+    // plain entry `claude auth login` wrote, and every turn ends "Not logged in" while Boxes,
+    // reading the plain entry, shows the box logged in (#328).
+    if ((this.config.configDir || this.config.ownTranscripts) && !isCliHome(this.claudeHome)) {
       over.CLAUDE_CONFIG_DIR = this.claudeHome;
+      // The mirror links the real dir's files, but a Keychain login has no file to link: point
+      // the CLI's credential store back at the real dir. Its token refreshes land there too,
+      // where a write through the mirror would replace the link with a copy.
+      if (this.claudeHome !== this.realClaudeHome)
+        over[SECURE_STORAGE_ENV] = secureStorageDir(this.realClaudeHome);
+    }
     const token = this.providerId === "claude-code" ? readSshToken(STATE_DIR, THIS_BOX) : undefined;
     // Not to a router: the token is the Claude account's, and an endpoint that is not Anthropic
     // has no business holding it. The CLI falls back to whatever the router's settings give it.

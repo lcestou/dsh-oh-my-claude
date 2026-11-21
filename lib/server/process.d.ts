@@ -39,6 +39,11 @@ export declare const FORWARDED_ENV: readonly ["DISABLE_TELEMETRY", "DISABLE_ERRO
 export declare function credentialEnv(base: NodeJS.ProcessEnv): Record<string, string>;
 /** The FORWARDED_ENV pairs set in `base`, in that order. */
 export declare function forwardedEnv(base?: NodeJS.ProcessEnv): [string, string][];
+/** Where the CLI keeps its login when set, apart from CLAUDE_CONFIG_DIR (secureStorageDir). */
+export declare const SECURE_STORAGE_ENV = "CLAUDE_SECURESTORAGE_CONFIG_DIR";
+/** Whether an override removes `key` rather than setting it: an empty value does, except for
+ *  SECURE_STORAGE_ENV, where the empty string is the CLI's name for the default login. */
+export declare const removesName: (override: Record<string, string> | undefined, key: string) => boolean;
 /** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
  *  the caller passes. CHILD_ENV beats the inherited value on purpose. An `MCP_TOOL_TIMEOUT` that
  *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode

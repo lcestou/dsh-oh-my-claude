@@ -110,6 +110,14 @@ export function forwardedEnv(base: NodeJS.ProcessEnv = process.env): [string, st
   });
 }
 
+/** Where the CLI keeps its login when set, apart from CLAUDE_CONFIG_DIR (secureStorageDir). */
+export const SECURE_STORAGE_ENV = "CLAUDE_SECURESTORAGE_CONFIG_DIR";
+
+/** Whether an override removes `key` rather than setting it: an empty value does, except for
+ *  SECURE_STORAGE_ENV, where the empty string is the CLI's name for the default login. */
+export const removesName = (override: Record<string, string> | undefined, key: string): boolean =>
+  override?.[key] === "" && key !== SECURE_STORAGE_ENV;
+
 /** The environment a Claude child runs with: dsh's own, then the plugin's additions, then whatever
  *  the caller passes. CHILD_ENV beats the inherited value on purpose. An `MCP_TOOL_TIMEOUT` that
  *  happens to be in dsh's environment would otherwise cut relayed dsh tools short in one spawn mode
@@ -121,7 +129,7 @@ export function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, stri
   for (const [k, v] of Object.entries(base)) if (v !== undefined) env[k] = v;
   if (process.platform !== "win32") env.PATH = withClaudeDirs(env.PATH);
   Object.assign(env, CHILD_ENV, override ?? {});
-  for (const [k, v] of Object.entries(override ?? {})) if (v === "") delete env[k];
+  for (const k of Object.keys(override ?? {})) if (removesName(override, k)) delete env[k];
   return env;
 }
 
@@ -533,7 +541,7 @@ export const seamSpawner =
           ...Object.fromEntries(forwardedEnv(base)),
           ...CHILD_ENV,
           ...envOverride,
-        }).filter(([k]) => envOverride?.[k] !== ""),
+        }).filter(([k]) => !removesName(envOverride, k)),
       ),
       graceMs: 5000,
       stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" },

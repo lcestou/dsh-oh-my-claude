@@ -93,6 +93,21 @@ export declare function rememberStarted(id: string, keep?: boolean, stateFile?: 
  */
 export declare function keychainService(home: string, envDir?: string | undefined): string;
 /**
+ * Whether `dir` is the config dir the CLI picks when it is handed no CLAUDE_CONFIG_DIR: dsh's own
+ * CLAUDE_CONFIG_DIR, or `~/.claude`. Compared resolved, so `~/.claude/` and `~/.claude` agree.
+ * Exporting the variable for such a dir is not a no-op to the CLI: it renames the macOS Keychain
+ * login (keychainService) and moves `.claude.json` into the dir.
+ */
+export declare function isCliHome(dir: string): boolean;
+/**
+ * The CLAUDE_SECURESTORAGE_CONFIG_DIR that makes a CLI run under another CLAUDE_CONFIG_DIR (the
+ * transcript mirror) read and write `home`'s login. The CLI (2.1.329) names the Keychain entry and
+ * places `.credentials.json` by this variable when it is set, and reads the empty string as the
+ * plain default entry under `~/.claude`, which no non-empty value reaches; so "" for a home whose
+ * login is that entry, the home itself otherwise.
+ */
+export declare function secureStorageDir(home: string, envDir?: string | undefined): string;
+/**
  * Headers for the Anthropic Models API: an API key from the env, else Claude Code's stored OAuth
  * token. The file leads; a missing or expired one falls back to the Keychain, where the CLI keeps
  * the login on macOS, under the entry named for that config dir (keychainService).

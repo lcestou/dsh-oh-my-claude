@@ -97,7 +97,14 @@ import {
 } from "./session-heal.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { isPluginScope, pluginScopeNeedsCwd, type PluginLoadError } from "./plugins.js";
-import { CLAUDE_HOME, STATE_DIR, loadWorkspaceModels, trace, writeJson } from "./state.js";
+import {
+  CLAUDE_HOME,
+  STATE_DIR,
+  isCliHome,
+  loadWorkspaceModels,
+  trace,
+  writeJson,
+} from "./state.js";
 import { boxProviderId, type Account } from "./accounts.js";
 import { accountsRoutes, type LocalMount, readAccounts } from "./routes/accounts.js";
 import { EFFORTS_ALL } from "./adapter/catalog.js";
@@ -864,7 +871,7 @@ export async function accountIdentity(
  * follows the same rule, so the routes and the process see one config.
  */
 export function cliEnvFor(dir?: string): NodeJS.ProcessEnv {
-  return dir && dir !== CLAUDE_HOME ? { ...process.env, CLAUDE_CONFIG_DIR: dir } : process.env;
+  return dir && !isCliHome(dir) ? { ...process.env, CLAUDE_CONFIG_DIR: dir } : process.env;
 }
 
 /**
