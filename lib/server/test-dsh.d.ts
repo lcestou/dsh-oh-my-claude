@@ -80,8 +80,12 @@ export interface FakeDsh {
         registry: object;
         attached: string[];
     };
-    /** Register the plugin's routes against this fake and answer requests to them. */
-    routes(options?: Partial<SessionRouteOptions>): {
+    /** Register the plugin's routes against this fake and answer requests to them. `connection`
+     *  stands in for dsh's: dsh past 0.2.2-rc.5 (harness #8266) dropped `requestRejection` and
+     *  checks the request itself. */
+    routes(options?: Partial<SessionRouteOptions>, connection?: {
+        requestRejection?: () => number | undefined;
+    }): {
         respond(method: string, url: string, body?: string): Promise<{
             status: number;
             body: Record<string, JsonValue>;

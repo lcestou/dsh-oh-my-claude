@@ -97,8 +97,13 @@ export interface FakeDsh {
   ctx(): { sessions: { get(): undefined }; sessionPersistence: FakeDsh["persistence"] };
   /** A workspace registry whose one workspace is `cwd`; `attached` lists the sessions attached. */
   registry(cwd: string): { registry: object; attached: string[] };
-  /** Register the plugin's routes against this fake and answer requests to them. */
-  routes(options?: Partial<SessionRouteOptions>): {
+  /** Register the plugin's routes against this fake and answer requests to them. `connection`
+   *  stands in for dsh's: dsh past 0.2.2-rc.5 (harness #8266) dropped `requestRejection` and
+   *  checks the request itself. */
+  routes(
+    options?: Partial<SessionRouteOptions>,
+    connection?: { requestRejection?: () => number | undefined },
+  ): {
     respond(
       method: string,
       url: string,
@@ -252,7 +257,7 @@ export function fakeDsh(root: string): FakeDsh {
       };
       return { registry, attached };
     },
-    routes: (options = {}) => {
+    routes: (options = {}, connection = { requestRejection: () => undefined }) => {
       let handler: ((req: unknown, res: unknown) => void) | undefined;
       const cwd = [...headers.values()][0]?.cwd ?? join(root, "work");
       const { registry } = fake.registry(cwd);
@@ -266,7 +271,7 @@ export function fakeDsh(root: string): FakeDsh {
                 return () => {};
               },
             },
-            connection: { requestRejection: () => undefined },
+            connection,
             sessions: { get: () => undefined },
             effect: (fn: () => void) => fn(),
             sessionPersistence: persistence,

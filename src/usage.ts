@@ -722,7 +722,7 @@ export function registerUsageRoute(
           kind: "prefix",
           path: ROUTE,
           handler: async (req: IncomingMessage, res: ServerResponse) => {
-            const rejection = connection.requestRejection(req);
+            const rejection = connection.requestRejection?.(req);
             const send = (
               status: number,
               body: UsageReply | UsageBreakdownReply | { error: string },

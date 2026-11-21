@@ -1081,7 +1081,13 @@ export function registerMcpBridge(
           // effect that cannot register would leave the listener holding the port with no owner.
           try {
             host.effect?.(() => {
-              const off = webServer.register({ kind: "prefix", path: MCP_PATH, handler: serve });
+              // The CLI carries no login cookie; `serve` checks the bridge key instead.
+              const off = webServer.register({
+                kind: "prefix",
+                path: MCP_PATH,
+                auth: "anonymous",
+                handler: serve,
+              });
               return () => {
                 loopback?.close();
                 if (typeof off === "function") off();

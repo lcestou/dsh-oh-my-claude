@@ -10,6 +10,7 @@ import {
   parseBreakdownCache,
   parseUsageBreakdown,
   readUsage,
+  registerUsageRoute,
   stillLimitedUntil,
   usageCredits,
   usageWindows,
@@ -578,4 +579,40 @@ console.log("breakdown-cache ok");
     h: { at: 0, limitedUntil: 5, strikes: 0 },
   });
   console.log("usage reader ok");
+}
+
+// dsh past 0.2.2-rc.5 (harness #8266) checks the login cookie before a plugin route runs and dropped
+// `connection.requestRejection`; an older dsh still leans on the plugin's own check.
+{
+  const serve = async (connection: { requestRejection?: () => number | undefined }) => {
+    let handler: ((req: unknown, res: unknown) => Promise<void>) | undefined;
+    // SAFETY: the route reads the injected host's webServer, connection and effect, nothing more
+    const ctx = {
+      inject: (_deps: string[], cb: (host: unknown) => void) =>
+        cb({
+          webServer: {
+            register: (r: { handler: typeof handler }) => {
+              handler = r.handler;
+              return () => {};
+            },
+          },
+          connection,
+          effect: (fn: () => void) => fn(),
+        }),
+    } as never;
+    registerUsageRoute(
+      ctx,
+      () => {},
+      async () => ({ host: "h", email: null }),
+    );
+    let status = 0;
+    await handler!(
+      { method: "POST", url: "/dsh-oh-my-claude/usage" },
+      { writeHead: (s: number) => void (status = s), end: () => {} },
+    );
+    return status;
+  };
+  assert.equal(await serve({}), 405, "a dsh without requestRejection reaches the route itself");
+  assert.equal(await serve({ requestRejection: () => 401 }), 401, "an older dsh's refusal holds");
+  console.log("usage route auth ok");
 }
