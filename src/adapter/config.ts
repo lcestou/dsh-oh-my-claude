@@ -346,7 +346,7 @@ export const Config = z.object({
     .string()
     .default("")
     .description(
-      "Claude Code config dir for this plugin instance (exported as CLAUDE_CONFIG_DIR); empty = CLAUDE_CONFIG_DIR env or ~/.claude",
+      "Claude Code config dir for this plugin instance (exported as CLAUDE_CONFIG_DIR unless it is the default); empty = CLAUDE_CONFIG_DIR env or ~/.claude",
     ),
   ownTranscripts: z
     .boolean()
