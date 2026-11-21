@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.6.10] - 2026-11-21
+
+dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.5; built and tested on 0.2.2-rc.5.
+
 ### Fixed
 
 - On a dsh whose web server checks logins itself (current dsh master, which removed `connection.requestRejection`), the switches on the Oh My Claude card in Settings flipped back as soon as they were clicked, the usage, status, accounts and changelog panels stayed empty, and Claude sessions under plain `dsh web` could not reach dsh's tools. Every plugin route answered an empty 400 and the MCP bridge a 401. The routes now leave the login check to dsh when it does it, and still make it themselves on an older dsh. The MCP bridge route tells dsh it needs no login cookie, since the CLI has none; its own key and dsh's host check still guard it. Thanks to @fancn (#334)
