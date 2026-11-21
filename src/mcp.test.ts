@@ -222,6 +222,7 @@ assert.ok(
 // registered as a fallback. A host without the gate keeps the web server route and starts nothing.
 const tmp = tempDir("omc-mcp-");
 const cleanups: Array<() => void> = [];
+const routes: Array<{ path: string; auth?: string }> = [];
 // SAFETY: minimal host double: only what registerMcpBridge reads
 /** A host double; `gated` adds the service DSH Desktop's launcher provides. */
 const fakeHost = (gated: boolean) => ({
@@ -241,7 +242,11 @@ const fakeHost = (gated: boolean) => ({
     cb({
       webServer: {
         port: 43120,
-        register: (_route: unknown) => () => {},
+        register: (route: unknown) => {
+          // SAFETY: registerMcpBridge registers a WebServer route
+          routes.push(route as { path: string; auth?: string });
+          return () => {};
+        },
       },
       tools,
       agents: { get: (_id: unknown) => agent },
@@ -269,6 +274,13 @@ const plain = await registerMcpBridge(fakeHost(false) as never, {
 assert.equal(plain.via, "webserver", "a host without the gate keeps the web server route");
 assert.equal(plain.base, "http://127.0.0.1:43120", "and the web server's own port");
 assert.equal(existsSync(join(tmp, "mcp-port")), false, "and starts no listener of its own");
+// dsh past 0.2.2-rc.5 (harness #8266) asks a login cookie of every route unless it says
+// otherwise. The CLI carries none, so the route opts out and the bridge key is what guards it.
+assert.equal(
+  routes.find((r) => r.path === MCP_PATH)?.auth,
+  "anonymous",
+  "the bridge route asks dsh for no login cookie",
+);
 // The key's folder is the state dir, with tokens and keeper files in it: closed to other users.
 if (process.platform !== "win32")
   assert.equal(statSync(tmp).mode & 0o777, 0o700, "the state dir is the owner's alone");

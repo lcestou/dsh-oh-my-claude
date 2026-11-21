@@ -2700,3 +2700,30 @@ console.log("sessions ok");
   assert.equal(r.status, 400, "a quote beside withDiff is dropped, leaving a blank question");
   console.log("side-questions selection route ok");
 }
+
+// dsh past 0.2.2-rc.5 (harness #8266) checks the login cookie before a plugin route runs and dropped
+// `connection.requestRejection`. Calling it threw, so every route answered an empty 400 and the
+// Settings switches flipped back. An older dsh still leans on the plugin's own check.
+{
+  const { fakeDsh } = await import("./test-dsh.js");
+  const { STATE_DIR } = await import("./state.js");
+  const f = fakeDsh(join(STATE_DIR, "route-auth"));
+  const unified = f.routes({ sshBoxesPath: join(f.root, "unified", "ssh-boxes.json") }, {});
+  let r = await unified.respond("GET", "/dsh-oh-my-claude/hints");
+  assert.equal(r.status, 200, "a dsh without requestRejection still serves the routes");
+  r = await unified.respond("POST", "/dsh-oh-my-claude/hints", JSON.stringify({ costOff: true }));
+  assert.equal(r.status, 200, "and takes a switch flipped in Settings");
+  r = await unified.respond("GET", "/dsh-oh-my-claude/hints");
+  assert.equal(r.body.costOff, true, "which reads back");
+
+  const legacyDir = join(f.root, "legacy");
+  const legacy = f.routes(
+    { sshBoxesPath: join(legacyDir, "ssh-boxes.json") },
+    { requestRejection: () => 401 },
+  );
+  r = await legacy.respond("POST", "/dsh-oh-my-claude/hints", JSON.stringify({ costOff: true }));
+  assert.equal(r.status, 401, "an older dsh's refusal still stops the request");
+  await assert.rejects(access(join(legacyDir, "hints.json")), "and nothing is written");
+  f.dispose();
+  console.log("route auth on old and new dsh ok");
+}

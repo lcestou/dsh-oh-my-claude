@@ -437,12 +437,17 @@ export interface WebServer {
     register(route: {
         kind: "prefix";
         path: string;
+        /** dsh past 0.2.2-rc.5 (harness #8266) checks this before the handler runs, `required` (login cookie) by default; older dsh ignores it. */
+        auth?: "anonymous" | "required" | "deny";
         handler: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => Promise<void>;
     }): () => void;
 }
 /** Mirrors: @deepseek-ai/dsh-client-connection (host half): trusted-host plus login-cookie check. */
 export interface ConnectionPolicy {
-    requestRejection(req: import("node:http").IncomingMessage): number | undefined;
+    /** Gone from dsh past 0.2.2-rc.5 (harness #8266), whose web server checks each route's `auth`
+     *  itself. Absent means that check already ran; the plugin's routes are safe to skip their own
+     *  only because of it. */
+    requestRejection?(req: import("node:http").IncomingMessage): number | undefined;
 }
 /** Mirrors: @deepseek-ai/dsh-session-persistence-jsonl/lib/types/index.d.ts */
 export interface SessionPersistence {

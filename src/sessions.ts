@@ -2891,7 +2891,7 @@ export function registerSessionRoutes(
         kind: "prefix",
         path: ROUTE_PREFIX,
         handler: async (req: IncomingMessage, res: ServerResponse) => {
-          const rejection = connection.requestRejection(req);
+          const rejection = connection.requestRejection?.(req);
           if (rejection !== undefined) return json(res, rejection, { error: "forbidden" });
           const url = new URL(req.url ?? "/", "http://dsh");
           try {
