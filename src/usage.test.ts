@@ -584,6 +584,7 @@ console.log("breakdown-cache ok");
 // dsh past 0.2.2-rc.5 (harness #8266) checks the login cookie before a plugin route runs and dropped
 // `connection.requestRejection`; an older dsh still leans on the plugin's own check.
 {
+  /** Mounts the usage route on a host double with `connection` and POSTs to it; returns the status, 405 when the route itself answered. */
   const serve = async (connection: { requestRejection?: () => number | undefined }) => {
     let handler: ((req: unknown, res: unknown) => Promise<void>) | undefined;
     // SAFETY: the route reads the injected host's webServer, connection and effect, nothing more
