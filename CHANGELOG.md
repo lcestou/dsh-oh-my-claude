@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.6.9] - 2026-11-20
+
+dsh: runs on 0.2.2-alpha.2 through 0.2.2-rc.5; built and tested on 0.2.2-rc.5.
+
 ### Added
 
 - Accounts in Settings → Boxes. Add account, under This box, takes a name and a config dir and mounts a second Claude Code login at once, with no dsh restart and no edit to `cordis.patch.yml`. Each account has a row showing who is logged in, with Log in, Log out and Remove; it appears in the model picker under its name and its sessions get dsh's tools. A mount written by hand in `cordis.patch.yml` is listed too. Thanks to @taseenb (#328)
