@@ -74,6 +74,11 @@ for (const name of ["user_terminal_list", "user_terminal_read"])
   assert.equal(planRefuses(name, "plan"), false, name);
 for (const name of ["office_convert", "office_recalculate", "office_render"])
   assert.equal(planRefuses(name, "plan"), true, name);
+// dsh 0.2.3 folds the two inspection tools into one; the tools that change the session's
+// directory there are refused like `working_directory` before them.
+assert.equal(planRefuses("cordis_inspect", "plan"), false, "cordis_inspect");
+for (const name of ["enter_worktree", "exit_worktree"])
+  assert.equal(planRefuses(name, "plan"), true, name);
 
 // Out of plan again: bash runs.
 mode = "acceptEdits";

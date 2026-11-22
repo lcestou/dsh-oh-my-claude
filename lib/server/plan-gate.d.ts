@@ -13,10 +13,14 @@ export declare const PLAN_REFUSAL = "plan mode: this tool can change files or st
  * - `ask_user_question`, `exit_plan_mode`: ask the user; the plan review is how plan mode ends.
  * - `wait_session`, `wait_agent`, `job_output`: wait for and read work already running.
  * - `cordis_inspect_query`: runs a query its provider declares read-only.
+ * - `cordis_inspect` (dsh 0.2.3-alpha.1, read in its source 2026-11-22): the two tools above as
+ *   one. Its description says "Read-only: cannot invoke business Service methods or modify the
+ *   runtime". The older two names stay listed for dsh 0.2.2.
  * - `user_terminal_list`, `user_terminal_read` (dsh 0.2.2-rc.2, read in its source 2026-11-11): list
  *   and read the screen of a terminal the user runs in the side panel; both descriptions say "Runs nothing".
  * Refused although they write no files:
- * - `working_directory`: also changes the session's directory (`cd`), not only reads it.
+ * - `working_directory`: also changes the session's directory (`cd`), not only reads it. dsh
+ *   0.2.3 drops it for `enter_worktree` and `exit_worktree`, which move the session as well.
  * - `todo_write`, `present`, `create_goal`, `update_goal`: change dsh's session state; Claude's
  *   own TodoWrite covers a to-do list while planning.
  * - `interrupt_agent`, `send_message`, `job_kill`: act on running work.
