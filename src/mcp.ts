@@ -815,9 +815,10 @@ function stableKey(file: string): string {
 export interface McpBridge {
   base: string;
   key: string;
-  /** Where `base` points: the bridge's own loopback listener under DSH Desktop, else the dsh web
-   *  server route (also when the listener could not start). The CLI's `--mcp-config` URL is built
-   *  off `base` either way. */
+  /** Where `base` points: the bridge's own loopback listener under DSH Desktop or once a probe finds
+   *  the web server route gated, else the dsh web server route (also when the listener could not
+   *  start). Both can change once after the mount, when the probe settles. The CLI's
+   *  `--mcp-config` URL is built off `base` at each spawn. */
   via: "loopback" | "webserver";
   /** The tools `tools/list` will answer that session with, the bridge's own included, so the system
    *  prompt can name the ones that are really there. Undefined when the session has no live agent
@@ -876,6 +877,30 @@ function listenOnce(
   });
 }
 
+/** How often, and how many times, the web server route is probed while nothing answers there. */
+const PROBE_RETRY_MS = 1000;
+const PROBE_ATTEMPTS = 120;
+
+/**
+ * Whether the bridge's own web server route answers the CLI. A keyed GET reaches `serve`, which
+ * answers 405 to anything but POST; any other answer (dsh-remote's 403 `unauthorized`, a login
+ * redirect, a proxy's error page) comes from something gating the route in front of the plugin.
+ * Resolves "unreachable" when the request fails outright (the server not listening yet).
+ */
+export async function probeRoute(base: string, key: string): Promise<"open" | "gated" | "unreachable"> {
+  try {
+    const res = await fetch(`${base}${MCP_PATH}/probe`, {
+      headers: { [KEY_HEADER]: key },
+      redirect: "manual",
+      signal: AbortSignal.timeout(5000),
+    });
+    await res.body?.cancel();
+    return res.status === 405 ? "open" : "gated";
+  } catch {
+    return "unreachable";
+  }
+}
+
 /**
  * The bridge's own listener on 127.0.0.1. The remembered port is tried first so a restart rebinds
  * the same port; when it is taken (a previous generation still holds it, or anything else does),
@@ -916,9 +941,11 @@ async function startLoopback(
  *  stable across dsh restarts so a keeper-mode claude that outlived dsh still authenticates.
  *  Under DSH Desktop, new Claude processes are pointed at the bridge's own loopback listener,
  *  which answers on 127.0.0.1 regardless of the browser-access gate Desktop puts on web server
- *  routes. Everywhere else they get the web server route as before, and no listener is started:
- *  a process that outlives a restart can only reconnect to the URL it was started with, and the
- *  web port is the one address that is fixed by configuration. */
+ *  routes. Everywhere else they get the web server route, and no listener is started while that
+ *  route answers: a process that outlives a restart can only reconnect to the URL it was started
+ *  with, and the web port is the one address that is fixed by configuration. Once the web server
+ *  listens the route is probed, and when another plugin's gate answers it instead of the bridge
+ *  (dsh-remote's login check, #338) the loopback listener starts and `base` moves to it. */
 export function registerMcpBridge(
   ctx: PluginContext,
   {
@@ -1063,17 +1090,18 @@ export function registerMcpBridge(
           const gated = host.get?.("desktopBrowserAccess") !== undefined;
           // The loopback listener is what new Claude processes get there: it answers on 127.0.0.1
           // no matter what gate sits on the web server routes.
-          const loopback = gated
-            ? await startLoopback(
-                log,
-                (req, res) => {
-                  serve(req, res).catch((e: unknown) =>
-                    log("warn", `mcp bridge loopback: ${errorText(e)}`),
-                  );
-                },
-                loopPortFile,
-              )
-            : undefined;
+          const listen = () =>
+            startLoopback(
+              log,
+              (req, res) => {
+                serve(req, res).catch((e: unknown) =>
+                  log("warn", `mcp bridge loopback: ${errorText(e)}`),
+                );
+              },
+              loopPortFile,
+            );
+          let loopback = gated ? await listen() : undefined;
+          let disposed = false;
           if (loopback) log("info", `mcp bridge: loopback listener on ${loopback.url}`);
           else if (gated)
             log("warn", "mcp bridge: no loopback listener, falling back to the web server route");
@@ -1089,6 +1117,7 @@ export function registerMcpBridge(
                 handler: serve,
               });
               return () => {
+                disposed = true;
                 loopback?.close();
                 if (typeof off === "function") off();
               };
@@ -1100,8 +1129,9 @@ export function registerMcpBridge(
             reject(e instanceof Error ? e : new Error(errorText(e)));
             return;
           }
-          resolve({
-            base: loopback?.url ?? webServerBase(webServer),
+          const webBase = webServerBase(webServer);
+          const bridge: McpBridge = {
+            base: loopback?.url ?? webBase,
             via: loopback ? "loopback" : "webserver",
             key,
             toolsFor: (sessionId) => {
@@ -1114,7 +1144,31 @@ export function registerMcpBridge(
               }
             },
             openCalls: (sessionId) => open.get(sessionId) ?? 0,
-          });
+          };
+          resolve(bridge);
+          if (loopback) return;
+          // The mount runs before dsh's web server listens, so the probe waits for it. Processes
+          // started before it settles keep the web server URL; at boot that is only keepers, whose
+          // URL was fixed when they were spawned.
+          for (let i = 0; i < PROBE_ATTEMPTS && !disposed; i++) {
+            if (i > 0)
+              await new Promise((r) => setTimeout(r, PROBE_RETRY_MS).unref?.());
+            if (disposed) return;
+            const reach = await probeRoute(webBase, key);
+            if (reach === "unreachable") continue;
+            if (reach === "open" || disposed) return;
+            const started = await listen();
+            if (!started) {
+              log("warn", `mcp bridge: ${webBase}${MCP_PATH} is gated and no loopback listener started`);
+              return;
+            }
+            if (disposed) return started.close();
+            loopback = started;
+            bridge.base = started.url;
+            bridge.via = "loopback";
+            log("info", `mcp bridge: ${webBase}${MCP_PATH} is gated; loopback listener on ${started.url}`);
+            return;
+          }
         })(),
     );
   });

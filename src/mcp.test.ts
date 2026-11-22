@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import {
   handleRpc,
@@ -224,8 +226,9 @@ const tmp = tempDir("omc-mcp-");
 const cleanups: Array<() => void> = [];
 const routes: Array<{ path: string; auth?: string }> = [];
 // SAFETY: minimal host double: only what registerMcpBridge reads
-/** A host double; `gated` adds the service DSH Desktop's launcher provides. */
-const fakeHost = (gated: boolean) => ({
+/** A host double; `gated` adds the service DSH Desktop's launcher provides. `port` is the web
+ *  server's, where nothing listens unless a test starts a server there. */
+const fakeHost = (gated: boolean, port = 43120) => ({
   inject: (
     _names: string[],
     cb: (host: {
@@ -241,7 +244,7 @@ const fakeHost = (gated: boolean) => ({
   ) => {
     cb({
       webServer: {
-        port: 43120,
+        port,
         register: (route: unknown) => {
           // SAFETY: registerMcpBridge registers a WebServer route
           routes.push(route as { path: string; auth?: string });
@@ -343,6 +346,74 @@ assert.equal(bridge2.base, bridge.base, "restart rebinds the remembered port");
 assert.equal(bridge2.key, bridge.key, "restart keeps the bridge key");
 assert.equal(bridge.key, plain.key, "one key whichever way the bridge is reached");
 for (const fn of cleanups) fn();
+cleanups.length = 0;
+
+// Plain dsh web with another plugin gating every route in front of the plugin's own (dsh-remote's
+// login check answers 403 `unauthorized`, #338): the probe sees an answer that is not the bridge's
+// and moves new Claude processes to the loopback listener. A web server that hands the request to
+// the bridge's route answers 405 to the probe's GET, and the bridge stays on the web server.
+{
+  /** A web server on an ephemeral port answering with `handle`; resolves its port. */
+  const webAt = async (handle: (req: IncomingMessage, res: ServerResponse) => void) => {
+    const server = createServer(handle);
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    // SAFETY: a TCP listener reports AddressInfo
+    return { server, port: (server.address() as AddressInfo).port };
+  };
+  /** Polls `ok` until it holds or two seconds pass. */
+  const until = async (ok: () => boolean) => {
+    for (let i = 0; i < 40 && !ok(); i++) await new Promise((r) => setTimeout(r, 50));
+  };
+  const gateTmp = tempDir("omc-mcp-gate-");
+  const gate = await webAt((_req, res) => {
+    res.writeHead(403, { "content-type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
+  });
+  // SAFETY: host double above carries the services registerMcpBridge needs
+  const gatedBridge = await registerMcpBridge(fakeHost(false, gate.port) as never, {
+    log: () => {},
+    version: "t",
+    keyFile: join(gateTmp, "mcp.key"),
+  });
+  await until(() => gatedBridge.via === "loopback");
+  assert.equal(gatedBridge.via, "loopback", "a gated web server route moves the bridge to loopback");
+  assert.notEqual(gatedBridge.base, `http://127.0.0.1:${gate.port}`, "off the gated port");
+  const through = await fetch(`${gatedBridge.base}${MCP_PATH}/s1`, {
+    method: "POST",
+    headers: { "content-type": "application/json", [KEY_HEADER]: gatedBridge.key },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+  });
+  assert.equal(through.status, 200, "and the loopback listener answers the CLI");
+  for (const fn of cleanups) fn();
+  cleanups.length = 0;
+  gate.server.close();
+
+  let probed = 0;
+  const openTmp = tempDir("omc-mcp-open-");
+  const web = await webAt((req, res) => {
+    probed++;
+    // SAFETY: registerMcpBridge registers a WebServer route with its handler
+    const route = routes.at(-1) as unknown as {
+      handler: (q: IncomingMessage, s: ServerResponse) => Promise<void>;
+    };
+    void route.handler(req, res);
+  });
+  // SAFETY: host double above carries the services registerMcpBridge needs
+  const openBridge = await registerMcpBridge(fakeHost(false, web.port) as never, {
+    log: () => {},
+    version: "t",
+    keyFile: join(openTmp, "mcp.key"),
+  });
+  await until(() => probed > 0);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(probed, 1, "the web server route was probed once");
+  assert.equal(openBridge.via, "webserver", "a route the bridge answers keeps the web server");
+  assert.equal(openBridge.base, `http://127.0.0.1:${web.port}`);
+  assert.equal(existsSync(join(openTmp, "mcp-port")), false, "and starts no listener");
+  for (const fn of cleanups) fn();
+  cleanups.length = 0;
+  web.server.close();
+}
 console.log("mcp ok");
 
 // Right after a restart, dsh has no agent for a session until its turn is continued, while the
