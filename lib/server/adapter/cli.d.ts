@@ -162,5 +162,13 @@ export declare const NATIVE_TOOL_MAP: {
     readonly EnterPlanMode: "enter_plan_mode";
     readonly SlashCommand: "slash_command";
 };
+/**
+ * A session title as a model wrote it, without the wrappers dsh's prompt forbids and a model still
+ * sends now and then: a JSON object with a `title` (the framed input is a JSON array, and Haiku
+ * answers in kind) or a code fence around the answer. dsh keeps the first non-empty line, so a
+ * fenced answer would name the session "```json". Anything else comes back trimmed and unchanged,
+ * and "" when nothing is left.
+ */
+export declare function cleanTitle(text: string): string;
 /** The text dsh's title provider sends: its one framed user message, joined when there are more. */
 export declare function titleInput(messages: GenerateOptions["messages"]): string;

@@ -9,6 +9,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 ### Fixed
 
 - With a plugin that puts its own login in front of every dsh route, such as @xgone/dsh-remote, Claude sessions got none of dsh's tools: the CLI's MCP client carries no login cookie, so the gate answered the bridge with 403 and Claude Code listed the `dsh` server as needing authentication. Once dsh's web server is up, the bridge now checks that its own route answers, and when something else answers instead it serves new Claude sessions from its own 127.0.0.1 port, as it already did under DSH Desktop. A dsh with no such gate keeps the web server route. Thanks to @msyzzm (#338)
+- A session could be named after raw JSON such as `{"title":"..."}` or just "```json" when its title came from the quick one-shot title call, which runs while the session's Claude is still starting. That call now unwraps a JSON answer or a code fence before dsh takes the first line as the name.
 
 ## [1.6.10] - 2026-11-21
 

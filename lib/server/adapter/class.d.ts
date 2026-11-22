@@ -1247,6 +1247,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Kill this instance's live processes and drop them from the shared registry: called when an SSH
      * box is removed from the panel, so its remote `claude` sessions do not outlive the mount. */
     disposeProcesses(): void;
+    /**
+     * The one-shot title call, its answer passed through `cleanTitle` before dsh takes the first
+     * line of it. The answer is held until the call finishes and goes out as one text block, so
+     * every block chunk of the call itself (text and reasoning alike) is dropped, which keeps the
+     * new block's index from colliding with one already sent. Other chunks (usage) and the finish
+     * pass through; a call that fails sends its finish and no text.
+     */
+    titleOneShot(options: GenerateOptions): AsyncGenerator<StreamChunk>;
     /** The stream entry point: answer a session-title request directly, run a one-shot when there is no resume path, otherwise delegate to the persistent turn loop. */
     stream(options: GenerateOptions): AsyncGenerator<StreamChunk>;
     /** Reuse the session's process when its spec still matches; otherwise replace it. */

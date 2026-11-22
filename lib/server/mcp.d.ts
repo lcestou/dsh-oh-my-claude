@@ -129,9 +129,10 @@ export interface BridgeOptions {
 export interface McpBridge {
     base: string;
     key: string;
-    /** Where `base` points: the bridge's own loopback listener under DSH Desktop, else the dsh web
-     *  server route (also when the listener could not start). The CLI's `--mcp-config` URL is built
-     *  off `base` either way. */
+    /** Where `base` points: the bridge's own loopback listener under DSH Desktop or once a probe finds
+     *  the web server route gated, else the dsh web server route (also when the listener could not
+     *  start). Both can change once after the mount, when the probe settles. The CLI's
+     *  `--mcp-config` URL is built off `base` at each spawn. */
     via: "loopback" | "webserver";
     /** The tools `tools/list` will answer that session with, the bridge's own included, so the system
      *  prompt can name the ones that are really there. Undefined when the session has no live agent
@@ -147,11 +148,20 @@ export interface McpBridge {
  * in a container behind a reverse proxy) answers only there, so 127.0.0.1 would refuse the bridge.
  */
 export declare function webServerBase(webServer: Pick<WebServer, "port" | "host">): string;
+/**
+ * Whether the bridge's own web server route answers the CLI. A keyed GET reaches `serve`, which
+ * answers 405 to anything but POST; any other answer (dsh-remote's 403 `unauthorized`, a login
+ * redirect, a proxy's error page) comes from something gating the route in front of the plugin.
+ * Resolves "unreachable" when the request fails outright or answers 5xx (the server not ready yet).
+ */
+export declare function probeRoute(base: string, key: string): Promise<"open" | "gated" | "unreachable">;
 /** Wires the MCP bridge up once the required services are injected, and keeps the bridge key
  *  stable across dsh restarts so a keeper-mode claude that outlived dsh still authenticates.
  *  Under DSH Desktop, new Claude processes are pointed at the bridge's own loopback listener,
  *  which answers on 127.0.0.1 regardless of the browser-access gate Desktop puts on web server
- *  routes. Everywhere else they get the web server route as before, and no listener is started:
- *  a process that outlives a restart can only reconnect to the URL it was started with, and the
- *  web port is the one address that is fixed by configuration. */
+ *  routes. Everywhere else they get the web server route, and no listener is started while that
+ *  route answers: a process that outlives a restart can only reconnect to the URL it was started
+ *  with, and the web port is the one address that is fixed by configuration. From the mount on, the
+ *  route is probed until something answers there, and when another plugin's gate answers it instead of the bridge
+ *  (dsh-remote's login check, #338) the loopback listener starts and `base` moves to it. */
 export declare function registerMcpBridge(ctx: PluginContext, { log, version, relay, mode, builtins, dshLoading, keyFile, portFile, awaitsAgent, agentWaitMs, }: BridgeOptions): Promise<McpBridge>;
