@@ -72,9 +72,10 @@ function promptText(content: unknown): string {
 /**
  * What a person typed, out of a prompt as the CLI stored it. dsh sends its own text in the same
  * user message: an approval-policy notice ahead of the prompt when the access mode changed, and its
- * "Current runtime context." block after it. A Rewind row labelled with the raw text led with the
- * notice ("The approval policy changed from "never" to "ask" …") instead of the question asked.
- * Text without either part comes back trimmed and otherwise untouched, and so does text that
+ * runtime-context block after it. A Rewind row labelled with the raw text led with the notice
+ * ("The approval policy changed from "never" to "ask" …") instead of the question asked, and
+ * prompt recall brought a session's first prompt back with the block attached.
+ * Text without these parts comes back trimmed and otherwise untouched, and so does text that
  * would be left empty.
  */
 export const typedPrompt = (text: string): string => {
@@ -83,6 +84,15 @@ export const typedPrompt = (text: string): string => {
   // on the same line, so the cut takes the rest of that line, not only a bare marker.
   const typed = text
     .replace(/\n\nCurrent runtime context\.[^\n]*\n[\s\S]*$/, "")
+    // dsh-agent-loop's runtime-context snapshot (`runtime-context.ts`, already in dsh 0.2.2-rc.5):
+    // one `<system-reminder>` that opens "The following information describes your current
+    // session" or, once cleared, "Current runtime context: none". dsh escapes a closing tag inside
+    // the body, so the first `</system-reminder>` after the opening is the block's own; text after
+    // the block is kept. A reminder the person typed into the prompt does not open with either line.
+    .replace(
+      /\s*<system-reminder>\n(?:The following information describes your current session|Current runtime context: none\.)[\s\S]*?<\/system-reminder>/g,
+      "",
+    )
     .replace(
       /^(?:The approval policy changed from "[^"]*" to "[^"]*" \(changed by the user\)\.\s*)+/,
       "",
