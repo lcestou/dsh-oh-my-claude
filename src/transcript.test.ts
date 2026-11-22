@@ -1063,6 +1063,39 @@ assert.equal(
   "Current runtime context.\nexplain it",
   "a prompt that starts with the words keeps them",
 );
+// dsh-agent-loop's snapshot, as the CLI stored a session's first prompt (dsh 0.2.3-alpha.2).
+const snapshot =
+  '<system-reminder>\nThe following information describes your current session:\n\nCurrent working directory: "/tmp/ws".\n\nYou are the root agent. Your name is "lead".\n</system-reminder>';
+assert.equal(
+  typedPrompt(`Reply with the single word alpha.\n\n${snapshot}`),
+  "Reply with the single word alpha.",
+  "the session-info reminder after the prompt is not what was typed",
+);
+assert.equal(
+  typedPrompt(
+    `What changed?\n\n<system-reminder>\nThe following information describes your current session. It replaces earlier versions of this context, including any retained in conversation summaries.\n\nbody\n</system-reminder>`,
+  ),
+  "What changed?",
+  "a later snapshot is cut too",
+);
+assert.equal(
+  typedPrompt(
+    "Go on.\n\n<system-reminder>\nCurrent runtime context: none. Earlier runtime-context snapshots no longer apply.\n</system-reminder>",
+  ),
+  "Go on.",
+  "the cleared form is cut",
+);
+assert.equal(
+  typedPrompt(`${snapshot}\n\nText after the block.`),
+  "Text after the block.",
+  "text after the block is kept",
+);
+assert.equal(
+  typedPrompt("Why does <system-reminder>\nkeep this</system-reminder> show up?"),
+  "Why does <system-reminder>\nkeep this</system-reminder> show up?",
+  "a reminder tag the person typed is left alone",
+);
+assert.equal(typedPrompt(snapshot), snapshot, "a prompt that is only the block comes back whole");
 
 // A session that opens on a slash command has no typed prompt in its head: the CLI stores the
 // command as markup, with dsh's runtime-context block inside the args. It listed as "Untitled".
