@@ -948,8 +948,8 @@ async function startLoopback(
  *  which answers on 127.0.0.1 regardless of the browser-access gate Desktop puts on web server
  *  routes. Everywhere else they get the web server route, and no listener is started while that
  *  route answers: a process that outlives a restart can only reconnect to the URL it was started
- *  with, and the web port is the one address that is fixed by configuration. Once the web server
- *  listens the route is probed, and when another plugin's gate answers it instead of the bridge
+ *  with, and the web port is the one address that is fixed by configuration. From the mount on, the
+ *  route is probed until something answers there, and when another plugin's gate answers it instead of the bridge
  *  (dsh-remote's login check, #338) the loopback listener starts and `base` moves to it. */
 export function registerMcpBridge(
   ctx: PluginContext,
@@ -1095,6 +1095,7 @@ export function registerMcpBridge(
           const gated = host.get?.("desktopBrowserAccess") !== undefined;
           // The loopback listener is what new Claude processes get there: it answers on 127.0.0.1
           // no matter what gate sits on the web server routes.
+          /** Starts the loopback listener serving the bridge; undefined when no port would bind. */
           const listen = () =>
             startLoopback(
               log,
@@ -1152,9 +1153,9 @@ export function registerMcpBridge(
           };
           resolve(bridge);
           if (loopback) return;
-          // The mount runs before dsh's web server listens, so the probe waits for it. Processes
-          // started before it settles keep the web server URL; at boot that is only keepers, whose
-          // URL was fixed when they were spawned.
+          // The mount runs before dsh's web server listens, so the probe retries until something
+          // answers. Processes started before it settles keep the web server URL; at boot that is
+          // only keepers, whose URL was fixed when they were spawned.
           for (let i = 0; i < PROBE_ATTEMPTS; i++) {
             if (i > 0) await new Promise((r) => setTimeout(r, PROBE_RETRY_MS).unref?.());
             if (disposed) return;
@@ -1179,6 +1180,8 @@ export function registerMcpBridge(
             );
             return;
           }
+          if (!disposed)
+            log("warn", `mcp bridge: ${webBase}${MCP_PATH} never answered; staying on it`);
         })(),
     );
   });

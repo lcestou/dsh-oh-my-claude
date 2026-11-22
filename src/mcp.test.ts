@@ -361,9 +361,9 @@ cleanups.length = 0;
     // SAFETY: a TCP listener reports AddressInfo
     return { server, port: (server.address() as AddressInfo).port };
   };
-  /** Polls `ok` until it holds or two seconds pass. */
+  /** Polls `ok` until it holds or four seconds pass. */
   const until = async (ok: () => boolean) => {
-    for (let i = 0; i < 40 && !ok(); i++) await new Promise((r) => setTimeout(r, 50));
+    for (let i = 0; i < 80 && !ok(); i++) await new Promise((r) => setTimeout(r, 50));
   };
   const busy = await webAt((_req, res) => {
     res.writeHead(503);
@@ -376,7 +376,15 @@ cleanups.length = 0;
   );
   busy.server.close();
   const gateTmp = tempDir("omc-mcp-gate-");
+  // Booting first (503), then gated: the probe keeps going past the 503 and acts on the 403.
+  let asked = 0;
   const gate = await webAt((_req, res) => {
+    asked++;
+    if (asked === 1) {
+      res.writeHead(503);
+      res.end();
+      return;
+    }
     res.writeHead(403, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
   });
@@ -392,6 +400,7 @@ cleanups.length = 0;
     "loopback",
     "a gated web server route moves the bridge to loopback",
   );
+  assert.equal(asked, 2, "after one retry past the 503");
   assert.notEqual(gatedBridge.base, `http://127.0.0.1:${gate.port}`, "off the gated port");
   const through = await fetch(`${gatedBridge.base}${MCP_PATH}/s1`, {
     method: "POST",
