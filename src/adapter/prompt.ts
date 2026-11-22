@@ -16,6 +16,20 @@ const MAX_IMAGES = 20;
 // ---------------------------------------------------------------------------
 // Request assembly
 
+/** One source's state in a dsh 0.2.3 system-prompt message. An active source's instructions are
+ *  the text block at `contentIndex`; a retired source has none. Blocks no section points at are
+ *  dsh's notices ("The following replaces the earlier instructions from ...") for a model that
+ *  reads the message in place. `state` is optional only because dsh uses the field name
+ *  `sections` a second time, for a context snapshot's `{ name, text }` list on a developer
+ *  message; those have no state and are never read as prompt sources. */
+export type SystemSection = {
+  name: string;
+  state?: "active" | "retired";
+  /** Ascending prompt order; dsh breaks a tie by name. */
+  order?: number;
+  contentIndex?: number;
+};
+
 /** The slice of a dsh message this adapter reads; dsh's own Message type is wider. */
 /** The slice of a dsh message this adapter reads; exported for test fixtures. */
 export type LooseMessage = {
@@ -35,6 +49,12 @@ export type LooseMessage = {
     /** dsh's shape for the block: `snapshot` for context injected before a step, `notice` for a
      *  notice a producer sends. */
     form?: string;
+    /** dsh 0.2.3, on a system-prompt message: which sources it sets or retires. Absent on a
+     *  message that holds a whole prompt, which is every one dsh wrote up to 0.2.2. */
+    sections?: readonly SystemSection[];
+    /** dsh 0.2.3, beside `sections`: this message replaces every source admitted before it.
+     *  Without it the message changes only the sources it names. */
+    reset?: boolean;
   };
   content?: string | ContentBlock[];
   /** dsh 0.1.7 answers a tool result as its own `role: "tool"` message and carries the call id on
@@ -104,16 +124,12 @@ export function isCliCommandLine(text: string, known: readonly string[] | undefi
 }
 
 /**
- * dsh's system prompt for a loop-built request: the text of the latest run of system-role
- * messages, after a one-shot caller's `system`. A loop-built request leads with one system
- * message, and a prompt that changed during the session is a later system message holding the
- * whole new text, so the latest run is the prompt in force. Undefined when neither has text.
+ * The whole-prompt reading of system messages, which is how dsh wrote them up to 0.2.2: the text
+ * of the latest run of system-role messages. A loop-built request leads with one system message,
+ * and a prompt that changed during the session is a later system message holding the whole new
+ * text, so the latest run is the prompt in force. Empty when no system message has text.
  */
-export function dshSystemPrompt(
-  messages: readonly LooseMessage[] | undefined,
-  system?: string,
-): string | undefined {
-  const all = messages ?? [];
+function latestSystemRun(all: readonly LooseMessage[]): string[] {
   let end = all.length - 1;
   // An emptied system message is skipped: dsh blanks the later ones when a session moves to a
   // route that is not in-history, and stopping there dropped the prompt for good.
@@ -121,9 +137,77 @@ export function dshSystemPrompt(
     end--;
   let start = end;
   while (start > 0 && all[start - 1]?.role === "system") start--;
-  const parts = [system ?? ""];
+  const parts: string[] = [];
   for (let i = start; i >= 0 && i <= end; i++) parts.push(textOf(all[i]?.content));
-  const text = parts.filter((p) => p.trim() !== "").join("\n\n");
+  return parts;
+}
+
+/**
+ * The prompt in force when system messages name their sources (dsh 0.2.3): each message is folded
+ * onto the ones before it, the way dsh's own projection does (dsh-system-prompt, `projection.ts`).
+ * A `reset` message starts over, an active section sets its source's text, a retired one drops
+ * it, and what is left is read in `order`, then by name. A later message holds only the sources
+ * that changed plus a notice for a model reading it in place, so the notice blocks are left out:
+ * Claude is started again with the whole prompt and has no earlier one to be told about.
+ *
+ * A message without `sections` in the same history is a whole prompt from before the upgrade. It
+ * stands until the next `reset`, which is the first thing dsh 0.2.3 writes after one.
+ */
+function foldedSystemSections(all: readonly LooseMessage[]): string[] {
+  let whole: string[] = [];
+  const live = new Map<string, { order: number; text: string }>();
+  all.forEach((m, i) => {
+    if (m.role !== "system") return;
+    const sections = m.source?.sections;
+    if (sections === undefined) {
+      const text = textOf(m.content);
+      if (text.trim() === "") return;
+      const before = all[i - 1];
+      const sameRun = before?.role === "system" && before.source?.sections === undefined;
+      whole = sameRun ? [...whole, text] : [text];
+      live.clear();
+      return;
+    }
+    if (m.source?.reset) {
+      whole = [];
+      live.clear();
+    }
+    for (const section of sections) {
+      if (section.state === "retired") {
+        live.delete(section.name);
+        continue;
+      }
+      if (section.state !== "active") continue;
+      const block = Array.isArray(m.content) ? m.content[section.contentIndex ?? -1] : undefined;
+      live.set(section.name, {
+        order: section.order ?? 0,
+        text: block?.type === "text" ? block.text : "",
+      });
+    }
+  });
+  const ordered = [...live.entries()]
+    .toSorted(([aName, a], [bName, b]) => a.order - b.order || (aName < bName ? -1 : 1))
+    .map(([, section]) => section.text);
+  return [...whole, ...ordered];
+}
+
+/**
+ * dsh's system prompt for a loop-built request, after a one-shot caller's `system`. Undefined
+ * when neither has text.
+ *
+ * Which reading applies is told by the messages themselves, not by a dsh version: one system
+ * message that names its sources means every later one is a change to fold in, and none means
+ * each holds a whole prompt. Reading a 0.2.3 change as a whole prompt gave Claude one changed
+ * paragraph for its entire system prompt, from the first model switch on.
+ */
+export function dshSystemPrompt(
+  messages: readonly LooseMessage[] | undefined,
+  system?: string,
+): string | undefined {
+  const all = messages ?? [];
+  const sectioned = all.some((m) => m.role === "system" && m.source?.sections !== undefined);
+  const parts = sectioned ? foldedSystemSections(all) : latestSystemRun(all);
+  const text = [system ?? "", ...parts].filter((p) => p.trim() !== "").join("\n\n");
   return text === "" ? undefined : text;
 }
 

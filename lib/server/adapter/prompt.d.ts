@@ -2,6 +2,19 @@ import { type ContentBlock } from "@deepseek-ai/dsh-llm";
 import { type ContextSizes, type ContextSource } from "../context-sources.js";
 import { type ImageAttachmentRef } from "../dsh.js";
 import { type SteerAttachment } from "../process.js";
+/** One source's state in a dsh 0.2.3 system-prompt message. An active source's instructions are
+ *  the text block at `contentIndex`; a retired source has none. Blocks no section points at are
+ *  dsh's notices ("The following replaces the earlier instructions from ...") for a model that
+ *  reads the message in place. `state` is optional only because dsh uses the field name
+ *  `sections` a second time, for a context snapshot's `{ name, text }` list on a developer
+ *  message; those have no state and are never read as prompt sources. */
+export type SystemSection = {
+    name: string;
+    state?: "active" | "retired";
+    /** Ascending prompt order; dsh breaks a tie by name. */
+    order?: number;
+    contentIndex?: number;
+};
 /** The slice of a dsh message this adapter reads; dsh's own Message type is wider. */
 /** The slice of a dsh message this adapter reads; exported for test fixtures. */
 export type LooseMessage = {
@@ -21,6 +34,12 @@ export type LooseMessage = {
         /** dsh's shape for the block: `snapshot` for context injected before a step, `notice` for a
          *  notice a producer sends. */
         form?: string;
+        /** dsh 0.2.3, on a system-prompt message: which sources it sets or retires. Absent on a
+         *  message that holds a whole prompt, which is every one dsh wrote up to 0.2.2. */
+        sections?: readonly SystemSection[];
+        /** dsh 0.2.3, beside `sections`: this message replaces every source admitted before it.
+         *  Without it the message changes only the sources it names. */
+        reset?: boolean;
     };
     content?: string | ContentBlock[];
     /** dsh 0.1.7 answers a tool result as its own `role: "tool"` message and carries the call id on
@@ -51,10 +70,13 @@ export declare const steerKey: (m: LooseMessage) => string | undefined;
  */
 export declare function isCliCommandLine(text: string, known: readonly string[] | undefined): boolean;
 /**
- * dsh's system prompt for a loop-built request: the text of the latest run of system-role
- * messages, after a one-shot caller's `system`. A loop-built request leads with one system
- * message, and a prompt that changed during the session is a later system message holding the
- * whole new text, so the latest run is the prompt in force. Undefined when neither has text.
+ * dsh's system prompt for a loop-built request, after a one-shot caller's `system`. Undefined
+ * when neither has text.
+ *
+ * Which reading applies is told by the messages themselves, not by a dsh version: one system
+ * message that names its sources means every later one is a change to fold in, and none means
+ * each holds a whole prompt. Reading a 0.2.3 change as a whole prompt gave Claude one changed
+ * paragraph for its entire system prompt, from the first model switch on.
  */
 export declare function dshSystemPrompt(messages: readonly LooseMessage[] | undefined, system?: string): string | undefined;
 /**
