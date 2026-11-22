@@ -73,5 +73,12 @@ assert.equal((await titleFrom(answer("Plain title"))).text, "Plain title");
   const { text, out } = await titleFrom([failed]);
   assert.equal(text, "", "a failed call sends no text");
   assert.deepEqual(out, [failed], "and its own finish");
+  const partial = await titleFrom([
+    { type: "block-start", index: 0, blockType: "text" },
+    { type: "text-delta", index: 0, text: '{"title":"Half' },
+    failed,
+  ]);
+  assert.equal(partial.text, "", "text that arrived before a failure is not sent");
+  assert.deepEqual(partial.out, [failed]);
 }
 console.log("session-title ok");

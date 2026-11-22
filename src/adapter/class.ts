@@ -4860,7 +4860,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     for await (const c of this.oneShot(options)) {
       if (c.type === "text-delta") text += c.text;
       else if (c.type === "finish") {
-        const title = cleanTitle(text);
+        const failed = c.reason.kind === "error" || c.reason.kind === "aborted";
+        const title = failed ? "" : cleanTitle(text);
         if (title) yield* new Translator({ toolActivity: false }).wholeBlock("text", title);
         yield c;
         return;
