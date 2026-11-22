@@ -1,5 +1,6 @@
 // The CLI probe, the flag guard, the argument and input builders, and the tool-name maps for the bridge.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
+import z from "@deepseek-ai/schemastery";
 import { execFile } from "node:child_process";
 import { type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { JsonValue, ToolSchema } from "../dsh.js";
@@ -591,6 +592,29 @@ export const NATIVE_TOOL_MAP = {
   EnterPlanMode: "enter_plan_mode",
   SlashCommand: "slash_command",
 } as const;
+
+/** The JSON shape a title model sometimes answers in. */
+const TitleAnswer = z.object({ title: z.string() });
+
+/**
+ * A session title as a model wrote it, without the wrappers dsh's prompt forbids and a model still
+ * sends now and then: a JSON object with a `title` (the framed input is a JSON array, and Haiku
+ * answers in kind) or a code fence around the answer. dsh keeps the first non-empty line, so a
+ * fenced answer would name the session "```json". Anything else comes back trimmed and unchanged,
+ * and "" when nothing is left.
+ */
+export function cleanTitle(text: string): string {
+  let t = text.trim();
+  const fence = /^```[\w-]*[^\S\n]*\n([\s\S]*?)\n?```$/.exec(t);
+  if (fence) t = (fence[1] ?? "").trim();
+  if (t.startsWith("{"))
+    try {
+      // SAFETY: schemastery validates at runtime and throws on any other shape; the cast only
+      //   widens the static input so the parsed value reaches the validator.
+      t = (TitleAnswer(JSON.parse(t) as Parameters<typeof TitleAnswer>[0]).title ?? t).trim();
+    } catch {}
+  return t;
+}
 
 /** The text dsh's title provider sends: its one framed user message, joined when there are more. */
 export function titleInput(messages: GenerateOptions["messages"]): string {

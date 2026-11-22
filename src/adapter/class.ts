@@ -359,6 +359,7 @@ import {
   renameTitle,
   rowsSupported,
   supports,
+  cleanTitle,
   titleInput,
   unknownFlagIn,
   usesStdin,
@@ -4847,6 +4848,26 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.streaming.clear();
   }
 
+  /**
+   * The one-shot title call, its answer passed through `cleanTitle` before dsh takes the first
+   * line of it. The answer is held until the call finishes and goes out as one text block, so
+   * every block chunk of the call itself (text and reasoning alike) is dropped, which keeps the
+   * new block's index from colliding with one already sent. Other chunks (usage) and the finish
+   * pass through; a call that fails sends its finish and no text.
+   */
+  async *titleOneShot(options: GenerateOptions): AsyncGenerator<StreamChunk> {
+    let text = "";
+    for await (const c of this.oneShot(options)) {
+      if (c.type === "text-delta") text += c.text;
+      else if (c.type === "finish") {
+        const title = cleanTitle(text);
+        if (title) yield* new Translator({ toolActivity: false }).wholeBlock("text", title);
+        yield c;
+        return;
+      } else if (!("index" in c)) yield c;
+    }
+  }
+
   /** The stream entry point: answer a session-title request directly, run a one-shot when there is no resume path, otherwise delegate to the persistent turn loop. */
   async *stream(options: GenerateOptions): AsyncGenerator<StreamChunk> {
     if (options.purpose === "session-title" && options.sessionId) {
@@ -4856,6 +4877,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         yield { type: "finish", reason: { kind: "stop" } };
         return;
       }
+    }
+    if (options.purpose === "session-title") {
+      yield* this.titleOneShot(options);
+      return;
     }
     if (options.purpose === "compaction" && options.sessionId) {
       const summary = await this.compactionFromCli(options.sessionId, options.signal);
