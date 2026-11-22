@@ -22,6 +22,8 @@ A mount written by hand in the profile's `cordis.patch.yml` still loads, and Box
         configDir: ~/.claude-work
 ```
 
+Move a hand-written mount into Settings before you update the plugin from dsh's Plugins page. Update removes the old version first, then reloads the profile. The hand-written row still names `dsh-oh-my-claude`, which is not installed at that moment, so dsh reports "Could not remove" with the old version's number, stops there, and leaves the plugin uninstalled. This was seen on dsh 0.2.2-rc.5. An account added from Settings has no row in the patch, and the same update goes through. If an update already failed this way, install `dsh-oh-my-claude` again from Add plugin and choose Enable now. The hand-written mount, its login and its sessions come back with it.
+
 Each box tints its Claude model names in its own colour: a shade of the accent until you pick one from the swatch beside its name in Boxes or under Settings → Customize → Box colours.
 
 An account and an SSH box share one list of names: both mount as `claude-code-<name>`, so Work can be one or the other.
