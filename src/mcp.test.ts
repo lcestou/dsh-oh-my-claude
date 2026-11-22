@@ -9,6 +9,7 @@ import {
   KEY_HEADER,
   MCP_PATH,
   openSession,
+  probeRoute,
   promptSession,
   registerMcpBridge,
   waitSession,
@@ -364,6 +365,16 @@ cleanups.length = 0;
   const until = async (ok: () => boolean) => {
     for (let i = 0; i < 40 && !ok(); i++) await new Promise((r) => setTimeout(r, 50));
   };
+  const busy = await webAt((_req, res) => {
+    res.writeHead(503);
+    res.end();
+  });
+  assert.equal(
+    await probeRoute(`http://127.0.0.1:${busy.port}`, "k"),
+    "unreachable",
+    "a server answering 503 is not ready yet, not gated",
+  );
+  busy.server.close();
   const gateTmp = tempDir("omc-mcp-gate-");
   const gate = await webAt((_req, res) => {
     res.writeHead(403, { "content-type": "application/json" });
@@ -376,7 +387,11 @@ cleanups.length = 0;
     keyFile: join(gateTmp, "mcp.key"),
   });
   await until(() => gatedBridge.via === "loopback");
-  assert.equal(gatedBridge.via, "loopback", "a gated web server route moves the bridge to loopback");
+  assert.equal(
+    gatedBridge.via,
+    "loopback",
+    "a gated web server route moves the bridge to loopback",
+  );
   assert.notEqual(gatedBridge.base, `http://127.0.0.1:${gate.port}`, "off the gated port");
   const through = await fetch(`${gatedBridge.base}${MCP_PATH}/s1`, {
     method: "POST",

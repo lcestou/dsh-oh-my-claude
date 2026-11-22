@@ -885,9 +885,12 @@ const PROBE_ATTEMPTS = 120;
  * Whether the bridge's own web server route answers the CLI. A keyed GET reaches `serve`, which
  * answers 405 to anything but POST; any other answer (dsh-remote's 403 `unauthorized`, a login
  * redirect, a proxy's error page) comes from something gating the route in front of the plugin.
- * Resolves "unreachable" when the request fails outright (the server not listening yet).
+ * Resolves "unreachable" when the request fails outright or answers 5xx (the server not ready yet).
  */
-export async function probeRoute(base: string, key: string): Promise<"open" | "gated" | "unreachable"> {
+export async function probeRoute(
+  base: string,
+  key: string,
+): Promise<"open" | "gated" | "unreachable"> {
   try {
     const res = await fetch(`${base}${MCP_PATH}/probe`, {
       headers: { [KEY_HEADER]: key },
@@ -895,6 +898,8 @@ export async function probeRoute(base: string, key: string): Promise<"open" | "g
       signal: AbortSignal.timeout(5000),
     });
     await res.body?.cancel();
+    // A 5xx is a server not ready yet (dsh booting, a proxy before its upstream), not a gate.
+    if (res.status >= 500) return "unreachable";
     return res.status === 405 ? "open" : "gated";
   } catch {
     return "unreachable";
@@ -1150,23 +1155,28 @@ export function registerMcpBridge(
           // The mount runs before dsh's web server listens, so the probe waits for it. Processes
           // started before it settles keep the web server URL; at boot that is only keepers, whose
           // URL was fixed when they were spawned.
-          for (let i = 0; i < PROBE_ATTEMPTS && !disposed; i++) {
-            if (i > 0)
-              await new Promise((r) => setTimeout(r, PROBE_RETRY_MS).unref?.());
+          for (let i = 0; i < PROBE_ATTEMPTS; i++) {
+            if (i > 0) await new Promise((r) => setTimeout(r, PROBE_RETRY_MS).unref?.());
             if (disposed) return;
             const reach = await probeRoute(webBase, key);
             if (reach === "unreachable") continue;
             if (reach === "open" || disposed) return;
             const started = await listen();
             if (!started) {
-              log("warn", `mcp bridge: ${webBase}${MCP_PATH} is gated and no loopback listener started`);
+              log(
+                "warn",
+                `mcp bridge: ${webBase}${MCP_PATH} is gated and no loopback listener started`,
+              );
               return;
             }
             if (disposed) return started.close();
             loopback = started;
             bridge.base = started.url;
             bridge.via = "loopback";
-            log("info", `mcp bridge: ${webBase}${MCP_PATH} is gated; loopback listener on ${started.url}`);
+            log(
+              "info",
+              `mcp bridge: ${webBase}${MCP_PATH} is gated; loopback listener on ${started.url}`,
+            );
             return;
           }
         })(),
