@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Changed
+
+- The accounts guide now says to move a hand-written mount into Settings before updating from dsh's Plugins page. With a second mount written by hand in `cordis.patch.yml`, Update on dsh 0.2.2-rc.5 stops at "Could not remove" and leaves the plugin uninstalled. An account added from Settings has no row in the patch, and the same update goes through. To get the plugin back, install `dsh-oh-my-claude` again from Add plugin and choose Enable now. Thanks to @taseenb (#341)
+
 ### Fixed
 
 - With a plugin that puts its own login in front of every dsh route, such as @xgone/dsh-remote, Claude sessions got none of dsh's tools: the CLI's MCP client carries no login cookie, so the gate answered the bridge with 403 and Claude Code listed the `dsh` server as needing authentication. Once dsh's web server is up, the bridge now checks that its own route answers, and when something else answers instead it serves new Claude sessions from its own 127.0.0.1 port, as it already did under DSH Desktop. A dsh with no such gate keeps the web server route. Thanks to @msyzzm (#338)
