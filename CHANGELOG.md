@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-22
+
+dsh: runs on 0.2.2-alpha.2 through 0.2.3-alpha.2; built and tested on 0.2.3-alpha.2.
+
 ### Changed
 
 - The accounts guide now says to move a hand-written mount into Settings before updating from dsh's Plugins page. With a second mount written by hand in `cordis.patch.yml`, Update on dsh 0.2.2-rc.5 stops at "Could not remove" and leaves the plugin uninstalled. An account added from Settings has no row in the patch, and the same update goes through. To get the plugin back, install `dsh-oh-my-claude` again from Add plugin and choose Enable now. Thanks to @taseenb (#341)
