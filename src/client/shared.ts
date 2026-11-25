@@ -113,6 +113,9 @@ export const T = {
   text: "var(--dsw-alias-label-primary, inherit)",
   muted: "var(--dsw-alias-label-secondary, rgba(128,128,128,.9))",
   faint: "var(--dsw-alias-label-tertiary, rgba(128,128,128,.7))",
+  /** Quiet text that must still read at 4.5:1: dsh's tertiary label in dark mode, its secondary in
+   *  light, where tertiary on the menu surface is 3.5:1. Set per theme in COST_DIALOG_CSS. */
+  quiet: "var(--omc-label-quiet, var(--dsw-alias-label-secondary, rgba(128,128,128,.9)))",
   border: "var(--dsw-alias-border-l2, rgba(128,128,128,.22))",
   card: "var(--dsw-alias-bg-layer-1, rgba(128,128,128,.06))",
   field: "var(--dsw-alias-bg-base, transparent)",
