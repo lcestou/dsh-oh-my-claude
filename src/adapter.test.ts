@@ -10171,17 +10171,21 @@ console.log("awaiting ok");
   a.sessionPluginWarnings.set("s1", []);
   a.permissionAsks.set("s1", ["Bash(ls:*)"]);
   a.awaitingInput.set("s1", { kind: "approval", id: "r1", since: 1 });
+  a.sessionCommands.set("s1", ["compact"]);
+  a.sessionConfigs.set("s1", a.config);
   a.sessionTools.set("s2", ["Read"]);
   a.forgetSession("s1");
   assert.deepEqual(
     [
+      a.sessionCommands.has("s1"),
+      a.sessionConfigs.has("s1"),
       a.sessionTools.has("s1"),
       a.sessionPluginErrors.has("s1"),
       a.sessionPluginWarnings.has("s1"),
       a.permissionAsks.has("s1"),
       a.awaitingInput.has("s1"),
     ],
-    [false, false, false, false, false],
+    [false, false, false, false, false, false, false],
     "every per-session map drops the id",
   );
   assert.equal(a.sessionTools.has("s2"), true, "another session is untouched");

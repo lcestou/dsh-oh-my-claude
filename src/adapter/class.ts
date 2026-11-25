@@ -5583,6 +5583,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    */
   forgetSession(sessionId: string) {
     this.sessionTools.delete(sessionId);
+    // Safe to drop with the process: the next turn's `prepare` records the config again before
+    // anything reads it, and a new process reports its own commands; until it does, any `/name`
+    // goes as a command, as on a session's first process.
+    this.sessionCommands.delete(sessionId);
+    this.sessionConfigs.delete(sessionId);
     this.sessionPluginErrors.delete(sessionId);
     this.sessionPluginWarnings.delete(sessionId);
     this.sessionTasks.delete(sessionId);
