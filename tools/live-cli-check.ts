@@ -72,7 +72,7 @@ function runTurn(
 ): Promise<TurnOutcome> {
   const inv = host
     ? sshInvocation(host, "claude", argv, process.cwd(), { token: readSshToken(STATE_DIR, host) })
-    : { command: "claude", args: argv };
+    : { command: "claude", args: argv, stdinFirst: "" };
   return new Promise<TurnOutcome>((resolve) => {
     const child = spawn(inv.command, inv.args, { stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
@@ -101,14 +101,17 @@ function runTurn(
         resolve({ error: `exit ${code}: ${err.trim().split("\n").pop() ?? "no output"}` });
       else resolve({ result });
     });
+    // The box token line goes first: the far shell reads it before it starts the CLI.
     child.stdin.end(
-      JSON.stringify({
-        type: "user",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: "Reply with the single word OK." }],
-        },
-      }) + "\n",
+      inv.stdinFirst +
+        JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Reply with the single word OK." }],
+          },
+        }) +
+        "\n",
     );
   });
 }
