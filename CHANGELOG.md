@@ -10,6 +10,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - When dsh restarts a Claude session with `--resume`, a tool call a hook held back in the last session no longer runs on its own. Claude Code 2.1.328 started running such calls on resume; the plugin now switches that off for every Claude it starts, here and over SSH, since a restart is not someone choosing to carry on.
 - In plan mode, Claude can now call dsh 0.2.3's `list_session` and `list_workspace`, which only list session and workspace names.
+- With reduced motion turned on in the system, the Claude Code update card's closing bar no longer animates. The card still closes after ten seconds, and hovering or focusing it still holds it open.
 - An added model with a context size of 200K or less now also tells Claude Code it is not a 1M model. From Claude Code 2.1.323 a model name the CLI does not know is taken for a 1M model, so a 200K model behind a proxy could miss its compaction and fail turns.
 
 ### Fixed
