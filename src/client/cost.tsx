@@ -151,6 +151,21 @@ export function subscriptionStatus(): Promise<boolean> {
   return statusOnce;
 }
 
+/**
+ * Wraps `apply` so only the newest of several overlapping reads lands: a reply that comes back
+ * after a later read started is dropped. A login change can start a second /status read while the
+ * first is still out, and the first answering last would otherwise put the old plan back.
+ */
+export function newestOnly<T>(apply: (value: T) => void): (read: Promise<T>) => void {
+  let latest = 0;
+  return (read) => {
+    const mine = ++latest;
+    void read.then((v) => {
+      if (mine === latest) apply(v);
+    });
+  };
+}
+
 // A login or logout, here or in another tab, arrives as BOXES_EVENT; drop the cached answer so the
 // next read asks again. Registered at import, so it runs before any pill's own listener re-reads.
 // Optional because a test imports this module where no window exists.
@@ -323,8 +338,9 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   const [subscription, setSubscription] = useState(false);
   useEffect(() => {
     let live = true;
+    const show = newestOnly<boolean>((v) => live && setSubscription(v));
     /** Ask for the plan (shared across pills) and show it while this pill is mounted. */
-    const load = () => void subscriptionStatus().then((v) => live && setSubscription(v));
+    const load = () => show(subscriptionStatus());
     load();
     // A login change elsewhere re-reads, so the pill follows it without a refresh.
     window.addEventListener(BOXES_EVENT, load);
