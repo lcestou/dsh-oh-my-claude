@@ -22,6 +22,7 @@ export declare const CHILD_ENV: {
     CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING: string;
     CLAUDE_CODE_ENTRYPOINT: string;
     CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: string;
+    CLAUDE_CODE_DISABLE_DEFERRED_TOOL_RESUME: string;
 };
 /** The privacy switches a person sets in the environment dsh runs in: Claude Code's own telemetry, error-reporting and nonessential-traffic switches, its updater
  *  and bug-report switches, and the cross-tool DO_NOT_TRACK. A local child inherits them through
@@ -430,6 +431,13 @@ export interface FarEnv {
  * as it does for a local spawn (`localEnvOverride`).
  */
 export declare function farEnvPairs(far?: FarEnv): [string, string][];
+/**
+ * A stated context window as the environment pairs the CLI reads, none when no window is stated.
+ * The size goes under both names the CLI listens to. A window of 200,000 or less also gets
+ * CLAUDE_CODE_DISABLE_1M_CONTEXT: from 2.1.323 the CLI takes a model id it does not know for a
+ * 1M model, and a 200K model behind a proxy then never compacts in time and fails its turns.
+ */
+export declare function windowEnvPairs(window: number | undefined): [string, string][];
 /**
  * The local `ssh` argv that runs `command args` on `host` in `cwd`. The remote shell inherits none
  * of this box's environment or working directory, so the command carries both: `cd` into `cwd`, then
