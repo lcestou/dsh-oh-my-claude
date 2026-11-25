@@ -44,6 +44,8 @@ export type Page = {
   /** Load the page again, as after a setting changed on disk that the page read once. */
   reload(how?: { waitUntil?: "networkidle" | "load" }): Promise<void>;
   addStyleTag(tag: { content: string }): Promise<void>;
+  /** Inject a script file into the page, as the accessibility scan does with axe-core. */
+  addScriptTag(tag: { path: string }): Promise<void>;
   /** Run in the page, which carries dsh's session cookie: the plugin's own routes answer 401 to a
    *  token passed as a query parameter, so a check that has to call one goes through here. */
   evaluate<T>(fn: () => T | Promise<T>): Promise<T>;
@@ -93,6 +95,10 @@ export type ContextOptions = {
   /** Emulated prefers-color-scheme; the owner runs dsh dark, so the tour shoots dark. */
   colorScheme?: "dark" | "light";
   recordVideo?: { dir: string; size: Size };
+  /** Emulated prefers-reduced-motion. */
+  reducedMotion?: "reduce" | "no-preference";
+  /** The browser language; dsh follows it until a language is chosen in Settings. */
+  locale?: string;
   /** Browser permissions granted up front; a check that reads the clipboard needs both. */
   permissions?: ("clipboard-read" | "clipboard-write")[];
 };
