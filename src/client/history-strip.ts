@@ -68,7 +68,7 @@ export function historyStrip(label: string, list: readonly HistoryEnded[]): HTML
   bars.setAttribute("aria-valuemax", String(list.length));
   // 24 px tall so the one target meets the minimum size; the bars fill its lower 18 px.
   bars.style.cssText =
-    "display:flex;align-items:flex-end;gap:2px;height:24px;padding-top:6px;box-sizing:border-box;cursor:default;touch-action:manipulation;border-radius:3px;outline-offset:2px";
+    "display:flex;align-items:flex-end;gap:2px;height:24px;padding-top:6px;box-sizing:border-box;cursor:default;touch-action:manipulation;border-radius:3px;outline-offset:2px;margin-bottom:6px";
   const els = list.map((e) => {
     const pct = Math.max(0, Math.min(100, e.percent));
     // The same thresholds as the window's own bar above, so a red stub means what a red bar means.
@@ -77,7 +77,11 @@ export function historyStrip(label: string, list: readonly HistoryEnded[]): HTML
     bar.setAttribute("data-omc-usage-history-bar", String(e.resetsAt));
     if (e.partial) bar.setAttribute("data-omc-usage-history-partial", "");
     bar.setAttribute("aria-hidden", "true");
-    bar.style.cssText = `flex:1 1 0;max-width:10px;height:${Math.max(2, pct)}%;border-radius:1px;background:${tone};opacity:${e.partial ? 0.45 : 0.85}`;
+    // A partial window is drawn hollow (its outline at full strength, a faint fill), so "at least"
+    // reads as a shape, not as a dimmer colour that turns red into brown in dark mode.
+    bar.style.cssText = e.partial
+      ? `flex:1 1 0;max-width:10px;height:${Math.max(4, pct)}%;box-sizing:border-box;border-radius:1px;border:1.5px solid ${tone};background:color-mix(in srgb, ${tone} 22%, transparent)`
+      : `flex:1 1 0;max-width:10px;height:${Math.max(2, pct)}%;border-radius:1px;background:${tone};opacity:0.85`;
     bars.append(bar);
     return bar;
   });
