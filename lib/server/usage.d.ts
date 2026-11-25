@@ -1,4 +1,5 @@
 import type { PluginContext } from "./dsh.js";
+import type { UsageHistory } from "./usage-history.js";
 /** How long to stay off the endpoint after the `strikes`-th 429 in a row. */
 export declare function backoffMs(retryAfter: number | undefined, strikes: number): number;
 /** One rate-limit window as the panel shows it. */
@@ -46,6 +47,9 @@ export type UsageReply = {
     /** Set when the endpoint could not be read just now (rate limited, unreachable) and these are
      *  the last good figures, as of `fetchedAt`. */
     stale?: true;
+    /** This login's ended windows per series, added by the route, never by the reader, so the
+     *  memo on disk never holds it. See usage-history.ts. */
+    history?: UsageHistory;
 } | {
     ok: false;
     error: string;

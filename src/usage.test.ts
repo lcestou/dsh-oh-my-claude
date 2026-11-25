@@ -617,3 +617,74 @@ console.log("breakdown-cache ok");
   assert.equal(await serve({ requestRejection: () => 401 }), 401, "an older dsh's refusal holds");
   console.log("usage route auth ok");
 }
+
+// The usage route folds a fresh reply into the login's history and sends the ended windows back,
+// and records nothing for a box whose CLI names no email. A new block: the reply, the history file,
+// its mode and the login key are what is checked here.
+{
+  const { existsSync, statSync, writeFileSync: put } = await import("node:fs");
+  const home = tempDir("omc-history-");
+  put(
+    join(home, ".credentials.json"),
+    JSON.stringify({ claudeAiOauth: { accessToken: "t", expiresAt: Date.now() + 3_600_000 } }),
+  );
+  const resetsAt = Date.now() + 86_400_000;
+  const realFetch = globalThis.fetch;
+  // SAFETY: readUsage reads status, headers.get and json() off the answer, nothing more
+  globalThis.fetch = (async () => ({
+    status: 200,
+    headers: { get: () => null },
+    json: async () => ({
+      limits: [{ kind: "weekly_all", percent: 17, resets_at: new Date(resetsAt).toISOString() }],
+    }),
+  })) as never;
+  /** Mounts a fresh usage route whose identity names `email`, GETs it once and answers the body. */
+  const get = async (email: string | null) => {
+    let handler: ((req: unknown, res: unknown) => Promise<void>) | undefined;
+    // SAFETY: the route reads the injected host's webServer, connection and effect, nothing more
+    const ctx = {
+      inject: (_deps: string[], cb: (host: unknown) => void) =>
+        cb({
+          webServer: {
+            register: (r: { handler: typeof handler }) => {
+              handler = r.handler;
+              return () => {};
+            },
+          },
+          connection: {},
+          effect: (fn: () => void) => fn(),
+        }),
+    } as never;
+    registerUsageRoute(
+      ctx,
+      () => {},
+      async () => ({ host: "h", email }),
+      {
+        home,
+        realHome: home,
+      },
+    );
+    let body = "";
+    await handler!(
+      { method: "GET", url: "/dsh-oh-my-claude/usage" },
+      { writeHead: () => {}, end: (b: string) => void (body = b) },
+    );
+    return JSON.parse(body) as { ok: boolean; history?: Record<string, unknown[]> };
+  };
+  const file = join(process.env.DSH_OMC_STATE_DIR ?? "", "usage-history.json");
+  const anonymous = await get(null);
+  assert.equal(anonymous.ok, true);
+  assert.equal(anonymous.history, undefined, "no email, no history");
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(existsSync(file), false, "no email, nothing written");
+  const reply = await get("a@example.com");
+  globalThis.fetch = realFetch;
+  assert.equal(reply.ok, true);
+  assert.deepEqual(reply.history, { weekly: [] }, "a fresh login has a series and nothing ended");
+  // The file lands under the login's email, written in the background, readable by the owner only.
+  for (let i = 0; i < 200 && !existsSync(file); i++) await new Promise((r) => setTimeout(r, 5));
+  const saved = JSON.parse(readFileSync(file, "utf8")) as { logins: Record<string, unknown[]> };
+  assert.deepEqual(Object.keys(saved.logins), ["a@example.com"]);
+  assert.equal(statSync(file).mode & 0o777, 0o600);
+  console.log("usage route history ok");
+}
