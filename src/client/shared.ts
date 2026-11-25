@@ -493,7 +493,7 @@ export function openSession(ctx: ClientCtx, id: string): void {
 }
 
 /** The ring's arc inside its button; `isRingRoot` says why it must be this exact shape. */
-export const RING_ARC = 'button[aria-haspopup="dialog"] > svg > circle + circle';
+export const RING_ARC = 'button[aria-haspopup="dialog"] > svg > circle + circle[stroke-dasharray]';
 /**
  * Put the plan usage inside dsh's context-meter popover, above the "N% of context used" line,
  * and one compact line into the ring's hover tooltip.
@@ -504,6 +504,8 @@ export const RING_ARC = 'button[aria-haspopup="dialog"] > svg > circle + circle'
  * opens a dialog, and while a subagent runs its activity dot draws circles nested in a span. A loose
  * `circle + circle` claimed that button as the ring, so the plugin relabelled it and the real
  * meter's popup opened without the usage block (owner, 2026-11-16).
+ * The arc must also carry `stroke-dasharray`, which the meter draws its reading with: another
+ * plugin's dialog button whose icon is two plain circles straight in its svg is not the ring.
  * True when `el` directly holds the meter's ring button; false for null and for the subagent button.
  */
 export const isRingRoot = (el: HTMLElement | null) => !!el?.querySelector(`:scope > ${RING_ARC}`);

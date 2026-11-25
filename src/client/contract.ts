@@ -93,7 +93,7 @@ export const DSH_CONTRACT: readonly ContractProbe[] = [
     // the selector the reader itself uses (`RING_ARC` in shared.ts). It is conversation-scoped because
     // dsh draws the ring only once a session has context, so a blank session must skip it rather
     // than report the ring missing.
-    selector: 'button[aria-haspopup="dialog"] > svg > circle + circle',
+    selector: 'button[aria-haspopup="dialog"] > svg > circle + circle[stroke-dasharray]',
     detects: "exact",
   },
   {
