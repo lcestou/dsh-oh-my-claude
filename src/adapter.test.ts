@@ -7500,6 +7500,16 @@ console.log("interrupt-on-abort ok");
       ["262144", "262144"],
     );
     assert.equal(
+      routed.localEnvOverride(false, sizedSpec.window)?.CLAUDE_CODE_DISABLE_1M_CONTEXT,
+      undefined,
+      "a window past 200K leaves the CLI's 1M guess alone",
+    );
+    assert.equal(
+      routed.localEnvOverride(false, 200_000)?.CLAUDE_CODE_DISABLE_1M_CONTEXT,
+      "1",
+      "a 200K window keeps an unknown id off the 1M guess",
+    );
+    assert.equal(
       routed.localEnvOverride(false)?.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
       undefined,
       "no window in the spec, nothing set",

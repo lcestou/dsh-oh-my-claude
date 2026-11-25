@@ -156,7 +156,7 @@ import {
 import { suggestRule } from "../permissions.js";
 import { currentLogVersion, type ToolMode, type ToolModeInfo } from "../rows-probe.js";
 import { readSshToken, THIS_BOX } from "../ssh-login.js";
-import { CHILD_ENV, SECURE_STORAGE_ENV, childEnv, errorText } from "../process.js";
+import { CHILD_ENV, SECURE_STORAGE_ENV, childEnv, errorText, windowEnvPairs } from "../process.js";
 import {
   KEEPER_OFF,
   ORPHAN_FLOOR_MS,
@@ -4171,10 +4171,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // knows. Measured on 2.1.322 with `get_context_usage`: `sonnet` behind a router reads
     // 1,000,000 with neither, and the number given with the second; an unknown id reads 200,000
     // with neither and the number given with the first.
-    if (window !== undefined) {
-      over.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(window);
-      over.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(window);
-    }
+    // A stated 200K or smaller also turns off the CLI's 1M guess for ids it does not know
+    // (`windowEnvPairs`).
+    Object.assign(over, Object.fromEntries(windowEnvPairs(window)));
     if (isolate) Object.assign(over, ISOLATED_ENV);
     return Object.keys(over).length === 0 ? undefined : over;
   }

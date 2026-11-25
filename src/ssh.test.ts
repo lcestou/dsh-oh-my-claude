@@ -26,6 +26,12 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
   assert.doesNotMatch(routed, /CLAUDE_CODE_OAUTH_TOKEN/);
   assert.match(routed, /CLAUDE_CODE_MAX_CONTEXT_TOKENS='128000'/);
   assert.match(routed, /CLAUDE_CODE_AUTO_COMPACT_WINDOW='128000'/);
+  // A stated window of 200K or less keeps the CLI off its 1M guess for an id it does not know;
+  // a larger one, or none, leaves the CLI to decide.
+  assert.match(routed, /CLAUDE_CODE_DISABLE_1M_CONTEXT='1'/);
+  assert.match(script({ window: 200_000 }), /CLAUDE_CODE_DISABLE_1M_CONTEXT='1'/);
+  assert.doesNotMatch(script({ window: 262_144 }), /CLAUDE_CODE_DISABLE_1M_CONTEXT/);
+  assert.doesNotMatch(direct, /CLAUDE_CODE_DISABLE_1M_CONTEXT/);
 }
 {
   const inv = sshInvocation("nova", "claude", ["-p", "--input-format", "stream-json"], "/home/u/w");

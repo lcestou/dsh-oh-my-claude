@@ -686,11 +686,26 @@ export interface FarEnv {
 export function farEnvPairs(far: FarEnv = {}): [string, string][] {
   const pairs: [string, string][] = [];
   if (far.token) pairs.push(["CLAUDE_CODE_OAUTH_TOKEN", far.token]);
-  if (far.window !== undefined)
-    pairs.push(
-      ["CLAUDE_CODE_MAX_CONTEXT_TOKENS", String(far.window)],
-      ["CLAUDE_CODE_AUTO_COMPACT_WINDOW", String(far.window)],
-    );
+  pairs.push(...windowEnvPairs(far.window));
+  return pairs;
+}
+
+/** Largest window that is not a 1M one: Claude Code's standard context size. */
+const STANDARD_WINDOW = 200_000;
+
+/**
+ * A stated context window as the environment pairs the CLI reads, none when no window is stated.
+ * The size goes under both names the CLI listens to. A window of 200,000 or less also gets
+ * CLAUDE_CODE_DISABLE_1M_CONTEXT: from 2.1.323 the CLI takes a model id it does not know for a
+ * 1M model, and a 200K model behind a proxy then never compacts in time and fails its turns.
+ */
+export function windowEnvPairs(window: number | undefined): [string, string][] {
+  if (window === undefined) return [];
+  const pairs: [string, string][] = [
+    ["CLAUDE_CODE_MAX_CONTEXT_TOKENS", String(window)],
+    ["CLAUDE_CODE_AUTO_COMPACT_WINDOW", String(window)],
+  ];
+  if (window <= STANDARD_WINDOW) pairs.push(["CLAUDE_CODE_DISABLE_1M_CONTEXT", "1"]);
   return pairs;
 }
 
