@@ -28,4 +28,5 @@ assert.notEqual(staleNote({ ok: true, fetchedAt: Date.now(), windows: [], stale:
 const soon = resetText(Date.now() + 3 * 3_600_000 - 20_000);
 assert.ok(!soon.includes("60"), soon);
 assert.ok(soon.includes("3"), soon);
+assert.equal(resetText(Date.now() + 20_000), resetText(Date.now() - 1), "20 s left reads as now");
 console.log("usage-load ok");

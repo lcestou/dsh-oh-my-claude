@@ -99,6 +99,8 @@ export const resetText = (at: number | null): string => {
   if (ms <= 0) return t("main.usage.resetsNow");
   if (ms < 86_400_000) {
     const minutes = Math.round(ms / 60_000);
+    // Under half a minute left rounds to 0: say "now" rather than "in 0 min".
+    if (minutes === 0) return t("main.usage.resetsNow");
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
     return h ? t("main.usage.resetsInH", { h, m }) : t("main.usage.resetsInM", { m });
