@@ -8,7 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
-- The plan usage no longer turns up in another plugin's popover. The context ring was matched by any dialog button whose own svg held two circles, so a plugin button with a two-circle icon could be taken for it, get the usage block and be read out as "N% of context used". The ring is now the button whose second circle carries `stroke-dasharray`, which dsh's meter draws its reading with.
+- The plan usage no longer turns up in another plugin's popover. The context ring was matched by any dialog button whose own svg held two circles, so a plugin button with a two-circle icon could be taken for it, get the usage block and be read out as "N% of context used". The ring is now the button whose second circle carries `stroke-dasharray`, which dsh's meter draws its reading with. Thanks to @soffits (#346)
 
 ## [1.7.0] - 2026-11-22
 
