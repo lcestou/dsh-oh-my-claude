@@ -688,3 +688,65 @@ console.log("breakdown-cache ok");
   assert.equal(statSync(file).mode & 0o777, 0o600);
   console.log("usage route history ok");
 }
+
+// A login change on a box: the usage memo still holds the old login's reading for CACHE_MS, and
+// that reading must not be filed under the new email.
+{
+  const home = tempDir("omc-history-switch-");
+  writeFileSync(
+    join(home, ".credentials.json"),
+    JSON.stringify({ claudeAiOauth: { accessToken: "t", expiresAt: Date.now() + 3_600_000 } }),
+  );
+  const resetsAt = Date.now() + 86_400_000;
+  const realFetch = globalThis.fetch;
+  let fetches = 0;
+  // SAFETY: readUsage reads status, headers.get and json() off the answer, nothing more
+  globalThis.fetch = (async () => {
+    fetches++;
+    return {
+      status: 200,
+      headers: { get: () => null },
+      json: async () => ({
+        limits: [{ kind: "weekly_all", percent: 40, resets_at: new Date(resetsAt).toISOString() }],
+      }),
+    };
+  }) as never;
+  let email = "old@example.com";
+  let handler: ((req: unknown, res: unknown) => Promise<void>) | undefined;
+  // SAFETY: the route reads the injected host's webServer, connection and effect, nothing more
+  const ctx = {
+    inject: (_deps: string[], cb: (host: unknown) => void) =>
+      cb({
+        webServer: {
+          register: (r: { handler: typeof handler }) => {
+            handler = r.handler;
+            return () => {};
+          },
+        },
+        connection: {},
+        effect: (fn: () => void) => fn(),
+      }),
+  } as never;
+  registerUsageRoute(
+    ctx,
+    () => {},
+    async () => ({ host: "h", email }),
+    { home, realHome: home },
+  );
+  /** GETs the mounted route once and answers the parsed body. */
+  const get = async () => {
+    let body = "";
+    await handler!(
+      { method: "GET", url: "/dsh-oh-my-claude/usage" },
+      { writeHead: () => {}, end: (b: string) => void (body = b) },
+    );
+    return JSON.parse(body) as { ok: boolean; history?: Record<string, unknown[]> };
+  };
+  await get();
+  email = "new@example.com";
+  const after = await get();
+  globalThis.fetch = realFetch;
+  assert.equal(fetches, 1, "the second read came from the memo");
+  assert.deepEqual(after.history, {}, "the old login's reading is not filed under the new email");
+  console.log("usage route login switch ok");
+}
