@@ -29,7 +29,11 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
   assert.throws(() => script({ token: "a\nb" }), /line break/);
   const routed = script({ token: undefined, window: 128_000 });
   assert.doesNotMatch(routed, /CLAUDE_CODE_OAUTH_TOKEN/);
-  assert.equal(sshInvocation("nova", "claude", ["-p"], "/w", {}).stdinFirst, "", "no token, no line");
+  assert.equal(
+    sshInvocation("nova", "claude", ["-p"], "/w", {}).stdinFirst,
+    "",
+    "no token, no line",
+  );
   assert.match(routed, /CLAUDE_CODE_MAX_CONTEXT_TOKENS='128000'/);
   assert.match(routed, /CLAUDE_CODE_AUTO_COMPACT_WINDOW='128000'/);
 }

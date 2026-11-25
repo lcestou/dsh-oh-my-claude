@@ -127,14 +127,19 @@ import { tempDir } from "./test-tmp.js";
     text: async () => "",
     body: endless,
   });
-  const result = await probeBox({ name: "b", url: "http://b" }, fakeFetch as unknown as typeof fetch);
+  const result = await probeBox(
+    { name: "b", url: "http://b" },
+    fakeFetch as unknown as typeof fetch,
+  );
   assert.equal(result.ok, false);
   assert.match((result as { ok: false; error: string }).error, /larger than 16 MB/);
   assert.ok(cancelled, "the rest of the stream is cancelled");
   assert.ok(pulled <= 18, `stopped near the cap, pulled ${pulled} chunks`);
   // A real-sized stream still reads whole.
   const small = new Response(JSON.stringify({ host: "x" })).body;
-  assert.deepEqual(JSON.parse(await cappedText({ text: async () => "", body: small })), { host: "x" });
+  assert.deepEqual(JSON.parse(await cappedText({ text: async () => "", body: small })), {
+    host: "x",
+  });
   await assert.rejects(cappedText({ text: async () => "x".repeat(11) }, 10), /larger than/);
 }
 

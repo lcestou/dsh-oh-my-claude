@@ -34,7 +34,11 @@ assert.equal(
     token: "tok",
     window: 128_000,
   });
-  assert.ok(s.startsWith("IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN || exit 71; "));
+  assert.ok(
+    s.startsWith(
+      "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN || exit 71; ",
+    ),
+  );
   assert.match(
     s,
     /d="\$HOME"\/\.local\/state\/dsh-oh-my-claude\/hold\/'abc-1'; mkdir -p "\$d" && mkfifo "\$d"\/in \|\| exit 70; /,

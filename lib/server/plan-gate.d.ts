@@ -33,5 +33,7 @@ export declare const PLAN_REFUSAL = "plan mode: this tool can change files or st
  */
 export declare const PLAN_SAFE_TOOLS: ReadonlySet<string>;
 /** True when a call to `name` must be refused: the session is in plan mode and the tool is not on
- *  the read-only list. An undefined mode (no live process to ask) refuses nothing, as before. */
+ *  the read-only list. An undefined mode refuses nothing; the bridge's wiring in `src/adapter.ts`
+ *  never passes one, since without a live process it falls back to the mode the session's next
+ *  spawn gets (its stored override, else its access mode's). */
 export declare const planRefuses: (name: string, mode: string | undefined) => boolean;
