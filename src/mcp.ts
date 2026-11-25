@@ -11,7 +11,7 @@
 // bridge served only there is unreachable and Claude sees zero dsh tools. Plain `dsh web` has no
 // gate and keeps the web server route alone, whose port is the one dsh was started on. The web
 // server route is registered either way, and is the fallback when the listener cannot start.
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
@@ -226,6 +226,16 @@ interface OpenSessionArgs {
   model?: JsonValue;
   reasoningEffort?: JsonValue;
   agentPreset?: JsonValue;
+}
+
+/** True when the bridge key header equals the key, compared in constant time so the answer's
+ *  timing says nothing about how much of a guess was right. A missing header, a repeated one (Node
+ *  hands those over as an array) or one of another length is false without comparing. */
+export function keyMatches(header: string | string[] | undefined, key: string): boolean {
+  if (typeof header !== "string") return false;
+  const a = Buffer.from(header);
+  const b = Buffer.from(key);
+  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /** The value when it is a string, else undefined; never a coerced value. */
@@ -1040,7 +1050,8 @@ export function registerMcpBridge(
             return agent;
           };
           const serve = async (req: IncomingMessage, res: ServerResponse) => {
-            if (req.headers[KEY_HEADER] !== key) return send(res, 403, { error: "forbidden" });
+            if (!keyMatches(req.headers[KEY_HEADER], key))
+              return send(res, 403, { error: "forbidden" });
             if (req.method !== "POST") return send(res, 405, { error: "POST only" });
             const sessionId = decodeURIComponent(
               (req.url ?? "").slice(MCP_PATH.length + 1).split("?")[0] ?? "",

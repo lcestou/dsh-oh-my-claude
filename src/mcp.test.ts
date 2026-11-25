@@ -9,6 +9,7 @@ import {
   KEY_HEADER,
   MCP_PATH,
   openSession,
+  keyMatches,
   probeRoute,
   promptSession,
   registerMcpBridge,
@@ -1122,3 +1123,9 @@ console.log("mcp ok");
   assert.equal(logged.length, 1, "an adapter failure is logged");
   console.log("prompt-session-route ok");
 }
+
+// The bridge key: only the exact key passes; a near miss, a repeated header or none is refused.
+assert.equal(keyMatches("k3y-abc", "k3y-abc"), true);
+for (const h of ["k3y-abd", "k3y-ab", "k3y-abcd", "", undefined, ["k3y-abc", "k3y-abc"]])
+  assert.equal(keyMatches(h, "k3y-abc"), false, JSON.stringify(h));
+console.log("bridge-key ok");
