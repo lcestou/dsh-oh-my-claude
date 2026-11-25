@@ -86,7 +86,7 @@ One `claude` process stays alive per dsh session (`processIdleMs`, default 30 mi
 
 With `approvals: true` (default) the child runs with `--permission-prompt-tool stdio`. When Claude Code would ask permission, dsh's own approval dialog appears. Approve runs the tool, and Deny tells Claude the user refused. Claude's `AskUserQuestion` becomes a dsh question form, and the answer goes back to Claude.
 
-Under Full Access nothing asks, except plan review. When Claude leaves plan mode (`ExitPlanMode` arrives as a permission request carrying the plan), dsh's own Plan review panel shows it with Approve and Keep planning. Approval lets the tool run, and anything else goes back to Claude as "the user chose to keep planning" with the typed feedback. Each ask also shows as a `⚑ approval: Tool …` or `❓ question …` row.
+Under Full Access almost nothing asks. Plan review does, and so do the few calls Claude Code still checks in bypass mode: from Claude Code 2.1.327, a Bash command that reads outside the workspace when `permissions.blockReadsOutsideWorkingDirectories` is on in its settings. When Claude leaves plan mode (`ExitPlanMode` arrives as a permission request carrying the plan), dsh's own Plan review panel shows it with Approve and Keep planning. Approval lets the tool run, and anything else goes back to Claude as "the user chose to keep planning" with the typed feedback. Each ask also shows as a `⚑ approval: Tool …` or `❓ question …` row.
 
 ## Permission mode per session
 
