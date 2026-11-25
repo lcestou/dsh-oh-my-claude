@@ -67,6 +67,10 @@ export const CHILD_ENV = {
   // one with it. The initialize request still turns suggestions off when the switch is off, since
   // the CLI checks that first.
   CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION: "true",
+  // From 2.1.328 a `-p --resume` runs a tool call a hook deferred in the last session. dsh respawns
+  // with --resume after a reload or a crash, not because a person chose to carry on, so the
+  // deferred call would run with nobody watching. This keeps it from running on resume.
+  CLAUDE_CODE_DISABLE_DEFERRED_TOOL_RESUME: "1",
 };
 
 /** The privacy switches a person sets in the environment dsh runs in: Claude Code's own telemetry, error-reporting and nonessential-traffic switches, its updater

@@ -54,7 +54,8 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
     script,
     "cd '/home/u/w' 2>/dev/null || cd \"$HOME\"; exec env MCP_TOOL_TIMEOUT='3600000' " +
       "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING='1' CLAUDE_CODE_ENTRYPOINT='dsh-oh-my-claude' " +
-      "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION='true' 'claude' '-p' '--input-format' 'stream-json'",
+      "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION='true' CLAUDE_CODE_DISABLE_DEFERRED_TOOL_RESUME='1' " +
+      "'claude' '-p' '--input-format' 'stream-json'",
   );
 }
 
