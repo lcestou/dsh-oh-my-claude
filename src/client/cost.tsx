@@ -153,10 +153,10 @@ export function subscriptionStatus(): Promise<boolean> {
 
 // A login or logout, here or in another tab, arrives as BOXES_EVENT; drop the cached answer so the
 // next read asks again. Registered at import, so it runs before any pill's own listener re-reads.
-if (typeof window !== "undefined")
-  window.addEventListener(BOXES_EVENT, () => {
-    statusOnce = undefined;
-  });
+// Optional because a test imports this module where no window exists.
+globalThis.window?.addEventListener(BOXES_EVENT, () => {
+  statusOnce = undefined;
+});
 
 /** The hashed half of a CSS-module class changes with every dsh build, the suffix does not. */
 const MODULE_ROOT = /(?:^|\s)[\w-]*_root(?:\s|$)/;
