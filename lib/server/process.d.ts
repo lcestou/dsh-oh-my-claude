@@ -609,9 +609,11 @@ export interface McpServerStatus {
 }
 /** An `mcp_status` answer as one row per server, with its own error kept when it is not connected. */
 export declare function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[];
-/** The sign-in page from an `mcp_authenticate` reply, or undefined when the reply does not carry
- *  one. Probed against 2.1.278 on 2026-09-20. */
-export declare function mcpAuthUrl(v: JsonValue | undefined): string | undefined;
+/** The sign-in page from an `mcp_authenticate` reply: the URL, undefined when the reply carries
+ *  none, or null when it carries one that is not an http(s) page. The server picks that link, so a
+ *  hostile one (`javascript:`, `data:`) is refused here rather than handed to the browser. Probed
+ *  against 2.1.278 on 2026-09-20. */
+export declare function mcpAuthUrl(v: JsonValue | undefined): string | null | undefined;
 /** True when the CLI answered success with nothing for the person to do: the server's token is
  *  still good, so there is no page to open. Distinguishing this from a failure matters, because the
  *  panel would otherwise tell someone their login failed when they are already signed in. */

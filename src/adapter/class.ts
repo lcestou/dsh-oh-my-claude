@@ -3060,6 +3060,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const reply = await this.control(proc, { subtype: "mcp_authenticate", serverName }, 20_000);
     if (!reply.ok) return { ok: false, error: reply.error };
     const url = mcpAuthUrl(reply.response);
+    if (url === null) return { ok: false, error: serverText("mcpAuthUrlRefused") };
     if (url !== undefined) return { ok: true, authUrl: url };
     if (mcpAuthNeedsNothing(reply.response)) return { ok: true };
     return { ok: false, error: "the CLI answered without a sign-in page" };

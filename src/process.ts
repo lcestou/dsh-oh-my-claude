@@ -25,6 +25,7 @@ import type {
 import type { ContextSizes, ContextSource } from "./context-sources.js";
 import { STATE_DIR } from "./state.js";
 import { SOCKET_PATH_MAX, keeperSocketPath } from "./keeper-socket.js";
+import { isWebUrl } from "./web-url.js";
 export type { JsonValue } from "./dsh.js";
 
 /** Errors reach us as `unknown`; this is the one place they become text. */
@@ -1115,11 +1116,14 @@ export function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[] {
   return out;
 }
 
-/** The sign-in page from an `mcp_authenticate` reply, or undefined when the reply does not carry
- *  one. Probed against 2.1.278 on 2026-09-20. */
-export function mcpAuthUrl(v: JsonValue | undefined): string | undefined {
+/** The sign-in page from an `mcp_authenticate` reply: the URL, undefined when the reply carries
+ *  none, or null when it carries one that is not an http(s) page. The server picks that link, so a
+ *  hostile one (`javascript:`, `data:`) is refused here rather than handed to the browser. Probed
+ *  against 2.1.278 on 2026-09-20. */
+export function mcpAuthUrl(v: JsonValue | undefined): string | null | undefined {
   const r = isRecord(v) ? v : {};
-  return typeof r.authUrl === "string" && r.authUrl !== "" ? r.authUrl : undefined;
+  if (typeof r.authUrl !== "string" || r.authUrl === "") return undefined;
+  return isWebUrl(r.authUrl) ? r.authUrl : null;
 }
 
 /** True when the CLI answered success with nothing for the person to do: the server's token is
