@@ -301,7 +301,7 @@ export async function openSession(
       // Required from dsh 0.1.7: a prompt says whether it queues behind the running turn or
       // steers into it. A fresh child session has no turn to steer, so it queues.
       mode: "queue",
-      content: [{ type: "text", text: prompt }],
+      content: [{ type: "text", text: `${senderLine(agent, "open_session")}\n\n${prompt}` }],
     },
     signal,
   );
@@ -318,12 +318,12 @@ function targetOf(agent: Agent, args: Record<string, JsonValue>, tool: string): 
   return asSessionId(id);
 }
 
-/** The line prompt_session puts above a message. dsh records the message as a plain user message
- *  with nothing to say who sent it, so without this line the target session, and the owner reading
- *  its transcript, could not tell it from the owner's own typing. The model reads it, so it is not
- *  translated. */
-const senderLine = (agent: Agent): string =>
-  `[Sent by the agent in dsh session ${agent.session?.id ?? "unknown"} through prompt_session, not typed by the user.]`;
+/** The line prompt_session and open_session put above a message. dsh records the message as a plain
+ *  user message with nothing to say who sent it, so without this line the target session, and the
+ *  owner reading its transcript, could not tell it from the owner's own typing. The model reads it,
+ *  so it is not translated. */
+const senderLine = (agent: Agent, tool: "prompt_session" | "open_session"): string =>
+  `[Sent by the agent in dsh session ${agent.session?.id ?? "unknown"} through ${tool}, not typed by the user.]`;
 
 /**
  * Switches the target session to the route prompt_session's optional `provider`, `model` and
@@ -414,7 +414,7 @@ export async function promptSession(
       sessionId,
       requestId: randomUUID(),
       mode,
-      content: [{ type: "text", text: `${senderLine(agent)}\n\n${prompt}` }],
+      content: [{ type: "text", text: `${senderLine(agent, "prompt_session")}\n\n${prompt}` }],
     },
     signal,
   );

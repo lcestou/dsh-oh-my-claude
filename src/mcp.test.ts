@@ -621,6 +621,7 @@ console.log("mcp ok");
 {
   const calls: string[] = [];
   const selected: unknown[] = [];
+  const prompted: string[] = [];
   const child = {
     model: { select: (r: unknown) => void (calls.push("select"), selected.push(r)) },
   };
@@ -635,7 +636,8 @@ console.log("mcp ok");
     sessionController: {
       create: async () => (calls.push("create"), { sessionId: "n1" }),
       resolveAgent: async () => ({ agent: child }),
-      prompt: async () => void calls.push("prompt"),
+      prompt: async (p: { content: { text: string }[] }) =>
+        void (calls.push("prompt"), prompted.push(p.content[0]?.text ?? "")),
     },
   } as unknown as Parameters<typeof openSession>[0];
   // SAFETY: an agent whose session header names the workspace path
@@ -650,6 +652,11 @@ console.log("mcp ok");
   assert.equal(text, "opened session n1 in workspace w1");
   assert.deepEqual(calls, ["create", "select", "prompt"], "route set before the first prompt");
   assert.deepEqual(selected, [{ provider: "claude-code", model: "claude-haiku-5-5" }]);
+  // The first prompt says who sent it, so the new session and the owner can tell it from typing.
+  assert.equal(
+    prompted[0],
+    "[Sent by the agent in dsh session s through open_session, not typed by the user.]\n\ngo",
+  );
   // A reasoning effort rides on the route (#250); without a route it is dropped with it.
   selected.length = 0;
   calls.length = 0;
