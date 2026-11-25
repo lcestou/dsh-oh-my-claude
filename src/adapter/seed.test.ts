@@ -387,6 +387,16 @@ assert.equal(bridgedName("mcp__other__x"), "mcp__other__x");
     readdirSync(dir).some((f) => /^s2\.jsonl\.replaced-\d+$/.test(f)),
     "the old one kept",
   );
+  // Rebuilds keep only the newest two copies of that transcript, and nothing else in the folder.
+  for (const ms of [100, 200, 300]) writeFileSync(join(dir, `s2.jsonl.replaced-${ms}`), "{}\n");
+  writeFileSync(join(dir, "s4.jsonl.replaced-50"), "{}\n");
+  writeFileSync(join(dir, "s2.jsonl.replaced-notes"), "{}\n");
+  assert.equal(await adapter.seedTranscript(history, "/w", "s2", "2.1.325", {}), true);
+  const copies = readdirSync(dir).filter((f) => /^s2\.jsonl\.replaced-\d+$/.test(f));
+  assert.equal(copies.length, 2, "two copies of s2 kept");
+  assert.ok(!copies.includes("s2.jsonl.replaced-100"), "the oldest went");
+  assert.ok(existsSync(join(dir, "s4.jsonl.replaced-50")), "another transcript's copy stays");
+  assert.ok(existsSync(join(dir, "s2.jsonl.replaced-notes")), "a name that is not a stamp stays");
   // A transcript that cannot be moved aside is never written over: the seed gives up instead.
   // Root ignores a read-only directory, so the check only holds for an ordinary user.
   if (process.getuid?.() !== 0) {

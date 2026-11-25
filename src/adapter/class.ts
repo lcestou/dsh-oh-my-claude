@@ -339,7 +339,7 @@ import {
   steerKey,
   textOf,
 } from "./prompt.js";
-import { seedTranscriptText } from "./seed.js";
+import { pruneReplaced, seedTranscriptText } from "./seed.js";
 import { busyEnterOf, CommandRows, commandNameOf, leavesQueue, lineReceipt } from "./lane.js";
 import {
   accessModeOf,
@@ -1633,6 +1633,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       }
       await writeFile(dest, text);
+      // Each rebuild moves one copy aside; without this they piled up for good.
+      await pruneReplaced(dest);
     } catch (error) {
       this.log("warn", `seeding claude session ${id} from dsh's log failed: ${errorText(error)}`);
       return false;

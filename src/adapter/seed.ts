@@ -7,6 +7,8 @@
 // its own earlier replies are no longer its own, and the people it talks with are a few lines inside
 // it. Written as a transcript, the history keeps its turns, and the CLI resumes it like any other.
 import { createHash, randomUUID } from "node:crypto";
+import { readdir, unlink } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import type { ContextSource } from "../context-sources.js";
 import type { JsonValue } from "../dsh.js";
 import { NATIVE_TOOL_MAP } from "./cli.js";
@@ -319,4 +321,23 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
     });
   }
   return rows.length > 0 ? `${rows.map((r) => JSON.stringify(r)).join("\n")}\n` : "";
+}
+
+/** How many moved-aside copies of one transcript a rebuild keeps. */
+export const REPLACED_KEEP = 2;
+
+/**
+ * Delete the older `<dest>.replaced-<ms>` copies a transcript rebuild left beside `dest`, keeping
+ * the `keep` newest by their stamp. Only names that are `dest`'s own name plus `.replaced-` and
+ * digits are touched, so another transcript's copies and every other file stay. A copy that is
+ * already gone or cannot be deleted is passed over; an unreadable directory deletes nothing.
+ */
+export async function pruneReplaced(dest: string, keep = REPLACED_KEEP): Promise<void> {
+  const prefix = `${basename(dest)}.replaced-`;
+  const names = await readdir(dirname(dest)).catch(() => []);
+  const stamped = names
+    .filter((n) => n.startsWith(prefix) && /^\d+$/.test(n.slice(prefix.length)))
+    .toSorted((a, b) => Number(b.slice(prefix.length)) - Number(a.slice(prefix.length)));
+  for (const old of stamped.slice(keep))
+    await unlink(join(dirname(dest), old)).catch(() => undefined);
 }
