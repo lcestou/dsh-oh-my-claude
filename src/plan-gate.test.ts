@@ -79,6 +79,9 @@ for (const name of ["office_convert", "office_recalculate", "office_render"])
 assert.equal(planRefuses("cordis_inspect", "plan"), false, "cordis_inspect");
 for (const name of ["enter_worktree", "exit_worktree"])
   assert.equal(planRefuses(name, "plan"), true, name);
+// dsh 0.2.3's session and workspace listings only read metadata.
+for (const name of ["list_session", "list_workspace"])
+  assert.equal(planRefuses(name, "plan"), false, name);
 
 // Out of plan again: bash runs.
 mode = "acceptEdits";
