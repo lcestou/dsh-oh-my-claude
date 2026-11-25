@@ -80,6 +80,7 @@ import {
   nodeSpawner,
   seamSpawner,
   sshSpawner,
+  farTokenLine,
   attachKeeper,
   keeperHolder,
   launchKeeper,
@@ -3062,6 +3063,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const reply = await this.control(proc, { subtype: "mcp_authenticate", serverName }, 20_000);
     if (!reply.ok) return { ok: false, error: reply.error };
     const url = mcpAuthUrl(reply.response);
+    if (url === null) return { ok: false, error: serverText("mcpAuthUrlRefused") };
     if (url !== undefined) return { ok: true, authUrl: url };
     if (mcpAuthNeedsNothing(reply.response)) return { ok: true };
     return { ok: false, error: "the CLI answered without a sign-in page" };
@@ -4272,13 +4274,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       startedAt: Date.now(),
     };
     if (this.keeperOwner) record.owner = this.keeperOwner;
+    const far = this.farEnv(host, spec.routed, spec.window);
     const started = new Promise<SubprocessHandle>((resolve, reject) => {
-      const s = run(
-        holdStartScript(holdId, cwd, command, args, this.farEnv(host, spec.routed, spec.window)),
-      );
+      const s = run(holdStartScript(holdId, cwd, command, args, far));
       let out = "";
       let err = "";
-      s.stdin.end();
+      s.stdin.end(farTokenLine(far));
       s.stdout.on("data", (d) => (out += String(d)));
       s.stderr.on("data", (d) => (err += String(d)));
       void s.done.then((o) => {

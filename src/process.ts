@@ -25,6 +25,7 @@ import type {
 import type { ContextSizes, ContextSource } from "./context-sources.js";
 import { STATE_DIR } from "./state.js";
 import { SOCKET_PATH_MAX, keeperSocketPath } from "./keeper-socket.js";
+import { isWebUrl } from "./web-url.js";
 export type { JsonValue } from "./dsh.js";
 
 /** Errors reach us as `unknown`; this is the one place they become text. */
@@ -676,18 +677,12 @@ export interface FarEnv {
 }
 
 /**
- * `far` as environment pairs for the remote command line. A fresh per-box token from `claude
- * setup-token` is delivered as CLAUDE_CODE_OAUTH_TOKEN, not a stored login, so it must be handed
- * to the far claude at spawn. ponytail: it rides in the remote env argv like the rest of
- * CHILD_ENV, so it shows in the box's own `ps`; acceptable on a single-user box, tighten with a
- * remote env file if a box is shared. The window goes out under both names the CLI listens to,
- * as it does for a local spawn (`localEnvOverride`).
+ * `far` as environment pairs for the remote command line. The window goes out under both names the
+ * CLI listens to, as it does for a local spawn (`localEnvOverride`). The box token is left out on
+ * purpose: argv shows in `ps` on both ends, so it travels on stdin instead (`farTokenLine`).
  */
 export function farEnvPairs(far: FarEnv = {}): [string, string][] {
-  const pairs: [string, string][] = [];
-  if (far.token) pairs.push(["CLAUDE_CODE_OAUTH_TOKEN", far.token]);
-  pairs.push(...windowEnvPairs(far.window));
-  return pairs;
+  return windowEnvPairs(far.window);
 }
 
 /** Largest window that is not a 1M one: Claude Code's standard context size. */
@@ -709,13 +704,34 @@ export function windowEnvPairs(window: number | undefined): [string, string][] {
   return pairs;
 }
 
+/** POSIX shell that takes the box token from the first stdin line. `read` on a pipe takes bytes one
+ *  at a time up to the newline, so whatever follows (the stream-json wire) is left for the CLI. */
+export const FAR_TOKEN_READ =
+  "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN";
+
 /**
- * The local `ssh` argv that runs `command args` on `host` in `cwd`. The remote shell inherits none
- * of this box's environment or working directory, so the command carries both: `cd` into `cwd`, then
- * `exec env` with CHILD_ENV (file checkpointing for rewind, the long MCP timeout). `cwd` is this
- * box's workspace path and usually does not exist on the remote, so fall back to the remote `$HOME`
+ * The stdin line that carries the box token to the far shell, or "" when there is none. A fresh
+ * per-box token from `claude setup-token` is delivered as CLAUDE_CODE_OAUTH_TOKEN, not a stored
+ * login, so it must reach the far claude at spawn; on stdin it never shows in `ps` on either box.
+ * The writer sends it before anything else. Throws on a token with a line break, which would cut it
+ * short and hand the rest to the CLI as input.
+ */
+export function farTokenLine(far: FarEnv = {}): string {
+  if (!far.token) return "";
+  if (/[\r\n]/.test(far.token)) throw new Error("the box token has a line break in it");
+  return `${far.token}\n`;
+}
+
+/**
+ * The local `ssh` argv that runs `command args` on `host` in `cwd`, and the line to write on its
+ * stdin first (`stdinFirst`, "" when there is no box token). The remote shell inherits none of this
+ * box's environment or working directory, so the command carries both: `cd` into `cwd`, then `exec
+ * env` with CHILD_ENV (file checkpointing for rewind, the long MCP timeout). `cwd` is this box's
+ * workspace path and usually does not exist on the remote, so fall back to the remote `$HOME`
  * rather than let `cd` fail the whole spawn. A remote workspace redirects `cwd` to its real remote
  * path before it reaches here (see `sshSpawner`), so that fallback is only for a plain local path.
+ * With a token, a `sh -c` reads it before it execs the CLI, so the read works whatever the far
+ * login shell is.
  */
 export function sshInvocation(
   host: string,
@@ -727,9 +743,11 @@ export function sshInvocation(
 ) {
   const envPairs = [...forwardedEnv(base), ...Object.entries(CHILD_ENV), ...farEnvPairs(far)];
   const env = envPairs.map(([key, val]) => `${key}=${shq(val)}`).join(" ");
-  const remote = [command, ...args].map(shq).join(" ");
+  const stdinFirst = farTokenLine(far);
+  const cli = [command, ...args].map(shq).join(" ");
+  const remote = stdinFirst ? `sh -c ${shq(`${FAR_TOKEN_READ} && exec "$@"`)} sh ${cli}` : cli;
   const script = `cd ${shq(cwd)} 2>/dev/null || cd "$HOME"; exec env ${env} ${remote}`;
-  return { command: "ssh", args: sshArgs(host, script) };
+  return { command: "ssh", args: sshArgs(host, script), stdinFirst };
 }
 
 /**
@@ -742,7 +760,10 @@ export const sshSpawner =
   (host: string, resolveCwd: (cwd: string) => string = (c) => c, far?: FarEnv): Spawner =>
   (command, args, cwd) => {
     const inv = sshInvocation(host, command, args, resolveCwd(cwd), far);
-    return nodeSpawner(inv.command, inv.args, ".");
+    const child = nodeSpawner(inv.command, inv.args, ".");
+    // Before the caller has the handle, so no stream-json can go ahead of the token.
+    if (inv.stdinFirst) child.stdin.write(inv.stdinFirst);
+    return child;
   };
 
 /** stdin line for one user turn. `session_id` empty and `parent_tool_use_id` null match what the SDK
@@ -1134,11 +1155,14 @@ export function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[] {
   return out;
 }
 
-/** The sign-in page from an `mcp_authenticate` reply, or undefined when the reply does not carry
- *  one. Probed against 2.1.278 on 2026-09-20. */
-export function mcpAuthUrl(v: JsonValue | undefined): string | undefined {
+/** The sign-in page from an `mcp_authenticate` reply: the URL, undefined when the reply carries
+ *  none, or null when it carries one that is not an http(s) page. The server picks that link, so a
+ *  hostile one (`javascript:`, `data:`) is refused here rather than handed to the browser. Probed
+ *  against 2.1.278 on 2026-09-20. */
+export function mcpAuthUrl(v: JsonValue | undefined): string | null | undefined {
   const r = isRecord(v) ? v : {};
-  return typeof r.authUrl === "string" && r.authUrl !== "" ? r.authUrl : undefined;
+  if (typeof r.authUrl !== "string" || r.authUrl === "") return undefined;
+  return isWebUrl(r.authUrl) ? r.authUrl : null;
 }
 
 /** True when the CLI answered success with nothing for the person to do: the server's token is

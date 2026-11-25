@@ -25,6 +25,7 @@ import {
 import { t, useLocale } from "../i18n.js";
 import { ConfirmButton } from "../tune.js";
 import { easeMs } from "./shared.js";
+import { isWebUrl } from "../../web-url.js";
 
 /**
  * The modes in which the CLI reads a per-server override at all, because they auto-allow an MCP
@@ -175,7 +176,11 @@ export function McpBody({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ session: sessionId, name: serverName }),
       }).then((x) => readJson<{ ok?: boolean; authUrl?: string; error?: string }>(x));
-      if (r.ok === true && r.authUrl !== undefined) {
+      // The server already refuses a non-http(s) link; checked again here because the browser is
+      // where a `javascript:` URL would run.
+      if (r.ok === true && r.authUrl !== undefined && !isWebUrl(r.authUrl)) {
+        setNote(t("panel.mcp.nameMsg", { name: serverName, msg: t("panel.mcp.badAuthUrl") }));
+      } else if (r.ok === true && r.authUrl !== undefined) {
         window.open(r.authUrl, "_blank", "noopener");
         setNote(t("panel.mcp.nameMsg", { name: serverName, msg: t("panel.mcp.approveInTab") }));
         watchUntilSignedIn();

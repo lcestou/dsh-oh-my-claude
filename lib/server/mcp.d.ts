@@ -28,6 +28,10 @@ interface OpenSessionArgs {
     reasoningEffort?: JsonValue;
     agentPreset?: JsonValue;
 }
+/** True when the bridge key header equals the key, compared in constant time so the answer's
+ *  timing says nothing about how much of a guess was right. A missing header, a repeated one (Node
+ *  hands those over as an array) or one of another length is false without comparing. */
+export declare function keyMatches(header: string | string[] | undefined, key: string): boolean;
 /** The host services openSession needs; all are injected before the bridge mounts. */
 type OpenHost = Required<Pick<PluginContext, "sessions" | "workspaceRegistry" | "sessionController">>;
 /** The host services promptSession needs: the controller, and dsh's model list to check a switch. */

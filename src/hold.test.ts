@@ -34,9 +34,14 @@ assert.equal(
     token: "tok",
     window: 128_000,
   });
+  assert.ok(
+    s.startsWith(
+      "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN || exit 71; ",
+    ),
+  );
   assert.match(
     s,
-    /^d="\$HOME"\/\.local\/state\/dsh-oh-my-claude\/hold\/'abc-1'; mkdir -p "\$d" && mkfifo "\$d"\/in \|\| exit 70; /,
+    /d="\$HOME"\/\.local\/state\/dsh-oh-my-claude\/hold\/'abc-1'; mkdir -p "\$d" && mkfifo "\$d"\/in \|\| exit 70; /,
   );
   assert.match(s, /cd '\/srv\/app' 2>\/dev\/null \|\| cd "\$HOME"; /);
   assert.match(s, /CLAUDE_CODE_AUTO_COMPACT_WINDOW=\S*128000/, "a stated window rides to the box");
@@ -48,7 +53,8 @@ assert.equal(
   assert.match(s, /exec 0<>"\$0"\/in; env /, "the inner sh opens the FIFO read-write for the cli");
   // The inner script is single-quoted once more for the far shell, so each of its own quotes
   // reads '\'' there; the far `sh -c` sees the inner text back as written.
-  assert.match(s, /CLAUDE_CODE_OAUTH_TOKEN='\\''tok'\\''/, "the token rides in the inner env");
+  // The token is read off the start ssh's stdin, never written into the script (argv, `ps`).
+  assert.ok(!s.includes("tok'") && !s.includes("=tok"), "the token is not in the script");
   assert.ok(s.includes("/a b"), "the argument with a quote is carried");
   assert.match(s, /echo \$\? >"\$0"\/exit/, "the exit code lands in the far dir");
   assert.match(s, new RegExp(`printf '${READY} %s\\\\n' "\\$!"$`), "answers the leader's pid");

@@ -6973,6 +6973,8 @@ console.log("interrupt-on-abort ok");
   assert.equal(mcpAuthUrl({ authUrl: "" }), undefined, "drops an empty page");
   assert.equal(mcpAuthUrl({}), undefined, "absent page is undefined");
   assert.equal(mcpAuthUrl(undefined), undefined, "absent reply is undefined");
+  for (const authUrl of ["javascript:alert(1)", "data:text/html,x", "file:///etc/passwd"])
+    assert.equal(mcpAuthUrl({ authUrl }), null, `refuses ${authUrl}`);
   assert.equal(
     mcpAuthNeedsNothing({ requiresUserAction: false }),
     true,

@@ -32,6 +32,7 @@ const preferenceOf = (read: LocaleSettingsReader): string | undefined => {
 
 const EN = {
   notLoggedIn: "not logged in",
+  mcpAuthUrlRefused: "the server's sign-in link is not an http(s) page, so it was not opened",
   planHeader: "Plan review",
   planQuestion: "Approve this plan and leave plan mode?",
   planApprove: "Approve",
@@ -199,6 +200,7 @@ export type ServerKey = keyof typeof EN;
 
 const ZH = {
   notLoggedIn: "未登录",
+  mcpAuthUrlRefused: "该服务器的登录链接不是 http(s) 页面，因此未打开",
   planHeader: "计划审阅",
   planQuestion: "同意执行这份计划并退出计划模式？",
   planApprove: "同意执行",

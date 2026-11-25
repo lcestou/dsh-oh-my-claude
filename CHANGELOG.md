@@ -17,7 +17,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - Rebuilding a Claude transcript from dsh's log no longer leaves every older copy behind. Each rebuild moved the previous transcript aside as `<id>.jsonl.replaced-<time>` and kept it forever; now the two newest copies of that transcript stay and older ones are deleted.
 - The cost pill now follows a login change made in Boxes, Accounts or another tab, switching between plan and API pricing without a page refresh.
-
+- Tighter trust edges between sessions, servers and boxes. A session opened with `open_session` now starts with a line saying which session sent its first message, as `prompt_session` already did, so it no longer reads as typed by you. An MCP server's sign-in link opens only when it is an http or https page. The tool bridge compares its key in constant time. Replies from another box are read up to 16 MB and refused past that. An SSH box's Claude login token now reaches the box on the connection's input instead of its command line, so it no longer shows in `ps` on either machine.
 - The plan usage no longer turns up in another plugin's popover. The context ring was matched by any dialog button whose own svg held two circles, so a plugin button with a two-circle icon could be taken for it, get the usage block and be read out as "N% of context used". The ring is now the button whose second circle carries `stroke-dasharray`, which dsh's meter draws its reading with. Thanks to @soffits (#346)
 
 ## [1.7.0] - 2026-11-22

@@ -21,7 +21,9 @@ import { PassThrough, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import {
   CHILD_ENV,
+  FAR_TOKEN_READ,
   farEnvPairs,
+  farTokenLine,
   forwardedEnv,
   nodeSpawner,
   shq,
@@ -89,7 +91,11 @@ export function holdStartScript(
   const cli = [command, ...args].map(shq).join(" ");
   // The inner script is single-quoted for the far shell, so it takes the dir as its `$0`.
   const inner = `exec 0<>"$0"/in; env ${env} ${cli}; echo $? >"$0"/exit`;
+  // The box token comes on the start ssh's stdin (`farTokenLine`), never in this script's argv;
+  // exported here, the CLI under `setsid` inherits it.
+  const token = farTokenLine(far) ? `${FAR_TOKEN_READ} || exit 71; ` : "";
   return (
+    token +
     `d=${dirOf(name)}; mkdir -p "$d" && mkfifo "$d"/in || exit 70; ` +
     `cd ${shq(cwd)} 2>/dev/null || cd "$HOME"; ` +
     `setsid sh -c ${shq(inner)} "$d" 1>>"$d"/out.log 2>>"$d"/err.log & ` +

@@ -11,7 +11,7 @@
 // bridge served only there is unreachable and Claude sees zero dsh tools. Plain `dsh web` has no
 // gate and keeps the web server route alone, whose port is the one dsh was started on. The web
 // server route is registered either way, and is the fallback when the listener cannot start.
-import { randomUUID } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
@@ -228,6 +228,16 @@ interface OpenSessionArgs {
   agentPreset?: JsonValue;
 }
 
+/** True when the bridge key header equals the key, compared in constant time so the answer's
+ *  timing says nothing about how much of a guess was right. A missing header, a repeated one (Node
+ *  hands those over as an array) or one of another length is false without comparing. */
+export function keyMatches(header: string | string[] | undefined, key: string): boolean {
+  if (typeof header !== "string") return false;
+  const a = Buffer.from(header);
+  const b = Buffer.from(key);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 /** The value when it is a string, else undefined; never a coerced value. */
 const str = (v: JsonValue | undefined): string | undefined =>
   typeof v === "string" ? v : undefined;
@@ -301,7 +311,7 @@ export async function openSession(
       // Required from dsh 0.1.7: a prompt says whether it queues behind the running turn or
       // steers into it. A fresh child session has no turn to steer, so it queues.
       mode: "queue",
-      content: [{ type: "text", text: prompt }],
+      content: [{ type: "text", text: `${senderLine(agent, "open_session")}\n\n${prompt}` }],
     },
     signal,
   );
@@ -318,12 +328,12 @@ function targetOf(agent: Agent, args: Record<string, JsonValue>, tool: string): 
   return asSessionId(id);
 }
 
-/** The line prompt_session puts above a message. dsh records the message as a plain user message
- *  with nothing to say who sent it, so without this line the target session, and the owner reading
- *  its transcript, could not tell it from the owner's own typing. The model reads it, so it is not
- *  translated. */
-const senderLine = (agent: Agent): string =>
-  `[Sent by the agent in dsh session ${agent.session?.id ?? "unknown"} through prompt_session, not typed by the user.]`;
+/** The line prompt_session and open_session put above a message. dsh records the message as a plain
+ *  user message with nothing to say who sent it, so without this line the target session, and the
+ *  owner reading its transcript, could not tell it from the owner's own typing. The model reads it,
+ *  so it is not translated. */
+const senderLine = (agent: Agent, tool: "prompt_session" | "open_session"): string =>
+  `[Sent by the agent in dsh session ${agent.session?.id ?? "unknown"} through ${tool}, not typed by the user.]`;
 
 /**
  * Switches the target session to the route prompt_session's optional `provider`, `model` and
@@ -414,7 +424,7 @@ export async function promptSession(
       sessionId,
       requestId: randomUUID(),
       mode,
-      content: [{ type: "text", text: `${senderLine(agent)}\n\n${prompt}` }],
+      content: [{ type: "text", text: `${senderLine(agent, "prompt_session")}\n\n${prompt}` }],
     },
     signal,
   );
@@ -1040,7 +1050,8 @@ export function registerMcpBridge(
             return agent;
           };
           const serve = async (req: IncomingMessage, res: ServerResponse) => {
-            if (req.headers[KEY_HEADER] !== key) return send(res, 403, { error: "forbidden" });
+            if (!keyMatches(req.headers[KEY_HEADER], key))
+              return send(res, 403, { error: "forbidden" });
             if (req.method !== "POST") return send(res, 405, { error: "POST only" });
             const sessionId = decodeURIComponent(
               (req.url ?? "").slice(MCP_PATH.length + 1).split("?")[0] ?? "",

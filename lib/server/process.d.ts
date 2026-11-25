@@ -423,12 +423,9 @@ export interface FarEnv {
     window?: number | undefined;
 }
 /**
- * `far` as environment pairs for the remote command line. A fresh per-box token from `claude
- * setup-token` is delivered as CLAUDE_CODE_OAUTH_TOKEN, not a stored login, so it must be handed
- * to the far claude at spawn. ponytail: it rides in the remote env argv like the rest of
- * CHILD_ENV, so it shows in the box's own `ps`; acceptable on a single-user box, tighten with a
- * remote env file if a box is shared. The window goes out under both names the CLI listens to,
- * as it does for a local spawn (`localEnvOverride`).
+ * `far` as environment pairs for the remote command line. The window goes out under both names the
+ * CLI listens to, as it does for a local spawn (`localEnvOverride`). The box token is left out on
+ * purpose: argv shows in `ps` on both ends, so it travels on stdin instead (`farTokenLine`).
  */
 export declare function farEnvPairs(far?: FarEnv): [string, string][];
 /**
@@ -438,17 +435,32 @@ export declare function farEnvPairs(far?: FarEnv): [string, string][];
  * 1M model, and a 200K model behind a proxy then never compacts in time and fails its turns.
  */
 export declare function windowEnvPairs(window: number | undefined): [string, string][];
+/** POSIX shell that takes the box token from the first stdin line. `read` on a pipe takes bytes one
+ *  at a time up to the newline, so whatever follows (the stream-json wire) is left for the CLI. */
+export declare const FAR_TOKEN_READ = "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN";
 /**
- * The local `ssh` argv that runs `command args` on `host` in `cwd`. The remote shell inherits none
- * of this box's environment or working directory, so the command carries both: `cd` into `cwd`, then
- * `exec env` with CHILD_ENV (file checkpointing for rewind, the long MCP timeout). `cwd` is this
- * box's workspace path and usually does not exist on the remote, so fall back to the remote `$HOME`
+ * The stdin line that carries the box token to the far shell, or "" when there is none. A fresh
+ * per-box token from `claude setup-token` is delivered as CLAUDE_CODE_OAUTH_TOKEN, not a stored
+ * login, so it must reach the far claude at spawn; on stdin it never shows in `ps` on either box.
+ * The writer sends it before anything else. Throws on a token with a line break, which would cut it
+ * short and hand the rest to the CLI as input.
+ */
+export declare function farTokenLine(far?: FarEnv): string;
+/**
+ * The local `ssh` argv that runs `command args` on `host` in `cwd`, and the line to write on its
+ * stdin first (`stdinFirst`, "" when there is no box token). The remote shell inherits none of this
+ * box's environment or working directory, so the command carries both: `cd` into `cwd`, then `exec
+ * env` with CHILD_ENV (file checkpointing for rewind, the long MCP timeout). `cwd` is this box's
+ * workspace path and usually does not exist on the remote, so fall back to the remote `$HOME`
  * rather than let `cd` fail the whole spawn. A remote workspace redirects `cwd` to its real remote
  * path before it reaches here (see `sshSpawner`), so that fallback is only for a plain local path.
+ * With a token, a `sh -c` reads it before it execs the CLI, so the read works whatever the far
+ * login shell is.
  */
 export declare function sshInvocation(host: string, command: string, args: string[], cwd: string, far?: FarEnv, base?: NodeJS.ProcessEnv): {
     command: string;
     args: string[];
+    stdinFirst: string;
 };
 /**
  * Spawner that runs Claude Code on a remote host over SSH: this box's harness drives the far `claude`,
@@ -617,9 +629,11 @@ export interface McpServerStatus {
 }
 /** An `mcp_status` answer as one row per server, with its own error kept when it is not connected. */
 export declare function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[];
-/** The sign-in page from an `mcp_authenticate` reply, or undefined when the reply does not carry
- *  one. Probed against 2.1.278 on 2026-09-20. */
-export declare function mcpAuthUrl(v: JsonValue | undefined): string | undefined;
+/** The sign-in page from an `mcp_authenticate` reply: the URL, undefined when the reply carries
+ *  none, or null when it carries one that is not an http(s) page. The server picks that link, so a
+ *  hostile one (`javascript:`, `data:`) is refused here rather than handed to the browser. Probed
+ *  against 2.1.278 on 2026-09-20. */
+export declare function mcpAuthUrl(v: JsonValue | undefined): string | null | undefined;
 /** True when the CLI answered success with nothing for the person to do: the server's token is
  *  still good, so there is no page to open. Distinguishing this from a failure matters, because the
  *  panel would otherwise tell someone their login failed when they are already signed in. */
