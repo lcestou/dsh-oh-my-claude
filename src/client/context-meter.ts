@@ -91,14 +91,16 @@ const capClock = (at: number): string => {
   if (at - Date.now() >= 86_400_000) format.weekday = "short";
   return new Date(at).toLocaleString(undefined, format);
 };
-/** "in 2 h 10 min" inside a day, else weekday and time. */
+/** "in 2 h 10 min" inside a day, else weekday and time. The minutes are rounded before they are
+ *  split into hours, so 2 h 59 min 40 s reads "3 h 0 min", never "2 h 60 min". */
 export const resetText = (at: number | null): string => {
   if (at === null) return "";
   const ms = at - Date.now();
   if (ms <= 0) return t("main.usage.resetsNow");
   if (ms < 86_400_000) {
-    const h = Math.floor(ms / 3_600_000);
-    const m = Math.round((ms % 3_600_000) / 60_000);
+    const minutes = Math.round(ms / 60_000);
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
     return h ? t("main.usage.resetsInH", { h, m }) : t("main.usage.resetsInM", { m });
   }
   return t("main.usage.resetsAt", {

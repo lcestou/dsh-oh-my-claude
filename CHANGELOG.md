@@ -19,6 +19,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The usage popover no longer says a window resets "in 2 h 60 min"; minutes that round up to the hour carry into it.
 - The cost dialog's labels and footnote read at WCAG AA contrast in light mode; dark mode looks as it did.
 - Rebuilding a Claude transcript from dsh's log no longer leaves every older copy behind. Each rebuild moved the previous transcript aside as `<id>.jsonl.replaced-<time>` and kept it forever; now the two newest copies of that transcript stay and older ones are deleted.
 - The cost pill now follows a login change made in Boxes, Accounts or another tab, switching between plan and API pricing without a page refresh.
