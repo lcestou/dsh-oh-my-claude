@@ -54,7 +54,10 @@ for (const c of cases) {
   }
   await p.locator('[role="treeitem"]').filter({ hasText: want }).first().click({ force: true });
   await p.waitForTimeout(2500);
-  await p.locator('button[aria-haspopup="dialog"]:has(> svg > circle + circle)').first().click();
+  await p
+    .locator('button[aria-haspopup="dialog"]:has(> svg > circle + circle[stroke-dasharray])')
+    .first()
+    .click();
   await p.waitForTimeout(1500);
   const dlg = p.locator('[role="dialog"]').last();
   const text = await dlg.innerText().catch(() => "");

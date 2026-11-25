@@ -155,8 +155,8 @@ const probes: ContractProbe[] = [
   // circles in a span. Only circles directly in the button's own svg are the ring (2026-11-16).
   assert.equal(ring.selector, RING_ARC, "the probe checks the selector the reader uses");
   assert.ok(
-    RING_ARC.endsWith("> svg > circle + circle"),
-    "the arc must sit directly in the button's svg, not anywhere inside it",
+    RING_ARC.endsWith("> svg > circle + circle[stroke-dasharray]"),
+    "the arc sits directly in the button's svg and carries the meter's dash array",
   );
   for (const probe of DSH_CONTRACT)
     assert.ok(

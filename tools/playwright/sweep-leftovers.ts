@@ -174,7 +174,9 @@ if ((await runButtons.count()) >= 1) {
 }
 
 // 4. The meter popover: plan windows carry a pace line when enough of the window has passed.
-const ring = p.locator('button[aria-haspopup="dialog"]:has(> svg > circle + circle)').first();
+const ring = p
+  .locator('button[aria-haspopup="dialog"]:has(> svg > circle + circle[stroke-dasharray])')
+  .first();
 if ((await ring.count()) > 0) {
   await ring.click();
   await p.waitForTimeout(3000);
