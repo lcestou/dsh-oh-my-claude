@@ -19,11 +19,17 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
   /** The far script for one spawn with `far` added to its environment. */
   const script = (far: Parameters<typeof sshInvocation>[4]) =>
     sshInvocation("nova", "claude", ["-p"], "/w", far).args.at(-1) ?? "";
-  const direct = script({ token: "tok", window: undefined });
-  assert.match(direct, /CLAUDE_CODE_OAUTH_TOKEN='tok'/);
+  const direct = script({ token: "tok-SECRET", window: undefined });
+  // The token never rides in argv (`ps` on both boxes shows it); the far sh reads it off stdin.
+  const directInv = sshInvocation("nova", "claude", ["-p"], "/w", { token: "tok-SECRET" });
+  assert.ok(!directInv.args.some((a) => a.includes("tok-SECRET")), "token is not in the ssh argv");
+  assert.equal(directInv.stdinFirst, "tok-SECRET\n");
+  assert.match(direct, /IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN/);
   assert.doesNotMatch(direct, /CLAUDE_CODE_MAX_CONTEXT_TOKENS|CLAUDE_CODE_AUTO_COMPACT_WINDOW/);
+  assert.throws(() => script({ token: "a\nb" }), /line break/);
   const routed = script({ token: undefined, window: 128_000 });
   assert.doesNotMatch(routed, /CLAUDE_CODE_OAUTH_TOKEN/);
+  assert.equal(sshInvocation("nova", "claude", ["-p"], "/w", {}).stdinFirst, "", "no token, no line");
   assert.match(routed, /CLAUDE_CODE_MAX_CONTEXT_TOKENS='128000'/);
   assert.match(routed, /CLAUDE_CODE_AUTO_COMPACT_WINDOW='128000'/);
 }

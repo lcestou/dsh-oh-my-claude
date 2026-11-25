@@ -80,6 +80,7 @@ import {
   nodeSpawner,
   seamSpawner,
   sshSpawner,
+  farTokenLine,
   attachKeeper,
   keeperHolder,
   launchKeeper,
@@ -4272,13 +4273,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       startedAt: Date.now(),
     };
     if (this.keeperOwner) record.owner = this.keeperOwner;
+    const far = this.farEnv(host, spec.routed, spec.window);
     const started = new Promise<SubprocessHandle>((resolve, reject) => {
-      const s = run(
-        holdStartScript(holdId, cwd, command, args, this.farEnv(host, spec.routed, spec.window)),
-      );
+      const s = run(holdStartScript(holdId, cwd, command, args, far));
       let out = "";
       let err = "";
-      s.stdin.end();
+      s.stdin.end(farTokenLine(far));
       s.stdout.on("data", (d) => (out += String(d)));
       s.stderr.on("data", (d) => (err += String(d)));
       void s.done.then((o) => {
