@@ -24,6 +24,7 @@ import { ACCOUNT_LOGIN } from "./accounts.js";
 import { size } from "./sessions-tab.js";
 import { kTokens, loadUsage, resetText, sessionModelOf } from "./context-meter.js";
 import { StarterCard } from "./settings-card.js";
+import { holdTimer, type HoldTimer } from "./hold-timer.js";
 
 /** Slot wrapper: reads the live draft through dsh's own input hook before handing the card its props.
  *  The hook comes in as a prop, so the read has to happen in a component dsh renders, not in the
@@ -1022,6 +1023,23 @@ export function ClaudeUpdateCard({
     const id = setTimeout(() => goneRef.current(), 250);
     return () => clearTimeout(id);
   }, [leaving]);
+  // Under reduced motion the bar stands still, so it has no end event to close on: a timer of the
+  // same length closes the card instead, and hover or focus pauses it just as it pauses the bar.
+  const reduced = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  const timerRef = useRef<HoldTimer | undefined>(undefined);
+  useEffect(() => {
+    if (!reduced || phase !== "done") return;
+    const timer = holdTimer(CLOSE_AFTER_S * 1000, () => setLeaving(true));
+    timerRef.current = timer;
+    return () => {
+      timer.stop();
+      timerRef.current = undefined;
+    };
+  }, [reduced, phase]);
+  useEffect(() => {
+    if (held) timerRef.current?.pause();
+    else timerRef.current?.run();
+  }, [held, reduced, phase]);
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- hover and focus only pause the auto-dismiss; every action is a real button inside
     <div
@@ -1061,8 +1079,12 @@ export function ClaudeUpdateCard({
             bottom: 0,
             height: 2,
             background: ACCENT,
-            animation: `omc-drain ${CLOSE_AFTER_S}s linear forwards`,
-            animationPlayState: held ? "paused" : "running",
+            ...(reduced
+              ? { width: "100%" }
+              : {
+                  animation: `omc-drain ${CLOSE_AFTER_S}s linear forwards`,
+                  animationPlayState: held ? "paused" : "running",
+                }),
           }}
         />
       )}

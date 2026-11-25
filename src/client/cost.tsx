@@ -24,6 +24,7 @@ import { Spark, sparkNode } from "./spark.js";
 import { useHintValue, useHintFlag } from "./hints.js";
 import { onBodyMutation } from "./dom.js";
 import { attachTip, hideTipFor, refreshTip } from "./tooltip.js";
+import { BOXES_EVENT } from "./picker.js";
 
 /** Cached tokens for the readout: `999`, `12.3K`, `2.1M`, and nothing at all for none. */
 export const formatCacheRead = (tokens: number): string => {
@@ -139,6 +140,38 @@ export const COST_DIALOG_CSS =
   "[data-omc-cost-note]{flex-basis:100%;margin:4px 0 0;color:var(--dsw-alias-label-tertiary)}";
 
 let statusOnce: Promise<boolean> | undefined;
+
+/** Whether this box's Claude is logged in with a claude.ai plan, read once and shared by every
+ *  pill until BOXES_EVENT clears it. A failed read answers false (priced as API use). */
+export function subscriptionStatus(): Promise<boolean> {
+  statusOnce ??= fetch(`${ROUTE}/status`)
+    .then((r) => readJson<{ authMethod?: string | null }>(r))
+    .then((s) => s.authMethod === "claude.ai")
+    .catch(() => false);
+  return statusOnce;
+}
+
+/**
+ * Wraps `apply` so only the newest of several overlapping reads lands: a reply that comes back
+ * after a later read started is dropped. A login change can start a second /status read while the
+ * first is still out, and the first answering last would otherwise put the old plan back.
+ */
+export function newestOnly<T>(apply: (value: T) => void): (read: Promise<T>) => void {
+  let latest = 0;
+  return (read) => {
+    const mine = ++latest;
+    void read.then((v) => {
+      if (mine === latest) apply(v);
+    });
+  };
+}
+
+// A login or logout, here or in another tab, arrives as BOXES_EVENT; drop the cached answer so the
+// next read asks again. Registered at import, so it runs before any pill's own listener re-reads.
+// Optional because a test imports this module where no window exists.
+globalThis.window?.addEventListener(BOXES_EVENT, () => {
+  statusOnce = undefined;
+});
 
 /** The hashed half of a CSS-module class changes with every dsh build, the suffix does not. */
 const MODULE_ROOT = /(?:^|\s)[\w-]*_root(?:\s|$)/;
@@ -305,13 +338,15 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   const [subscription, setSubscription] = useState(false);
   useEffect(() => {
     let live = true;
-    statusOnce ??= fetch(`${ROUTE}/status`)
-      .then((r) => readJson<{ authMethod?: string | null }>(r))
-      .then((s) => s.authMethod === "claude.ai")
-      .catch(() => false);
-    void statusOnce.then((v) => live && setSubscription(v));
+    const show = newestOnly<boolean>((v) => live && setSubscription(v));
+    /** Ask for the plan (shared across pills) and show it while this pill is mounted. */
+    const load = () => show(subscriptionStatus());
+    load();
+    // A login change elsewhere re-reads, so the pill follows it without a refresh.
+    window.addEventListener(BOXES_EVENT, load);
     return () => {
       live = false;
+      window.removeEventListener(BOXES_EVENT, load);
     };
   }, []);
   const [guardDraft, setGuardDraft] = useState("");

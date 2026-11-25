@@ -15,6 +15,7 @@ export interface LocaleSettingsReader {
 }
 declare const EN: {
     readonly notLoggedIn: "not logged in";
+    readonly mcpAuthUrlRefused: "the server's sign-in link is not an http(s) page, so it was not opened";
     readonly planHeader: "Plan review";
     readonly planQuestion: "Approve this plan and leave plan mode?";
     readonly planApprove: "Approve";

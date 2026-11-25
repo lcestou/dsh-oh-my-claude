@@ -6973,6 +6973,8 @@ console.log("interrupt-on-abort ok");
   assert.equal(mcpAuthUrl({ authUrl: "" }), undefined, "drops an empty page");
   assert.equal(mcpAuthUrl({}), undefined, "absent page is undefined");
   assert.equal(mcpAuthUrl(undefined), undefined, "absent reply is undefined");
+  for (const authUrl of ["javascript:alert(1)", "data:text/html,x", "file:///etc/passwd"])
+    assert.equal(mcpAuthUrl({ authUrl }), null, `refuses ${authUrl}`);
   assert.equal(
     mcpAuthNeedsNothing({ requiresUserAction: false }),
     true,
@@ -7498,6 +7500,16 @@ console.log("interrupt-on-abort ok");
         routed.localEnvOverride(false, sizedSpec.window)?.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
       ],
       ["262144", "262144"],
+    );
+    assert.equal(
+      routed.localEnvOverride(false, sizedSpec.window)?.CLAUDE_CODE_DISABLE_1M_CONTEXT,
+      undefined,
+      "a window past 200K leaves the CLI's 1M guess alone",
+    );
+    assert.equal(
+      routed.localEnvOverride(false, 200_000)?.CLAUDE_CODE_DISABLE_1M_CONTEXT,
+      "1",
+      "a 200K window keeps an unknown id off the 1M guess",
     );
     assert.equal(
       routed.localEnvOverride(false)?.CLAUDE_CODE_AUTO_COMPACT_WINDOW,
@@ -10161,17 +10173,21 @@ console.log("awaiting ok");
   a.sessionPluginWarnings.set("s1", []);
   a.permissionAsks.set("s1", ["Bash(ls:*)"]);
   a.awaitingInput.set("s1", { kind: "approval", id: "r1", since: 1 });
+  a.sessionCommands.set("s1", ["compact"]);
+  a.sessionConfigs.set("s1", a.config);
   a.sessionTools.set("s2", ["Read"]);
   a.forgetSession("s1");
   assert.deepEqual(
     [
+      a.sessionCommands.has("s1"),
+      a.sessionConfigs.has("s1"),
       a.sessionTools.has("s1"),
       a.sessionPluginErrors.has("s1"),
       a.sessionPluginWarnings.has("s1"),
       a.permissionAsks.has("s1"),
       a.awaitingInput.has("s1"),
     ],
-    [false, false, false, false, false],
+    [false, false, false, false, false, false, false],
     "every per-session map drops the id",
   );
   assert.equal(a.sessionTools.has("s2"), true, "another session is untouched");

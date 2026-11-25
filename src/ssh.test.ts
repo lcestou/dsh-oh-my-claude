@@ -19,13 +19,29 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
   /** The far script for one spawn with `far` added to its environment. */
   const script = (far: Parameters<typeof sshInvocation>[4]) =>
     sshInvocation("nova", "claude", ["-p"], "/w", far).args.at(-1) ?? "";
-  const direct = script({ token: "tok", window: undefined });
-  assert.match(direct, /CLAUDE_CODE_OAUTH_TOKEN='tok'/);
+  const direct = script({ token: "tok-SECRET", window: undefined });
+  // The token never rides in argv (`ps` on both boxes shows it); the far sh reads it off stdin.
+  const directInv = sshInvocation("nova", "claude", ["-p"], "/w", { token: "tok-SECRET" });
+  assert.ok(!directInv.args.some((a) => a.includes("tok-SECRET")), "token is not in the ssh argv");
+  assert.equal(directInv.stdinFirst, "tok-SECRET\n");
+  assert.match(direct, /IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN/);
   assert.doesNotMatch(direct, /CLAUDE_CODE_MAX_CONTEXT_TOKENS|CLAUDE_CODE_AUTO_COMPACT_WINDOW/);
+  assert.throws(() => script({ token: "a\nb" }), /line break/);
   const routed = script({ token: undefined, window: 128_000 });
   assert.doesNotMatch(routed, /CLAUDE_CODE_OAUTH_TOKEN/);
+  assert.equal(
+    sshInvocation("nova", "claude", ["-p"], "/w", {}).stdinFirst,
+    "",
+    "no token, no line",
+  );
   assert.match(routed, /CLAUDE_CODE_MAX_CONTEXT_TOKENS='128000'/);
   assert.match(routed, /CLAUDE_CODE_AUTO_COMPACT_WINDOW='128000'/);
+  // A stated window of 200K or less keeps the CLI off its 1M guess for an id it does not know;
+  // a larger one, or none, leaves the CLI to decide.
+  assert.match(routed, /CLAUDE_CODE_DISABLE_1M_CONTEXT='1'/);
+  assert.match(script({ window: 200_000 }), /CLAUDE_CODE_DISABLE_1M_CONTEXT='1'/);
+  assert.doesNotMatch(script({ window: 262_144 }), /CLAUDE_CODE_DISABLE_1M_CONTEXT/);
+  assert.doesNotMatch(direct, /CLAUDE_CODE_DISABLE_1M_CONTEXT/);
 }
 {
   const inv = sshInvocation("nova", "claude", ["-p", "--input-format", "stream-json"], "/home/u/w");
@@ -54,7 +70,8 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
     script,
     "cd '/home/u/w' 2>/dev/null || cd \"$HOME\"; exec env MCP_TOOL_TIMEOUT='3600000' " +
       "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING='1' CLAUDE_CODE_ENTRYPOINT='dsh-oh-my-claude' " +
-      "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION='true' 'claude' '-p' '--input-format' 'stream-json'",
+      "CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION='true' CLAUDE_CODE_DISABLE_DEFERRED_TOOL_RESUME='1' " +
+      "'claude' '-p' '--input-format' 'stream-json'",
   );
 }
 

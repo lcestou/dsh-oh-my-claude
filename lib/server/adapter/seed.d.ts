@@ -39,3 +39,12 @@ export interface SeedOptions {
  * API refuses a `tool_use` left unanswered. Empty when there is nothing to seed.
  */
 export declare function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOptions): string;
+/** How many moved-aside copies of one transcript a rebuild keeps. */
+export declare const REPLACED_KEEP = 2;
+/**
+ * Delete the older `<dest>.replaced-<ms>` copies a transcript rebuild left beside `dest`, keeping
+ * the `keep` newest by their stamp. Only names that are `dest`'s own name plus `.replaced-` and
+ * digits are touched, so another transcript's copies and every other file stay. A copy that is
+ * already gone or cannot be deleted is passed over; an unreadable directory deletes nothing.
+ */
+export declare function pruneReplaced(dest: string, keep?: number): Promise<void>;

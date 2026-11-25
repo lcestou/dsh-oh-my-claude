@@ -80,6 +80,7 @@ import {
   nodeSpawner,
   seamSpawner,
   sshSpawner,
+  farTokenLine,
   attachKeeper,
   keeperHolder,
   launchKeeper,
@@ -156,7 +157,7 @@ import {
 import { suggestRule } from "../permissions.js";
 import { currentLogVersion, type ToolMode, type ToolModeInfo } from "../rows-probe.js";
 import { readSshToken, THIS_BOX } from "../ssh-login.js";
-import { CHILD_ENV, SECURE_STORAGE_ENV, childEnv, errorText } from "../process.js";
+import { CHILD_ENV, SECURE_STORAGE_ENV, childEnv, errorText, windowEnvPairs } from "../process.js";
 import {
   KEEPER_OFF,
   ORPHAN_FLOOR_MS,
@@ -339,7 +340,7 @@ import {
   steerKey,
   textOf,
 } from "./prompt.js";
-import { seedTranscriptText } from "./seed.js";
+import { pruneReplaced, seedTranscriptText } from "./seed.js";
 import { busyEnterOf, CommandRows, commandNameOf, leavesQueue, lineReceipt } from "./lane.js";
 import {
   accessModeOf,
@@ -1633,6 +1634,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
       }
       await writeFile(dest, text);
+      // Each rebuild moves one copy aside; without this they piled up for good.
+      await pruneReplaced(dest);
     } catch (error) {
       this.log("warn", `seeding claude session ${id} from dsh's log failed: ${errorText(error)}`);
       return false;
@@ -3060,6 +3063,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const reply = await this.control(proc, { subtype: "mcp_authenticate", serverName }, 20_000);
     if (!reply.ok) return { ok: false, error: reply.error };
     const url = mcpAuthUrl(reply.response);
+    if (url === null) return { ok: false, error: serverText("mcpAuthUrlRefused") };
     if (url !== undefined) return { ok: true, authUrl: url };
     if (mcpAuthNeedsNothing(reply.response)) return { ok: true };
     return { ok: false, error: "the CLI answered without a sign-in page" };
@@ -4171,10 +4175,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // knows. Measured on 2.1.322 with `get_context_usage`: `sonnet` behind a router reads
     // 1,000,000 with neither, and the number given with the second; an unknown id reads 200,000
     // with neither and the number given with the first.
-    if (window !== undefined) {
-      over.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(window);
-      over.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(window);
-    }
+    // A stated 200K or smaller also turns off the CLI's 1M guess for ids it does not know
+    // (`windowEnvPairs`).
+    Object.assign(over, Object.fromEntries(windowEnvPairs(window)));
     if (isolate) Object.assign(over, ISOLATED_ENV);
     return Object.keys(over).length === 0 ? undefined : over;
   }
@@ -4271,13 +4274,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       startedAt: Date.now(),
     };
     if (this.keeperOwner) record.owner = this.keeperOwner;
+    const far = this.farEnv(host, spec.routed, spec.window);
     const started = new Promise<SubprocessHandle>((resolve, reject) => {
-      const s = run(
-        holdStartScript(holdId, cwd, command, args, this.farEnv(host, spec.routed, spec.window)),
-      );
+      const s = run(holdStartScript(holdId, cwd, command, args, far));
       let out = "";
       let err = "";
-      s.stdin.end();
+      s.stdin.end(farTokenLine(far));
       s.stdout.on("data", (d) => (out += String(d)));
       s.stderr.on("data", (d) => (err += String(d)));
       void s.done.then((o) => {
@@ -5584,6 +5586,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    */
   forgetSession(sessionId: string) {
     this.sessionTools.delete(sessionId);
+    // Safe to drop with the process: the next turn's `prepare` records the config again before
+    // anything reads it, and a new process reports its own commands; until it does, any `/name`
+    // goes as a command, as on a session's first process.
+    this.sessionCommands.delete(sessionId);
+    this.sessionConfigs.delete(sessionId);
     this.sessionPluginErrors.delete(sessionId);
     this.sessionPluginWarnings.delete(sessionId);
     this.sessionTasks.delete(sessionId);

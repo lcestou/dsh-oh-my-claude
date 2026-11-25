@@ -1,8 +1,8 @@
 // The plugin's event stream to open tabs: one long GET per tab, server-sent events, one message
 // per change of anything the tab used to poll for (`GET /dsh-oh-my-claude/events`, registered in
-// sessions.ts). dsh's own HMR plugin serves the same shape from dsh-client-hmr (`/plugins/events`);
-// this adds a heartbeat for proxies, a per-connection session filter and coalescing for the one
-// kind that changes per frame. What is sent is built by the adapter from the same maps its routes
+// sessions.ts). It follows the shape dsh's HMR event stream had before dsh 0.2.2-rc.3 removed
+// `/plugins/events`, plus a heartbeat for proxies, a per-connection session filter and coalescing
+// for the one kind that changes per frame. What is sent is built by the adapter from the same maps its routes
 // read, so an event body and the matching route body are one function's output.
 import type { ServerResponse } from "node:http";
 

@@ -10,6 +10,7 @@ import {
   openTranscriptOnce,
   createVersion,
   probeBox,
+  cappedText,
   readPickerSettings,
   readRemoteWorkspaces,
   readSshBoxes,
@@ -52,6 +53,7 @@ import { tempDir } from "./test-tmp.js";
     ok: status >= 200 && status < 300,
     headers: { get: (k: string) => headers[k.toLowerCase()] ?? null },
     json: async () => body,
+    text: async () => JSON.stringify(body),
   });
   // SAFETY: partial fake for tests
   const fakeFetch = async (u: string, init?: Record<string, unknown>) => {
@@ -95,12 +97,50 @@ import { tempDir } from "./test-tmp.js";
       ok: true,
       headers: { get: () => null },
       json: async () => ({ host: "x" }),
+      text: async () => JSON.stringify({ host: "x" }),
     };
   };
   // SAFETY: cast to fetch signature for test double
   await probeBox({ name: "b", url: "http://b" }, fakeFetch as unknown as typeof fetch);
   assert.equal(calls.length, 1);
   assert.equal(calls[0], "http://b/dsh-oh-my-claude/status");
+}
+
+// probeBox reads a reply through a 16 MB cap: an endless or huge stream is refused with a clear
+// error and cancelled, never read whole into memory.
+{
+  let pulled = 0;
+  let cancelled = false;
+  const endless = new ReadableStream<Uint8Array>({
+    pull: (c) => {
+      pulled += 1;
+      c.enqueue(new Uint8Array(1024 * 1024).fill(32));
+    },
+    cancel: () => void (cancelled = true),
+  });
+  // SAFETY: partial fake for tests; only the status route is asked
+  const fakeFetch = async () => ({
+    status: 200,
+    ok: true,
+    headers: { get: () => null },
+    json: async () => ({}),
+    text: async () => "",
+    body: endless,
+  });
+  const result = await probeBox(
+    { name: "b", url: "http://b" },
+    fakeFetch as unknown as typeof fetch,
+  );
+  assert.equal(result.ok, false);
+  assert.match((result as { ok: false; error: string }).error, /larger than 16 MB/);
+  assert.ok(cancelled, "the rest of the stream is cancelled");
+  assert.ok(pulled <= 18, `stopped near the cap, pulled ${pulled} chunks`);
+  // A real-sized stream still reads whole.
+  const small = new Response(JSON.stringify({ host: "x" })).body;
+  assert.deepEqual(JSON.parse(await cappedText({ text: async () => "", body: small })), {
+    host: "x",
+  });
+  await assert.rejects(cappedText({ text: async () => "x".repeat(11) }, 10), /larger than/);
 }
 
 // Boxes settings routes: 400 when url param missing, 404 when box not found.

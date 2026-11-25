@@ -270,7 +270,21 @@ export type FetchLike = (url: string, init: {
     };
     json(): Promise<unknown>;
     text(): Promise<string>;
+    body?: ReadableStream<Uint8Array> | null;
 }>;
+/** The most of another box's reply probeBox reads. A status is a few KB, but `sessions?all=1` lists
+ *  every transcript at about 250 bytes each, and a busy box already has 2,000 (500 KB, 2026-11-25),
+ *  so the cap leaves that list room to grow while still stopping a host that streams without end. */
+export declare const PROBE_REPLY_MAX: number;
+/**
+ * A reply's text read through a byte cap, so a host that streams without end cannot fill dsh-web's
+ * memory. Throws once the reply passes `max` bytes, cancelling the rest of the stream. A reply with
+ * no stream (a test double) falls back to `text()` and is checked after the read.
+ */
+export declare function cappedText(r: {
+    text(): Promise<string>;
+    body?: ReadableStream<Uint8Array> | null;
+}, max?: number): Promise<string>;
 /**
  * Log into a box like a browser would (dsh's `/?token=` sets the auth cookie; an NPM-style proxy
  * redirects to that URL by itself) and read its plugin status. Never throws: the panel shows why.

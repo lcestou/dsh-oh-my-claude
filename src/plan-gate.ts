@@ -27,6 +27,8 @@ export const PLAN_REFUSAL =
  *   runtime". The older two names stay listed for dsh 0.2.2.
  * - `user_terminal_list`, `user_terminal_read` (dsh 0.2.2-rc.2, read in its source 2026-11-11): list
  *   and read the screen of a terminal the user runs in the side panel; both descriptions say "Runs nothing".
+ * - `list_session`, `list_workspace` (dsh 0.2.3, tool catalog read 2026-11-25): list session and
+ *   workspace metadata; the catalog says "No Agent is activated".
  * Refused although they write no files:
  * - `working_directory`: also changes the session's directory (`cd`), not only reads it. dsh
  *   0.2.3 drops it for `enter_worktree` and `exit_worktree`, which move the session as well.
@@ -52,7 +54,9 @@ export const PLAN_SAFE_TOOLS: ReadonlySet<string> = new Set([
   "list_agents",
   "list_mcp_resource_templates",
   "list_mcp_resources",
+  "list_session",
   "list_subagent_models",
+  "list_workspace",
   "read_image",
   "read_mcp_resource",
   "schedule_list",
@@ -76,6 +80,8 @@ export const PLAN_SAFE_TOOLS: ReadonlySet<string> = new Set([
 ]);
 
 /** True when a call to `name` must be refused: the session is in plan mode and the tool is not on
- *  the read-only list. An undefined mode (no live process to ask) refuses nothing, as before. */
+ *  the read-only list. An undefined mode refuses nothing; the bridge's wiring in `src/adapter.ts`
+ *  never passes one, since without a live process it falls back to the mode the session's next
+ *  spawn gets (its stored override, else its access mode's). */
 export const planRefuses = (name: string, mode: string | undefined): boolean =>
   mode === PLAN_MODE && !PLAN_SAFE_TOOLS.has(name);

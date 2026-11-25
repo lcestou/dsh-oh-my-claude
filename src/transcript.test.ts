@@ -460,6 +460,7 @@ assert.ok(validateBoxes("nope").error);
     ok: status >= 200 && status < 300,
     headers: { get: (k: string) => headers[k.toLowerCase()] ?? null },
     json: async () => body,
+    text: async () => JSON.stringify(body),
   });
   // SAFETY: partial fake for tests
   const fakeFetch = async (u: string, init?: { headers?: Record<string, string> }) => {
