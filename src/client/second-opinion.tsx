@@ -62,6 +62,13 @@ export function SecondOpinionCard({
   const [sent, setSent] = useState<ReadonlySet<string>>(new Set());
   const [, setTick] = useState(0);
   const running = card?.state === "running";
+  // Each review starts folded and with no stale error: the dock stays mounted between turns, so
+  // without this one review opened would leave every later one open.
+  const cardAt = card?.at;
+  useEffect(() => {
+    setOpen(false);
+    setFailed(false);
+  }, [cardAt]);
   useEffect(() => {
     if (!running) return;
     // A local review takes minutes; the elapsed time redraws every second so the card is not
