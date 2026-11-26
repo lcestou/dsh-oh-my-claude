@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- Phone notices. With the switch on in Settings, a finished turn, an approval, a question or a plan review reaches your phone or another computer with no dsh tab open, through Web Push (no app and no account, encrypted end to end) or a webhook such as ntfy, Home Assistant or n8n. A notice waits a minute by default and goes out only if you have not answered or sent a new message by then. Off by default.
+
 ### Changed
 
 - When dsh restarts a Claude session with `--resume`, a tool call a hook held back in the last session no longer runs on its own. Claude Code 2.1.328 started running such calls on resume; the plugin now switches that off for every Claude it starts, here and over SSH, since a restart is not someone choosing to carry on.
