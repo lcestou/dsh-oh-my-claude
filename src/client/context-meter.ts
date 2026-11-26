@@ -1,6 +1,6 @@
 // Readers and renderers for the plan usage and context breakdowns. The entry keeps one
 // import line for what it still uses; the helpers it calls through stay at their owners.
-import { t, onLocaleSwitch, type OmcKey } from "./i18n.js";
+import { t, onLocaleSwitch, type OmcKey, activeLocale } from "./i18n.js";
 import {
   ROUTE,
   readJson,
@@ -80,7 +80,10 @@ export const whose = (r: UsageReply): string => {
 export const loginEndNote = (r: UsageReply): string => {
   const ends = r.ok ? loginEndSoon(r.loginEndsAt) : undefined;
   if (ends === undefined) return "";
-  const date = new Date(ends).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  const date = new Date(ends).toLocaleDateString(activeLocale(), {
+    month: "short",
+    day: "numeric",
+  });
   return t(ends <= Date.now() ? "main.usage.loginEnded" : "main.usage.loginEnds", { date });
 };
 
@@ -89,7 +92,7 @@ export const loginEndNote = (r: UsageReply): string => {
 const capClock = (at: number): string => {
   const format: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit" };
   if (at - Date.now() >= 86_400_000) format.weekday = "short";
-  return new Date(at).toLocaleString(undefined, format);
+  return new Date(at).toLocaleString(activeLocale(), format);
 };
 /** "in 2 h 10 min" inside a day, else weekday and time. The minutes are rounded before they are
  *  split into hours, so 2 h 59 min 40 s reads "3 h 0 min", never "2 h 60 min". */
@@ -106,7 +109,7 @@ export const resetText = (at: number | null): string => {
     return h ? t("main.usage.resetsInH", { h, m }) : t("main.usage.resetsInM", { m });
   }
   return t("main.usage.resetsAt", {
-    when: new Date(at).toLocaleString(undefined, {
+    when: new Date(at).toLocaleString(activeLocale(), {
       weekday: "short",
       hour: "numeric",
       minute: "2-digit",
@@ -151,8 +154,8 @@ export const staleNote = (r: UsageReply): string => {
   const sameDay = at.toDateString() === new Date().toDateString();
   return t("main.usage.stale", {
     time: sameDay
-      ? at.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
-      : at.toLocaleString(undefined, {
+      ? at.toLocaleTimeString(activeLocale(), { hour: "numeric", minute: "2-digit" })
+      : at.toLocaleString(activeLocale(), {
           month: "short",
           day: "numeric",
           hour: "numeric",

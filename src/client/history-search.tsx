@@ -385,6 +385,21 @@ export function HistorySearch({
           ))
         )}
       </div>
+      {/* The rows never take focus (the field keeps it), so a screen reader is told which prompt
+          the arrows picked here, the way a listbox would announce its active option. */}
+      <span
+        data-omc-history-picked=""
+        aria-live="polite"
+        style={{
+          position: "absolute",
+          width: 1,
+          height: 1,
+          overflow: "hidden",
+          clip: "rect(0 0 0 0)",
+        }}
+      >
+        {picked?.text ?? ""}
+      </span>
       {/* Keyboard keys only: phone-style.ts hides the line on a touch screen. */}
       <div data-omc-history-keys="" style={{ ...meta, whiteSpace: "normal" }} aria-hidden="true">
         {t("main.history.keys")}

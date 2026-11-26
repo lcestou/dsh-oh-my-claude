@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { t } from "./i18n.js";
+import { t, activeLocale } from "./i18n.js";
 
 export const ROUTE = "/dsh-oh-my-claude";
 /** "m*****@gmail.com": first letter, stars, then the domain. Every surface that shows the login
@@ -49,7 +49,7 @@ export const ago = (ms: number): string => {
   const s = Math.max(0, (Date.now() - ms) / 1000);
   if (s < 3600) return t("time.minAgo", { n: Math.max(1, Math.round(s / 60)) });
   if (s < 86400) return t("time.hAgo", { n: Math.round(s / 3600) });
-  return new Date(ms).toLocaleDateString();
+  return new Date(ms).toLocaleDateString(activeLocale());
 };
 
 const KEYWORD_PAIRS = new Map<string, string>([

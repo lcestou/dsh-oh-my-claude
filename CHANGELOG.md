@@ -23,6 +23,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- Dates and times the plugin shows (plan resets, update history, task runs, box and device lists) now follow dsh's language setting instead of the browser's.
+- Prompt history search (Ctrl+R) tells a screen reader which prompt the arrow keys picked.
 - The usage popover no longer says a window resets "in 2 h 60 min"; minutes that round up to the hour carry into it.
 - The cost dialog's labels and footnote read at WCAG AA contrast in light mode; dark mode looks as it did.
 - Rebuilding a Claude transcript from dsh's log no longer leaves every older copy behind. Each rebuild moved the previous transcript aside as `<id>.jsonl.replaced-<time>` and kept it forever; now the two newest copies of that transcript stay and older ones are deleted.

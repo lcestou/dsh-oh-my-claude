@@ -1,6 +1,7 @@
 // loadUsage never forces, shares one fetch between callers, and the stale note names its time.
 import assert from "node:assert/strict";
 import { loadUsage, resetText, staleNote, usageCache } from "./context-meter.js";
+import { installLocale } from "./i18n.js";
 
 const urls: string[] = [];
 globalThis.fetch = (async (url: string) => {
@@ -29,4 +30,20 @@ const soon = resetText(Date.now() + 3 * 3_600_000 - 20_000);
 assert.ok(!soon.includes("60"), soon);
 assert.ok(soon.includes("3"), soon);
 assert.equal(resetText(Date.now() + 20_000), resetText(Date.now() - 1), "20 s left reads as now");
+// Dates follow dsh's language, not the browser's: with dsh on Chinese a reset two days out names
+// its weekday in Chinese, whatever language the test process runs in.
+{
+  const off = installLocale({
+    get: () => ({
+      register: () => undefined,
+      bind: () => (_key: string, params?: Record<string, string | number>) =>
+        String(params?.when ?? ""),
+      subscribe: () => () => {},
+      getSnapshot: () => ({ active: "zh", revision: 1 }),
+    }),
+  });
+  const when = resetText(Date.now() + 2 * 86_400_000);
+  off();
+  assert.match(when, /周|星期/, `a Chinese weekday, got ${when}`);
+}
 console.log("usage-load ok");
