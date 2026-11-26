@@ -153,6 +153,16 @@ declare const EN: {
     readonly customModelMany: "A box keeps at most {max} added models.";
     readonly customModelBox: "No Claude Code box answers to {provider}.";
     readonly customModelUnread: "That list of models could not be read.";
+    readonly notifyFinished: "Claude finished its turn.";
+    readonly notifyApproval: "Claude is waiting for your approval to run {tool}.";
+    readonly notifyQuestion: "Claude asked you a question.";
+    readonly notifyPlan: "Claude has a plan ready for your review.";
+    readonly notifyTest: "Test from Oh My Claude. Phone notices are set up.";
+    readonly notifyUntitled: "Claude Code session";
+    readonly notifyBadUrl: "A webhook address starts with http:// or https://.";
+    readonly notifyLongUrl: "A webhook address can be at most 2,000 characters.";
+    readonly notifyBadDevice: "This browser sent a subscription the box cannot use.";
+    readonly notifyTooManyDevices: "This box already sends to {max} devices. Delete one first.";
 };
 /** A key of the server's own strings. */
 export type ServerKey = keyof typeof EN;
