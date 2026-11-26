@@ -932,6 +932,10 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  answered anywhere. A mount publishing only its own map would make a tab forget the root's
      *  prompts on the next box event. */
     private publishAwaiting;
+    /** Hand a finished turn or an open prompt to the phone notifier, which sends it after the box's
+     *  delay unless the prompt with `requestId` was answered, or a prompt or steer went to the session,
+     *  by then. Does nothing while phone notices are off; the notifier reads the switch itself. */
+    private notifyLater;
     /** The asides body for one session to its streams, read from the session's mount. A publish
      *  does not re-arm hold timers (`touch: false`); only the card's own read does. */
     private publishAsides;

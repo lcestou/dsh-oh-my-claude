@@ -181,6 +181,7 @@ dsh ships prereleases only and moves client APIs between them, so every release 
 41. The ring popover remembers how earlier plan windows ended: a strip of bars under each window with the typical figure, per login; point at, tap or arrow through a bar for its date. [Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
 42. A second opinion, off until you pick a model in Settings: after a Claude turn that changes files, another model from dsh's providers reviews that turn's changes, and a card above the composer lists what it found, each finding with Send to Claude.
 43. A test gate, off by default and set per workspace in Settings: before Claude ends a turn, the plugin runs the workspace's test command, and while it fails Claude keeps fixing, up to the tries you set. [Test gate](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#test-gate)
+44. A notice on your phone when a Claude turn finishes or waits for you, with no dsh tab open, through Web Push or a webhook (ntfy, Home Assistant, n8n). Off until you turn it on. [Phone notices](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#phone-notices)
 
 Defaults you never have to touch, such as secret redaction in tool results and surviving the CLI's own updates, are on [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md).
 

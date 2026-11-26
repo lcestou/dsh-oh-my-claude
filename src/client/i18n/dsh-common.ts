@@ -13,4 +13,5 @@ export const en = {
   loading: "Loading…",
   save: "Save",
   edit: "Edit",
+  delete: "Delete",
 } as const;

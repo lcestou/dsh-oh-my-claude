@@ -39,6 +39,7 @@ import { AddWorkflow, AddWorkspaceFlow, BOXES_EVENT } from "./picker.js";
 import { sparkNode } from "./spark.js";
 import { HINTS_EVENT, loadHints, writeHints, applyTheme } from "./hints.js";
 import { watchSessionNotices } from "./session-notices.js";
+import { PhoneNoticesBlock, watchPhoneOpen } from "./phone-notices.js";
 import { ToolIconSprites, watchToolFolds } from "./tool-folds.js";
 import { watchPluginsPage } from "./plugins-page.js";
 import {
@@ -232,6 +233,7 @@ export function apply(ctx: ClientCtx) {
   watchTurnStatus(ctx);
   watchRunButtons(ctx);
   watchSessionNotices(ctx);
+  watchPhoneOpen(ctx);
   watchSessionSpinners(ctx);
   ensureSendButtonStyle();
   ensurePhoneStyle();
@@ -324,6 +326,7 @@ export function apply(ctx: ClientCtx) {
         <ReturnRecapSwitch />
         <SecondOpinionRow />
         <TestGateRow ctx={ctx} />
+        <PhoneNoticesBlock />
         <SpendGuardField />
         <ProxyFirstPartySwitch />
         <TerminalSyncSwitch />

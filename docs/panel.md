@@ -207,6 +207,37 @@ Both settings are box-wide, like the switches around them, so a second browser p
 
 Under 640 px wide the plugin's rows wrap instead of squeezing: an MCP server or skill name takes its own line with its buttons under it, a steer's text takes the card's width with Edit, Remove and Send now below, and an aside's question gets a second line. The cards above the composer stop at 45% of the screen and scroll. On a touch screen every button, tab, field and fold in the panel, the cards above the composer, the cost dialog and history search is at least 44 px tall, the size a finger needs. On/off switches keep dsh's own 36 by 20 size. Both live in one stylesheet, `src/client/phone-style.ts`, inside media queries a desktop window with a mouse never matches, so the desktop look does not change. The panel may grow to 640 px tall on a phone. History search, which opens on Ctrl+R, also has a button at the top of the Rewind tab on a touch screen. `tools/playwright/phone-layout.ts` checks the cost pill, the touch sizes, the panel's tabs and height, the MCP names, the stack's cap and the Rewind button at 360, 390 and 430 px, checks that a 600 px mouse window gets no touch sizes, and prints a desktop capture to diff.
 
+## Phone notices
+
+Session notices need a dsh tab open. **Phone notices** reach a phone or another computer with no tab open, through Web Push, a webhook, or both. The switch sits in Settings under Oh My Claude and is off until you turn it on.
+
+A notice goes out when a Claude turn finishes, or when a session stops for an approval, a question or a plan review. It waits first: one minute by default, set by **Wait before sending** (right away, 30 seconds, 1 minute or 5 minutes). Answer the prompt or send a new message inside that time and nothing goes out, so working at the desk does not buzz your phone. A subagent's finished turn sends nothing, since its parent is still working, but a subagent waiting for an approval, a question or a plan review does send one: the parent is blocked inside that subagent and raises nothing of its own. Pressing Stop sends nothing either. A notice carries the session's title, which dsh or Claude Code usually writes from your first message, what Claude is waiting for and, for an approval, the tool's name. Nothing else from the chat goes in it.
+
+**Notify this device** subscribes the browser you click it in to Web Push. The box sends each notice to that browser's push service (Apple, Google or Mozilla), encrypted so only the browser can read it; no account and no other app is needed. Tapping the notice opens the session. Only Apple's, Google's, Mozilla's and Microsoft's push services are accepted as a destination. Web Push needs dsh over HTTPS or on localhost, so a plain-HTTP address on the LAN cannot subscribe. On an iPhone or iPad, add dsh to the Home Screen first (Share, then Add to Home Screen), open it from there and subscribe inside it; Safari in a tab cannot take push notices. Delivery does not need the phone to reach the box, but opening the session from the notice does, so a dsh that only answers on your LAN opens only on the LAN or over your VPN.
+
+The **Devices** list shows every subscribed browser on the box, whichever browser you open Settings in, and **Delete** removes one. A device whose push service reports it gone is removed on the next notice.
+
+**Webhook URL** is optional: each notice is also posted there as JSON, for ntfy, Home Assistant, n8n or a script of your own.
+
+```json
+{
+  "source": "dsh-oh-my-claude",
+  "event": "approval",
+  "session": "<session id>",
+  "title": "<session title>",
+  "message": "Claude is waiting for your approval to run Bash.",
+  "tool": "Bash",
+  "click": "https://<your dsh>/?omc-open=<session id>",
+  "at": 1764100000000
+}
+```
+
+`event` is `finished`, `approval`, `question`, `plan` or `test`; `tool` is there only for an approval; `click` is the address of the browser that saved the form, and is null until a form is saved. For the ntfy app, use `https://ntfy.sh/<your-topic>?tpl=1&t={{.title}}&m={{.message}}`: ntfy fills the title and the message from the JSON, and the `Click` header the plugin also sends opens the session on a tap. Anyone who knows an ntfy.sh topic name can read it, so pick a long random one or run your own ntfy server.
+
+**Send a test** sends one notice through everything that is set up, ignoring the delay, and says what took it. Everything here is stored on the box in the plugin's state directory, readable by your account only: the webhook in `notify.json`, the devices in `push-devices.json` and the box's push key pair in `push-vapid.json`. Deleting `push-vapid.json` makes a new pair; each browser then needs **Stop notifying this device** and **Notify this device** again.
+
+There are no Allow or Deny buttons on the notice. An approval is answered in dsh's own dialog, which shows the whole command, once the notice has opened the session.
+
 ## Cost pill
 
 On every turn the adapter extracts `total_cost_usd`, `duration_ms`, `duration_api_ms`, `num_turns` and the token counts from Claude Code's `result` frame, and stores them in a per-session ring buffer (last 50 turns) on the adapter instance. Two of those are running totals for the life of the CLI process rather than the turn's own figures. The frame's schema says to read the latest result rather than sum across results. So the adapter stores the rise since the previous result for `total_cost_usd` and `duration_api_ms`. A figure below the last one is a total that started over with a new process or a `/clear`, and it counts whole. The token counts are the main agent loop's, so a Task subagent's tokens are in the cost but not in the token rows. A `GET /dsh-oh-my-claude/turns?session=<dsh session id>` route returns the list plus a session total, empty for an unknown session, 400 without `session`. The client fetches the route on mount and every 10 seconds while the tab is visible, renders nothing when the list is empty, and appends `$18.21 · $0.42 last` to dsh's footer stats row as a third pill after dsh's own two. Under 640 px it shows the session total alone and keeps its width while dsh's pills beside it shorten.
