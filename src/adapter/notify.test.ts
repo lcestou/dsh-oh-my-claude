@@ -192,4 +192,27 @@ const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
   // close() also stops the hub's heartbeat timer, which would keep this process alive.
   hub.close();
 }
+// A send that throws (a key file that cannot be written) is logged, never left unhandled.
+{
+  const logged: string[] = [];
+  const n = new Notifier({
+    dir: "/nonexistent",
+    hints: async () => ({ notifyOn: true, notifyDelayMs: 0 }),
+    send: async () => {
+      throw new Error("EACCES push-vapid.json");
+    },
+  });
+  let unhandled = false;
+  /** Marks any rejection nothing listened to while this block runs. */
+  const onUnhandled = () => {
+    unhandled = true;
+  };
+  process.on("unhandledRejection", onUnhandled);
+  n.schedule(req({ log: (_level, msg) => logged.push(msg) }));
+  await until(() => logged.length > 0);
+  await new Promise((r) => setTimeout(r, 20));
+  process.off("unhandledRejection", onUnhandled);
+  assert.equal(unhandled, false, "a failed send is not an unhandled rejection");
+  assert.match(logged[0] ?? "", /send failed: EACCES/);
+}
 console.log("notify ok");

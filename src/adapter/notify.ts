@@ -50,7 +50,8 @@ const TITLE_MAX = 120;
 const SEND_TIMEOUT_MS = 10_000;
 
 /** The notice for `event`, in the server's stored language. The tool name is a code token and is
- *  never translated; nothing from the chat itself is ever included. */
+ *  never translated. What leaves the box is the session title (dsh often writes it from the
+ *  first message) and this one event line; no message text or tool output is ever included. */
 export function noteFor(
   event: NotifyEvent,
   session: string | null,
@@ -249,7 +250,15 @@ export class Notifier {
       .hints()
       .then((h) => {
         if (h.notifyOn !== true || this.gen.get(req.sessionId) !== mine) return;
-        const timer = setTimeout(() => void this.fire(req, mine), notifyDelayIn(h.notifyDelayMs));
+        // A send that throws (a key file that cannot be written, say) is logged, not left to
+        // reject with nothing listening.
+        const timer = setTimeout(
+          () =>
+            void this.fire(req, mine).catch((e: Error) =>
+              req.log("warn", `phone notice: send failed: ${errorText(e)}`),
+            ),
+          notifyDelayIn(h.notifyDelayMs),
+        );
         // A pending notice must not keep a test process or a shutting-down dsh alive.
         timer.unref?.();
         this.timers.set(req.sessionId, timer);

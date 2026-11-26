@@ -24,7 +24,8 @@ export interface DeliveryReport {
     removed: number;
 }
 /** The notice for `event`, in the server's stored language. The tool name is a code token and is
- *  never translated; nothing from the chat itself is ever included. */
+ *  never translated. What leaves the box is the session title (dsh often writes it from the
+ *  first message) and this one event line; no message text or tool output is ever included. */
 export declare function noteFor(event: NotifyEvent, session: string | null, title: string | undefined, tool?: string): Note;
 /** The link a notice opens: the saved origin with the session the plugin's client opens on load,
  *  or null when no form was ever saved (the box cannot know the address a phone reaches it by). */

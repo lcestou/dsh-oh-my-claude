@@ -8,7 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
-- Phone notices. With the switch on in Settings, a finished turn, an approval, a question or a plan review reaches your phone or another computer with no dsh tab open, through Web Push (no app and no account, encrypted end to end) or a webhook such as ntfy, Home Assistant or n8n. A notice waits a minute by default and goes out only if you have not answered or sent a new message by then. Off by default.
+- Phone notices. With the switch on in Settings, a finished turn, an approval, a question or a plan review reaches your phone or another computer with no dsh tab open, through Web Push (no app and no account; the push service only sees ciphertext) or a webhook (plain JSON to the URL you set) such as ntfy, Home Assistant or n8n. A notice waits a minute by default and goes out only if you have not answered or sent a new message by then. Off by default.
 
 ### Changed
 
