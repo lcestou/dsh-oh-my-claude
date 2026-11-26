@@ -85,6 +85,8 @@ import { watchUltrathink } from "./ultrathink.js";
 import { watchRunButtons } from "./run-button.js";
 import { DraftRelay, StarterSlot } from "./cards.js";
 import { AsideBubble, IdleChip } from "./dock.js";
+import { TestGateCard } from "./test-gate-card.js";
+import { TestGateRow } from "./test-gate-settings.js";
 import { mountSelectionActions } from "./selection-actions.js";
 import { startBoxColours } from "./box-colour-swatch.js";
 export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
@@ -317,6 +319,7 @@ export function apply(ctx: ClientCtx) {
         <ContextSwitch ctx={ctx} />
         <EngineModeCard />
         <ReturnRecapSwitch />
+        <TestGateRow ctx={ctx} />
         <SpendGuardField />
         <ProxyFirstPartySwitch />
         <TerminalSyncSwitch />
@@ -405,6 +408,11 @@ export function apply(ctx: ClientCtx) {
   ctx.slots.inject("conversation.input.dock", () => {
     // The working line again, above the composer, while the turn header's is off screen or not
     // drawn. Lowest order of the dock so it sits nearest the chat, the way a status bar did.
+    // The test gate's run, right above the working line it explains.
+    ctx.slots.register(
+      { name: "conversation.input.dock", id: "claude-test-gate", order: 41 },
+      (props) => (props.sessionId ? <TestGateCard sessionId={props.sessionId} ctx={ctx} /> : null),
+    );
     ctx.slots.register(
       { name: "conversation.input.dock", id: "claude-dock-status", order: 42 },
       (props) => (props.sessionId ? <DockStatus sessionId={props.sessionId} ctx={ctx} /> : null),
