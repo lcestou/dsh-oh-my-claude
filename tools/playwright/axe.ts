@@ -1,13 +1,14 @@
 // Dev-only check: an axe-core WCAG 2.2 AA scan of the plugin's own elements in a Claude session,
 // in English and Chinese, light and dark, at desktop and phone width, with the cost dialog both
-// closed and open. dsh's own markup is left out: the scan includes only `[data-omc-*]` roots, so a
-// finding is always ours to fix.
+// closed and open, and with the ring popover open on a fabricated usage history. dsh's own markup
+// is left out: the scan includes only `[data-omc-*]` roots, so a finding is always ours to fix.
 //
 // axe-core is borrowed the way Playwright is: AXE_CORE names its `axe.min.js` (any `npm install
 // axe-core` folder), so neither is a dependency of the plugin. PLAYWRIGHT_ROOT names a project with
 // Playwright. Run it against a scratch dsh (DSH_ORIGIN) that has one Claude session with a turn in it.
 // Usage: AXE_CORE=<path>/axe.min.js bun tools/playwright/axe.ts <token> [session title]
 import { dshUrl, launch, type Page } from "./pw.js";
+import { routeUsage } from "./usage-fixture.js";
 
 const [token, sessionTitle] = process.argv.slice(2);
 const axeEnv = process.env.AXE_CORE;
@@ -21,6 +22,8 @@ const ROOTS = [
   "[data-omc-update-card]",
   "[data-omc-steer-card]",
   "[data-omc-turn-status]",
+  "[data-omc-usage-history]",
+  "[data-omc-usage-history-row]",
 ];
 /** WCAG 2.0 to 2.2, levels A and AA: what the ship rule asks for. */
 const TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
@@ -94,11 +97,15 @@ for (const locale of ["en-US", "zh-CN"])
         hasTouch: width < 500,
       });
       const p = await ctx.newPage();
+      // The ring popover's history comes from a fabricated usage reply, so every strip, the row
+      // for a series with no live window and the partial bars are on screen whatever the box's
+      // own history holds; the box's usage-history.json is never read or written.
+      await routeUsage(p, "full");
       await p.goto(dshUrl(token), { waitUntil: "load" });
       await p.waitForTimeout(2500);
       await openSession(p);
       const scene = `${locale} ${colorScheme} ${width}px`;
-      for (const state of ["closed", "dialog open"]) {
+      for (const state of ["closed", "dialog open", "ring open"]) {
         if (state === "dialog open") {
           const pill = p.locator("[data-omc-cost-pill]").first();
           if (!(await pill.count())) {
@@ -108,6 +115,21 @@ for (const locale of ["en-US", "zh-CN"])
           }
           await pill.evaluate((el) => el.click());
           await p.waitForTimeout(800);
+        }
+        if (state === "ring open") {
+          await p.keyboard.press("Escape");
+          const ring = p
+            .locator(
+              'button[aria-haspopup="dialog"]:has(> svg > circle + circle[stroke-dasharray])',
+            )
+            .first();
+          if (!(await ring.count())) {
+            console.log(`FAIL ${scene} ${state}: no context ring to open`);
+            failed++;
+            continue;
+          }
+          await ring.evaluate((el) => el.click());
+          await p.waitForTimeout(1500);
         }
         const { scanned, findings } = await scan(p);
         if (scanned.length === 0) {
@@ -121,6 +143,7 @@ for (const locale of ["en-US", "zh-CN"])
             findings.map((f) => `\n  ${f.id} (${f.impact}): ${f.targets.join(", ")}`).join(""),
         );
       }
+      await p.unrouteAll({ behavior: "ignoreErrors" });
       await ctx.close();
     }
 await b.close();

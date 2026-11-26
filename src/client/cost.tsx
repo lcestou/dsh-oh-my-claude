@@ -125,9 +125,9 @@ export const COST_DIALOG_CSS =
   "[data-omc-cost-title-label] svg{flex:none;width:14px;height:14px}" +
   "[data-omc-cost-title-value]{font-variant-numeric:tabular-nums}" +
   "[data-omc-cost-rule]{border-top:.5px solid var(--dsw-alias-border-l2);margin-bottom:10px}" +
-  "[data-omc-cost-details]{color:var(--dsw-alias-label-tertiary);grid-template-columns:minmax(76px,auto) minmax(0,1fr);gap:6px 16px;margin:0;display:grid}" +
+  "[data-omc-cost-details]{color:var(--omc-label-quiet);grid-template-columns:minmax(76px,auto) minmax(0,1fr);gap:6px 16px;margin:0;display:grid}" +
   "[data-omc-cost-details] dt,[data-omc-cost-details] dd{min-width:0;margin:0}" +
-  "[data-omc-cost-details] dd{color:var(--dsw-alias-label-secondary);font-variant-numeric:tabular-nums;text-align:right}" +
+  "[data-omc-cost-details] dd{color:var(--omc-label-value);font-variant-numeric:tabular-nums;text-align:right}" +
   // dsh's tooltip look (its bubble class is hashed, so the rules are copied onto our own hook,
   // on the same tokens): fixed, above the anchor, centred by the transform.
   "[data-omc-tip]{display:inline-flex;align-items:center;position:fixed;z-index:1100;width:max-content;max-width:50vw;padding:3px 7px;border-radius:var(--dsw-radius-sm);background:var(--dsw-alias-tooltip-bg);color:var(--dsw-static-neutral-bluish-00);font-size:13px;line-height:20px;white-space:pre-line;overflow-wrap:break-word;pointer-events:none;transform:translate(-50%,-100%);animation:omc-tip-in .15s var(--ds-ease-in-out,ease-in-out)}" +
@@ -138,7 +138,12 @@ export const COST_DIALOG_CSS =
   "[data-omc-cost-guard] label{display:inline-flex;align-items:center;gap:4px}" +
   "[data-omc-cost-guard] input{width:64px;font:inherit;color:inherit;background:var(--dsw-alias-bg-module-platform,rgba(128,128,128,.1));border:0;border-radius:6px;padding:2px 6px}" +
   "[data-omc-cost-guard] button{font:inherit;font-size:12px;color:inherit;background:transparent;border:1px solid var(--dsw-alias-border-l1);border-radius:999px;padding:2px 8px;cursor:pointer}" +
-  "[data-omc-cost-note]{flex-basis:100%;margin:4px 0 0;color:var(--dsw-alias-label-tertiary)}";
+  "[data-omc-cost-note]{flex-basis:100%;margin:4px 0 0;color:var(--omc-label-quiet)}" +
+  // Two labels that hold 4.5:1 on dsh's menu surface in both themes and keep the dark look as it
+  // was: dark keeps tertiary and secondary; light, where tertiary is 3.5:1, moves each up a step.
+  // dsh marks its dark theme on body, so the light values are the default and dark overrides.
+  "body{--omc-label-quiet:var(--dsw-alias-label-secondary);--omc-label-value:var(--dsw-alias-label-primary)}" +
+  "body[data-ds-dark-theme]{--omc-label-quiet:var(--dsw-alias-label-tertiary);--omc-label-value:var(--dsw-alias-label-secondary)}";
 
 let statusOnce: Promise<boolean> | undefined;
 
