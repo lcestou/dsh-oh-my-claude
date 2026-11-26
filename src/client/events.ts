@@ -149,6 +149,8 @@ export interface EventData {
   "permission-mode": PermissionModeState;
   /** An SSH box or an account was added, removed, logged in or out; readers fetch again. */
   boxes: Record<string, never>;
+  /** A phone-notice device or the webhook was added, removed or changed; readers fetch again. */
+  notify: Record<string, never>;
   ping: Record<string, never>;
 }
 
@@ -163,6 +165,7 @@ export const KINDS = [
   "new-session-default",
   "permission-mode",
   "boxes",
+  "notify",
   "ping",
 ] as const;
 
