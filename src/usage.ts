@@ -10,6 +10,8 @@ import type { PluginContext } from "./dsh.js";
 import z from "@deepseek-ai/schemastery";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createUsageHistory } from "./usage-history-store.js";
+import type { UsageHistory } from "./usage-history.js";
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const ROUTE = "/dsh-oh-my-claude/usage";
@@ -87,6 +89,9 @@ export type UsageReply =
       /** Set when the endpoint could not be read just now (rate limited, unreachable) and these are
        *  the last good figures, as of `fetchedAt`. */
       stale?: true;
+      /** This login's ended windows per series, added by the route, never by the reader, so the
+       *  memo on disk never holds it. See usage-history.ts. */
+      history?: UsageHistory;
     }
   | {
       ok: false;
@@ -655,6 +660,32 @@ export function registerUsageRoute(
   const defaultHome = options?.home;
   const boxFor = options?.boxFor;
   const read = createUsageReader(join(STATE_DIR, "usage-plan.json"));
+  // Each login's past windows, folded in from every fresh reply this route serves. Readings arrive
+  // only while some tab asks (the composer's limit check asks every minute while a Claude session
+  // is open), so a window used only while no tab was open ends with its last reading short of its
+  // real end; the history marks such a window `partial` rather than guessing.
+  // The usage memo is keyed by box, the history by login: after a login change on a box the memo
+  // can still hold the old login's windows for up to CACHE_MS. A reading is recorded only when it
+  // was fetched after the box's email last changed. Gets wrong: a login changed across a dsh
+  // restart within CACHE_MS, where the first email seen is already the new one.
+  const loginSince = new Map<string, { email: string; since: number }>();
+  /** Whether a reading fetched at `fetchedAt` on `box` can belong to `email`. */
+  const readSince = (box: string, email: string, fetchedAt: number): boolean => {
+    const seen = loginSince.get(box);
+    if (!seen) {
+      loginSince.set(box, { email, since: -1 });
+      return true;
+    }
+    if (seen.email !== email) loginSince.set(box, { email, since: Date.now() });
+    // Strict: a reading stamped in the very millisecond of the switch may still be the old one.
+    return fetchedAt > (loginSince.get(box)?.since ?? -1);
+  };
+  const historyFile = join(STATE_DIR, "usage-history.json");
+  const history = createUsageHistory(
+    () => readFile(historyFile, "utf8"),
+    // Owner-only, like the SSH tokens: the keys are login emails.
+    (value) => writeJson(historyFile, value, { mode: 0o600 }),
+  );
   // Breakdown answers are cached per box, and unlike the plan windows this cache is also written
   // to disk. The read is a `claude -p "/usage"` spawn, measured at 3.6 s on the author's box, and
   // an in-memory cache alone meant every dsh restart threw the answer away and the next person to
@@ -765,10 +796,21 @@ export function registerUsageRoute(
                 identity(box.home, box.sshHost),
                 options?.routed?.(provider ?? undefined).catch(() => false) ?? false,
               ]);
-              return send(
-                200,
-                reply.ok && routed ? { ...reply, ...who, routed: true } : { ...reply, ...who },
-              );
+              if (!reply.ok) return send(200, { ...reply, ...who });
+              const base = routed
+                ? { ...reply, ...who, routed: true as const }
+                : { ...reply, ...who };
+              // History is kept per login email, so two boxes on one account share it. A box whose
+              // CLI names no email (an API key, a login it cannot read) records nothing: a box path
+              // is not a login, and one box can change accounts under it. A stale reply is a
+              // reading already folded in. Routed or not, the windows are the login's.
+              if (!who.email) return send(200, base);
+              if (
+                !reply.stale &&
+                readSince(box.sshHost ? `ssh:${box.sshHost}` : realHome, who.email, reply.fetchedAt)
+              )
+                await history.record(who.email, reply.windows, reply.fetchedAt);
+              return send(200, { ...base, history: await history.view(who.email, Date.now()) });
             } catch (e) {
               log("warn", `usage route failed: ${errorText(e)}`);
               return send(500, { error: errorText(e) });

@@ -20,6 +20,7 @@ import * as updates from "./i18n/updates.js";
 import * as accounts from "./i18n/accounts.js";
 import * as boxColours from "./i18n/box-colours.js";
 import * as testGate from "./i18n/test-gate.js";
+import * as secondOpinion from "./i18n/second-opinion.js";
 
 /** The namespace this plugin registers under dsh's locale service. */
 export const LOCALE_NS = "oh-my-claude";
@@ -37,6 +38,7 @@ const OWN_EN = {
   ...accounts.en,
   ...boxColours.en,
   ...testGate.en,
+  ...secondOpinion.en,
 } as const;
 /** Every English string `t()` can answer with: the plugin's own, plus the English fallback for the
  *  dsh `common` words it borrows (used only when dsh has no locale service). */
@@ -57,6 +59,7 @@ export const ZH = {
   ...accounts.zh,
   ...boxColours.zh,
   ...testGate.zh,
+  ...secondOpinion.zh,
 } satisfies Record<keyof typeof OWN_EN, string>;
 
 /** Values for `{name}` placeholders. */

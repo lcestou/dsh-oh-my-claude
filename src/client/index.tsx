@@ -4,6 +4,7 @@
 // machines you add, each probed for claude version and login). Built into lib/client.js by
 // `bun run build`.
 import { NewSessionDefaultRow } from "./new-session-default.js";
+import { SecondOpinionCard, SecondOpinionRow } from "./second-opinion.js";
 import { installLocale, t, useLocale } from "./i18n.js";
 import { useEffect, useState } from "react";
 import {
@@ -26,6 +27,7 @@ import {
   revive,
 } from "./shared.js";
 import { ensureSendButtonStyle } from "./send-button.js";
+import { ensurePhoneStyle } from "./phone-style.js";
 import { themeSplitPatch, hasTheme } from "./theme.js";
 import { PluginUpdateBadge } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
@@ -232,6 +234,7 @@ export function apply(ctx: ClientCtx) {
   watchSessionNotices(ctx);
   watchSessionSpinners(ctx);
   ensureSendButtonStyle();
+  ensurePhoneStyle();
   watchUltrathink(ctx);
   watchToolFolds();
   watchPluginsPage(ctx);
@@ -319,6 +322,7 @@ export function apply(ctx: ClientCtx) {
         <ContextSwitch ctx={ctx} />
         <EngineModeCard />
         <ReturnRecapSwitch />
+        <SecondOpinionRow />
         <TestGateRow ctx={ctx} />
         <SpendGuardField />
         <ProxyFirstPartySwitch />
@@ -406,13 +410,27 @@ export function apply(ctx: ClientCtx) {
 
   // `/btw` answers dock above the composer beside dsh's todo and goal panels, at their width.
   ctx.slots.inject("conversation.input.dock", () => {
-    // The working line again, above the composer, while the turn header's is off screen or not
-    // drawn. Lowest order of the dock so it sits nearest the chat, the way a status bar did.
-    // The test gate's run, right above the working line it explains.
+    // Another model's review of the last turn's changes: the top of the plugin's own dock cards,
+    // nearest the turn. dsh's todo, goal and queue rows (0 to 20) and the touch selection row (-10)
+    // still draw above it.
     ctx.slots.register(
-      { name: "conversation.input.dock", id: "claude-test-gate", order: 41 },
+      { name: "conversation.input.dock", id: "claude-second-opinion", order: 41 },
+      (props) =>
+        props.sessionId ? (
+          <SecondOpinionCard
+            sessionId={props.sessionId}
+            inputActions={props.inputActions}
+            useInput={props.useInput}
+          />
+        ) : null,
+    );
+    // The working line again, above the composer, while the turn header's is off screen or not
+    // drawn, comes below; first the test gate's run, between the second opinion and that line.
+    ctx.slots.register(
+      { name: "conversation.input.dock", id: "claude-test-gate", order: 41.5 },
       (props) => (props.sessionId ? <TestGateCard sessionId={props.sessionId} ctx={ctx} /> : null),
     );
+    // The working line itself: just under those, the last of the plugin's cards before the composer.
     ctx.slots.register(
       { name: "conversation.input.dock", id: "claude-dock-status", order: 42 },
       (props) => (props.sessionId ? <DockStatus sessionId={props.sessionId} ctx={ctx} /> : null),

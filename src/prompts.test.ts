@@ -1,6 +1,6 @@
 // Offline self-check: bun src/prompts.test.ts. No CLI, no file, no network.
 import assert from "node:assert/strict";
-import { diffQuestion, reviewPrompt } from "./prompts.js";
+import { diffQuestion, reviewPrompt, secondOpinionSteer } from "./prompts.js";
 
 // diffQuestion: empty means the whole tree, non-empty names the path.
 {
@@ -38,5 +38,14 @@ import { diffQuestion, reviewPrompt } from "./prompts.js";
     "13 paths counted, boundary high",
   );
 }
+
+// secondOpinionSteer: the model named, each finding on its own line, a note without a location.
+assert.equal(
+  secondOpinionSteer("lutechi-llm", [
+    { kind: "bug", where: "a.ts:3", text: "Off by one." },
+    { kind: "note", where: "", text: "Odd." },
+  ]),
+  "A second model (lutechi-llm) reviewed the changes from your last turn and raised the points below. Check each one against the code. Fix the ones that hold, and say briefly why the others do not.\n\n- [bug] a.ts:3 Off by one.\n- [note] Odd.",
+);
 
 console.log("prompts ok");

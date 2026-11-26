@@ -90,6 +90,12 @@ async function mainCheckout(box: FsBox, dir: string, dotGit: string): Promise<st
   return basename(commonDir) === ".git" ? dirname(commonDir) : commonDir;
 }
 
+/** The root of the checkout `cwd` is in (a linked worktree's own root, not the main checkout's),
+ *  or `cwd` outside a repository. The CLI's workspace diff names files relative to this. */
+export async function checkoutRoot(box: FsBox, cwd: string): Promise<string> {
+  return (await checkoutOf(box, cwd))?.root ?? cwd;
+}
+
 /**
  * The directory that stands for `cwd`'s repository: the checkout's root for a subdirectory, and
  * the main checkout's root for a linked worktree, so every worktree of one repository answers the
