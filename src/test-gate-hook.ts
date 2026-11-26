@@ -6,6 +6,9 @@
 // a broken gate must never trap a turn.
 import { spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+
+/** How long a finished command's pipes get to drain before they are cut. */
+const DRAIN_MS = 300;
 import {
   GATE_MODES,
   TAIL_CHARS,
@@ -77,9 +80,21 @@ function runCommand(
     child.on("exit", (code) => {
       clearTimeout(timer);
       killGroup();
-      child.stdout.destroy();
-      child.stderr.destroy();
-      resolve({ code, timedOut, stopped, tail: tail.slice(-TAIL_CHARS) });
+      // Output written just before the exit can still be in the pipes: let both drain, but not
+      // wait on them for good, since a background child the command left holds them open.
+      let open = 2;
+      /** Settles once both pipes have ended or the grace has run out, whichever is first. */
+      const done = () => {
+        clearTimeout(grace);
+        child.stdout.destroy();
+        child.stderr.destroy();
+        resolve({ code, timedOut, stopped, tail: tail.slice(-TAIL_CHARS) });
+      };
+      const grace = setTimeout(done, DRAIN_MS);
+      for (const pipe of [child.stdout, child.stderr])
+        pipe.once("end", () => {
+          if (--open === 0) done();
+        });
     });
   });
 }

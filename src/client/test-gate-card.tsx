@@ -84,14 +84,18 @@ export function TestGateCard({ sessionId, ctx }: { sessionId: string; ctx: Clien
   const [late, setLate] = useState(false);
   useEffect(() => {
     let live = true;
+    // Once an event lands it is newer than the first read, which then must not write over it.
+    let heard = false;
     setRun(null);
     // The first read covers a tab opened mid-run; the event carries every write after it.
     fetch(`${ROUTE}/test-gate/run?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<{ run: TestGateRun | null }>(r))
-      .then((r) => live && setRun(r.run))
+      .then((r) => live && !heard && setRun(r.run))
       .catch(() => {});
     const off = subscribe("test-gate", (s, data) => {
-      if (s === sessionId) setRun(data);
+      if (s !== sessionId) return;
+      heard = true;
+      setRun(data);
     });
     return () => {
       live = false;

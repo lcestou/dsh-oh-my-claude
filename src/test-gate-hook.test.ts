@@ -43,4 +43,8 @@ const held = stop("echo broke; exit 1", {
   stop_hook_active: false,
 });
 assert.deepEqual([held.state, held.stdout], ["held", ""], "acceptEdits runs nothing");
+// A command that writes a lot and exits at once: the last line it wrote is what Claude most needs,
+// and it must still be in the tail after the pipes drain.
+const burst = stop("seq 1 200000; echo LAST-LINE-MARK; exit 1", full);
+assert.match(burst.stdout, /LAST-LINE-MARK/, "the end of a fast failure's output is kept");
 console.log("test-gate hook ok");
