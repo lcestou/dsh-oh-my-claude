@@ -1,5 +1,6 @@
-// The words the Changes tab's two controls send. One module because the server asks the question the
-// client labels, and because the review prompt is the one string a person reads before pressing send.
+// The words the Changes tab's two controls and the second-opinion card send. One module because the
+// server asks the question the client labels, and because each is a string a person reads before
+// pressing send.
 // Pure, no DOM, no React: src/client imports it the way tune.tsx imports ../permissions.js.
 
 /** What the Ask control asks. `path` empty means the whole working tree. Short on purpose: this is
@@ -22,3 +23,17 @@ export const reviewPrompt = (paths: readonly string[]): string => {
     ? `${head} ${paths.length} files changed.`
     : `${head} Files: ${paths.join(", ")}`;
 };
+
+/** One second-opinion finding as the card carries it (`Finding` in src/adapter/second-opinion.ts). */
+export interface OpinionFinding {
+  kind: "bug" | "risk" | "note";
+  where: string;
+  text: string;
+}
+
+/** What a second opinion's Send to Claude writes into the composer: the reviewing model named, then
+ *  one line per finding. Never sent by the plugin: the person reads it, edits it, sends it. */
+export const secondOpinionSteer = (model: string, findings: readonly OpinionFinding[]): string =>
+  `A second model (${model}) reviewed the changes from your last turn and raised the points below. Check each one against the code. Fix the ones that hold, and say briefly why the others do not.\n\n${findings
+    .map((f) => `- [${f.kind}] ${f.where ? `${f.where} ` : ""}${f.text}`)
+    .join("\n")}`;
