@@ -425,7 +425,17 @@ import {
   WATCH_LOOKBACK_BYTES,
 } from "./turn.js";
 import { subagentLinkOf } from "./wake-subagent.js";
+import { Notifier, type NotifyEvent } from "./notify.js";
 import { announcementOf } from "./seed.js";
+
+/** The box's one phone notifier. Module-level so every mount in this process shares its timers: a
+ *  session holds at most one pending notice whichever mount runs it. A plugin reload leaves the old
+ *  module's pending timers to fire once from the old code; they are unref'd and send at most one
+ *  notice each. */
+const notifier = new Notifier({
+  dir: STATE_DIR,
+  hints: () => readHints(join(STATE_DIR, "hints.json")),
+});
 
 /** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
 export class ClaudeCodeAdapter extends LlmAdapter {
@@ -784,6 +794,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         const uuid = randomUUID();
         if (proc.write(buildInput(text, [], uuid, this.composedFor(session?.id, text)))) {
           proc.sent.add(key);
+          if (session?.id) notifier.cancel(session.id);
           proc.steerPending = true;
           proc.forwarded += 1;
           record({ uuid, key, text, at: Date.now() });
@@ -3331,6 +3342,31 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     hub.publish({ kind: "awaiting", session: null, data: this.awaitingAll() });
   }
 
+  /** Hand a finished turn or an open prompt to the phone notifier, which sends it after the box's
+   *  delay unless the prompt with `requestId` was answered, or a prompt or steer went to the session,
+   *  by then. Does nothing while phone notices are off; the notifier reads the switch itself. */
+  private notifyLater(
+    sessionId: string,
+    event: Exclude<NotifyEvent, "test">,
+    requestId?: string,
+    tool?: string,
+  ): void {
+    if (!sessionId) return;
+    notifier.schedule({
+      sessionId,
+      event,
+      tool,
+      still: () => requestId === undefined || this.awaitingInput.get(sessionId)?.id === requestId,
+      title: () => {
+        const titles = this.ctx?.get?.("sessionTitle");
+        const session = this.ctx?.sessions?.get?.(asSessionId(sessionId));
+        return titles && session ? titles.get(session)?.title : undefined;
+      },
+      isChild: async () => (await this.subagentLink(sessionId)) !== undefined,
+      log: (level, msg) => this.log(level, msg),
+    });
+  }
+
   /** The asides body for one session to its streams, read from the session's mount. A publish
    *  does not re-arm hold timers (`touch: false`); only the card's own read does. */
   private publishAsides(sessionId: string): void {
@@ -5722,6 +5758,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (!proc.write(buildInput(body, images, uuid, this.composedFor(options.sessionId, body))))
       return false;
     proc.sent.add(key);
+    notifier.cancel(options.sessionId);
     return true;
   }
 
@@ -5804,6 +5841,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (prep.input === null || !proc.write(prep.input))
       throw new LlmError("claude process is not running", "PROVIDER_ERROR");
     proc.promptSentAt = Date.now();
+    notifier.cancel(cont.options.sessionId);
     // The guess was for the prompt that just went out; the result that follows brings a new one,
     // and only a frame after that result is stored (see `noteSuggestion`). Published at once: the
     // card's own read runs every 30 s while the stream is up, and the publish before the write
@@ -6312,6 +6350,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           data: this.turnsReply(options.sessionId),
         });
         void saveTurnRecords(this.stateDir, options.sessionId, buf);
+        // Stop pressed in dsh aborts the step, and the CLI still answers with a result: that is the
+        // person at the desk, not a turn to tell their phone about.
+        if (!options.signal?.aborted) this.notifyLater(options.sessionId, "finished");
         // The window this model actually runs at, asked once per model between turns so dsh's
         // context ring is right before anyone opens the breakdown. A model switched mid-session is
         // an id this process has not asked about, so the next result asks again for the model it
@@ -7443,6 +7484,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       since: Date.now(),
     });
     this.publishAwaiting();
+    this.notifyLater(options.sessionId, awaitKind, requestId, toolName);
     const signal = options.signal
       ? AbortSignal.any([options.signal, controller.signal])
       : controller.signal;
@@ -7512,6 +7554,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       since: Date.now(),
     });
     this.publishAwaiting();
+    this.notifyLater(options.sessionId, "question", requestId);
     const signal = options.signal
       ? AbortSignal.any([options.signal, controller.signal])
       : controller.signal;
