@@ -2,15 +2,15 @@
 // window, oldest on the left, its height the percent the window ended at. The bars are one control
 // (a slider over the windows) rather than one button each: twelve 10 px buttons would be twelve
 // tab stops and twelve targets under the 24 px minimum, where one strip is one of each.
-import { t } from "./i18n.js";
+import { activeLocale, t } from "./i18n.js";
 import { ACCENT, T } from "./shared.js";
 import { typicalPercent, type HistoryEnded, type UsageHistory } from "../usage-history.js";
 
 /** When a window ended, short: weekday and time inside the last six days, month and day beyond,
- *  in the reader's own locale like the reset line above it. */
+ *  in dsh's language like the reset line above it. */
 const endClock = (at: number, now = Date.now()): string =>
   new Date(at).toLocaleString(
-    undefined,
+    activeLocale(),
     now - at < 6 * 86_400_000
       ? { weekday: "short", hour: "numeric", minute: "2-digit" }
       : { month: "short", day: "numeric" },
