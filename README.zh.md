@@ -178,6 +178,7 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 38. 在输入框按 Ctrl+R 搜索之前输入过的提示词：范围可为本会话、本工作区或整台机器（Ctrl+S 或 Ctrl+↑/↓ 切换）。Enter 发送所选行，Tab 填入输入框，Esc 关闭。可在设置中关闭（「历史搜索」）。
 39. 输入框为空且没有任务运行时按两次 Esc，打开回溯标签页并选中最新一条提示词，与终端按两次 Esc 打开 /rewind 一致；回溯后该提示词会回到输入框，可修改后重新发送。可在设置中关闭（「编辑上一条提示词」）。这三个输入框按键也列在 dsh 的快捷键对话框里。
 40. 插件自带三个命令：`/btw <问题>` 向 Claude 提一个旁问，不加入对话；`/temporary` 让该会话不保留 Claude 的对话记录；`/ultracode` 开关 Claude Code 的 ultracode，无需重启进程。[Asides](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#asides)、[Temporary sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#temporary-sessions)、[Ultracode](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#ultracode)
+41. 测试门禁，默认关闭，在设置中按工作区开启：Claude 结束一轮前，插件先运行该工作区的测试命令；测试失败时 Claude 会继续修复，最多尝试你设定的次数。[Test gate](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#test-gate)
 
 一些你永远不必动的默认行为，比如工具结果中的密钥脱敏和挺过 CLI 自身的更新，见 [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)。
 
