@@ -17,8 +17,9 @@ const sessionRow = process.env.PW_SESSION ?? "";
 /** What went wrong, one line each; the run exits 1 when any. */
 const failed: string[] = [];
 
-/** Rewrites the side-questions reply to carry one waiting steer and one answered aside, so the
- *  cards draw on an idle session. The real reply's other fields pass through. */
+/** Rewrites the side-questions reply to carry three waiting steers, one held edit and one answered
+ *  aside, the stack the 45dvh cap exists for, so the cards draw on an idle session. The real
+ *  reply's other fields pass through. */
 async function fakeCards(p: Page): Promise<void> {
   const now = Date.now();
   await p.route("**/dsh-oh-my-claude/side-questions?*", async (route) => {
@@ -38,14 +39,12 @@ async function fakeCards(p: Page): Promise<void> {
           },
         ],
         steers: {
-          waiting: [
-            {
-              id: "omc-phone-steer",
-              text: "Also check the 360 px width and the context ring popover, then report back",
-              at: now - 5_000,
-            },
-          ],
-          held: [],
+          waiting: [1, 2, 3].map((n) => ({
+            id: `omc-phone-steer-${n}`,
+            text: `Steer ${n}: also check the 360 px width and the context ring popover, then report back`,
+            at: now - 5_000 * n,
+          })),
+          held: [{ id: "omc-phone-held", text: "A held edit waiting for its send" }],
         },
       },
     });
@@ -164,6 +163,8 @@ async function phone(b: Browser, width: number): Promise<void> {
   const s = await readSizes(p);
   console.log(width, JSON.stringify(s));
   if (s.pillClipped !== "false") failed.push(`${width}: cost pill figure clipped (${s.pillText})`);
+  // A check that found no steer buttons measured nothing; say so instead of passing.
+  if (s.steerButtons.trim() === "") failed.push(`${width}: no steer buttons drawn to measure`);
   for (const size of s.steerButtons.split(" ").filter(Boolean))
     if (Number(size.split("x")[1]) < 44) failed.push(`${width}: steer button ${size} under 44 px`);
   if (s.asideDismiss !== "none" && Number(s.asideDismiss.split("x")[1]) < 44)
