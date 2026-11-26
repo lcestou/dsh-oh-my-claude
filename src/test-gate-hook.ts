@@ -5,6 +5,7 @@
 // when the tests failed and tries remain. Exits 0 in every other case, including its own errors:
 // a broken gate must never trap a turn.
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import {
   GATE_MODES,
   TAIL_CHARS,
@@ -41,11 +42,16 @@ function runCommand(
     stdio: ["ignore", "pipe", "pipe"],
   });
   let tail = "";
-  const keep = (b: Buffer) => {
-    tail = (tail + b.toString("utf8")).slice(-TAIL_CHARS * 2);
+  /** Appends one stream's chunk through that stream's own decoder, so a character split across
+   *  two chunks is joined rather than turned into U+FFFD. */
+  const keeper = () => {
+    const decoder = new StringDecoder("utf8");
+    return (b: Buffer) => {
+      tail = (tail + decoder.write(b)).slice(-TAIL_CHARS * 2);
+    };
   };
-  child.stdout.on("data", keep);
-  child.stderr.on("data", keep);
+  child.stdout.on("data", keeper());
+  child.stderr.on("data", keeper());
   let timedOut = false;
   let stopped = false;
   const killGroup = () => {

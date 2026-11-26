@@ -8,7 +8,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
-- Test gate: switch it on for a workspace in Settings and save a test command, and before Claude ends a turn there with Full access the plugin runs it. While the tests fail Claude keeps fixing, up to three tries by default; a card above the composer shows the run and, when the tries run out, offers Rewind. Off by default.
+- Test gate: switch it on for a workspace in Settings and save a test command, and before Claude ends a turn there in Auto or Bypass mode the plugin runs it. While the tests fail Claude keeps fixing, up to three tries by default; a card above the composer shows the run and, when the tries run out, offers Rewind. Off by default.
 
 ### Changed
 

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { JsonValue } from "../dsh.js";
 import { testGateRoutes } from "./test-gate.js";
+import { setRemoteWorkspaces } from "../adapter/config.js";
 
 const root = mkdtempSync(join(tmpdir(), "omc-gate-routes-"));
 const stateDir = join(root, "state");
@@ -67,6 +68,21 @@ assert.equal(
   (await call("PUT", "/p/test-gate", { cwd: ws, config: { command: 1 } })).error !== undefined,
   true,
 );
+
+// A gate for a remote workspace would never run (the hook runs beside a local CLI): refused.
+setRemoteWorkspaces([
+  { name: "far", host: "nova", remoteCwd: "/srv/far", path: "/remote/far", workspaceId: "w-far" },
+]);
+assert.equal(
+  (
+    await call("PUT", "/p/test-gate", {
+      cwd: "/remote/far",
+      config: { enabled: true, command: "true", tries: 3, timeoutSec: 60 },
+    })
+  ).error,
+  "the test gate runs only for a local workspace",
+);
+setRemoteWorkspaces([]);
 
 assert.deepEqual(await call("GET", "/p/test-gate/run?session=s1"), { run: null });
 mkdirSync(join(stateDir, "test-gate"), { recursive: true });

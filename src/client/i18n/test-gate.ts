@@ -5,7 +5,7 @@
 export const en = {
   "testGate.title": "Test gate",
   "testGate.desc":
-    "Before Claude ends a turn in this workspace, run its tests. If they fail, Claude keeps fixing, up to the number of tries you set. Runs only with Full access. It catches mistakes; it does not stop Claude from changing the tests.",
+    "Before Claude ends a turn in this workspace, run its tests. If they fail, Claude keeps fixing, up to the number of tries you set. Runs only in Auto or Bypass mode. It catches mistakes; it does not stop Claude from changing the tests.",
   "testGate.workspace": "Workspace: {path}",
   "testGate.noSession": "Open a session in a workspace to set its test command.",
   "testGate.remote": "The test gate runs only for workspaces on this box.",
@@ -19,7 +19,7 @@ export const en = {
   "testGate.saved": "Saved. It applies from this workspace's next turn.",
   "testGate.saveFailed": "Could not save. Reload Settings and try again.",
   "testGate.held":
-    "Tests not run: the test gate runs only with Full access, where Claude runs commands without asking.",
+    "Tests not run: the test gate runs only in Auto or Bypass mode, where Claude runs commands without asking.",
   "testGate.running": "Running tests: {command}",
   "testGate.fixing": "Tests failed. Claude is fixing them ({attempt}/{tries}).",
   "testGate.passedOne": "Tests pass after 1 fix.",
@@ -37,7 +37,7 @@ export const en = {
 export const zh = {
   "testGate.title": "测试门禁",
   "testGate.desc":
-    "Claude 在此工作区结束一轮前先运行测试。测试失败时，Claude 会继续修复，最多尝试你设定的次数。仅在完全权限下运行。它用来发现错误，不能阻止 Claude 修改测试。",
+    "Claude 在此工作区结束一轮前先运行测试。测试失败时，Claude 会继续修复，最多尝试你设定的次数。仅在“自动”或“绕过”模式下运行。它用来发现错误，不能阻止 Claude 修改测试。",
   "testGate.workspace": "工作区：{path}",
   "testGate.noSession": "先在某个工作区打开会话，再设置它的测试命令。",
   "testGate.remote": "测试门禁只适用于本机上的工作区。",
@@ -49,7 +49,8 @@ export const zh = {
   "testGate.timeout": "运行超时",
   "testGate.saved": "已保存。从此工作区的下一轮开始生效。",
   "testGate.saveFailed": "保存失败，请重新打开设置后重试。",
-  "testGate.held": "未运行测试：测试门禁只在完全权限下运行，此时 Claude 无需询问即可运行命令。",
+  "testGate.held":
+    "未运行测试：测试门禁只在“自动”或“绕过”模式下运行，此时 Claude 无需询问即可运行命令。",
   "testGate.running": "正在运行测试：{command}",
   "testGate.fixing": "测试失败，Claude 正在修复（{attempt}/{tries}）。",
   "testGate.passedOne": "修复 1 次后测试通过。",
