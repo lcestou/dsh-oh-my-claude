@@ -9,6 +9,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 ### Added
 
 - The plan usage popover shows how earlier windows ended: a strip of bars under each 5-hour and weekly window with the typical figure, recorded per login on the box. Point at, tap or arrow through a bar for its date.
+- A second opinion on Claude's changes. Pick a model from dsh's other providers under Settings → Oh My Claude → Second opinion, and after each Claude turn that changes files a card above the composer offers that model's review of the turn's diff, with Send to Claude on each finding. Off by default; each review uses the picked provider's tokens.
 
 ### Changed
 

@@ -137,6 +137,7 @@ import { settingsRoutes } from "./routes/settings.js";
 import { statusRoutes } from "./routes/status.js";
 import { controlsRoutes } from "./routes/controls.js";
 import { tasksRoutes } from "./routes/tasks.js";
+import { secondOpinionRoutes } from "./routes/second-opinion.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
 /** This plugin's own key on globalThis, so a hot reload does not start a second heal sweep. */
@@ -2898,6 +2899,7 @@ export function registerSessionRoutes(
       settingsRoutes(routeCtx),
       statusRoutes(routeCtx),
       controlsRoutes(routeCtx),
+      secondOpinionRoutes(routeCtx),
     ];
     if (accounts)
       beforeBoxes.push(

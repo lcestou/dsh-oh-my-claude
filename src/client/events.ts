@@ -6,6 +6,7 @@ import type { FallbackRecord, LiveMode, LiveTask, SuggestionRow } from "../trans
 export type { LiveTask, SuggestionRow };
 import type { AwaitingRow } from "./notices.js";
 import { ROUTE, whenContextGone } from "./shared.js";
+import type { OpinionFinding } from "../prompts.js";
 
 /** `GET /live-turn` while a turn runs, every field optional because the body is `{}` once the turn
  *  has ended. The ages were computed when the server built the body; `polledAt` on the reader adds
@@ -128,6 +129,36 @@ export interface PermissionModeState {
   error?: string;
 }
 
+/** `GET /second-opinion` and its event: the card for the session's last turn (the server's
+ *  `OpinionReply` in src/adapter/second-opinion.ts, mirrored here as every other event body is). */
+export interface OpinionCardData {
+  card:
+    | { state: "ready"; at: number; files: string[] }
+    | { state: "running"; at: number; files: string[]; model: string; startedAt: number }
+    | {
+        state: "done";
+        at: number;
+        files: string[];
+        model: string;
+        findings: OpinionFinding[];
+        reviewed: number;
+        ms: number;
+      }
+    | {
+        state: "failed";
+        at: number;
+        files: string[];
+        model: string;
+        reason: "gone" | "timeout" | "error" | "empty";
+        detail?: string;
+      }
+    | null;
+}
+/** The saved second-opinion model, or null for off. */
+export interface OpinionSettingData {
+  setting: { provider: string; model: string; auto?: boolean } | null;
+}
+
 /** Each kind's body: what the matching GET route answers today, so a reader parses one shape
  *  whether it came from the stream or from its fallback fetch. `ping` is the heartbeat and has no
  *  readers. */
@@ -147,6 +178,10 @@ export interface EventData {
   /** The new-session default after a write from any tab; `{}` when it was cleared. */
   "new-session-default": { provider?: string; model?: string; effort?: string; all?: boolean };
   "permission-mode": PermissionModeState;
+  /** A session's second-opinion card; null when it has none. */
+  "second-opinion": OpinionCardData;
+  /** The second-opinion setting after a save from any tab; null when it is off. */
+  "second-opinion-setting": OpinionSettingData;
   /** An SSH box or an account was added, removed, logged in or out; readers fetch again. */
   boxes: Record<string, never>;
   ping: Record<string, never>;
@@ -162,6 +197,8 @@ export const KINDS = [
   "hints",
   "new-session-default",
   "permission-mode",
+  "second-opinion",
+  "second-opinion-setting",
   "boxes",
   "ping",
 ] as const;

@@ -1,4 +1,7 @@
 import { type FsBox } from "./remote-fs.js";
+/** The root of the checkout `cwd` is in (a linked worktree's own root, not the main checkout's),
+ *  or `cwd` outside a repository. The CLI's workspace diff names files relative to this. */
+export declare function checkoutRoot(box: FsBox, cwd: string): Promise<string>;
 /**
  * The directory that stands for `cwd`'s repository: the checkout's root for a subdirectory, and
  * the main checkout's root for a linked worktree, so every worktree of one repository answers the
