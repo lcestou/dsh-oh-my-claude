@@ -17,6 +17,8 @@ import {
 } from "./shared.js";
 import { type LimitLevel, limitFor, loginEndSoon } from "./limits.js";
 import { paceOf, WINDOW_MS } from "./pace.js";
+import { seriesOf, type UsageHistory } from "../usage-history.js";
+import { absentSeries, historyStrip, seriesLabel } from "./history-strip.js";
 import { sparkNode } from "./spark.js";
 import { HINTS_EVENT, loadHints } from "./hints.js";
 import { onBodyMutation, changedElements } from "./dom.js";
@@ -60,6 +62,8 @@ export type UsageReply =
       routed?: true;
       /** The endpoint could not be read just now: these are the last good figures, as of `fetchedAt`. */
       stale?: true;
+      /** This login's ended windows per series; absent from a server older than the history. */
+      history?: UsageHistory;
     }
   | { ok: false; error: string; windows?: undefined; host?: string; email?: string | null };
 /** "m*****@example.com on <host>" or whichever half is known; the usage is this box's login. */
@@ -87,14 +91,18 @@ const capClock = (at: number): string => {
   if (at - Date.now() >= 86_400_000) format.weekday = "short";
   return new Date(at).toLocaleString(undefined, format);
 };
-/** "in 2 h 10 min" inside a day, else weekday and time. */
+/** "in 2 h 10 min" inside a day, else weekday and time. The minutes are rounded before they are
+ *  split into hours, so 2 h 59 min 40 s reads "3 h 0 min", never "2 h 60 min". */
 export const resetText = (at: number | null): string => {
   if (at === null) return "";
   const ms = at - Date.now();
   if (ms <= 0) return t("main.usage.resetsNow");
   if (ms < 86_400_000) {
-    const h = Math.floor(ms / 3_600_000);
-    const m = Math.round((ms % 3_600_000) / 60_000);
+    const minutes = Math.round(ms / 60_000);
+    // Under half a minute left rounds to 0: say "now" rather than "in 0 min".
+    if (minutes === 0) return t("main.usage.resetsNow");
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
     return h ? t("main.usage.resetsInH", { h, m }) : t("main.usage.resetsInM", { m });
   }
   return t("main.usage.resetsAt", {
@@ -409,6 +417,8 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     block.append(p);
     return;
   }
+  // Series a live row drew its strip under, so a strip whose window is absent now still shows below.
+  const drawn = new Set<string>();
   for (const w of reply.windows) {
     // Label and reset on the left, percent on the right, a thin bar under both: the same shape
     // dsh draws for the context meter below, so the two sections read as one panel.
@@ -456,7 +466,34 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
       paceLine.style.cssText = `grid-column:1 / -1;color:${pace.kind === "cap" ? T.warn : T.faint};font-size:11px;line-height:16px`;
       usageRow.append(paceLine);
     }
+    drawn.add(seriesOf(w));
+    const strip = historyStrip(windowLabel(w), reply.history?.[seriesOf(w)] ?? []);
+    if (strip) usageRow.append(strip);
     block.append(usageRow);
+  }
+  // A series with ended windows and no live row (the 5-hour window while idle, a model row the API
+  // dropped): its name alone, then its strip, after the live rows.
+  for (const series of absentSeries(reply.history ?? {}, drawn)) {
+    const strip = historyStrip(seriesLabel(series), reply.history?.[series] ?? []);
+    if (!strip) continue;
+    const row = document.createElement("div");
+    row.setAttribute("data-omc-usage-history-row", series);
+    row.style.cssText = "display:grid;padding:3px 0";
+    const name = document.createElement("span");
+    name.textContent = seriesLabel(series);
+    name.style.cssText = `color:${T.text};font-weight:500`;
+    row.append(name, strip);
+    block.append(row);
+  }
+  // Recording has begun and no window has ended since: one line, so the space under the bars reads
+  // as "nothing yet" rather than as broken. A server older than the history sends none.
+  const series = Object.values(reply.history ?? {});
+  if (series.length > 0 && series.every((list) => list.length === 0)) {
+    const p = document.createElement("div");
+    p.setAttribute("data-omc-usage-history-empty", "");
+    p.textContent = t("main.usage.historyEmpty");
+    p.style.cssText = `color:${T.quiet};font-size:11px;line-height:16px;padding-top:3px`;
+    block.append(p);
   }
   if (reply.windows.length === 0) {
     const p = document.createElement("div");
@@ -577,6 +614,8 @@ export function watchContextMeter(ctx: ClientCtx) {
         block.style.paddingBottom = "0";
         block.style.marginBottom = "0";
       });
+    // Read once per open: the popover is rebuilt each time it opens, and while it is on screen
+    // nothing else changes these figures or the history (a new reading lands on the next open).
     loadUsage(provider).then(
       (reply) => {
         const who = whose(reply);

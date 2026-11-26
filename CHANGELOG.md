@@ -8,10 +8,12 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Added
 
+- The plan usage popover shows how earlier windows ended: a strip of bars under each 5-hour and weekly window with the typical figure, recorded per login on the box. Point at, tap or arrow through a bar for its date.
 - A second opinion on Claude's changes. Pick a model from dsh's other providers under Settings → Oh My Claude → Second opinion, and after each Claude turn that changes files a card above the composer offers that model's review of the turn's diff, with Send to Claude on each finding. Off by default; each review uses the picked provider's tokens.
 
 ### Changed
 
+- On a phone, the plugin's buttons, tabs and fields are big enough to tap, MCP server and skill rows wrap so names stay readable, the panel grows taller, and the cost pill shows the session total instead of a cut-off figure. History search, which needs Ctrl+R, can be opened from the Rewind tab on a touch screen. The desktop look is unchanged.
 - When dsh restarts a Claude session with `--resume`, a tool call a hook held back in the last session no longer runs on its own. Claude Code 2.1.328 started running such calls on resume; the plugin now switches that off for every Claude it starts, here and over SSH, since a restart is not someone choosing to carry on.
 - In plan mode, Claude can now call dsh 0.2.3's `list_session` and `list_workspace`, which only list session and workspace names.
 - With reduced motion turned on in the system, the Claude Code update card's closing bar no longer animates. The card still closes after ten seconds, and hovering or focusing it still holds it open.
@@ -19,6 +21,8 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Fixed
 
+- The usage popover no longer says a window resets "in 2 h 60 min"; minutes that round up to the hour carry into it.
+- The cost dialog's labels and footnote read at WCAG AA contrast in light mode; dark mode looks as it did.
 - Rebuilding a Claude transcript from dsh's log no longer leaves every older copy behind. Each rebuild moved the previous transcript aside as `<id>.jsonl.replaced-<time>` and kept it forever; now the two newest copies of that transcript stay and older ones are deleted.
 - The cost pill now follows a login change made in Boxes, Accounts or another tab, switching between plan and API pricing without a page refresh.
 - Tighter trust edges between sessions, servers and boxes. A session opened with `open_session` now starts with a line saying which session sent its first message, as `prompt_session` already did, so it no longer reads as typed by you. An MCP server's sign-in link opens only when it is an http or https page. The tool bridge compares its key in constant time. Replies from another box are read up to 16 MB and refused past that. An SSH box's Claude login token now reaches the box on the connection's input instead of its command line, so it no longer shows in `ps` on either machine.

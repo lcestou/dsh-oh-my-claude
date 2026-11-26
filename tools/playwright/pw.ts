@@ -59,6 +59,8 @@ export type Page = {
   screenshot(how: { path: string; clip?: Box; fullPage?: boolean }): Promise<void>;
   setViewportSize(size: Size): Promise<void>;
   keyboard: { press(key: string): Promise<void>; type(text: string): Promise<void> };
+  /** A finger tap at page coordinates; only in a context opened with `hasTouch`. */
+  touchscreen: { tap(x: number, y: number): Promise<void> };
   on(event: "console", handler: (message: { text(): string }) => void): void;
   /** Every request the page makes; a counter check reads `url()` and `method()` off each one. */
   on(event: "request", handler: (request: { url(): string; method(): string }) => void): void;
@@ -66,7 +68,7 @@ export type Page = {
   url(): string;
   /** Answer one of the page's requests from the check: the handler may fetch the real reply and
    *  fulfil an edited copy, which is how a check shows a state the box is not in. */
-  route(url: string, handler: (route: Route) => Promise<void>): Promise<void>;
+  route(url: string | RegExp, handler: (route: Route) => Promise<void>): Promise<void>;
   /** Drop every route handler before the context closes, so a reply in flight does not throw. */
   unrouteAll(how: { behavior: "ignoreErrors" }): Promise<void>;
 };
