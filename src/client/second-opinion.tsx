@@ -74,6 +74,8 @@ export function SecondOpinionCard({
   const draft = useInput?.((s) => s.draft) ?? "";
   useEffect(() => {
     let live = true;
+    // A dock reused for another session must not show the last one's card while this one loads.
+    setCard(null);
     // Read once on mount, then follow the stream: every change to the card is published.
     fetch(`${ROUTE}/second-opinion?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<OpinionCardData>(r))

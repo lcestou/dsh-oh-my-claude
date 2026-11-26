@@ -17,10 +17,19 @@ const route = secondOpinionRoutes({
   // SAFETY: the group reads only `llm.listProviders` and `llm.listModels` off the context
   ctx: {
     llm: {
-      listProviders: () => [{ id: "claude-code" }, { id: "local", name: "Local" }],
-      // Claude's mount lists a model too, so only the provider filter keeps it out.
-      listModels: async (p: string) =>
-        p === "local" ? [{ id: "m1", name: "Model 1" }] : [{ id: "opus", name: "Opus" }],
+      listProviders: () => [
+        { id: "claude-code" },
+        { id: "local", name: "Local" },
+        { id: "hung", name: "Hung" },
+      ],
+      // Claude's mount lists a model too, so only the provider filter keeps it out. `hung` never
+      // answers, and the row must still come back without it.
+      listModels: (p: string) =>
+        p === "hung"
+          ? new Promise(() => {})
+          : Promise.resolve(
+              p === "local" ? [{ id: "m1", name: "Model 1" }] : [{ id: "opus", name: "Opus" }],
+            ),
     },
   } as never,
 });
@@ -42,7 +51,7 @@ assert.equal(answer.status, 409);
 await hit("POST", "/dsh-oh-my-claude/second-opinion/run", {});
 assert.equal(answer.status, 400, "a body without a session");
 
-// The model list leaves out Claude's own mounts.
+// The model list leaves out Claude's own mounts, and a provider that never answers.
 await hit("GET", "/dsh-oh-my-claude/second-opinion/setting");
 assert.deepEqual(answer.value, {
   setting: null,

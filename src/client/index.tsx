@@ -405,8 +405,6 @@ export function apply(ctx: ClientCtx) {
 
   // `/btw` answers dock above the composer beside dsh's todo and goal panels, at their width.
   ctx.slots.inject("conversation.input.dock", () => {
-    // The working line again, above the composer, while the turn header's is off screen or not
-    // drawn. Lowest order of the dock so it sits nearest the chat, the way a status bar did.
     // Another model's review of the last turn's changes: the top of the plugin's own dock cards,
     // nearest the turn. dsh's todo, goal and queue rows (0 to 20) and the touch selection row (-10)
     // still draw above it.
@@ -421,6 +419,8 @@ export function apply(ctx: ClientCtx) {
           />
         ) : null,
     );
+    // The working line again, above the composer, while the turn header's is off screen or not
+    // drawn: just under the second opinion, the last of the plugin's cards before the composer.
     ctx.slots.register(
       { name: "conversation.input.dock", id: "claude-dock-status", order: 42 },
       (props) => (props.sessionId ? <DockStatus sessionId={props.sessionId} ctx={ctx} /> : null),

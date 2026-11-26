@@ -84,8 +84,8 @@ export declare function treeMarks(diff: WorkspaceDiff, texts: ReadonlyMap<string
  *  turn committed or reverted is gone from `after` and is not reviewed, and a file the person edited
  *  by hand between the snapshot and the turn's end counts as the turn's. */
 export declare function changedPaths(before: TreeMarks | undefined, after: TreeMarks): string[];
-/** The user message the reviewer reads: the request, then each changed file whole, in diff order,
- *  until the cap. The first file always goes, cut at the cap if it alone is over, because a review
+/** The user message the reviewer reads: the request, then each changed file in diff order until
+ *  the cap: a tracked file as its diff hunks, a new file whole. The first file always goes, cut at the cap if it alone is over, because a review
  *  with no diff in it is worthless. `reviewed` counts the files that went in. */
 export declare function reviewInput(request: string, diff: WorkspaceDiff, paths: readonly string[], texts: ReadonlyMap<string, string>): {
     text: string;

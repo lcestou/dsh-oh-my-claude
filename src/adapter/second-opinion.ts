@@ -126,8 +126,8 @@ export function changedPaths(before: TreeMarks | undefined, after: TreeMarks): s
   return [...after].filter(([path, mark]) => before.get(path) !== mark).map(([path]) => path);
 }
 
-/** The user message the reviewer reads: the request, then each changed file whole, in diff order,
- *  until the cap. The first file always goes, cut at the cap if it alone is over, because a review
+/** The user message the reviewer reads: the request, then each changed file in diff order until
+ *  the cap: a tracked file as its diff hunks, a new file whole. The first file always goes, cut at the cap if it alone is over, because a review
  *  with no diff in it is worthless. `reviewed` counts the files that went in. */
 export function reviewInput(
   request: string,
