@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Added
+
+- A second opinion on Claude's changes. Pick a model from dsh's other providers under Settings → Oh My Claude → Second opinion, and after each Claude turn that changes files a card above the composer offers that model's review of the turn's diff, with Send to Claude on each finding. Off by default; each review uses the picked provider's tokens.
+
 ### Changed
 
 - When dsh restarts a Claude session with `--resume`, a tool call a hook held back in the last session no longer runs on its own. Claude Code 2.1.328 started running such calls on resume; the plugin now switches that off for every Claude it starts, here and over SSH, since a restart is not someone choosing to carry on.
