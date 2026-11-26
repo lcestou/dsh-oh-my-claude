@@ -499,8 +499,10 @@ export function SteerCard({
             data-omc-steer-relayed={s.relayed ? "" : undefined}
             style={{ padding: "4px 0" }}
           >
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
+            {/* On a phone the text takes the full line and Edit, Remove and Send now wrap under
+                it (phone-style.ts); beside 44 px buttons it kept about 130 px at 390. */}
+            <div data-omc-wrap="" style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+              <div data-omc-wrap-lead="" style={{ flex: 1, minWidth: 0 }}>
                 <SteerAttachments items={s.attachments} />
                 <span
                   style={{
