@@ -96,12 +96,16 @@ export const isOpenKey = (e: KeyboardEvent): boolean =>
 /** Puts the keyboard back in dsh's composer once the card closes. */
 const focusComposer = () => document.querySelector<HTMLElement>("[data-composer-input]")?.focus();
 
+/** The window event that opens the history card for the session named in its `detail`: the
+ *  Rewind tab's touch-only button, since a phone has no Ctrl+R. */
+export const OPEN_HISTORY_EVENT = "omc:open-history";
+
 /**
  * Whether the history card is open for one Claude session's composer, and the setter. Ctrl+R in
- * the composer opens it; the card itself closes it. Off with the `historySearchOff` hint, and
- * inert without the composer's `setDraft`, since the card could then do nothing with a pick. A
- * session switch closes it. Lives apart from the card so the dock, which draws nothing while it
- * has no cards, can see that this one wants drawing.
+ * the composer opens it, and so does OPEN_HISTORY_EVENT; the card itself closes it. Off with the
+ * `historySearchOff` hint, and inert without the composer's `setDraft`, since the card could then
+ * do nothing with a pick. A session switch closes it. Lives apart from the card so the dock,
+ * which draws nothing while it has no cards, can see that this one wants drawing.
  */
 export function useHistoryOpen({
   sessionId,
@@ -124,8 +128,18 @@ export function useHistoryOpen({
       e.stopPropagation();
       setOpen(true);
     };
+    /** Opens this session's card only: the Rewind button sends the event with the session id it
+     *  targets, and another session's dock hears it too. */
+    const onOpen = (e: Event) => {
+      if (e instanceof CustomEvent && e.detail === sessionId && isClaudeSession(ctx, sessionId))
+        setOpen(true);
+    };
     document.addEventListener("keydown", onKey, true);
-    return () => document.removeEventListener("keydown", onKey, true);
+    window.addEventListener(OPEN_HISTORY_EVENT, onOpen);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener(OPEN_HISTORY_EVENT, onOpen);
+    };
   }, [off, ctx, sessionId, setDraft]);
   return [open, setOpen];
 }
@@ -371,7 +385,8 @@ export function HistorySearch({
           ))
         )}
       </div>
-      <div style={{ ...meta, whiteSpace: "normal" }} aria-hidden="true">
+      {/* Keyboard keys only: phone-style.ts hides the line on a touch screen. */}
+      <div data-omc-history-keys="" style={{ ...meta, whiteSpace: "normal" }} aria-hidden="true">
         {t("main.history.keys")}
       </div>
       {error && <span style={{ ...meta, color: T.err }}>{error}</span>}
