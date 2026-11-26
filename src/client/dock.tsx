@@ -418,7 +418,9 @@ export function AsideBubble({
   const newest = shown[shown.length - 1]?.id;
 
   return (
-    <div {...{ [DOCK_ATTR]: "1" }} style={DOCK_CARD}>
+    // data-omc-dock-stack: on a phone the whole stack stops at 45% of the screen and scrolls
+    // (phone-style.ts). Not DOCK_ATTR, which the selection's floating Ask panel also carries.
+    <div {...{ [DOCK_ATTR]: "1" }} data-omc-dock-stack="" style={DOCK_CARD}>
       {/* First: Ctrl+R's search card sits right on the composer, where its rows land. */}
       {inputActions && (
         <HistorySearch
@@ -514,6 +516,7 @@ export function AsideBubble({
                 type="button"
                 aria-expanded={open}
                 data-omc-aside-toggle={it.id}
+                data-omc-wrap=""
                 onClick={() => toggle(it.id)}
                 style={{ ...HEADER_TOGGLE, padding: "6px 0 6px 8px" }}
               >
@@ -528,8 +531,10 @@ export function AsideBubble({
                 >
                   {t("main.aside.title")}
                 </span>
-                {/* Question rides the bar, truncated, so a collapsed card still says what it asked. */}
+                {/* Question rides the bar, truncated, so a collapsed card still says what it asked.
+                    On a phone it drops to a second line of its own, two lines at most. */}
                 <span
+                  data-omc-wrap-tail=""
                   style={{
                     color: T.muted,
                     fontSize: 12,
