@@ -26,6 +26,7 @@ import {
   revive,
 } from "./shared.js";
 import { ensureSendButtonStyle } from "./send-button.js";
+import { ensurePhoneStyle } from "./phone-style.js";
 import { themeSplitPatch, hasTheme } from "./theme.js";
 import { PluginUpdateBadge } from "./update-pill.js";
 import { ReportBlock } from "./report.js";
@@ -230,6 +231,7 @@ export function apply(ctx: ClientCtx) {
   watchSessionNotices(ctx);
   watchSessionSpinners(ctx);
   ensureSendButtonStyle();
+  ensurePhoneStyle();
   watchUltrathink(ctx);
   watchToolFolds();
   watchPluginsPage(ctx);

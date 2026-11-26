@@ -106,7 +106,9 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   const [card, setCard] = useState<HTMLElement | null>(null);
   // Phone sheet (fallback only): fixed, above the control, wherever the composer sits.
   const [above, setAbove] = useState(0);
-  const maxHeight = useFitAbove(panelRef, 400, open);
+  // A phone gets up to 640 px, which is all the room above the composer on an 844 px screen: its
+  // tab strip takes three 44 px rows, and under the 400 px desktop cap the body kept about 300.
+  const maxHeight = useFitAbove(panelRef, narrow ? 640 : 400, open);
   useHeightEase(panelRef, open);
 
   // dsh's chat width handles sit at the edges of the conversation column, outside this panel's

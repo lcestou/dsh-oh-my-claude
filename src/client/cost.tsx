@@ -17,6 +17,7 @@ import {
   type ClientCtx,
   openSessionId,
   numberOr,
+  useNarrow,
 } from "./shared.js";
 import { pollEvery, subscribe, type TurnRecord, type TurnsReply } from "./events.js";
 import { paintSpeed, tokensPerSecond } from "./speed.js";
@@ -325,7 +326,16 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   // Money is Claude's turns only: a turn a router answered is not priced (`TurnRecord.via`).
   const total = turns.reduce((s, r) => s + priced(r), 0);
   const last = turns[turns.length - 1];
-  const text = mine && !costOff && total > 0 && last ? costText(total, priced(last)) : "";
+  // A phone's stats row has room for one figure, so under 640 px the pill shows the session total
+  // alone; the last turn stays in its aria-label and in the dialog's Last turn row. The full text
+  // was cut to "$0.0…" at 390 px.
+  const narrow = useNarrow();
+  const text =
+    mine && !costOff && total > 0 && last
+      ? narrow
+        ? fmtCost(total)
+        : costText(total, priced(last))
+      : "";
   // Past the line the pill turns orange and the tooltip leads with the fact; every wording says
   // API-rate, since a subscription login is not billed by this figure.
   const over = mine && total > 0 && line !== undefined && total >= line;

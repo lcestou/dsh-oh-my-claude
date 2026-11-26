@@ -12,6 +12,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ### Changed
 
+- On a phone, the plugin's buttons, tabs and fields are big enough to tap, MCP server and skill rows wrap so names stay readable, the panel grows taller, and the cost pill shows the session total instead of a cut-off figure. History search, which needs Ctrl+R, can be opened from the Rewind tab on a touch screen. The desktop look is unchanged.
 - When dsh restarts a Claude session with `--resume`, a tool call a hook held back in the last session no longer runs on its own. Claude Code 2.1.328 started running such calls on resume; the plugin now switches that off for every Claude it starts, here and over SSH, since a restart is not someone choosing to carry on.
 - In plan mode, Claude can now call dsh 0.2.3's `list_session` and `list_workspace`, which only list session and workspace names.
 - With reduced motion turned on in the system, the Claude Code update card's closing bar no longer animates. The card still closes after ten seconds, and hovering or focusing it still holds it open.
