@@ -15,7 +15,7 @@ Object.assign(globalThis, {
     });
   },
 });
-const { subscriptionStatus } = await import("./cost.js");
+const { newestOnly, subscriptionStatus } = await import("./cost.js");
 const { BOXES_EVENT } = await import("./picker.js");
 
 assert.equal(await subscriptionStatus(), true);
@@ -25,4 +25,23 @@ method = "api-key";
 win.dispatchEvent(new Event(BOXES_EVENT));
 assert.equal(await subscriptionStatus(), false, "a login change is read again");
 assert.equal(calls, 2);
+// Two overlapping reads: the older one answers last and must not win.
+{
+  const seen: string[] = [];
+  const show = newestOnly<string>((v) => seen.push(v));
+  /** A promise and the function that settles it, so the test picks the order replies land in. */
+  const deferred = () => {
+    let settle!: (v: string) => void;
+    const promise = new Promise<string>((r) => (settle = r));
+    return { promise, settle };
+  };
+  const first = deferred();
+  const second = deferred();
+  show(first.promise);
+  show(second.promise);
+  second.settle("api-key");
+  first.settle("claude.ai");
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(seen, ["api-key"], "the stale reply is dropped");
+}
 console.log("cost ok");
