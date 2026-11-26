@@ -10,6 +10,7 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 - The plan usage popover shows how earlier windows ended: a strip of bars under each 5-hour and weekly window with the typical figure, recorded per login on the box. Point at, tap or arrow through a bar for its date.
 - A second opinion on Claude's changes. Pick a model from dsh's other providers under Settings → Oh My Claude → Second opinion, and after each Claude turn that changes files a card above the composer offers that model's review of the turn's diff, with Send to Claude on each finding. Off by default; each review uses the picked provider's tokens.
+- Test gate: switch it on for a workspace in Settings and save a test command, and before Claude ends a turn there in Auto or Bypass mode the plugin runs it. While the tests fail Claude keeps fixing, up to three tries by default; a card above the composer shows the run and, when the tries run out, offers Rewind. Off by default.
 
 ### Changed
 

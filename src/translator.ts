@@ -14,6 +14,7 @@ import type { JsonValue } from "./dsh.js";
 import { OWN_TOOL_NAMES } from "./mcp-config.js";
 import { pluginErrorsOf, type PluginLoadError } from "./plugins.js";
 import { serverIsChinese, serverText, type ServerKey } from "./locale.js";
+import { gateNoteOf } from "./test-gate.js";
 
 // ---------------------------------------------------------------------------
 // stream-json → dsh chunks (moved from src/adapter.ts)
@@ -1380,6 +1381,27 @@ export class Translator {
       case "user": {
         // Text the CLI wrote itself carries no tool result: nothing to draw, and no call answered.
         const content = event.message?.content ?? [];
+        // The test gate's block reason, which the CLI hands Claude as user text: one line in the
+        // turn where Claude goes back to work. Any other Stop hook's feedback stays unshown. The
+        // CLI sends that text as a plain string (2.1.332), not as a block array, so both shapes
+        // are read before the array-only path below.
+        const first = Array.isArray(content) ? content[0] : undefined;
+        const text =
+          typeof content === "string"
+            ? content
+            : first?.type === "text" && typeof first.text === "string"
+              ? first.text
+              : undefined;
+        const gate =
+          event.isSynthetic === true && text !== undefined ? gateNoteOf(text) : undefined;
+        if (gate)
+          return this.wholeBlock(
+            "reasoning",
+            serverText("testGateFixing", {
+              attempt: String(gate.attempt),
+              tries: String(gate.tries),
+            }),
+          );
         if (!Array.isArray(content)) return [];
         return this.toolResults(
           content,

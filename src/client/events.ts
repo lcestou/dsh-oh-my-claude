@@ -3,6 +3,7 @@
 // the matching GET route answers. `streamUp()` lets each fallback timer slow to 30 s while the
 // stream is alive, and `pollEvery()` is the period they ask for.
 import type { FallbackRecord, LiveMode, LiveTask, SuggestionRow } from "../translator.js";
+import type { TestGateRun } from "../test-gate.js";
 export type { LiveTask, SuggestionRow };
 import type { AwaitingRow } from "./notices.js";
 import { ROUTE, whenContextGone } from "./shared.js";
@@ -178,6 +179,10 @@ export interface EventData {
   /** The new-session default after a write from any tab; `{}` when it was cleared. */
   "new-session-default": { provider?: string; model?: string; effort?: string; all?: boolean };
   "permission-mode": PermissionModeState;
+  /** A session's latest test gate run, as the hook script wrote it. */
+  "test-gate": TestGateRun;
+  /** A workspace's gate was saved or cleared from any tab; readers fetch it again. */
+  "test-gate-config": { cwd: string };
   /** A session's second-opinion card; null when it has none. */
   "second-opinion": OpinionCardData;
   /** The second-opinion setting after a save from any tab; null when it is off. */
@@ -197,6 +202,8 @@ export const KINDS = [
   "hints",
   "new-session-default",
   "permission-mode",
+  "test-gate",
+  "test-gate-config",
   "second-opinion",
   "second-opinion-setting",
   "boxes",

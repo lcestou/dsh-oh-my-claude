@@ -19,6 +19,7 @@ import * as picker from "./i18n/picker.js";
 import * as updates from "./i18n/updates.js";
 import * as accounts from "./i18n/accounts.js";
 import * as boxColours from "./i18n/box-colours.js";
+import * as testGate from "./i18n/test-gate.js";
 import * as secondOpinion from "./i18n/second-opinion.js";
 
 /** The namespace this plugin registers under dsh's locale service. */
@@ -36,6 +37,7 @@ const OWN_EN = {
   ...updates.en,
   ...accounts.en,
   ...boxColours.en,
+  ...testGate.en,
   ...secondOpinion.en,
 } as const;
 /** Every English string `t()` can answer with: the plugin's own, plus the English fallback for the
@@ -56,6 +58,7 @@ export const ZH = {
   ...updates.zh,
   ...accounts.zh,
   ...boxColours.zh,
+  ...testGate.zh,
   ...secondOpinion.zh,
 } satisfies Record<keyof typeof OWN_EN, string>;
 

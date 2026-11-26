@@ -6,6 +6,7 @@ import { type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { JsonValue, ToolSchema } from "../dsh.js";
 import { KEY_ENV, KEY_HEADER } from "../mcp-config.js";
 import { ISOLATED_ENV, ISOLATED_SETTINGS } from "./isolate.js";
+import type { stopHookSettings } from "../test-gate.js";
 import { CHILD_ENV, shq, sshArgs, userTurnLine } from "../process.js";
 import { probeRawToolRows, type RowsSupport } from "../rows-probe.js";
 import { Config } from "./config.js";
@@ -339,6 +340,7 @@ export function buildArgs({
   temporary = false,
   permissionMode,
   dshSystem,
+  testGate,
 }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
   /** dsh's own system prompt (`dshSystemPrompt`), passed only under `systemPrompt: dsh`. It
    *  replaces Claude Code's prompt rather than following it. */
@@ -355,6 +357,9 @@ export function buildArgs({
   temporary?: boolean;
   /** Optional permission mode override; if provided, used instead of computing from config. */
   permissionMode?: string;
+  /** The test gate's Stop hook (`stopHookSettings`), when the workspace has the gate on. Merged
+   *  into --settings for a session's own process; a side call never gets it. */
+  testGate?: ReturnType<typeof stopHookSettings> | undefined;
 }) {
   const args = ["-p"];
   if (usesStdin(flags)) args.push("--input-format", "stream-json");
@@ -374,6 +379,9 @@ export function buildArgs({
   // In -p mode /fast only works in a session launched with fast mode in --settings (fast-mode docs).
   const settings: Record<string, JsonValue> = config.isolate ? { ...ISOLATED_SETTINGS } : {};
   if (config.fastMode) settings.fastMode = true;
+  // A hook passed here fires under `isolate` too: --settings is a source of its own, which
+  // `--setting-sources ""` leaves on (probed on 2.1.332).
+  if (testGate && !purpose) settings.hooks = testGate;
   if (Object.keys(settings).length > 0 && supports(flags, "--settings"))
     args.push("--settings", JSON.stringify(settings));
   if (config.isolate) {

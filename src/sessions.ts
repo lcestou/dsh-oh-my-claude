@@ -134,6 +134,7 @@ import { UNHANDLED } from "./routes/context.js";
 import { transcriptsRoutes } from "./routes/transcripts.js";
 import { filesRoutes } from "./routes/files.js";
 import { settingsRoutes } from "./routes/settings.js";
+import { testGateRoutes } from "./routes/test-gate.js";
 import { statusRoutes } from "./routes/status.js";
 import { controlsRoutes } from "./routes/controls.js";
 import { tasksRoutes } from "./routes/tasks.js";
@@ -2899,6 +2900,7 @@ export function registerSessionRoutes(
       settingsRoutes(routeCtx),
       statusRoutes(routeCtx),
       controlsRoutes(routeCtx),
+      testGateRoutes({ ROUTE_PREFIX, stateDir: STATE_DIR, json, readBody }),
       secondOpinionRoutes(routeCtx),
     ];
     if (accounts)

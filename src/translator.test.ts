@@ -771,3 +771,29 @@ console.log("translator plugin-warnings ok");
   assert.ok(drawn.length > 0, "a real tool result is still drawn");
   assert.equal(t.callsOutstanding(), false);
 }
+
+// The test gate's block reason arrives as a synthetic user frame whose content is a plain string
+// (CLI 2.1.332, seen on a live run 2026-11-25), and must draw one reasoning line all the same.
+{
+  // SAFETY: translate takes the CLI's frame union; this literal is the user frame the CLI sends
+  const t = new Translator() as any;
+  const text =
+    "Stop hook feedback:\n[test gate 1/3] The tests failed, so your turn did not end.\nCommand: x";
+  for (const content of [text, [{ type: "text", text }]]) {
+    const out = t.translate({
+      type: "user",
+      isSynthetic: true,
+      message: { role: "user", content },
+    });
+    assert.equal(out.at(-1)?.block?.type, "reasoning", `gate line drawn for ${typeof content}`);
+    assert.match(out.at(-1)?.block?.text ?? "", /1\/3/);
+  }
+  // Other synthetic string text still draws nothing.
+  const other = t.translate({
+    type: "user",
+    isSynthetic: true,
+    message: { role: "user", content: "Stop hook feedback:\nsomething else" },
+  });
+  assert.equal(other.length, 0);
+  console.log("translator test gate line ok");
+}
