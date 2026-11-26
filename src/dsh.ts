@@ -412,7 +412,8 @@ export interface WebServer {
   /** The configured bind address (`dsh web --host`); undefined or a wildcard means every interface. */
   readonly host?: string | undefined;
   register(route: {
-    kind: "prefix";
+    /** `exact` matches one path and wins over any prefix that covers it. */
+    kind: "prefix" | "exact";
     path: string;
     /** dsh past 0.2.2-rc.5 (harness #8266) checks this before the handler runs, `required` (login cookie) by default; older dsh ignores it. */
     auth?: "anonymous" | "required" | "deny";

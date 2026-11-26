@@ -137,6 +137,7 @@ import { settingsRoutes } from "./routes/settings.js";
 import { statusRoutes } from "./routes/status.js";
 import { controlsRoutes } from "./routes/controls.js";
 import { tasksRoutes } from "./routes/tasks.js";
+import { notifyRoutes, PUSH_SW_PATH, servePushSw } from "./routes/notify.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
 /** This plugin's own key on globalThis, so a hot reload does not start a second heal sweep. */
@@ -2898,6 +2899,7 @@ export function registerSessionRoutes(
       settingsRoutes(routeCtx),
       statusRoutes(routeCtx),
       controlsRoutes(routeCtx),
+      notifyRoutes(routeCtx),
     ];
     if (accounts)
       beforeBoxes.push(
@@ -2931,6 +2933,21 @@ export function registerSessionRoutes(
       );
     const afterBoxes = [tasksRoutes(routeCtx)];
     host.effect?.(() => {
+      // Exact beats prefix, so this one path skips the login the prefix route requires. Registered
+      // first: the route tests' fake webServer keeps the last handler it is given, the prefix one.
+      // A throw here (a duplicate path) must not cost the prefix route below: without the worker
+      // only phone notices' Web Push is missing, without the prefix every plugin route is.
+      let disposeSw: (() => void) | undefined;
+      try {
+        disposeSw = webServer.register({
+          kind: "exact",
+          path: PUSH_SW_PATH,
+          auth: "anonymous",
+          handler: servePushSw,
+        });
+      } catch (e) {
+        log("warn", `phone notices: worker route not registered: ${errorText(e)}`);
+      }
       const dispose = webServer.register({
         kind: "prefix",
         path: ROUTE_PREFIX,
@@ -3539,6 +3556,7 @@ export function registerSessionRoutes(
       return () => {
         events?.hub.close();
         dispose();
+        disposeSw?.();
       };
     }, "dsh-oh-my-claude session routes");
   });
