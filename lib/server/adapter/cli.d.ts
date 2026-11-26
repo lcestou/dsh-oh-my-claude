@@ -1,5 +1,6 @@
 import { type GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { JsonValue, ToolSchema } from "../dsh.js";
+import type { stopHookSettings } from "../test-gate.js";
 import { type RowsSupport } from "../rows-probe.js";
 import { Config } from "./config.js";
 import { type LooseMessage } from "./prompt.js";
@@ -78,7 +79,7 @@ export declare function dshToolsGuidance(tools?: readonly ToolSchema[], builtins
  * of its own, and never carries a permission mode, allowed tools, budget or resume. Everything
  * after that early return applies only to a real conversation turn.
  */
-export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, permissionMode, dshSystem, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
+export declare function buildArgs({ model, reasoningEffort, system, purpose, config, session, accessMode, flags, promptText, mcp, temporary, permissionMode, dshSystem, testGate, }: Pick<GenerateOptions, "reasoningEffort" | "system" | "purpose"> & {
     /** dsh's own system prompt (`dshSystemPrompt`), passed only under `systemPrompt: dsh`. It
      *  replaces Claude Code's prompt rather than following it. */
     dshSystem?: string | undefined;
@@ -100,6 +101,9 @@ export declare function buildArgs({ model, reasoningEffort, system, purpose, con
     temporary?: boolean;
     /** Optional permission mode override; if provided, used instead of computing from config. */
     permissionMode?: string;
+    /** The test gate's Stop hook (`stopHookSettings`), when the workspace has the gate on. Merged
+     *  into --settings for a session's own process; a side call never gets it. */
+    testGate?: ReturnType<typeof stopHookSettings> | undefined;
 }): string[];
 /** One stream-json input line: the user turn with text and inline images. `uuid` goes on the line so a later `cancel_async_message` can name it. */
 export declare function buildInput(prompt: string, images: Array<{

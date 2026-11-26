@@ -40,6 +40,7 @@ import {
   settingsEnvAt,
 } from "../sessions.js";
 import { hub, type OmcEvent } from "../events.js";
+import { gateHookFor } from "./test-gate.js";
 import { managedDir } from "../instructions.js";
 import { readUsage, stillLimitedUntil } from "../usage.js";
 import { MCP_PATH, type McpBridge } from "../mcp.js";
@@ -1854,6 +1855,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           ...contextSizes(turns, copies),
           tools: toolsSent ? dshToolsGuidance(mcpBridge.tools, cfg.builtinTools).length : 0,
         };
+    // The test gate: a local workspace with the gate on in Settings, on a session's own turn. The
+    // hook script runs on this box, so a box or a remote workspace never gets it, and neither does
+    // a dsh subagent's session: it shares the parent's tree, and every child stop would run the
+    // whole suite beside the parent's.
+    let subagent = false;
+    try {
+      if (options.sessionId)
+        subagent = this.ctx.sessions.get(options.sessionId)?.header?.origin === "subagent";
+    } catch {
+      // a session dsh cannot hand back is read as a top-level one: gated if the workspace is
+    }
+    const testGate =
+      options.purpose || subagent || this.config.sshHost || remoteWorkspaceFor(cwd)
+        ? undefined
+        : await gateHookFor(STATE_DIR, cwd, options.sessionId, this.config.idleTimeoutMs);
     const args = buildArgs({
       ...options,
       model,
@@ -1866,6 +1882,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       permissionMode: effectivePermissionMode,
       mcp: mcpBridge,
       dshSystem,
+      testGate,
     });
     // Spec = what a running process was spawned with. `resuming` is deliberately left out: it flips
     // to true after the first turn and must not force a respawn.
@@ -1886,6 +1903,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (engine !== undefined) spec.engine = engine;
     // Its environment is fixed at spawn, so isolate rides on the spec the spawner reads.
     if (engineConfig.isolate) spec.isolate = true;
+    // The hook list is fixed at spawn too: a gate switched on or off replaces the process on the
+    // session's next turn, which resumes the conversation.
+    if (testGate) spec.testGate = true;
     // An environment is fixed at spawn, so the switch joins the spec: a session already running
     // when it flips is replaced on its next turn and resumes with the window the switch gives.
     // Local spawns only; the flag does not ride to a box, whose own environment decides.
@@ -6468,10 +6488,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // slower call with a placeholder row, left a dsh call of the same message to run without
       // its card, and a nested agent's inner result parked the step under the agent itself.
       // Nor at a user frame of the CLI's own text (a slash command's output, a compaction
-      // summary): it is no tool result, so nothing has been handed the steer.
+      // summary): it is no tool result, so nothing has been handed the steer. The CLI marks the
+      // frames it writes in the user's place `isSynthetic` (meta text such as a skill body or a
+      // hook's added context, the compaction summary, a Stop hook's block reason like the test
+      // gate's), even when the text comes in an array; a message typed meanwhile waits for a turn
+      // of its own (probed on 2.1.332), so none of them parks.
       if (
         proc.steerPending &&
         event.type === "user" &&
+        event.isSynthetic !== true &&
         Array.isArray(event.message?.content) &&
         pending.size === 0 &&
         !relaying &&

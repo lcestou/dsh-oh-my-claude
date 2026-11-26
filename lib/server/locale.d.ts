@@ -143,6 +143,7 @@ declare const EN: {
     readonly claudeOnly: "/{command} works in Claude Code sessions. This session runs on {provider}; pick a Claude model to use it.";
     readonly btwSent: "Side question sent. The answer opens in the ✻ aside bubble.";
     readonly idleStopped: "claude produced no output for {s}s and was stopped";
+    readonly testGateFixing: "Tests failed, Claude is fixing them ({attempt}/{tries})";
     readonly claudeExited: "claude exited {code}: {detail}";
     readonly noOutput: "no output";
     readonly inputDeclined: "{who} asked for input dsh cannot present, declined";
