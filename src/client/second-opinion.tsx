@@ -180,7 +180,7 @@ export function SecondOpinionCard({
             <button
               type="button"
               data-omc-second-opinion-run=""
-              style={{ ...rowBtn, fontSize: 12 }}
+              style={{ ...rowBtn, width: "auto", fontSize: 12 }}
               onClick={() => act("run")}
             >
               {t("secondOpinion.run")}
@@ -190,7 +190,7 @@ export function SecondOpinionCard({
             <button
               type="button"
               data-omc-second-opinion-cancel=""
-              style={{ ...rowBtn, fontSize: 12 }}
+              style={{ ...rowBtn, width: "auto", fontSize: 12 }}
               onClick={() => act("cancel")}
             >
               {t("cancel")}
@@ -258,7 +258,7 @@ export function SecondOpinionCard({
                       data-omc-second-opinion-send={i}
                       aria-label={t("secondOpinion.sendOneAria", { n: i + 1 })}
                       disabled={sent.has(`${card.at}:${i}`)}
-                      style={{ ...rowBtn, fontSize: 12, flex: "0 0 auto" }}
+                      style={{ ...rowBtn, width: "auto", fontSize: 12, flex: "0 0 auto" }}
                       onClick={() => send([i])}
                     >
                       {t("secondOpinion.send")}
