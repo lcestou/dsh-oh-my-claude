@@ -10,7 +10,7 @@ import { btn, errText, meta, nested, readJson, ROUTE, select, T } from "./shared
 import { LiveNote } from "./live-note.js";
 import { Switch } from "./switch.js";
 import { onBox, read, readTunables, updateSettings } from "./tune.js";
-import { t, useLocale } from "./i18n.js";
+import { t, useLocale, activeLocale } from "./i18n.js";
 
 /** The updater's reply, plus whether the Settings switch has turned the whole feature off. */
 type UpdateReply = ClaudeUpdateState & { switchedOff?: boolean };
@@ -302,7 +302,7 @@ export function ClaudeUpdateDetails() {
                 {history.map((e) => (
                   <li key={e.at} style={{ color: e.ok ? T.text : T.err }}>
                     {t("updates.historyEntry", { to: e.to ?? "?", from: e.from ?? "?" })} ·{" "}
-                    {new Date(e.at).toLocaleString()} ·{" "}
+                    {new Date(e.at).toLocaleString(activeLocale())} ·{" "}
                     {e.by === "button" ? t("updates.byYou") : t("updates.byAuto")}
                     {!e.ok && e.note ? ` · ${e.note}` : ""}
                   </li>

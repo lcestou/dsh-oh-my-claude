@@ -17,7 +17,7 @@ import {
   boxParam,
   type ClientCtx,
 } from "../shared.js";
-import { t, useLocale, type OmcKey } from "../i18n.js";
+import { t, useLocale, type OmcKey, activeLocale } from "../i18n.js";
 
 /** One task from the durable file or the session transcript. */
 interface Task {
@@ -115,7 +115,9 @@ function TaskRow({ task }: { task: Task }) {
       ) : null}
       {task.nextRunAt === undefined ? null : (
         <div style={{ ...meta, fontSize: 11 }}>
-          {t("panel.tasks.nextRun", { date: new Date(task.nextRunAt).toLocaleString() })}
+          {t("panel.tasks.nextRun", {
+            date: new Date(task.nextRunAt).toLocaleString(activeLocale()),
+          })}
         </div>
       )}
     </div>

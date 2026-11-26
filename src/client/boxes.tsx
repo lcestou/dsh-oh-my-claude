@@ -1,7 +1,7 @@
 // The boxes panel from the browser's side: the box rows, the login steps, the per-box settings editor,
 // and the JSON helpers the panel reads through.
 import { isNewer } from "../update.js";
-import { t, useLocale } from "./i18n.js";
+import { t, useLocale, activeLocale } from "./i18n.js";
 import { BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT, SETTINGS_EVENT } from "./picker.js";
 import { SCOPE_LABELS, SETTINGS_SCOPES, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
@@ -375,7 +375,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
         setEditing(false);
         setSaved(
           t("main.settings.saved", {
-            time: new Date(b.mtime ?? 0).toLocaleTimeString(),
+            time: new Date(b.mtime ?? 0).toLocaleTimeString(activeLocale()),
             backup: b.backup ?? "?",
           }),
         );

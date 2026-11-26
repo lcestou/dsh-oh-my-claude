@@ -2,7 +2,7 @@
 // subscription, the device list, the webhook) and the watcher that opens the session a tapped
 // notice names. The sending is the box's (src/adapter/notify.ts); this file only sets it up.
 import { useCallback, useEffect, useState } from "react";
-import { t, useLocale } from "./i18n.js";
+import { t, useLocale, activeLocale } from "./i18n.js";
 import {
   ROUTE,
   T,
@@ -324,7 +324,7 @@ export function PhoneNoticesBlock() {
           {state && state.devices.length > 0 && (
             <ul data-omc-phone-devices="" style={{ listStyle: "none", margin: 0, padding: 0 }}>
               {state.devices.map((d) => {
-                const date = new Date(d.added).toLocaleDateString();
+                const date = new Date(d.added).toLocaleDateString(activeLocale());
                 return (
                   <li
                     key={d.id}
