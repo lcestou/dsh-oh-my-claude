@@ -946,8 +946,12 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** The permission mode state for one session to its streams: after a pick, a restore or a
      *  spawn, which is when `liveMode` changes. */
     private publishPermissionMode;
+    /** What a second opinion reads for one session: the CLI's diff, a new file's text on the session's
+     *  box under the checkout root (the diff names paths relative to it, not to the cwd; asked only
+     *  when a new file is read), and dsh's model service. */
+    private opinionDeps;
     /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
-    workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply>;
+    workspaceDiff(sessionId: string, timeoutMs?: number): Promise<WorkspaceDiffReply>;
     /** The permission rules and hooks a session's live process actually loaded
      *  (`list_permission_rules`, `get_hooks_listing`), read-only. Both or neither: the readout is one
      *  section pair and a half-answer would read as an empty half. */

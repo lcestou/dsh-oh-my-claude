@@ -40,6 +40,7 @@ import {
   settingsEnvAt,
 } from "../sessions.js";
 import { hub, type OmcEvent } from "../events.js";
+import { gateHookFor } from "./test-gate.js";
 import { managedDir } from "../instructions.js";
 import { readUsage, stillLimitedUntil } from "../usage.js";
 import { MCP_PATH, type McpBridge } from "../mcp.js";
@@ -177,7 +178,9 @@ import {
   mirrorReplyBlocks,
   alreadyShown,
 } from "../transcript.js";
-import { copyToAt, homeAt, readFromAt, sizeAt, type FsBox } from "../remote-fs.js";
+import { copyToAt, homeAt, readFromAt, readTextAt, sizeAt, type FsBox } from "../remote-fs.js";
+import { checkoutRoot } from "../repo.js";
+import { NEW_FILE_MAX_BYTES, opinions, requestText, type TurnDeps } from "./second-opinion.js";
 import {
   READY as READY_MARK,
   asHoldRecord,
@@ -1865,6 +1868,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           ...contextSizes(turns, copies),
           tools: toolsSent ? dshToolsGuidance(mcpBridge.tools, cfg.builtinTools).length : 0,
         };
+    // The test gate: a local workspace with the gate on in Settings, on a session's own turn. The
+    // hook script runs on this box, so a box or a remote workspace never gets it, and neither does
+    // a dsh subagent's session: it shares the parent's tree, and every child stop would run the
+    // whole suite beside the parent's.
+    let subagent = false;
+    try {
+      if (options.sessionId)
+        subagent = this.ctx.sessions.get(options.sessionId)?.header?.origin === "subagent";
+    } catch {
+      // a session dsh cannot hand back is read as a top-level one: gated if the workspace is
+    }
+    const testGate =
+      options.purpose || subagent || this.config.sshHost || remoteWorkspaceFor(cwd)
+        ? undefined
+        : await gateHookFor(STATE_DIR, cwd, options.sessionId, this.config.idleTimeoutMs);
     const args = buildArgs({
       ...options,
       model,
@@ -1877,6 +1895,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       permissionMode: effectivePermissionMode,
       mcp: mcpBridge,
       dshSystem,
+      testGate,
     });
     // Spec = what a running process was spawned with. `resuming` is deliberately left out: it flips
     // to true after the first turn and must not force a respawn.
@@ -1897,6 +1916,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (engine !== undefined) spec.engine = engine;
     // Its environment is fixed at spawn, so isolate rides on the spec the spawner reads.
     if (engineConfig.isolate) spec.isolate = true;
+    // The hook list is fixed at spawn too: a gate switched on or off replaces the process on the
+    // session's next turn, which resumes the conversation.
+    if (testGate) spec.testGate = true;
     // An environment is fixed at spawn, so the switch joins the spec: a session already running
     // when it flips is replaced on its next turn and resumes with the window the switch gives.
     // Local spawns only; the flag does not ride to a box, whose own environment decides.
@@ -3323,6 +3345,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (sessionId === null) return out;
     out.push({ kind: "live-turn", session: sessionId, data: this.liveTurnReply(sessionId) });
     out.push({ kind: "asides", session: sessionId, data: this.asidesReply(sessionId) });
+    out.push({ kind: "second-opinion", session: sessionId, data: opinions.reply(sessionId) });
     out.push({ kind: "idle", session: sessionId, data: this.idleReply(sessionId) });
     out.push({ kind: "turns", session: sessionId, data: this.turnsReply(sessionId) });
     out.push({
@@ -3391,11 +3414,34 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     });
   }
 
+  /** What a second opinion reads for one session: the CLI's diff, a new file's text on the session's
+   *  box under the checkout root (the diff names paths relative to it, not to the cwd; asked only
+   *  when a new file is read), and dsh's model service. */
+  private opinionDeps(sessionId: string): TurnDeps {
+    const cwd = this.sessionCwd(sessionId) ?? process.cwd();
+    const ws = remoteWorkspaceFor(cwd);
+    const box: FsBox = { sshHost: boxFor(this.config.sshHost, ws?.host) };
+    let root: Promise<string> | undefined;
+    return {
+      // 60 s, not the Changes tab's 10: the first turn after a spawn waits on MCP servers loading.
+      diff: () => this.workspaceDiff(sessionId, 60_000),
+      read: async (path) => {
+        const at = join(await (root ??= checkoutRoot(box, ws?.remoteCwd ?? cwd)), path);
+        const bytes = await sizeAt(box, at);
+        if (bytes === null || bytes > NEW_FILE_MAX_BYTES) return null;
+        const text = await readTextAt(box, at);
+        // A NUL byte means a binary file the CLI did not flag; it is named, not sent.
+        return text?.includes("\u0000") ? null : text;
+      },
+      llm: this.ctx.llm,
+    };
+  }
+
   /** The CLI's working-tree diff (`get_workspace_diff`) for a session with a live process. */
-  async workspaceDiff(sessionId: string): Promise<WorkspaceDiffReply> {
+  async workspaceDiff(sessionId: string, timeoutMs = 10_000): Promise<WorkspaceDiffReply> {
     const proc = this.processes.get(registryKey(this.providerId, sessionId));
     if (!proc?.alive) return { ok: false, error: "no live Claude process for this session" };
-    const reply = await this.control(proc, { subtype: "get_workspace_diff" }, 10_000);
+    const reply = await this.control(proc, { subtype: "get_workspace_diff" }, timeoutMs);
     if (!reply.ok) return { ok: false, error: reply.error };
     return { ok: true, ...decodeWorkspaceDiff(reply.response) };
   }
@@ -5838,6 +5884,13 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Before the prompt, like initialize: a rename typed into dsh since the last turn reaches
     // the CLI ahead of the turn it names.
     this.syncTitleToCli(proc, cont.options.sessionId);
+    // The second opinion's before-snapshot: its control request is written here, ahead of the
+    // prompt, so the CLI answers it against the tree as the turn found it. Not awaited.
+    opinions.turnStarting(
+      cont.options.sessionId,
+      requestText(cont.options.messages),
+      this.opinionDeps(cont.options.sessionId),
+    );
     if (prep.input === null || !proc.write(prep.input))
       throw new LlmError("claude process is not running", "PROVIDER_ERROR");
     proc.promptSentAt = Date.now();
@@ -6353,6 +6406,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         // Stop pressed in dsh aborts the step, and the CLI still answers with a result: that is the
         // person at the desk, not a turn to tell their phone about.
         if (!options.signal?.aborted) this.notifyLater(options.sessionId, "finished");
+        // Detached: the review reads the tree after the turn and must never hold up the next one.
+        void opinions.turnEnded(options.sessionId);
         // The window this model actually runs at, asked once per model between turns so dsh's
         // context ring is right before anyone opens the breakdown. A model switched mid-session is
         // an id this process has not asked about, so the next result asks again for the model it
@@ -6509,10 +6564,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // slower call with a placeholder row, left a dsh call of the same message to run without
       // its card, and a nested agent's inner result parked the step under the agent itself.
       // Nor at a user frame of the CLI's own text (a slash command's output, a compaction
-      // summary): it is no tool result, so nothing has been handed the steer.
+      // summary): it is no tool result, so nothing has been handed the steer. The CLI marks the
+      // frames it writes in the user's place `isSynthetic` (meta text such as a skill body or a
+      // hook's added context, the compaction summary, a Stop hook's block reason like the test
+      // gate's), even when the text comes in an array; a message typed meanwhile waits for a turn
+      // of its own (probed on 2.1.332), so none of them parks.
       if (
         proc.steerPending &&
         event.type === "user" &&
+        event.isSynthetic !== true &&
         Array.isArray(event.message?.content) &&
         pending.size === 0 &&
         !relaying &&

@@ -356,6 +356,8 @@ export type ClaudeEvent =
       /** What the CLI records beside a tool result. `handbackReport` holds a subagent's report
        *  when the result text is only the note that it was delivered as a message. */
       tool_use_result?: { handbackReport?: { text?: string } };
+      /** Set on text the CLI wrote in the user's place, such as a Stop hook's block reason. */
+      isSynthetic?: boolean;
     }
   | {
       type: "result";
@@ -1547,6 +1549,9 @@ export interface ClaudeProcessSpec {
    *  Present only when on, so a spec saved before the switch existed still keys the same; a flip
    *  changes the key, and the session's next turn replaces the process, as an effort change does. */
   firstParty?: true;
+  /** Spawned with the test gate's Stop hook in --settings. Present only when on, so every spec saved
+   *  before the gate existed keys the same; a flip replaces the process on the next turn. */
+  testGate?: true;
   /** The base URL a settings file gave the CLI at spawn, when it is not the one dsh itself was
    *  started with: a router switched on in settings.json. Absent otherwise, so every spec saved
    *  before the field existed keys the same. A process reads its environment once, so a router

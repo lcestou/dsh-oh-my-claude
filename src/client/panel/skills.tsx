@@ -240,8 +240,14 @@ export function PluginManagerBlock({
           </div>
         ))}
         <MarketplaceAddForm act={act} busy={busy} />
-        {error !== "" && <span style={{ ...meta, display: "block", marginTop: 4 }}>{error}</span>}
-        <span style={{ ...meta, display: "block", marginTop: 4 }}>
+        {/* `meta` keeps a label on one line; these two are sentences, and on a phone the
+            unwrapped one let the whole Instructions tab scroll 90 px sideways. */}
+        {error !== "" && (
+          <span style={{ ...meta, display: "block", marginTop: 4, whiteSpace: "normal" }}>
+            {error}
+          </span>
+        )}
+        <span style={{ ...meta, display: "block", marginTop: 4, whiteSpace: "normal" }}>
           {applied || t("panel.plugins.applyNote")}
         </span>
       </div>
@@ -521,10 +527,15 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
   const rowNode = (s: SkillRow) => (
     <div
       key={s.path}
+      // On a phone the name takes its own line and the description gets the width the name
+      // and buttons left it, about five characters at 390 px before (phone-style.ts).
+      data-omc-wrap=""
       style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}
       title={s.path}
     >
-      <span style={{ flex: "none", fontFamily: T.mono, fontSize: 12 }}>{s.name}</span>
+      <span data-omc-wrap-lead="" style={{ flex: "none", fontFamily: T.mono, fontSize: 12 }}>
+        {s.name}
+      </span>
       <span style={pill(T.faint)}>{s.scope}</span>
       <span
         style={{

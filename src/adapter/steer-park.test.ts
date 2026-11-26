@@ -169,5 +169,20 @@ const block = (index: number, id: string) => [
   ]);
   assert.deepEqual(cliText, { left: 0, parked: undefined }, "the CLI's own text is no boundary");
 }
+{
+  // A Stop hook that blocks (the test gate) hands Claude its reason as a synthetic user frame.
+  // The CLI keeps a steer typed meanwhile for its own turn, so the step must read on, not park.
+  const gated = await step([
+    { type: "assistant", message: { id: "m1", content: [{ type: "text", text: "done" }] } },
+    {
+      type: "user",
+      isSynthetic: true,
+      message: { content: [{ type: "text", text: "Stop hook feedback:\n[test gate 1/3] failed" }] },
+    },
+    { type: "assistant", message: { id: "m2", content: [{ type: "text", text: "fixed" }] } },
+    { type: "result", subtype: "success", is_error: false, result: "fixed" },
+  ]);
+  assert.notEqual(gated.parked, "steer", "a block reason is not where the CLI takes a steer");
+}
 rmSync(stateDir, { recursive: true, force: true });
 console.log("steer park ok");

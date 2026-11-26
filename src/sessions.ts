@@ -134,10 +134,12 @@ import { UNHANDLED } from "./routes/context.js";
 import { transcriptsRoutes } from "./routes/transcripts.js";
 import { filesRoutes } from "./routes/files.js";
 import { settingsRoutes } from "./routes/settings.js";
+import { testGateRoutes } from "./routes/test-gate.js";
 import { statusRoutes } from "./routes/status.js";
 import { controlsRoutes } from "./routes/controls.js";
 import { tasksRoutes } from "./routes/tasks.js";
 import { notifyRoutes, PUSH_SW_PATH, servePushSw } from "./routes/notify.js";
+import { secondOpinionRoutes } from "./routes/second-opinion.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
 /** This plugin's own key on globalThis, so a hot reload does not start a second heal sweep. */
@@ -2900,6 +2902,8 @@ export function registerSessionRoutes(
       statusRoutes(routeCtx),
       controlsRoutes(routeCtx),
       notifyRoutes(routeCtx),
+      testGateRoutes({ ROUTE_PREFIX, stateDir: STATE_DIR, json, readBody }),
+      secondOpinionRoutes(routeCtx),
     ];
     if (accounts)
       beforeBoxes.push(

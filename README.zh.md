@@ -175,10 +175,13 @@ dsh 只发布预发行版，客户端 API 也会在版本之间变动，所以�
 35. 在 dsh 里重命名的会话在 `claude --resume` 中沿用同名，Claude 一侧设置的名字也会重命名 dsh 会话。[Command bridge](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#command-bridge)
 36. 在 Claude 和其他模型（例如 DeepSeek 或本地模型）之间来回切换同一个会话：Claude 能看到其他模型期间的提示、回复和工具调用。[Sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#sessions)
 37. 输入框为空时按上箭头调出上一条提示词，再按上箭头调出更早的，下箭头调出更新的直至清空，与 Claude Code 终端一致；输入任意字符即结束回溯。新会话从该工作区最近的记录中回溯。可在设置中关闭（「提示词回溯」）。
-38. 在输入框按 Ctrl+R 搜索之前输入过的提示词：范围可为本会话、本工作区或整台机器（Ctrl+S 或 Ctrl+↑/↓ 切换）。Enter 发送所选行，Tab 填入输入框，Esc 关闭。可在设置中关闭（「历史搜索」）。
+38. 在输入框按 Ctrl+R 搜索之前输入过的提示词：范围可为本会话、本工作区或整台机器（Ctrl+S 或 Ctrl+↑/↓ 切换）。Enter 发送所选行，Tab 填入输入框，Esc 关闭。触屏上没有 Ctrl 键，可在「回溯」标签页点「搜索提示词历史」按钮打开它。可在设置中关闭（「历史搜索」）。
 39. 输入框为空且没有任务运行时按两次 Esc，打开回溯标签页并选中最新一条提示词，与终端按两次 Esc 打开 /rewind 一致；回溯后该提示词会回到输入框，可修改后重新发送。可在设置中关闭（「编辑上一条提示词」）。这三个输入框按键也列在 dsh 的快捷键对话框里。
 40. 插件自带三个命令：`/btw <问题>` 向 Claude 提一个旁问，不加入对话；`/temporary` 让该会话不保留 Claude 的对话记录；`/ultracode` 开关 Claude Code 的 ultracode，无需重启进程。[Asides](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#asides)、[Temporary sessions](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#temporary-sessions)、[Ultracode](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md#ultracode)
-41. Claude 完成一轮或等你回应时，即使没有打开 dsh 标签页，也能通过 Web Push 或 webhook（ntfy、Home Assistant、n8n）通知你的手机。默认关闭。[Phone notices](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#phone-notices)
+41. 环形弹窗会记住此前额度窗口的结束情况：每个窗口下方一排小柱并显示通常的用量，按登录分别记录；指向、轻点或用方向键选中一根小柱即可看到日期。[Plan usage](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#plan-usage)
+42. 第二意见，在设置中选好模型之前不开启：Claude 的某一轮改动了文件后，由 dsh 提供商中的另一个模型审查这一轮的改动，输入框上方的卡片列出它的发现，每条都可以「发给 Claude」。
+43. 测试门禁，默认关闭，在设置中按工作区开启：Claude 结束一轮前，插件先运行该工作区的测试命令；测试失败时 Claude 会继续修复，最多尝试你设定的次数。[Test gate](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#test-gate)
+44. Claude 完成一轮或等你回应时，即使没有打开 dsh 标签页，也能通过 Web Push 或 webhook（ntfy、Home Assistant、n8n）通知你的手机。默认关闭。[Phone notices](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/panel.md#phone-notices)
 
 一些你永远不必动的默认行为，比如工具结果中的密钥脱敏和挺过 CLI 自身的更新，见 [How it works](https://github.com/lcestou/dsh-oh-my-claude/blob/main/docs/how-it-works.md)。
 

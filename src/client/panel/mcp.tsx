@@ -307,7 +307,12 @@ export function McpBody({
       ) : (
         servers.map((s) => (
           <div key={s.name}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
+            {/* data-omc-wrap: on a phone the name takes the first line and the status, pills and
+                buttons wrap under it (phone-style.ts); at 360 px the name was 0 px wide. */}
+            <div
+              data-omc-wrap=""
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}
+            >
               <span
                 aria-hidden="true"
                 style={{
@@ -320,6 +325,7 @@ export function McpBody({
                 }}
               />
               <span
+                data-omc-wrap-lead=""
                 style={{
                   flex: 1,
                   minWidth: 0,
@@ -416,12 +422,16 @@ export function McpBody({
       )}
       {pendingRows.map((c) => (
         <div key={`configured:${c.name}`} data-omc-mcp-pending="">
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}>
+          <div
+            data-omc-wrap=""
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0" }}
+          >
             <span
               aria-hidden="true"
               style={{ width: 8, height: 8, borderRadius: 4, flex: "none", background: T.faint }}
             />
             <span
+              data-omc-wrap-lead=""
               style={{
                 flex: 1,
                 minWidth: 0,

@@ -19,6 +19,9 @@ import { t, useLocale } from "../i18n.js";
 import { retentionNote, useFeatureSwitches } from "./restore.js";
 import { RewoundEvent } from "../edit-last.js";
 import { PLUGIN_NOTICE } from "../recall.js";
+import { OPEN_HISTORY_EVENT } from "../history-search.js";
+import { touchScreen } from "../selection-actions.js";
+import { useHintFlag } from "../hints.js";
 
 /** One user prompt from `GET /rewind`. */
 interface RewindPrompt {
@@ -75,6 +78,7 @@ export function RewindBody({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const switches = useFeatureSwitches(cwd);
+  const [historyOff] = useHintFlag("historySearchOff");
 
   useEffect(() => {
     if (!cwd) return;
@@ -136,11 +140,27 @@ export function RewindBody({
   }, [pickLatest, prompts]);
 
   if (!isClaude || !cwd) return null;
+  // History search opens on Ctrl+R, which a phone does not have, so a touch screen gets a button
+  // here, the tab that already lists past prompts. A mouse never sees it.
+  const historyButton = picked === null && !historyOff && touchScreen();
   // The file half of a rewind needs checkpoints; without them the button still moves the
   // conversation, so say which half is missing before it is pressed rather than after.
   const noFiles = switches?.checkpointingDisabled === true;
   return (
     <div style={bodyFlow}>
+      {historyButton && (
+        <button
+          type="button"
+          data-omc-rewind-history=""
+          style={btn}
+          onClick={() => {
+            window.dispatchEvent(new CustomEvent(OPEN_HISTORY_EVENT, { detail: sessionId }));
+            onClose();
+          }}
+        >
+          {t("main.history.title")}
+        </button>
+      )}
       {noFiles && <span style={errText}>{t("panel.rewind.noCheckpoints")}</span>}
       {picked === null ? (
         prompts.length === 0 ? (

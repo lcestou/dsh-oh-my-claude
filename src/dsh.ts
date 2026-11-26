@@ -491,14 +491,24 @@ export interface PluginContext {
      *  its request assembly writes. Optional: a dsh without it leaves file steers to the boundary. */
     fileRequestText?: (ref: { attachmentId: string; name: string; bytes: number }) => string;
     /** Every provider dsh has registered. dsh's own model switch refuses one not listed here. */
-    listProviders(): ReadonlyArray<{ id: string }>;
+    listProviders(): ReadonlyArray<{ id: string; name?: string }>;
     /** The models dsh's picker offers for one provider; rejects when the provider cannot list. */
-    listModels(provider: string): Promise<ReadonlyArray<{ id: string }>>;
+    listModels(provider: string): Promise<ReadonlyArray<{ id: string; name?: string }>>;
     /** Checks a route's request controls against its model and rejects with dsh's own message when
      *  the model lacks the effort asked for; resolves the route, with any default it fills in. An
      *  adapter may describe any model id, so an unknown model can pass here: dsh's own switch checks
      *  `listModels` first, and so does the bridge. */
     resolveCallConfig(config: ModelRoute, signal?: AbortSignal): Promise<ModelRoute>;
+    /** Resolves one call and binds it to the adapter that will stream it, the way dsh's own
+     *  session-title call does (dsh-session-title-llm 0.2.3). Optional: the suites' fakes carry
+     *  none, and a second opinion without it reports its model as unavailable. */
+    prepareCall?(
+      config: { provider: string; model: string; maxTokens?: number },
+      signal?: AbortSignal,
+    ): Promise<{
+      config: Omit<GenerateOptions, "messages">;
+      stream(options: GenerateOptions): AsyncIterable<import("@deepseek-ai/dsh-llm").StreamChunk>;
+    }>;
   };
   logger: {
     [level: string]: ((msg: string) => void) | undefined;

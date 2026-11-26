@@ -39,6 +39,10 @@ export function useFitAbove(
         if (c.overflowX !== "visible" || c.overflowY !== "visible")
           top = Math.max(top, a.getBoundingClientRect().top);
       }
+      // A phone's soft keyboard shrinks only the visual viewport and scrolls it down; without this
+      // the top of a 640 px panel sat above the visible band while the keyboard was up. Zero on a
+      // desktop that is not pinch-zoomed, so the desktop fit is unchanged.
+      top = Math.max(top, window.visualViewport?.offsetTop ?? 0);
       // max-height sizes the content box, so the panel's own padding and border come off too.
       const own = getComputedStyle(el);
       const frame =
@@ -63,10 +67,14 @@ export function useFitAbove(
     fit();
     window.addEventListener("resize", fitSoon);
     window.addEventListener("scroll", fitSoon, true);
+    window.visualViewport?.addEventListener("resize", fitSoon);
+    window.visualViewport?.addEventListener("scroll", fitSoon);
     return () => {
       if (queued !== 0) cancelAnimationFrame(queued);
       window.removeEventListener("resize", fitSoon);
       window.removeEventListener("scroll", fitSoon, true);
+      window.visualViewport?.removeEventListener("resize", fitSoon);
+      window.visualViewport?.removeEventListener("scroll", fitSoon);
     };
   }, [ref, cap, open]);
   return maxHeight;
