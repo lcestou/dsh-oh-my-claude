@@ -7,6 +7,7 @@
 export function isWebUrl(u: string): boolean {
   try {
     const { protocol } = new URL(u);
+
     return protocol === "https:" || protocol === "http:";
   } catch {
     return false;

@@ -7,26 +7,20 @@
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import {
-  RUN_STATES,
-  TIMEOUT_DEFAULT_SEC,
-  TRIES_DEFAULT,
-  clampGate,
-  type RunState,
-  type TestGateConfig,
-  type TestGateFile,
-  type TestGateRun,
-} from "./test-gate.js";
+import { RUN_STATES, TIMEOUT_DEFAULT_SEC, TRIES_DEFAULT, clampGate } from "./test-gate.js";
+import type { RunState, TestGateConfig, TestGateFile, TestGateRun } from "./test-gate.js";
 
 /** A parsed JSON value: what `JSON.parse` can hand back. */
-type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+type Json = string | number | boolean | null | Array<Json> | { [key: string]: Json };
 
 /** A plain JSON object, not an array or null. */
 const isObj = (v: Json | undefined): v is { [key: string]: Json } =>
   typeof v === "object" && v !== null && !Array.isArray(v);
+
 /** `v` when it is a finite number, else `d`. */
 const num = (v: Json | undefined, d: number): number =>
   typeof v === "number" && Number.isFinite(v) ? v : d;
+
 /** `JSON.parse` that answers undefined for text that is not JSON. */
 const parse = (text: string): Json | undefined => {
   try {
@@ -36,11 +30,13 @@ const parse = (text: string): Json | undefined => {
     return undefined;
   }
 };
+
 /** Whether `s` is one of the run states. */
 const isState = (s: string): s is RunState => RUN_STATES.some((r) => r === s);
 
 /** The gate file under a state dir. */
 export const gatePathIn = (stateDir: string): string => join(stateDir, "test-gate.json");
+
 /** The run directory under a state dir: one `<session>.json` per gated session. */
 export const runDirIn = (stateDir: string): string => join(stateDir, "test-gate");
 
@@ -48,8 +44,10 @@ export const runDirIn = (stateDir: string): string => join(stateDir, "test-gate"
  *  undefined when `enabled` is not a boolean or `command` not a string. Missing numbers take the
  *  defaults. */
 export function gateEntryOf(v: Json | undefined): TestGateConfig | undefined {
-  if (!isObj(v) || typeof v.enabled !== "boolean" || typeof v.command !== "string")
+  if (!isObj(v) || typeof v.enabled !== "boolean" || typeof v.command !== "string") {
     return undefined;
+  }
+
   return clampGate({
     enabled: v.enabled,
     command: v.command,
@@ -63,9 +61,16 @@ export function gateEntryOf(v: Json | undefined): TestGateConfig | undefined {
 export function gatePutOf(body: {
   [key: string]: Json;
 }): { cwd: string; config: TestGateConfig | null } | undefined {
-  if (typeof body.cwd !== "string" || !("config" in body)) return undefined;
-  if (body.config === null) return { cwd: body.cwd, config: null };
+  if (typeof body.cwd !== "string" || !("config" in body)) {
+    return undefined;
+  }
+
+  if (body.config === null) {
+    return { cwd: body.cwd, config: null };
+  }
+
   const config = gateEntryOf(body.config);
+
   return config ? { cwd: body.cwd, config } : undefined;
 }
 
@@ -74,11 +79,17 @@ export function gatePutOf(body: {
 export async function readGateFile(path: string): Promise<TestGateFile> {
   const all = parse(await readFile(path, "utf8").catch(() => "{}"));
   const out: TestGateFile = {};
-  if (isObj(all))
+
+  if (isObj(all)) {
     for (const [k, v] of Object.entries(all)) {
       const e = gateEntryOf(v);
-      if (e) out[k] = e;
+
+      if (e) {
+        out[k] = e;
+      }
     }
+  }
+
   return out;
 }
 
@@ -95,8 +106,15 @@ export async function writeDismiss(path: string, startedAt: number): Promise<voi
  *  missing, half written or not a run. */
 export async function readRunFile(path: string): Promise<TestGateRun | null> {
   const v = parse(await readFile(path, "utf8").catch(() => ""));
-  if (!isObj(v) || typeof v.state !== "string" || !isState(v.state)) return null;
-  if (typeof v.command !== "string") return null;
+
+  if (!isObj(v) || typeof v.state !== "string" || !isState(v.state)) {
+    return null;
+  }
+
+  if (typeof v.command !== "string") {
+    return null;
+  }
+
   const run: TestGateRun = {
     state: v.state,
     attempt: num(v.attempt, 0),
@@ -105,10 +123,21 @@ export async function readRunFile(path: string): Promise<TestGateRun | null> {
     startedAt: num(v.startedAt, 0),
     tail: typeof v.tail === "string" ? v.tail : "",
   };
-  if (typeof v.endedAt === "number") run.endedAt = v.endedAt;
-  if (typeof v.exitCode === "number" || v.exitCode === null) run.exitCode = v.exitCode;
+
+  if (typeof v.endedAt === "number") {
+    run.endedAt = v.endedAt;
+  }
+
+  if (typeof v.exitCode === "number" || v.exitCode === null) {
+    run.exitCode = v.exitCode;
+  }
+
   const closed = await readFile(dismissPathOf(path), "utf8").catch(() => "");
-  if (closed !== "" && closed === String(run.startedAt)) run.dismissed = true;
+
+  if (closed !== "" && closed === String(run.startedAt)) {
+    run.dismissed = true;
+  }
+
   return run;
 }
 
@@ -123,7 +152,11 @@ export interface HookInput {
  *  `plan`). Input it cannot read gives false and an empty mode, which the gate does not run in. */
 export function hookInputOf(text: string): HookInput {
   const v = parse(text);
-  if (!isObj(v)) return { stopHookActive: false, permissionMode: "" };
+
+  if (!isObj(v)) {
+    return { stopHookActive: false, permissionMode: "" };
+  }
+
   return {
     stopHookActive: v.stop_hook_active === true,
     permissionMode: typeof v.permission_mode === "string" ? v.permission_mode : "",
@@ -134,6 +167,7 @@ export function hookInputOf(text: string): HookInput {
 export function testScriptIn(packageJson: string | undefined): string | undefined {
   const v = packageJson === undefined ? undefined : parse(packageJson);
   const scripts = isObj(v) ? v.scripts : undefined;
+
   return isObj(scripts) && typeof scripts.test === "string" ? scripts.test : undefined;
 }
 

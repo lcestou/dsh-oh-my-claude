@@ -12,14 +12,15 @@ import { basename, dirname, join } from "node:path";
 import type { ContextSource } from "../context-sources.js";
 import type { JsonValue } from "../dsh.js";
 import { NATIVE_TOOL_MAP } from "./cli.js";
-import { type LooseMessage, type NativeCopies, promptTextOf, textOf } from "./prompt.js";
+import { promptTextOf, textOf } from "./prompt.js";
+import type { LooseMessage, NativeCopies } from "./prompt.js";
 
 /** One transcript row the CLI's `--resume` loads. */
 interface Row {
   parentUuid: string | null;
   isSidechain: false;
   type: "user" | "assistant";
-  message: { role: "user" | "assistant"; content: Block[] };
+  message: { role: "user" | "assistant"; content: Array<Block> };
   uuid: string;
   timestamp: string;
   userType: "external";
@@ -37,7 +38,7 @@ type Block =
   | {
       type: "tool_result";
       tool_use_id: string;
-      content: { type: "text"; text: string }[];
+      content: Array<{ type: "text"; text: string }>;
       is_error?: boolean;
     };
 
@@ -62,10 +63,13 @@ const NATIVE_NAMES = new Map<string, string>(
  *  call that ran inside the bridge, which arrives under its `mcp__dsh__` name. `isNativeCall`
  *  reads the mark back when a transcript is rebuilt. */
 export function announcementOf(callId: string, toolName: string) {
-  if (toolName.startsWith("mcp__dsh__"))
+  if (toolName.startsWith("mcp__dsh__")) {
     return { id: `${callId}:dsh`, name: toolName.slice("mcp__dsh__".length) };
+  }
+
   // SAFETY: NATIVE_TOOL_MAP is a closed literal type; an unlisted name reads as undefined
   const name = NATIVE_TOOL_MAP[toolName as keyof typeof NATIVE_TOOL_MAP] ?? toolName;
+
   return { id: `${callId}:call`, name };
 }
 
@@ -103,24 +107,38 @@ const calledName = (
   m: LooseMessage,
   call: { id: string; name: string; arguments: string },
 ): string => {
-  if (!isNativeCall(m, call)) return bridgedName(call.name);
+  if (!isNativeCall(m, call)) {
+    return bridgedName(call.name);
+  }
+
   // MultiEdit logs as `edit` too; its input is the one that carries an `edits` list.
-  if (call.name === "edit" && /"edits"\s*:\s*\[/.test(call.arguments)) return "MultiEdit";
+  if (call.name === "edit" && /"edits"\s*:\s*\[/.test(call.arguments)) {
+    return "MultiEdit";
+  }
+
   return NATIVE_NAMES.get(call.name) ?? call.name;
 };
 
 /** A tool call's arguments (dsh keeps them as JSON text) as the object a `tool_use` block carries;
  *  anything that does not parse to an object is kept whole under `input`. */
 const inputOf = (args: string) => {
-  if (args.trim() === "") return {} satisfies ToolInput;
+  if (args.trim() === "") {
+    return {} satisfies ToolInput;
+  }
+
   let value: JsonValue;
+
   try {
     // SAFETY: JSON.parse of text yields a JSON value
     value = JSON.parse(args) as JsonValue;
   } catch {
     return { input: args } satisfies ToolInput;
   }
-  if (value instanceof Object && !Array.isArray(value)) return value;
+
+  if (value instanceof Object && !Array.isArray(value)) {
+    return value;
+  }
+
   return { input: value } satisfies ToolInput;
 };
 
@@ -133,12 +151,16 @@ const resultCallId = (m: LooseMessage): string | undefined =>
       : undefined;
 
 /** Text of a message's non-text blocks, named so the turn still says something was there. */
-const attachmentLines = (content: LooseMessage["content"]): string[] =>
+const attachmentLines = (content: LooseMessage["content"]): Array<string> =>
   Array.isArray(content)
     ? content.flatMap((b) => {
-        if (b.type !== "image" && b.type !== "file") return [];
+        if (b.type !== "image" && b.type !== "file") {
+          return [];
+        }
+
         // SAFETY: both attachment refs carry an id; only some carry a name
         const ref = (b as { attachment?: { name?: string; attachmentId?: string } }).attachment;
+
         return [`[${b.type} ${ref?.name ?? ref?.attachmentId ?? ""}]`.replace(" ]", "]")];
       })
     : [];
@@ -146,30 +168,46 @@ const attachmentLines = (content: LooseMessage["content"]): string[] =>
 /** Where the history a seed holds ends: just past the last assistant message and the results that
  *  answer its calls. Everything after it is the new turn the prompt carries. 0 when no assistant
  *  message exists, which leaves nothing to seed. */
-export function historyEnd(messages: readonly LooseMessage[]): number {
+export function historyEnd(messages: ReadonlyArray<LooseMessage>): number {
   let last = -1;
   messages.forEach((m, i) => {
-    if (m.role === "assistant") last = i;
+    if (m.role === "assistant") {
+      last = i;
+    }
   });
-  if (last < 0) return 0;
+
+  if (last < 0) {
+    return 0;
+  }
+
   // Calls made side by side are logged as consecutive messages, all before their results: the
   // results that follow answer any of them.
   let first = last;
-  while (messages[first - 1]?.role === "assistant") first--;
+
+  while (messages[first - 1]?.role === "assistant") {
+    first--;
+  }
+
   const calls = new Set(messages.slice(first, last + 1).flatMap(callIdsOf));
   // A developer message dsh puts between a call and its result does not cut the result off.
   let end = last + 1;
+
   for (let i = last + 1; i < messages.length; i++) {
     const m = messages[i]!;
     const id = resultCallId(m);
-    if (id !== undefined && calls.has(id)) end = i + 1;
-    else if (m.role !== "developer") break;
+
+    if (id !== undefined && calls.has(id)) {
+      end = i + 1;
+    } else if (m.role !== "developer") {
+      break;
+    }
   }
+
   return end;
 }
 
 /** The ids of the tool calls a message made. */
-const callIdsOf = (m: LooseMessage): string[] =>
+const callIdsOf = (m: LooseMessage): Array<string> =>
   Array.isArray(m.content) ? m.content.flatMap((b) => (b.type === "tool-call" ? [b.id] : [])) : [];
 
 export interface SeedOptions {
@@ -194,14 +232,19 @@ export interface SeedOptions {
  * signature the API would accept). A call the log has no result for gets one saying so, since the
  * API refuses a `tool_use` left unanswered. Empty when there is nothing to seed.
  */
-export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOptions): string {
+export function seedTranscriptText(messages: ReadonlyArray<LooseMessage>, o: SeedOptions): string {
   const end = historyEnd(messages);
-  if (end === 0) return "";
+
+  if (end === 0) {
+    return "";
+  }
+
   const drops = o.drops ?? new Set<ContextSource>();
   const base = (o.now ?? new Date()).getTime();
-  const rows: Row[] = [];
+  const rows: Array<Row> = [];
   let parent: string | null = null;
-  const push = (type: Row["type"], content: Block[]) => {
+
+  const push = (type: Row["type"], content: Array<Block>) => {
     const uuid = randomUUID();
     rows.push({
       parentUuid: parent,
@@ -218,9 +261,11 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
     });
     parent = uuid;
   };
-  let open: string[] = [];
+
+  let open: Array<string> = [];
+
   const closeOpen = () => {
-    for (const id of open)
+    for (const id of open) {
       push("user", [
         {
           type: "tool_result",
@@ -229,58 +274,90 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
           is_error: true,
         },
       ]);
+    }
+
     open = [];
   };
+
   /** A message the conversation shows as someone speaking: a person, or dsh's developer messages
    *  when they count. Either closes the calls still open. */
   const isConversation = (m: LooseMessage) =>
     (m.role === "user" && m.source?.kind !== "tool") ||
     (o.developer === true && m.role === "developer");
+
   const history = messages.slice(0, end);
+
   /** Whether a result for one of the open calls still comes after `from`, before the person speaks
    *  again: then the calls are running side by side, not cut off. */
   const answeredLater = (from: number) => {
     for (const later of history.slice(from + 1)) {
       const id = resultCallId(later);
-      if (id !== undefined && open.includes(id)) return true;
-      if (isConversation(later)) return false;
+
+      if (id !== undefined && open.includes(id)) {
+        return true;
+      }
+
+      if (isConversation(later)) {
+        return false;
+      }
     }
+
     return false;
   };
+
   for (const [i, m] of history.entries()) {
     const callId = resultCallId(m);
+
     if (callId !== undefined) {
-      if (!open.includes(callId)) continue; // its call is not in the seed, or already answered
+      if (!open.includes(callId)) {
+        continue;
+      } // its call is not in the seed, or already answered
+
       open = open.filter((id) => id !== callId);
       const full = textOf(m.content);
       const cap = o.cap ?? 0;
+
       const kept =
         cap > 0 && full.length > cap
           ? `${full.slice(0, cap)}… (${full.length - cap} more characters)`
           : full;
+
       const text =
         [kept, ...attachmentLines(m.content)].filter(Boolean).join("\n") || "(no output)";
+
       const block: Block = {
         type: "tool_result",
         tool_use_id: apiId(callId),
         content: [{ type: "text", text }],
       };
-      if (m.isError) block.is_error = true;
+
+      if (m.isError) {
+        block.is_error = true;
+      }
+
       push("user", [block]);
       continue;
     }
+
     if (m.role === "assistant") {
       // Claude runs a message's tool calls side by side, and the plugin logs each as a message of
       // its own before any result: those calls belong in the one reply that made them, or the
       // first would be closed as unanswered and its real result dropped.
       const last = rows.at(-1);
       const together = open.length > 0 && last?.type === "assistant" && answeredLater(i);
-      if (!together) closeOpen();
-      const content: Block[] = together && last ? last.message.content : [];
+
+      if (!together) {
+        closeOpen();
+      }
+
+      const content: Array<Block> = together && last ? last.message.content : [];
+
       if (Array.isArray(m.content)) {
         for (const b of m.content) {
-          if (b.type === "text" && b.text.trim() !== "")
+          if (b.type === "text" && b.text.trim() !== "") {
             content.push({ type: "text", text: b.text });
+          }
+
           if (b.type === "tool-call") {
             content.push({
               type: "tool_use",
@@ -294,18 +371,32 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
       } else if (m.content !== undefined && m.content.trim() !== "") {
         content.push({ type: "text", text: m.content });
       }
-      if (content.length > 0 && !together) push("assistant", content);
+
+      if (content.length > 0 && !together) {
+        push("assistant", content);
+      }
+
       continue;
     }
-    if (!isConversation(m)) continue;
+
+    if (!isConversation(m)) {
+      continue;
+    }
+
     const text = [promptTextOf(m, drops, o.copies), ...attachmentLines(m.content)]
       .filter((t) => t.trim() !== "")
       .join("\n");
-    if (text === "") continue;
+
+    if (text === "") {
+      continue;
+    }
+
     closeOpen();
     push("user", [{ type: "text", text }]);
   }
+
   closeOpen();
+
   // The API takes a conversation that opens with the user; one that opens with a reply (a session
   // whose first message was withheld) gets a neutral first line.
   if (rows[0]?.type === "assistant") {
@@ -320,6 +411,7 @@ export function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOpt
       message: { role: "user", content: [{ type: "text", text: "(conversation start)" }] },
     });
   }
+
   return rows.length > 0 ? `${rows.map((r) => JSON.stringify(r)).join("\n")}\n` : "";
 }
 
@@ -335,9 +427,12 @@ export const REPLACED_KEEP = 2;
 export async function pruneReplaced(dest: string, keep = REPLACED_KEEP): Promise<void> {
   const prefix = `${basename(dest)}.replaced-`;
   const names = await readdir(dirname(dest)).catch(() => []);
+
   const stamped = names
     .filter((n) => n.startsWith(prefix) && /^\d+$/.test(n.slice(prefix.length)))
     .toSorted((a, b) => Number(b.slice(prefix.length)) - Number(a.slice(prefix.length)));
-  for (const old of stamped.slice(keep))
+
+  for (const old of stamped.slice(keep)) {
     await unlink(join(dirname(dest), old)).catch(() => undefined);
+  }
 }

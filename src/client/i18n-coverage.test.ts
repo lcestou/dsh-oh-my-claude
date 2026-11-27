@@ -64,24 +64,45 @@ const PROP = /^\s*(?:"aria-label"|"aria-description"|title|placeholder|alt|label
  *  as a data hook, CSS, a path or a URL. */
 function looksLikeCopy(text: string): boolean {
   let s = text.trim();
+
   // A template's `${…}` parts are code; only the words around them are read.
   for (let prev = ""; prev !== s;) {
     prev = s;
-    s = s.replace(/\$\{[^{}]*\}/g, " ").trim();
+    s = s.replaceAll(/\$\{[^{}]*\}/g, " ").trim();
   }
+
   // A stylesheet written as a string (a rule body in braces) is CSS, not copy.
-  if (/\{[^}]*:[^}]*\}/.test(s)) return false;
-  if (!/[A-Za-z]{2}/.test(s)) return false;
-  if (ALLOWED.has(s)) return false;
+  if (/\{[^}]*:[^}]*\}/.test(s)) {
+    return false;
+  }
+
+  if (!/[A-Za-z]{2}/.test(s)) {
+    return false;
+  }
+
+  if (ALLOWED.has(s)) {
+    return false;
+  }
+
   // Code tokens: identifiers, hooks, CSS, paths, URLs, placeholders-only templates.
-  if (/^[\w.:/@#~$-]+$/.test(s) && !/^[A-Z][a-z]+$/.test(s) && !/\s/.test(s)) return false;
-  if (/^(https?:|\/|\.\/|~\/|data:|#|var\(|rgba?\(|calc\()/.test(s)) return false;
-  if (/^\$\{[^}]*\}$/.test(s)) return false;
+  if (/^[\w.:/@#~$-]+$/.test(s) && !/^[A-Z][a-z]+$/.test(s) && !/\s/.test(s)) {
+    return false;
+  }
+
+  if (/^(https?:|\/|\.\/|~\/|data:|#|var\(|rgba?\(|calc\()/.test(s)) {
+    return false;
+  }
+
+  if (/^\$\{[^}]*\}$/.test(s)) {
+    return false;
+  }
+
   return true;
 }
 
 /** One double-quoted or backtick string literal, as a regex source. */
-const STR = '("(?:[^"\\\\]|\\\\.)*"|\\x60(?:[^\\x60\\\\]|\\\\.)*\\x60)';
+const STR = String.raw`("(?:[^"\\]|\\.)*"|\x60(?:[^\x60\\]|\\.)*\x60)`;
+
 /** A `t(...)` key, a comparison operand, or a string-method argument: literals code reads, not people. */
 const CODE_LITERAL = new RegExp(
   `\\bt\\(\\s*${STR}|[!=]==?\\s*${STR}|${STR}\\s*[!=]==?|\\.(?:startsWith|endsWith|includes|indexOf|split|replace|replaceAll|match|test)\\(\\s*${STR}`,
@@ -90,57 +111,95 @@ const CODE_LITERAL = new RegExp(
 
 /** The literals on one transpiled line, after removing the ones only code reads (see CODE_LITERAL).
  *  A line of CSS written as a string yields none. */
-function literalsOf(line: string): string[] {
-  if (/@keyframes|@media|[a-z-]+:[^;{}"]+;/.test(line)) return [];
-  const bare = line.replace(CODE_LITERAL, " ");
+function literalsOf(line: string): Array<string> {
+  if (/@keyframes|@media|[a-z-]+:[^;{}"]+;/.test(line)) {
+    return [];
+  }
+
+  const bare = line.replaceAll(CODE_LITERAL, " ");
+
   return [...bare.matchAll(LITERAL)].map((m) => m[1] ?? m[2] ?? "");
 }
 
 /** Every on-screen literal in one component file, found in Bun's transpiled output. */
-function scanJsx(file: string): Hit[] {
+function scanJsx(file: string): Array<Hit> {
   const out = new Bun.Transpiler({
     loader: "tsx",
     tsconfig: { compilerOptions: { jsx: "react-jsx" } },
   }).transformSync(readFileSync(join(DIR, file), "utf8"));
-  const hits: Hit[] = [];
+
+  const hits: Array<Hit> = [];
   const lines = out.split("\n");
   // Indents of the `children: [` arrays the current line sits inside.
-  const open: number[] = [];
+  const open: Array<number> = [];
   lines.forEach((line, i) => {
     const indent = line.length - line.trimStart().length;
-    while (open.length && indent <= open.at(-1)! && /^\s*\]/.test(line)) open.pop();
+
+    while (open.length && indent <= open.at(-1)! && /^\s*\]/.test(line)) {
+      open.pop();
+    }
+
     const inChildren = open.length > 0 && indent > open.at(-1)!;
-    const texts: string[] = [];
+    const texts: Array<string> = [];
     const child = /^\s*children:\s*(.*?),?$/.exec(line);
-    if (child && !child[1]!.startsWith("[")) texts.push(...literalsOf(child[1]!));
+
+    if (child && !child[1]!.startsWith("[")) {
+      texts.push(...literalsOf(child[1]!));
+    }
+
     const prop = PROP.exec(line);
-    if (prop) texts.push(...literalsOf(prop[1]!));
+
+    if (prop) {
+      texts.push(...literalsOf(prop[1]!));
+    }
+
     // Only a direct element of the array is a child; deeper lines are props and handler bodies.
     const direct = inChildren && indent === open.at(-1)! + 2;
-    if (direct && !/^\s*(\w+|"[\w-]+"):/.test(line)) texts.push(...literalsOf(line));
-    for (const text of texts) if (looksLikeCopy(text)) hits.push({ file, line: i + 1, text });
-    if (/children:\s*\[$/.test(line)) open.push(indent);
+
+    if (direct && !/^\s*(\w+|"[\w-]+"):/.test(line)) {
+      texts.push(...literalsOf(line));
+    }
+
+    for (const text of texts) {
+      if (looksLikeCopy(text)) {
+        hits.push({ file, line: i + 1, text });
+      }
+    }
+
+    if (/children:\s*\[$/.test(line)) {
+      open.push(indent);
+    }
   });
+
   return hits;
 }
 
 /** Text written into the DOM by hand in any client file: `textContent`, `innerText`, `title` or
  *  `placeholder` assigned a literal, or a label attribute set to one. */
-function scanDom(file: string): Hit[] {
-  const hits: Hit[] = [];
+function scanDom(file: string): Array<Hit> {
+  const hits: Array<Hit> = [];
   readFileSync(join(DIR, file), "utf8")
     .split("\n")
     .forEach((line, i) => {
       const assign = /\.(?:textContent|innerText|title|placeholder)\s*=\s*(["`].*)$/.exec(line);
+
       const attr = /setAttribute\(\s*"(?:aria-label|title|placeholder|alt)",\s*(["`].*)$/.exec(
         line,
       );
+
       for (const m of [assign, attr]) {
-        if (!m) continue;
-        for (const text of literalsOf(m[1]!))
-          if (looksLikeCopy(text)) hits.push({ file, line: i + 1, text });
+        if (!m) {
+          continue;
+        }
+
+        for (const text of literalsOf(m[1]!)) {
+          if (looksLikeCopy(text)) {
+            hits.push({ file, line: i + 1, text });
+          }
+        }
       }
     });
+
   return hits;
 }
 
@@ -175,30 +234,55 @@ const ALLOWED_PHRASES = new Map<string, string>([
 /** Phrases of two or more English words in any client file that sit outside t(): a helper that
  *  returns a sentence, a label kept in a variable, a table of messages. Logs, thrown errors,
  *  comparisons, selectors, CSS and dsh's own fallback dictionary in picker.tsx are skipped. */
-function scanPhrases(file: string): Hit[] {
-  const hits: Hit[] = [];
-  const text = readFileSync(join(DIR, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, (m) =>
-    m.replace(/[^\n]/g, " "),
+function scanPhrases(file: string): Array<Hit> {
+  const hits: Array<Hit> = [];
+
+  const text = readFileSync(join(DIR, file), "utf8").replaceAll(/\/\*[\s\S]*?\*\//g, (m) =>
+    m.replaceAll(/[^\n]/g, " "),
   );
+
   text.split("\n").forEach((raw, i) => {
     const line = raw.includes("://") ? raw : raw.replace(/\/\/.*$/, "");
-    if (/console\.|\bdebug\(|new Error\(|throw /.test(line)) return;
+
+    if (/console\.|\bdebug\(|new Error\(|throw /.test(line)) {
+      return;
+    }
+
     // picker.tsx mirrors dsh's own directory-browser dictionary as its no-locale fallback.
-    if (basename(file) === "picker.tsx" && /^\s*"browser\.[\w]+":/.test(line)) return;
-    if (basename(file) === "picker.tsx" && line.includes('|| "Add workspace"')) return;
+    if (basename(file) === "picker.tsx" && /^\s*"browser\.[\w]+":/.test(line)) {
+      return;
+    }
+
+    if (basename(file) === "picker.tsx" && line.includes('|| "Add workspace"')) {
+      return;
+    }
+
     for (const lit of literalsOf(line)) {
       let s = lit.trim();
+
       for (let prev = ""; prev !== s;) {
         prev = s;
-        s = s.replace(/\$\{[^{}]*\}/g, " ").trim();
+        s = s.replaceAll(/\$\{[^{}]*\}/g, " ").trim();
       }
-      if (!/[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(s)) continue;
-      if (/[[\]=^]|\{[^}]*:|--|var\(|color-mix|\d(px|fr|s|ms)\b|\b(ease|linear|forwards)\b/.test(s))
+
+      if (!/[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(s)) {
         continue;
-      if ([...ALLOWED_PHRASES.keys()].some((k) => s.startsWith(k))) continue;
+      }
+
+      if (
+        /[[\]=^]|\{[^}]*:|--|var\(|color-mix|\d(px|fr|s|ms)\b|\b(ease|linear|forwards)\b/.test(s)
+      ) {
+        continue;
+      }
+
+      if ([...ALLOWED_PHRASES.keys()].some((k) => s.startsWith(k))) {
+        continue;
+      }
+
       hits.push({ file, line: i + 1, text: s });
     }
   });
+
   return hits;
 }
 
@@ -208,6 +292,7 @@ function scanPhrases(file: string): Hit[] {
 const files = readdirSync(DIR, { recursive: true, encoding: "utf8" }).filter(
   (f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$|\.d\.ts$/.test(f) && !f.startsWith("i18n/"),
 );
+
 const hits = [
   ...files.filter((f) => f.endsWith(".tsx")).flatMap(scanJsx),
   ...files.flatMap(scanDom),
@@ -224,12 +309,13 @@ const hits = [
       'const A = () => <div aria-label="Close it" data-omc-x="x">{t("a.b")}<b>Hello there</b>{n ? "two items" : t("c")}{tab === "Memory" && <i />}</div>;',
     )
     .split("\n");
-  const found = planted.flatMap((l) => literalsOf(l)).filter(looksLikeCopy);
-  assert.ok(found.includes("Close it"), "a literal aria-label is caught");
-  assert.ok(found.includes("Hello there"), "JSX text is caught");
-  assert.ok(found.includes("two items"), "a literal in a ternary is caught");
-  assert.ok(!found.includes("a.b") && !found.includes("x"), "t() keys and hooks are not");
-  assert.ok(!found.includes("Memory"), "a comparison operand is not");
+
+  const found = new Set(planted.flatMap((l) => literalsOf(l)).filter(looksLikeCopy));
+  assert.ok(found.has("Close it"), "a literal aria-label is caught");
+  assert.ok(found.has("Hello there"), "JSX text is caught");
+  assert.ok(found.has("two items"), "a literal in a ternary is caught");
+  assert.ok(!found.has("a.b") && !found.has("x"), "t() keys and hooks are not");
+  assert.ok(!found.has("Memory"), "a comparison operand is not");
 }
 
 assert.deepEqual(

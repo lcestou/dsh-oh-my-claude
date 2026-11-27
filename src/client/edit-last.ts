@@ -7,7 +7,8 @@
 import { useEffect, useRef } from "react";
 import { useHintFlag } from "./hints.js";
 import { REWOUND_EVENT } from "./recall.js";
-import { inOwnComposer, isClaudeSession, type ClientCtx } from "./shared.js";
+import { inOwnComposer, isClaudeSession } from "./shared.js";
+import type { ClientCtx } from "./shared.js";
 
 /** Fired on `window` to open the plugin's panel on a tab, from code that has no panel of its own.
  *  `rewindLatest` asks the Rewind tab to pick the newest prompt itself, preview and all. */
@@ -50,7 +51,10 @@ export const ESC_GAP_MS = 500;
  * the time to remember for the next press (nothing after a firing, so a third press starts over).
  */
 export function escapeStep(lastAt: number | null, now: number, gapMs: number) {
-  if (lastAt !== null && now - lastAt <= gapMs) return { fire: true, lastAt: null };
+  if (lastAt !== null && now - lastAt <= gapMs) {
+    return { fire: true, lastAt: null };
+  }
+
   return { fire: false, lastAt: now };
 }
 
@@ -84,13 +88,21 @@ export function useEditLastPrompt({
   const setRef = useRef(setDraft);
   setRef.current = setDraft;
   useEffect(() => {
-    if (off) return;
+    if (off) {
+      return;
+    }
+
     // Read per press, so a changed dsh interval holds without a remount.
     const gap = () =>
       ctx.get?.<{ stopSequenceMs?: number }>("shortcuts")?.stopSequenceMs ?? ESC_GAP_MS;
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape") {
+        return;
+      }
+
       const inBox = inOwnComposer(e.target, sessionId);
+
       if (
         e.altKey ||
         e.ctrlKey ||
@@ -104,21 +116,35 @@ export function useEditLastPrompt({
         !isClaudeSession(ctx, sessionId)
       ) {
         lastAt.current = null;
+
         return;
       }
+
       const step = escapeStep(lastAt.current, performance.now(), gap());
       lastAt.current = step.lastAt;
-      if (!step.fire) return;
+
+      if (!step.fire) {
+        return;
+      }
+
       e.preventDefault();
       e.stopPropagation();
       window.dispatchEvent(new OpenPanelEvent({ tab: "Rewind", rewindLatest: true }));
     };
+
     const onRewound = (e: Event) => {
-      if (!(e instanceof RewoundEvent) || e.sessionId !== sessionId || e.text === undefined) return;
-      if (draftRef.current.trim() === "") setRef.current?.(e.text);
+      if (!(e instanceof RewoundEvent) || e.sessionId !== sessionId || e.text === undefined) {
+        return;
+      }
+
+      if (draftRef.current.trim() === "") {
+        setRef.current?.(e.text);
+      }
     };
+
     document.addEventListener("keydown", onKey, true);
     window.addEventListener(REWOUND_EVENT, onRewound);
+
     return () => {
       document.removeEventListener("keydown", onKey, true);
       window.removeEventListener(REWOUND_EVENT, onRewound);

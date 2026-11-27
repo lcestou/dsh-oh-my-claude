@@ -15,7 +15,7 @@ import type { WorkspaceDiff } from "../process.js";
 import type { TurnDeps } from "./second-opinion.js";
 
 /** A diff with one tracked file and one new file, the shape `decodeWorkspaceDiff` returns. */
-const diff = (aLines: string[], newFile = true): WorkspaceDiff => ({
+const diff = (aLines: Array<string>, newFile = true): WorkspaceDiff => ({
   filesCount: newFile ? 2 : 1,
   linesAdded: 1,
   linesRemoved: 0,
@@ -39,15 +39,20 @@ assert.deepEqual(changedPaths(undefined, treeMarks(diff([" a", "+b"]), new Map()
 
 // A tracked file whose hunks changed counts; one that did not, does not.
 const start = treeMarks(diff([" a", "+b"], false), new Map());
+
 assert.deepEqual(changedPaths(start, treeMarks(diff([" a", "+b"], false), new Map())), []);
+
 assert.deepEqual(changedPaths(start, treeMarks(diff([" a", "+c"], false), new Map())), ["a.ts"]);
 
 // A new file counts when it appears, and again when its text changes, though the CLI's counts stay 0.
 const withNew = treeMarks(diff([" a", "+b"]), new Map([["n.ts", "one"]]));
+
 assert.deepEqual(changedPaths(start, withNew), ["n.ts"]);
+
 assert.deepEqual(changedPaths(withNew, treeMarks(diff([" a", "+b"]), new Map([["n.ts", "two"]]))), [
   "n.ts",
 ]);
+
 assert.deepEqual(
   changedPaths(withNew, treeMarks(diff([" a", "+b"]), new Map([["n.ts", "one"]]))),
   [],
@@ -60,24 +65,32 @@ const both = reviewInput(
   ["a.ts", "n.ts"],
   new Map([["n.ts", "x\ny"]]),
 );
+
 assert.equal(both.reviewed, 2);
+
 assert.equal(
   both.text,
   "Request:\nFix it\n\nDiff:\n--- a.ts\n@@ -1 +1 @@\n a\n+b\n\n--- n.ts (new file)\n+x\n+y",
 );
+
 const unread = reviewInput("", diff([" a"]), ["n.ts"], new Map());
+
 assert.equal(unread.text, "Request:\n(no request text)\n\nDiff:\n--- n.ts (new file, not read)");
 
 // Over the cap: the first file always goes (cut to the cap), the rest are counted, not sent.
 const big = "+".concat("x".repeat(REVIEW_CAP));
 const capped = reviewInput("r", diff([big]), ["a.ts", "n.ts"], new Map([["n.ts", "y"]]));
+
 assert.equal(capped.reviewed, 1);
+
 assert.ok(capped.text.endsWith("(diff cut: 1 of 2 files shown)"), "the cut is named");
+
 assert.ok(!capped.text.includes("n.ts"), "the second file stays out");
 
 // parseFindings: the line format, a quoted line, a leading star and any case; the cap at three;
 // a finding about a file the reviewer never saw is dropped.
 const seen = ["a.ts", "b.ts"];
+
 assert.deepEqual(
   parseFindings(
     "- [bug] a.ts:3 `return kept.slice(0, max);` Keeps the oldest.\n* [RISK] ./b.ts:9 May race.",
@@ -88,10 +101,15 @@ assert.deepEqual(
     { kind: "risk", where: "./b.ts:9", text: "May race." },
   ],
 );
+
 assert.equal(parseFindings(Array(7).fill("- [bug] a.ts:1 x").join("\n"), seen).length, 3);
+
 assert.deepEqual(parseFindings("- [bug] c.ts:1 Guess about an unseen file.", seen), []);
+
 assert.deepEqual(parseFindings("No findings.", seen), []);
+
 assert.deepEqual(parseFindings("  no findings  ", seen), []);
+
 assert.deepEqual(parseFindings("The change looks fine to me.", seen), [
   { kind: "note", where: "", text: "The change looks fine to me." },
 ]);
@@ -100,15 +118,18 @@ assert.deepEqual(parseFindings("The change looks fine to me.", seen), [
 // and a turn end leaves no card.
 {
   let asked = 0;
+
   const deps: TurnDeps = {
     diff: () => {
       asked++;
+
       return Promise.resolve({ ok: false, error: "not asked" });
     },
     read: () => Promise.resolve(null),
     // SAFETY: the off path returns before it touches the model service
     llm: {} as TurnDeps["llm"],
   };
+
   opinions.turnStarting("s-off", "request", deps);
   await opinions.turnEnded("s-off");
   assert.equal(asked, 0, "no control request while off");
@@ -122,16 +143,19 @@ assert.deepEqual(parseFindings("The change looks fine to me.", seen), [
   writeFileSync(join(dir, "second-opinion.json"), JSON.stringify({ provider: "p", model: "m" }));
   await opinions.prime(dir);
   let calls = 0;
+
   const deps: TurnDeps = {
     // Each snapshot sees a different a.ts, so any two of them differ.
     diff: () => {
       calls++;
+
       return Promise.resolve({ ok: true as const, ...diff([" a", `+${calls}`], false) });
     },
     read: () => Promise.resolve(null),
     // SAFETY: no review runs in this block (auto is off), so the model service is never touched
     llm: {} as TurnDeps["llm"],
   };
+
   opinions.turnStarting("s-race", "one", deps);
   // turnEnded runs up to its first await, then turn 2 starts before it resumes.
   const ending = opinions.turnEnded("s-race");
@@ -142,6 +166,7 @@ assert.deepEqual(parseFindings("The change looks fine to me.", seen), [
   // Run pressed twice (a double click, or two tabs) prepares one call; a provider that throws
   // shows as a failed card with its message.
   let prepared = 0;
+
   const llm = {
     listProviders: () => [{ id: "p" }],
     listModels: async () => [{ id: "m" }],
@@ -150,6 +175,7 @@ assert.deepEqual(parseFindings("The change looks fine to me.", seen), [
       throw new Error("provider down");
     },
   };
+
   // SAFETY: the review reads only these three methods off the model service
   const runDeps: TurnDeps = { ...deps, llm: llm as never };
   opinions.turnStarting("s-run", "fix it", runDeps);

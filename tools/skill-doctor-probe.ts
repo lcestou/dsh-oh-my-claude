@@ -30,13 +30,19 @@ let buf = "";
 child.stdout.on("data", (d: Buffer) => {
   buf += d.toString();
   let nl = buf.indexOf("\n");
+
   while (nl !== -1) {
     const line = buf.slice(0, nl);
     buf = buf.slice(nl + 1);
     nl = buf.indexOf("\n");
-    if (line.trim() === "") continue;
+
+    if (line.trim() === "") {
+      continue;
+    }
+
     try {
       const frame: { type?: string; is_error?: boolean; result?: unknown } = JSON.parse(line);
+
       if (frame.type === "result") {
         isError = frame.is_error;
         report = String(frame.result ?? "");
@@ -51,14 +57,16 @@ const frame = {
   type: "user",
   message: { role: "user", content: [{ type: "text", text: "/skill-doctor" }] },
 };
+
 child.stdin.write(`${JSON.stringify(frame)}\n`);
+
 child.stdin.end();
 
 const timer = setTimeout(() => {
   console.log("FAIL: no result frame in 25 s");
   child.kill();
   process.exit(1);
-}, 25000);
+}, 25_000);
 
 child.on("close", () => {
   clearTimeout(timer);

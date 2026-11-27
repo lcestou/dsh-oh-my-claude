@@ -14,7 +14,8 @@ import {
   useDismiss,
   PANEL_ACCENT,
 } from "./shared.js";
-import { t, useLocale, type OmcKey } from "./i18n.js";
+import { t, useLocale } from "./i18n.js";
+import type { OmcKey } from "./i18n.js";
 import { Tooltip } from "@deepseek-ai/dsh-client-ui-primitives";
 import { Spark } from "./spark.js";
 import { TuneBody } from "./tune.js";
@@ -24,7 +25,8 @@ import { MemoryBody } from "./panel/memory.js";
 import { InstructionsBody } from "./panel/instructions.js";
 import { SkillsBody } from "./panel/skills.js";
 import { RewindBody } from "./panel/rewind.js";
-import { OPEN_PANEL_EVENT, type OpenPanelDetail, OpenPanelEvent } from "./edit-last.js";
+import { OPEN_PANEL_EVENT, OpenPanelEvent } from "./edit-last.js";
+import type { OpenPanelDetail } from "./edit-last.js";
 import { ChangesBody } from "./panel/changes.js";
 import { McpBody } from "./panel/mcp.js";
 import { AsidesBody } from "./panel/asides.js";
@@ -32,6 +34,7 @@ import { DiagnosticsBody } from "./panel/diagnostics.js";
 import { TasksBody } from "./panel/tasks.js";
 
 export { AccessShield, AccessTrigger } from "./panel/access.js";
+
 export { sessionLabel } from "./panel/shared.js";
 
 // Module-level variable so reopening lands on the last picked tab.
@@ -75,26 +78,41 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   useEffect(() => {
     let live = true;
     void readHints().then((h) => {
-      if (live && h !== null && !h.sparkTip && !h.restorePulse) setTip(true);
+      if (live && h !== null && !h.sparkTip && !h.restorePulse) {
+        setTip(true);
+      }
     });
+
     return () => {
       live = false;
     };
   }, []);
+
   const dropTip = () => {
-    if (!tip) return;
+    if (!tip) {
+      return;
+    }
+
     setTip(false);
     markHint("sparkTip");
   };
+
   useEffect(() => {
-    if (restorable === 0 || entry?.blank === false) return;
+    if (restorable === 0 || entry?.blank === false) {
+      return;
+    }
+
     let live = true;
     void readHints().then((h) => {
-      if (!live || h === null || h.restorePulse) return;
+      if (!live || h === null || h.restorePulse) {
+        return;
+      }
+
       markHint("restorePulse");
       setPulse(true);
       setTimeout(() => live && setPulse(false), 4000);
     });
+
     return () => {
       live = false;
     };
@@ -116,34 +134,45 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   // dialog. They are dsh's own elements: mark the body instead, and the plugin's style block
   // switches their pointer events off for as long as the panel is mounted.
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
+
     document.body.dataset.omcPanelOpen = "1";
+
     return () => {
       delete document.body.dataset.omcPanelOpen;
     };
   }, [open]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
+
     ensurePanelStyle(); // hover, focus and active rules for everything inside; idempotent
     // One frame after mount, so the browser has a closed style to transition away from.
     const frame = requestAnimationFrame(() => setShown(true));
+
     return () => cancelAnimationFrame(frame);
   }, [open]);
   // False when an outside click closed the panel: that click already moved focus where the person
   // wanted it, and pulling it back to the trigger lit up the trigger's tooltip.
   const refocus = useRef(true);
+
   const close = useCallback((how?: "pointer" | "key") => {
     refocus.current = how !== "pointer";
     setShown(false);
     closeTimer.current = setTimeout(() => setOpen(false), easeMs());
   }, []);
+
   // A pending close must not unmount a panel the next click just reopened.
   const openPanel = useCallback(() => {
     clearTimeout(closeTimer.current);
     setOpen(true);
     setShown(false);
   }, []);
+
   useEffect(() => () => clearTimeout(closeTimer.current), []);
 
   // The panel, not the trigger: a portal takes it out of the trigger's DOM subtree.
@@ -154,13 +183,18 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   // the panel is not modal and the page around it stays usable. An outside click is the exception:
   // focus stays where that click put it.
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
+
     // Record the focused element before focus moves, so close can return it.
     const before = document.activeElement;
     document.getElementById(`omc-tab-${tab}`)?.focus();
+
     return () => {
-      if (refocus.current && before instanceof HTMLElement && document.contains(before))
+      if (refocus.current && before instanceof HTMLElement && document.contains(before)) {
         before.focus();
+      }
     };
   }, [open]);
 
@@ -172,25 +206,40 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
   // Through a ref, so the one listener below reads this render's closures without re-subscribing.
   const openFrom = useRef<(detail: OpenPanelDetail) => void>(() => {});
   openFrom.current = (detail) => {
-    if (!isMine) return;
+    if (!isMine) {
+      return;
+    }
+
     dropTip();
     setTab(detail.tab);
     setRewindLatest(detail.rewindLatest === true);
     const host = rootRef.current?.closest<HTMLElement>("[data-composer-card]") ?? null;
     setCard(host);
     const rect = rootRef.current?.getBoundingClientRect();
-    if (!host && rect) setAbove(Math.max(12, window.innerHeight - rect.top + 8));
+
+    if (!host && rect) {
+      setAbove(Math.max(12, window.innerHeight - rect.top + 8));
+    }
+
     openPanel();
   };
+
   useEffect(() => {
     const onOpen = (e: Event) => {
-      if (e instanceof OpenPanelEvent) openFrom.current(e.detail);
+      if (e instanceof OpenPanelEvent) {
+        openFrom.current(e.detail);
+      }
     };
+
     window.addEventListener(OPEN_PANEL_EVENT, onOpen);
+
     return () => window.removeEventListener(OPEN_PANEL_EVENT, onOpen);
   }, []);
 
-  if (!isMine) return null;
+  if (!isMine) {
+    return null;
+  }
+
   // Restore only fits a blank session; the Restore body hides itself for the same reason.
   const blank = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.blank !== false;
 
@@ -234,6 +283,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
         ...panelSurface,
         borderRadius: 10,
       };
+
   // In the card the panel only fades: `useFitAbove` measures the element's bottom
   // on mount, and a 6 px rise still applied at that moment would size it 6 px too tall.
   // The panel's own type base, so text a tab leaves unsized inherits 13 px on a 1.5 line instead
@@ -267,9 +317,12 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
     { key: "Tasks" },
     { key: "Tune" },
   ] as const;
+
   // Fall back when an earlier session stored a tab no longer present (e.g. removed Permissions).
   // SAFETY: tabs is const-as, so tb.key is a literal string; the map produces string[].
-  if (!(tabs.map((tb) => tb.key) as readonly string[]).includes(lastTab)) lastTab = "Memory";
+  if (!(tabs.map((tb) => tb.key) as ReadonlyArray<string>).includes(lastTab)) {
+    lastTab = "Memory";
+  }
 
   return (
     <span ref={rootRef} style={{ position: "relative", display: "inline-flex" }}>
@@ -309,14 +362,20 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
           onClick={() => {
             if (open) {
               close();
+
               return;
             }
+
             dropTip();
             setTab(panelOpenTab({ blank, restorable, unknown: transcriptsUnknown, lastTab }));
             const host = rootRef.current?.closest<HTMLElement>("[data-composer-card]") ?? null;
             setCard(host);
             const rect = rootRef.current?.getBoundingClientRect();
-            if (!host && rect) setAbove(Math.max(12, window.innerHeight - rect.top + 8));
+
+            if (!host && rect) {
+              setAbove(Math.max(12, window.innerHeight - rect.top + 8));
+            }
+
             openPanel();
           }}
         >
@@ -430,10 +489,14 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               onKeyDown={(e) => {
                 // Only these four keys are ours; every other key keeps its default, so focus can
                 // still leave the strip.
-                if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(e.key)) return;
+                if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(e.key)) {
+                  return;
+                }
+
                 e.preventDefault();
                 const order = tabs.map((tb) => tb.key);
                 const index = order.indexOf(tab);
+
                 const next =
                   e.key === "ArrowRight"
                     ? (index + 1) % order.length
@@ -442,9 +505,14 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
                       : e.key === "Home"
                         ? 0
                         : order.length - 1;
+
                 const key = order[next];
+
                 // next is always a valid index, so this never fires; it narrows key to string.
-                if (!key) return;
+                if (!key) {
+                  return;
+                }
+
                 lastTab = key;
                 setTab(key);
                 // Reach the button by the id it already carries, not by a ref.
@@ -468,6 +536,7 @@ export function OhMyClaudeControl({ sessionId, ctx }: import("./shared.js").Rest
               {tabs.map((tabDef) => {
                 // SAFETY: every tabs[].key has a matching panel.tab.<key> entry in the dictionary.
                 const label = t(`panel.tab.${tabDef.key}` as OmcKey);
+
                 return (
                   <button
                     key={tabDef.key}

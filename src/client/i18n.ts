@@ -40,11 +40,14 @@ const OWN_EN = {
   ...testGate.en,
   ...secondOpinion.en,
 } as const;
+
 /** Every English string `t()` can answer with: the plugin's own, plus the English fallback for the
  *  dsh `common` words it borrows (used only when dsh has no locale service). */
 export const EN = { ...dshCommon.en, ...OWN_EN } as const;
+
 /** Every key the client can ask for. */
 export type OmcKey = keyof typeof EN;
+
 /** The Chinese strings, one per key the plugin registers; the compiler refuses a missing or extra
  *  key. The borrowed dsh `common` words are dsh's to translate and are not here. */
 export const ZH = {
@@ -83,8 +86,11 @@ let bound: ((key: string, params?: Params) => string) | undefined;
 /** Fill `{name}` placeholders from `params`; a placeholder with no value is left as written, the
  *  way dsh's own lookup leaves it, so a missing parameter shows instead of vanishing. */
 export function fill(text: string, params?: Params): string {
-  if (!params) return text;
-  return text.replace(/\{(\w+)\}/g, (whole, name: string) =>
+  if (!params) {
+    return text;
+  }
+
+  return text.replaceAll(/\{(\w+)\}/g, (whole, name: string) =>
     name in params ? String(params[name]) : whole,
   );
 }
@@ -97,10 +103,15 @@ export function installLocale(ctx: {
   get?: (name: "locale") => LocaleLike | undefined;
 }): () => void {
   const svc = ctx.get?.("locale");
-  if (!svc) return () => {};
+
+  if (!svc) {
+    return () => {};
+  }
+
   runtime = svc;
   const dispose = svc.register(LOCALE_NS, { zh: ZH, en: OWN_EN });
   bound = svc.bind(LOCALE_NS);
+
   return () => {
     dispose?.();
     runtime = undefined;
@@ -126,6 +137,7 @@ export function useLocale(): string {
     runtime ? (fn) => runtime!.subscribe(fn) : noSubscribe,
     () => runtime?.getSnapshot().revision ?? 0,
   );
+
   return runtime?.getSnapshot().active ?? "en";
 }
 
@@ -142,12 +154,20 @@ export function activeLocale(): string {
  * no-op without the locale service.
  */
 export function onLocaleSwitch(fn: () => void): () => void {
-  if (!runtime) return () => {};
+  if (!runtime) {
+    return () => {};
+  }
+
   const svc = runtime;
   let last = svc.getSnapshot().active;
+
   return svc.subscribe(() => {
     const now = svc.getSnapshot().active;
-    if (now === last) return;
+
+    if (now === last) {
+      return;
+    }
+
     last = now;
     fn();
   });

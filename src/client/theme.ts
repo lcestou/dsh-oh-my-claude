@@ -7,8 +7,10 @@ export const THEME_GROUPS = [
   "panel",
   "rainbow",
 ] as const;
+
 export type ThemeGroup = (typeof THEME_GROUPS)[number];
-export const THEME_DEFAULT_ACCENT = 0xd97757;
+
+export const THEME_DEFAULT_ACCENT = 0xd9_77_57;
 
 const OFF_KEY = {
   row: "themeRowOff",
@@ -23,9 +25,14 @@ const OFF_KEY = {
 /** True only when the value is an integer in the 0 to 0xffffff range, so a boolean, a fraction or
  *  an out-of-range number is rejected as a hex accent and the default is used instead. */
 export const isColourInt = (v: boolean | number | undefined): v is number =>
-  Number.isInteger(v) && Number(v) >= 0 && Number(v) <= 0xffffff;
+  Number.isInteger(v) && Number(v) >= 0 && Number(v) <= 0xff_ff_ff;
 
-type ThemeResult = { groups: ThemeGroup[]; accent: string; shimmer: string; shimmerDark: string };
+type ThemeResult = {
+  groups: Array<ThemeGroup>;
+  accent: string;
+  shimmer: string;
+  shimmerDark: string;
+};
 
 /** Hints in, body tokens and accent out. Absent keys mean on and the default colour. */
 export function themeOf(hints: Record<string, boolean | number>): ThemeResult {
@@ -43,15 +50,16 @@ export function themeOf(hints: Record<string, boolean | number>): ThemeResult {
   }
 
   const groups = THEME_GROUPS.filter((g) => hints[OFF_KEY[g]] !== true);
+
   return { groups, accent, shimmer, shimmerDark };
 }
 
 /** "#rrggbb" (lower case, six digits) to its channels. */
 export function hexToRgb(hex: string): readonly [number, number, number] {
   return [
-    parseInt(hex.slice(1, 3), 16),
-    parseInt(hex.slice(3, 5), 16),
-    parseInt(hex.slice(5, 7), 16),
+    Number.parseInt(hex.slice(1, 3), 16),
+    Number.parseInt(hex.slice(3, 5), 16),
+    Number.parseInt(hex.slice(5, 7), 16),
   ];
 }
 
@@ -68,8 +76,14 @@ const SPLIT_MARK = "themeSplit";
 export function themeSplitPatch(
   hints: Record<string, boolean | number>,
 ): Record<string, boolean | number> | null {
-  if (hints[SPLIT_MARK] !== undefined) return null;
-  if (hints.themeProseOff !== true) return { [SPLIT_MARK]: 1 };
+  if (hints[SPLIT_MARK] !== undefined) {
+    return null;
+  }
+
+  if (hints.themeProseOff !== true) {
+    return { [SPLIT_MARK]: 1 };
+  }
+
   return { themeComposerOff: true, themeModelsOff: true, [SPLIT_MARK]: 1 };
 }
 
@@ -79,11 +93,13 @@ export function themeSplitPatch(
  *  `claude` false drops the `[data-omc-claude]` condition for rules that never had it. */
 export const gated = (group: ThemeGroup, rest: string, claude = true): string => {
   const body = claude ? "body[data-omc-claude]" : "body";
+
   return `${body}:not([data-omc-theme]) ${rest},${body}[data-omc-theme~="${group}"] ${rest}`;
 };
 
 /** Whether a theme group is on right now: absent attribute means on (nothing has loaded yet). */
 export const hasTheme = (group: ThemeGroup): boolean => {
   const v = document.body.getAttribute("data-omc-theme");
+
   return v === null || v.split(" ").includes(group);
 };

@@ -40,19 +40,22 @@ interface LogHeader {
   delegationDepth: number;
   agentPreset: string;
 }
+
 /** One event line of a v3 log: the envelope dsh writes, with the payload it carries. */
 interface LogRow {
   type: string;
   seq: number;
   time: number;
   surfaceOp?: "append";
-  sourceEventSeqs?: number[];
+  sourceEventSeqs?: Array<number>;
   data: JsonValue;
 }
+
 export interface RawRowsLog {
   header: LogHeader;
-  rows: LogRow[];
+  rows: Array<LogRow>;
 }
+
 /** The slice of dsh's session-format catalog the probe calls: the restore a load runs. */
 export interface Catalog {
   /** The log version this dsh writes. The probe stamps its fixture with it, see `rawRowsLog`. */
@@ -64,6 +67,7 @@ export interface Catalog {
 }
 
 const T0 = 1_700_000_000_000;
+
 /** One synthetic log row for the probe, timed at a base plus its sequence number so rows stay
  *  ordered. */
 const ev = (
@@ -96,7 +100,8 @@ export function toolResultMessage(
   isError = false,
 ): JsonValue {
   const content = [{ type: "text", text }];
-  if (version >= 4)
+
+  if (version >= 4) {
     return {
       id,
       role: "tool",
@@ -105,6 +110,8 @@ export function toolResultMessage(
       content,
       isError,
     };
+  }
+
   return {
     id,
     role: "user",
@@ -214,10 +221,17 @@ const realEntry = (entry: string): string => {
  *  own node_modules cannot answer: a copy pinned there would be probing a different dsh. */
 const catalogPath = (entry = process.argv[1] ?? ""): string | undefined => {
   const rel = join("node_modules", "@deepseek-ai", "dsh-session-format-catalog", "lib", "index.js");
+
   for (let dir = dirname(realEntry(entry)); ; dir = dirname(dir)) {
     const at = join(dir, rel);
-    if (existsSync(at)) return at;
-    if (dir === dirname(dir)) return undefined;
+
+    if (existsSync(at)) {
+      return at;
+    }
+
+    if (dir === dirname(dir)) {
+      return undefined;
+    }
   }
 };
 
@@ -235,7 +249,11 @@ const importCatalog = async (at: string): Promise<{ sessionFormatCatalog?: Catal
  */
 export async function loadSessionCatalog(entry?: string): Promise<Catalog | undefined> {
   const at = catalogPath(entry);
-  if (at === undefined) return undefined;
+
+  if (at === undefined) {
+    return undefined;
+  }
+
   try {
     return (await importCatalog(at)).sessionFormatCatalog;
   } catch {
@@ -255,14 +273,23 @@ export async function currentLogVersion(entry?: string): Promise<number | undefi
 /** Feed the synthetic log through dsh's own restore, with the options its load passes. */
 export async function probeRawToolRows(entry?: string): Promise<RowsSupport> {
   const at = catalogPath(entry);
-  if (at === undefined) return { ok: false, reason: "dsh session-format catalog not found" };
+
+  if (at === undefined) {
+    return { ok: false, reason: "dsh session-format catalog not found" };
+  }
+
   try {
     // A dsh that renames the export fails on the read below, and the catch answers "rows off" with
     // the message, which is the safe side. The export name is the one tools/dsh-session-repair.ts reads.
     const { sessionFormatCatalog } = await importCatalog(at);
-    if (!sessionFormatCatalog) throw new Error("dsh's catalog module has no sessionFormatCatalog");
+
+    if (!sessionFormatCatalog) {
+      throw new Error("dsh's catalog module has no sessionFormatCatalog");
+    }
+
     const version = sessionFormatCatalog.currentVersion ?? 3;
     const { header, rows } = rawRowsLog(version);
+
     // The pair dsh-session-persistence-jsonl hands createRestore when it loads a session. Up to
     // 0.1.6 (v3) that is "transformed", which checks nothing on a current-format log, and
     // "current" would have locked rows that loaded fine. 0.1.7 (v4) loads with "current", whose
@@ -274,10 +301,15 @@ export async function probeRawToolRows(entry?: string): Promise<RowsSupport> {
       recovery: "strict",
       validation: version >= 4 ? "current" : "transformed",
     });
-    for (const row of rows) restore.decodeRow(row);
+
+    for (const row of rows) {
+      restore.decodeRow(row);
+    }
+
     restore.finish();
+
     return { ok: true, reason: "" };
-  } catch (e) {
-    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }

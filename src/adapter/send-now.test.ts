@@ -18,6 +18,7 @@ function makeProc(
   steers: Array<[string, { uuid: string; text: string; at: number }]>,
 ) {
   const written: Array<{ subtype: string; message_uuid?: string }> = [];
+
   const proc: Record<string, unknown> = {
     alive: true,
     busy: true,
@@ -30,7 +31,11 @@ function makeProc(
     /** Records each control request and answers it `{ cancelled }` on the next tick. */
     write(line: string) {
       const req = JSON.parse(line);
-      if (req.type !== "control_request") return true;
+
+      if (req.type !== "control_request") {
+        return true;
+      }
+
       written.push(req.request);
       setTimeout(() => {
         // SAFETY: the adapter installs this listener before writing a control request
@@ -39,22 +44,26 @@ function makeProc(
           response: { subtype: "success", request_id: req.request_id, response: { cancelled } },
         });
       }, 0);
+
       return true;
     },
   };
+
   // SAFETY: partial fake; the send-now path reads only the fields above
   return { proc: proc as unknown as ClaudeProcess, raw: proc, written };
 }
 
 /** A dsh agent whose inbox holds `ids`, recording every call send-now makes on it in order. */
 function makeAgent(ids: Array<[string, string]>, withCancel = true) {
-  const calls: string[] = [];
+  const calls: Array<string> = [];
+
   const nextStep = ids.map(([id, text]) => ({
     id,
     role: "user",
     source: { kind: "user", rpcId: `r-${id}` },
     content: [{ type: "text", text }],
   }));
+
   const agent: Record<string, unknown> = {
     inbox: {
       nextStep,
@@ -62,6 +71,7 @@ function makeAgent(ids: Array<[string, string]>, withCancel = true) {
       /** Records the inbox removal. */
       remove(id: string) {
         calls.push(`remove ${id}`);
+
         return true;
       },
     },
@@ -74,6 +84,7 @@ function makeAgent(ids: Array<[string, string]>, withCancel = true) {
       calls.push(`followup ${m.id}`);
     },
   };
+
   if (withCancel) {
     /** Records the turn cut and whether the inbox was kept. */
     agent.cancel = (reason: { kind: string }, opts: { keepInbox?: boolean }) =>
@@ -83,6 +94,7 @@ function makeAgent(ids: Array<[string, string]>, withCancel = true) {
       calls.push("idle");
     };
   }
+
   return { agent, calls };
 }
 
@@ -90,6 +102,7 @@ function makeAgent(ids: Array<[string, string]>, withCancel = true) {
 function adapterWith(agent: object) {
   // SAFETY: partial fake; send-now reads `agents.get` and subscribes with `on`
   const ctx = { on() {}, agents: { get: () => agent } } as unknown as PluginContext;
+
   return new ClaudeCodeAdapter(ctx, Config({}));
 }
 
@@ -114,11 +127,14 @@ function adapterWith(agent: object) {
     ["m1", "first"],
     ["m2", "second"],
   ]);
+
   const adapter = adapterWith(agent);
+
   const { proc, written } = makeProc(true, [
     ["m1", { uuid: "u1", text: "first", at: 5 }],
     ["m2", { uuid: "u2", text: "second", at: 9 }],
   ]);
+
   adapter.processes.set(registryKey(adapter.providerId, "s1"), proc);
   assert.deepEqual(await adapter.sendSteerNow("s1", ["m2", "m1"]), { ok: true });
   assert.deepEqual(

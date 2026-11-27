@@ -46,6 +46,7 @@ const w = usageWindows({
     { kind: "opus_daily", percent: 7, resets_at: null },
   ],
 });
+
 assert.deepEqual(
   w.map((x) => [x.label, x.usedPercent, x.resetsAt]),
   [
@@ -56,6 +57,7 @@ assert.deepEqual(
     ["Opus daily", 7, null],
   ],
 );
+
 // The API's own grade and a scoped window's model name pass through; a window without them has neither.
 {
   const graded = usageWindows({
@@ -70,6 +72,7 @@ assert.deepEqual(
       { kind: "weekly_scoped", percent: 5, scope: { surface: "code" } },
     ],
   });
+
   assert.deepEqual(
     graded.map((x) => [x.label, x.severity, x.model]),
     [
@@ -79,22 +82,27 @@ assert.deepEqual(
     ],
   );
 }
+
 // legacy shape
 assert.deepEqual(usageWindows({ five_hour: { utilization: 50, resets_at: null }, seven_day: {} }), [
   { label: "5-hour", kind: "session", usedPercent: 50, resetsAt: null },
 ]);
+
 assert.deepEqual(usageWindows(null), []);
+
 assert.deepEqual(usageWindows({ limits: "nope" }), []);
 
 // A fake login in a scratch home, so these reads never touch this box's own credentials: with the
 // box logged out they stopped at "needs a Claude Code login" before the fake fetch was ever called.
 const home = tempDir("omc-usage-");
+
 writeFileSync(
   join(home, ".credentials.json"),
   JSON.stringify({
     claudeAiOauth: { accessToken: "sk-ant-your-token-here", expiresAt: Date.now() + 3_600_000 },
   }),
 );
+
 // A scratch home with no login in it.
 const loggedOut = tempDir("omc-usage-none-");
 
@@ -102,6 +110,7 @@ const loggedOut = tempDir("omc-usage-none-");
 const dead = await readUsage(async () => {
   throw new Error("ECONNREFUSED");
 }, home);
+
 assert.equal(dead.ok, false);
 
 // a 429 surfaces retryAfterMs from the header (seconds), so the route can back off
@@ -113,23 +122,29 @@ const limited = await readUsage(
   }),
   home,
 );
+
 assert.equal(limited.ok, false);
-assert.equal(limited.ok === false && limited.retryAfterMs, 120_000);
+
+assert.equal(!limited.ok && limited.retryAfterMs, 120_000);
 
 // a 429 with no header still backs off at the floor (60s), never 0
 const noHeader = await readUsage(async () => ({ status: 429, json: async () => ({}) }), home);
-assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
+
+assert.equal(!noHeader.ok && noHeader.retryAfterMs, 60_000);
 
 // The other statuses: each is an error row with its own reason, a body that is not JSON included,
 // and an empty 200 is a readable reply with nothing in it.
 {
   const reply = (status: number, json: () => Promise<object> = async () => ({})) =>
     readUsage(async () => ({ status, json }), home);
+
   assert.deepEqual(await reply(401), { ok: false, error: "login expired: run claude auth login" });
   assert.deepEqual(await reply(503), { ok: false, error: "HTTP 503" });
+
   const html = await reply(200, async () => {
     throw new SyntaxError("Unexpected token <");
   });
+
   assert.equal(html.ok, false, "a proxy's HTML page on a 200 is an error row, never a throw");
   const empty = await reply(200);
   assert.ok(empty.ok);
@@ -137,10 +152,13 @@ assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
   assert.equal(empty.ok && empty.extraUsage, false);
   // No login at all stops before any request.
   let called = false;
+
   const none = await readUsage(async () => {
     called = true;
+
     return { status: 200, json: async () => ({}) };
   }, loggedOut);
+
   assert.equal(none.ok, false);
   assert.equal(called, false, "no request without a login");
 }
@@ -151,10 +169,13 @@ assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
 // assertion on purpose.
 {
   const real = Date.parse("2026-11-10T17:00:29Z");
+
   const [win] = usageWindows({
     limits: [{ kind: "session", percent: 100, resets_at: real / 1000 }],
   });
+
   assert.equal(win?.resetsAt, Date.parse("2026-11-10T17:00:00Z"), "rounded to the nearest minute");
+
   const full = {
     ok: true as const,
     fetchedAt: 0,
@@ -162,6 +183,7 @@ assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
     extraUsage: false,
     credits: { enabled: false, capped: false, canPurchase: false },
   };
+
   assert.equal(stillLimitedUntil(full, Date.parse("2026-11-10T17:00:05Z")), undefined);
   // Seconds and milliseconds both read as the same instant.
   const [ms] = usageWindows({ limits: [{ kind: "session", percent: 1, resets_at: real }] });
@@ -171,22 +193,24 @@ assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
 // still at the cap: the latest reset among full windows; nothing when all have room, expired, or unreadable
 {
   const now = 1_000_000;
+
   const win = (usedPercent: number, resetsAt: number | null) => ({
     label: "w",
     usedPercent,
     resetsAt,
   });
-  const ok = (windows: any[]) => ({ ok: true as const, fetchedAt: now, windows });
+
+  const ok = (windows: Array<any>) => ({ ok: true as const, fetchedAt: now, windows });
   assert.equal(
-    stillLimitedUntil(ok([win(100, now + 5_000), win(100, now + 9_000)]), now),
-    now + 9_000,
+    stillLimitedUntil(ok([win(100, now + 5000), win(100, now + 9000)]), now),
+    now + 9000,
   );
-  assert.equal(stillLimitedUntil(ok([win(99, now + 5_000)]), now), undefined);
+  assert.equal(stillLimitedUntil(ok([win(99, now + 5000)]), now), undefined);
   assert.equal(stillLimitedUntil(ok([win(100, now - 1)]), now), undefined);
   assert.equal(stillLimitedUntil(ok([win(100, null)]), now), undefined);
   assert.equal(stillLimitedUntil({ ok: false, error: "x" }, now), undefined);
   assert.equal(
-    stillLimitedUntil({ ...ok([win(100, now + 5_000)]), extraUsage: true }, now),
+    stillLimitedUntil({ ...ok([win(100, now + 5000)]), extraUsage: true }, now),
     undefined,
   );
   assert.equal(
@@ -206,6 +230,7 @@ assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
 {
   const disclaimer =
     "Usage credits cover you when you hit your plan limits. [Learn more](https://support.claude.com/articles/12429409)";
+
   // the live payload with credits off: zero spent, no limit, purchase not offered
   const off: UsageCredits = usageCredits({
     extra_usage: {
@@ -228,6 +253,7 @@ assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
       can_toggle: false,
     },
   });
+
   assert.deepEqual(off, { enabled: false, capped: false, canPurchase: false, note: disclaimer });
 
   // on with a cap: both amounts formatted from the payload's own currency and exponent
@@ -240,6 +266,7 @@ assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
       can_purchase_credits: true,
     },
   });
+
   assert.deepEqual(on, {
     enabled: true,
     capped: false,
@@ -292,21 +319,24 @@ assert.equal(noHeader.ok === false && noHeader.retryAfterMs, 60_000);
   // the consequence: credits covering a full window still stop the limit wait from arming, and a
   // reached cap still arms it, whichever block the payload states them in
   const now = 2_000_000;
-  const full = [{ label: "5-hour", usedPercent: 100, resetsAt: now + 7_000 }];
+  const full = [{ label: "5-hour", usedPercent: 100, resetsAt: now + 7000 }];
+
   const reply = (payload: unknown) => ({
     ok: true as const,
     fetchedAt: now,
     windows: full,
     extraUsage: extraUsageOn(payload),
   });
+
   assert.equal(stillLimitedUntil(reply({ spend: { enabled: true } }), now), undefined);
-  assert.equal(stillLimitedUntil(reply({ spend: { enabled: false } }), now), now + 7_000);
+  assert.equal(stillLimitedUntil(reply({ spend: { enabled: false } }), now), now + 7000);
   assert.equal(
     stillLimitedUntil(reply({ extra_usage: { is_enabled: true, spend_limit_reached: true } }), now),
-    now + 7_000,
+    now + 7000,
   );
   console.log("credits ok");
 }
+
 console.log("usage ok");
 
 // /usage breakdown: parse the CLI's own text (2.1.x) into windows and driver groups.
@@ -333,10 +363,15 @@ console.log("usage ok");
     "  Top skills: /local-subagent 10%, /unslop 3%, /impeccable 2%, /codebase-design 2%, /divi5-skill 1%",
     "  Top MCP servers: dsh 11%, plugin:context-mode:context-mode 11%",
   ].join("\n");
+
   const wins = parseUsageBreakdown(text);
   assert.equal(wins.length, 2, "two windows parsed");
   const [day, week] = wins;
-  if (!day || !week) throw new Error("expected two windows");
+
+  if (!day || !week) {
+    throw new Error("expected two windows");
+  }
+
   assert.equal(week.label, "Last 7d", "second window label");
   assert.equal(week.requests, 9432, "7d requests");
   assert.equal(week.sessions, 154, "7d sessions");
@@ -346,7 +381,11 @@ console.log("usage ok");
     "7d group labels, Title-cased",
   );
   const [skills, mcp] = week.groups;
-  if (!skills || !mcp) throw new Error("expected two groups");
+
+  if (!skills || !mcp) {
+    throw new Error("expected two groups");
+  }
+
   assert.deepEqual(
     skills.drivers,
     [
@@ -380,11 +419,13 @@ console.log("usage ok");
   // Unrecognised text yields no windows, which the caller degrades to an empty section.
   assert.deepEqual(parseUsageBreakdown("nothing here"), [], "unknown text yields no windows");
 }
+
 assert.deepEqual(
   parseUsageBreakdown("Last 7d · 12 requests · 3 sessions\n"),
   [],
   "a window with no Top rows is dropped, not shown empty",
 );
+
 console.log("usage-breakdown ok");
 
 // The breakdown cache on disk is read by shape, not trusted by a version number. It has already
@@ -392,7 +433,8 @@ console.log("usage-breakdown ok");
 // was read by code that expected them. Each case below is a file the reader must refuse rather
 // than serve, and refusing means the next open reads fresh.
 {
-  const reply = (windows: unknown[]) => ({ ok: true, fetchedAt: 1, windows });
+  const reply = (windows: Array<unknown>) => ({ ok: true, fetchedAt: 1, windows });
+
   const window = {
     label: "Last 7d",
     requests: 10,
@@ -400,11 +442,15 @@ console.log("usage-breakdown ok");
     behaviours: ["78% of your usage was at >150k context"],
     groups: [{ label: "MCP servers", drivers: [{ name: "dsh", pct: 12 }] }],
   };
+
   const good = JSON.stringify({ entries: { box: { at: 1, reply: reply([window]) } } });
+
   const windowsOf = (file: string) => {
     const r = parseBreakdownCache(file)?.box?.reply;
+
     return r?.ok === true ? r.windows : undefined;
   };
+
   assert.equal(windowsOf(good)?.length, 1, "a well-formed file is read");
 
   // The file that crashed the panel: written before the behaviour field existed. It is read, and
@@ -440,6 +486,7 @@ console.log("usage-breakdown ok");
     "a reply with no ok flag is dropped, not promoted to a success",
   );
 }
+
 console.log("breakdown-cache ok");
 
 // The route's reader: one endpoint read per cache life, the last good reply and the backoff on disk,
@@ -450,16 +497,24 @@ console.log("breakdown-cache ok");
   let clock = 1_000_000;
   let calls = 0;
   let mode: "ok" | "limited" | "down" = "ok";
+
   const fake = async () => {
     calls++;
-    if (mode === "limited")
+
+    if (mode === "limited") {
       return { status: 429, headers: { get: () => null }, json: async () => ({}) };
-    if (mode === "down") throw new Error("ECONNREFUSED");
+    }
+
+    if (mode === "down") {
+      throw new Error("ECONNREFUSED");
+    }
+
     return {
       status: 200,
       json: async () => ({ limits: [{ kind: "session", percent: 40, resets_at: 1_900_000_000 }] }),
     };
   };
+
   const reader = () => createUsageReader(file, fake, () => clock);
   const flush = () => new Promise((r) => setTimeout(r, 30));
 
@@ -539,8 +594,9 @@ console.log("breakdown-cache ok");
     }),
     () => clock,
   );
+
   const bare = await fresh(home);
-  assert.deepEqual(bare.ok === false && bare.error, "usage endpoint rate limited");
+  assert.deepEqual(!bare.ok && bare.error, "usage endpoint rate limited");
 
   // repeated 429s back off longer, up to a ceiling; a long Retry-After wins
   assert.equal(backoffMs(undefined, 1), 60_000);
@@ -554,15 +610,18 @@ console.log("breakdown-cache ok");
     writeFileSync(join(second, ".credentials.json"), readFileSync(join(home, ".credentials.json")));
     let disk = "";
     let writes = 0;
+
     const slowFirst = async (_file: string, value: unknown) => {
       const text = JSON.stringify(value);
       await new Promise((r) => setTimeout(r, writes++ === 0 ? 50 : 0));
       disk = text;
     };
+
     const ok = async () => ({
       status: 200,
       json: async () => ({ limits: [{ kind: "session", percent: 1, resets_at: 1_900_000_000 }] }),
     });
+
     const both = createUsageReader(join(dir, "order.json"), ok, () => clock, slowFirst);
     await Promise.all([both(home), both(second)]);
     await new Promise((r) => setTimeout(r, 120));
@@ -587,13 +646,15 @@ console.log("breakdown-cache ok");
   /** Mounts the usage route on a host double with `connection` and POSTs to it; returns the status, 405 when the route itself answered. */
   const serve = async (connection: { requestRejection?: () => number | undefined }) => {
     let handler: ((req: unknown, res: unknown) => Promise<void>) | undefined;
+
     // SAFETY: the route reads the injected host's webServer, connection and effect, nothing more
     const ctx = {
-      inject: (_deps: string[], cb: (host: unknown) => void) =>
+      inject: (_deps: Array<string>, cb: (host: unknown) => void) =>
         cb({
           webServer: {
             register: (r: { handler: typeof handler }) => {
               handler = r.handler;
+
               return () => {};
             },
           },
@@ -601,6 +662,7 @@ console.log("breakdown-cache ok");
           effect: (fn: () => void) => fn(),
         }),
     } as never;
+
     registerUsageRoute(
       ctx,
       () => {},
@@ -611,8 +673,10 @@ console.log("breakdown-cache ok");
       { method: "POST", url: "/dsh-oh-my-claude/usage" },
       { writeHead: (s: number) => void (status = s), end: () => {} },
     );
+
     return status;
   };
+
   assert.equal(await serve({}), 405, "a dsh without requestRejection reaches the route itself");
   assert.equal(await serve({ requestRejection: () => 401 }), 401, "an older dsh's refusal holds");
   console.log("usage route auth ok");
@@ -638,16 +702,19 @@ console.log("breakdown-cache ok");
       limits: [{ kind: "weekly_all", percent: 17, resets_at: new Date(resetsAt).toISOString() }],
     }),
   })) as never;
+
   /** Mounts a fresh usage route whose identity names `email`, GETs it once and answers the body. */
   const get = async (email: string | null) => {
     let handler: ((req: unknown, res: unknown) => Promise<void>) | undefined;
+
     // SAFETY: the route reads the injected host's webServer, connection and effect, nothing more
     const ctx = {
-      inject: (_deps: string[], cb: (host: unknown) => void) =>
+      inject: (_deps: Array<string>, cb: (host: unknown) => void) =>
         cb({
           webServer: {
             register: (r: { handler: typeof handler }) => {
               handler = r.handler;
+
               return () => {};
             },
           },
@@ -655,6 +722,7 @@ console.log("breakdown-cache ok");
           effect: (fn: () => void) => fn(),
         }),
     } as never;
+
     registerUsageRoute(
       ctx,
       () => {},
@@ -669,8 +737,10 @@ console.log("breakdown-cache ok");
       { method: "GET", url: "/dsh-oh-my-claude/usage" },
       { writeHead: () => {}, end: (b: string) => void (body = b) },
     );
-    return JSON.parse(body) as { ok: boolean; history?: Record<string, unknown[]> };
+
+    return JSON.parse(body) as { ok: boolean; history?: Record<string, Array<unknown>> };
   };
+
   const file = join(process.env.DSH_OMC_STATE_DIR ?? "", "usage-history.json");
   const anonymous = await get(null);
   assert.equal(anonymous.ok, true);
@@ -681,9 +751,16 @@ console.log("breakdown-cache ok");
   globalThis.fetch = realFetch;
   assert.equal(reply.ok, true);
   assert.deepEqual(reply.history, { weekly: [] }, "a fresh login has a series and nothing ended");
+
   // The file lands under the login's email, written in the background, readable by the owner only.
-  for (let i = 0; i < 200 && !existsSync(file); i++) await new Promise((r) => setTimeout(r, 5));
-  const saved = JSON.parse(readFileSync(file, "utf8")) as { logins: Record<string, unknown[]> };
+  for (let i = 0; i < 200 && !existsSync(file); i++) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+
+  const saved = JSON.parse(readFileSync(file, "utf8")) as {
+    logins: Record<string, Array<unknown>>;
+  };
+
   assert.deepEqual(Object.keys(saved.logins), ["a@example.com"]);
   assert.equal(statSync(file).mode & 0o777, 0o600);
   console.log("usage route history ok");
@@ -703,6 +780,7 @@ console.log("breakdown-cache ok");
   // SAFETY: readUsage reads status, headers.get and json() off the answer, nothing more
   globalThis.fetch = (async () => {
     fetches++;
+
     return {
       status: 200,
       headers: { get: () => null },
@@ -713,13 +791,15 @@ console.log("breakdown-cache ok");
   }) as never;
   let email = "old@example.com";
   let handler: ((req: unknown, res: unknown) => Promise<void>) | undefined;
+
   // SAFETY: the route reads the injected host's webServer, connection and effect, nothing more
   const ctx = {
-    inject: (_deps: string[], cb: (host: unknown) => void) =>
+    inject: (_deps: Array<string>, cb: (host: unknown) => void) =>
       cb({
         webServer: {
           register: (r: { handler: typeof handler }) => {
             handler = r.handler;
+
             return () => {};
           },
         },
@@ -727,12 +807,14 @@ console.log("breakdown-cache ok");
         effect: (fn: () => void) => fn(),
       }),
   } as never;
+
   registerUsageRoute(
     ctx,
     () => {},
     async () => ({ host: "h", email }),
     { home, realHome: home },
   );
+
   /** GETs the mounted route once and answers the parsed body. */
   const get = async () => {
     let body = "";
@@ -740,8 +822,10 @@ console.log("breakdown-cache ok");
       { method: "GET", url: "/dsh-oh-my-claude/usage" },
       { writeHead: () => {}, end: (b: string) => void (body = b) },
     );
-    return JSON.parse(body) as { ok: boolean; history?: Record<string, unknown[]> };
+
+    return JSON.parse(body) as { ok: boolean; history?: Record<string, Array<unknown>> };
   };
+
   await get();
   email = "new@example.com";
   const after = await get();

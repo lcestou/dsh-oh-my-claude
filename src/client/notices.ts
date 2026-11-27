@@ -9,6 +9,7 @@ export interface NoticeRow {
   completed?: boolean;
   displayTitle?: string;
 }
+
 export interface NoticeSnapshot {
   byId: Record<string, NoticeRow>;
   current?: string;
@@ -19,19 +20,34 @@ export interface NoticeSnapshot {
  * The first snapshot of a page load is the baseline and never fires: everything already finished
  * would otherwise arrive as news the moment the tab opens.
  */
-export function newlyWaiting(prev: NoticeSnapshot | null, next: NoticeSnapshot): string[] {
-  if (prev === null) return [];
-  const out: string[] = [];
+export function newlyWaiting(prev: NoticeSnapshot | null, next: NoticeSnapshot): Array<string> {
+  if (prev === null) {
+    return [];
+  }
+
+  const out: Array<string> = [];
+
   for (const id of Object.keys(next.byId)) {
-    if (id === next.current) continue;
+    if (id === next.current) {
+      continue;
+    }
+
     const was = prev.byId[id];
     const now = next.byId[id];
+
     // A session that arrived with this snapshot has no transition to report yet.
-    if (was === undefined || now === undefined) continue;
+    if (was === undefined || now === undefined) {
+      continue;
+    }
+
     const stopped = was.running === true && now.running !== true;
     const finished = now.completed === true && was.completed !== true;
-    if (stopped || finished) out.push(id);
+
+    if (stopped || finished) {
+      out.push(id);
+    }
   }
+
   return out;
 }
 
@@ -57,15 +73,27 @@ export function newlyAwaiting(
   prev: Readonly<Record<string, AwaitingRow>> | null,
   next: Readonly<Record<string, AwaitingRow>>,
   current: string | undefined,
-): string[] {
-  if (prev === null) return [];
-  const out: string[] = [];
+): Array<string> {
+  if (prev === null) {
+    return [];
+  }
+
+  const out: Array<string> = [];
+
   for (const [id, row] of Object.entries(next)) {
-    if (id === current) continue;
+    if (id === current) {
+      continue;
+    }
+
     const was = prev[id];
-    if (was !== undefined && was.id === row.id) continue;
+
+    if (was !== undefined && was.id === row.id) {
+      continue;
+    }
+
     out.push(id);
   }
+
   return out;
 }
 
@@ -106,18 +134,28 @@ export const RECAP_AWAY_CHOICES = [60_000, RECAP_AWAY_MS, 15 * 60_000, 30 * 60_0
  */
 export function recapNext(
   pending: Readonly<Record<string, number>>,
-  waiting: readonly string[],
+  waiting: ReadonlyArray<string>,
   current: string | undefined,
   now: number,
   awayMs: number,
 ): RecapStep {
   const next = { ...pending };
-  for (const id of waiting) if (id !== current) next[id] ??= now;
+
+  for (const id of waiting) {
+    if (id !== current) {
+      next[id] ??= now;
+    }
+  }
+
   if (current !== undefined) {
     const since = next[current];
     delete next[current];
-    if (since !== undefined && now - since >= awayMs) return { pending: next, fire: current };
+
+    if (since !== undefined && now - since >= awayMs) {
+      return { pending: next, fire: current };
+    }
   }
+
   return { pending: next };
 }
 
@@ -140,6 +178,7 @@ export const recapOnIn = (hints: Record<string, boolean | number>): boolean =>
  */
 export const recapAwayIn = (stored: boolean | number | undefined): number => {
   const ms = Number(stored);
+
   return RECAP_AWAY_CHOICES.includes(ms) ? ms : RECAP_AWAY_MS;
 };
 

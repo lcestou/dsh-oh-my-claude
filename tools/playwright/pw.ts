@@ -6,14 +6,16 @@
 // answers null for anything unrendered, and every crop in `tour.ts` reads `.x` off one. Partial on
 // purpose: extend it when a check needs a method, do not mirror the API.
 export type Box = { x: number; y: number; width: number; height: number };
+
 export type Size = { width: number; height: number };
+
 type Find = { hasText?: string | RegExp };
 
 export type Locator = {
   first(): Locator;
   last(): Locator;
   nth(index: number): Locator;
-  all(): Promise<Locator[]>;
+  all(): Promise<Array<Locator>>;
   filter(where: Find): Locator;
   locator(selector: string, where?: Find): Locator;
   count(): Promise<number>;
@@ -23,16 +25,16 @@ export type Locator = {
   innerText(): Promise<string>;
   innerHTML(): Promise<string>;
   textContent(): Promise<string | null>;
-  allTextContents(): Promise<string[]>;
-  allInnerTexts(): Promise<string[]>;
+  allTextContents(): Promise<Array<string>>;
+  allInnerTexts(): Promise<Array<string>>;
   getAttribute(name: string): Promise<string | null>;
   boundingBox(): Promise<Box | null>;
   evaluate<R>(fn: (el: HTMLElement) => R): Promise<R>;
-  evaluateAll<R>(fn: (els: HTMLElement[]) => R): Promise<R>;
+  evaluateAll<R>(fn: (els: Array<HTMLElement>) => R): Promise<R>;
   screenshot(how: { path: string }): Promise<void>;
   scrollIntoViewIfNeeded(): Promise<void>;
-  setInputFiles(files: string | string[]): Promise<void>;
-  selectOption(value: string): Promise<string[]>;
+  setInputFiles(files: string | Array<string>): Promise<void>;
+  selectOption(value: string): Promise<Array<string>>;
   inputValue(): Promise<string>;
   isChecked(): Promise<boolean>;
   isDisabled(): Promise<boolean>;
@@ -74,8 +76,10 @@ export type Page = {
 };
 
 /** Any JSON document, as a plugin route answers with. */
-export type JsonValue = string | number | boolean | null | JsonValue[] | JsonDoc;
+export type JsonValue = string | number | boolean | null | Array<JsonValue> | JsonDoc;
+
 export type JsonDoc = { [key: string]: JsonValue };
+
 /** One intercepted request; the slice a check needs to rewrite a JSON reply. */
 export type Route = {
   fetch(): Promise<Reply>;
@@ -86,6 +90,7 @@ export type Route = {
   /** Let the request through to the box unchanged, as when a check only watches it. */
   continue(): Promise<void>;
 };
+
 export type Reply = { json(): Promise<JsonDoc> };
 
 /** What a context is opened with: a phone shot needs the touch flags, a clip needs the recorder. */
@@ -102,7 +107,7 @@ export type ContextOptions = {
   /** The browser language; dsh follows it until a language is chosen in Settings. */
   locale?: string;
   /** Browser permissions granted up front; a check that reads the clipboard needs both. */
-  permissions?: ("clipboard-read" | "clipboard-write")[];
+  permissions?: Array<"clipboard-read" | "clipboard-write">;
 };
 
 export type Context = {
@@ -120,11 +125,13 @@ export type Browser = {
 export async function launch(): Promise<Browser> {
   const root = process.env.PLAYWRIGHT_ROOT ?? process.cwd();
   const entry = `${root}/node_modules/playwright/index.mjs`;
+
   // Named rather than left to the module loader: "Cannot find module undefined/node_modules/..."
   // is what an unset PLAYWRIGHT_ROOT used to print, which reads as a bug in the check.
   const { chromium } = await import(entry).catch(() => {
     throw new Error(`no Playwright at ${entry}; point PLAYWRIGHT_ROOT at a project that has it`);
   });
+
   // SAFETY: `Browser` is the hand-written slice of Playwright's API these checks use. The import
   // is dynamic and untyped by design (Playwright is not a dependency here); a method that moved
   // fails the check that calls it, which is the failure a dev-only check should have.

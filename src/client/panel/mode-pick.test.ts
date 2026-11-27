@@ -7,13 +7,15 @@ import { clearsOverride, keepsShield } from "./mode-pick.js";
 
 const MODES = ["plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"];
 const SHIELDS = ["read-only", "workspace-write", "danger-full-access"];
+
 const DSH_DEFAULTS = {
   "read-only": "plan",
   "workspace-write": "acceptEdits",
   "danger-full-access": "bypassPermissions",
 };
+
 // The modes a `dsh` session may be in on each shield: modesUpTo of the shield's mapping.
-const DSH_ALLOWED: Record<string, string[]> = {
+const DSH_ALLOWED: Record<string, Array<string>> = {
   "read-only": ["plan"],
   "workspace-write": ["plan", "default", "acceptEdits"],
   "danger-full-access": MODES,
@@ -51,6 +53,7 @@ for (const shield of SHIELDS) {
 // pinned Bypass, is stored as an override instead of falling back to the pin.
 for (const pin of MODES) {
   const defaultModes = Object.fromEntries(SHIELDS.map((s) => [s, pin]));
+
   for (const shield of SHIELDS) {
     for (const m of MODES) {
       const s = snap({ accessMode: shield, mode: pin, ceiling: pin, defaultModes });
@@ -62,13 +65,20 @@ for (const pin of MODES) {
 // The checked Auto row under a pinned Auto on Workspace Write: the pick does nothing, rather than
 // sending `/permission danger-full-access`. On Full access it widens nothing, so it goes through.
 const pinnedAuto = Object.fromEntries(SHIELDS.map((s) => [s, "auto"]));
+
 const autoOn = (accessMode: string): PermissionModeState =>
   snap({ accessMode, mode: "auto", liveMode: "auto", ceiling: "auto", defaultModes: pinnedAuto });
+
 assert.equal(keepsShield("auto", autoOn("workspace-write")), true);
+
 assert.equal(keepsShield("auto", autoOn("read-only")), true);
+
 assert.equal(keepsShield("auto", autoOn("danger-full-access")), false);
+
 // Another row on the same session is a real pick and still goes through.
 assert.equal(keepsShield("acceptEdits", autoOn("workspace-write")), false);
+
 assert.equal(keepsShield("dontAsk", autoOn("workspace-write")), false);
+
 // Before the first prompt names a shield nothing is known to widen, so the old path runs.
 assert.equal(keepsShield("auto", snap({ accessMode: null, mode: "auto" })), false);

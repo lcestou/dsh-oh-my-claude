@@ -18,6 +18,7 @@ import { isFable, noTrailers, readTunables, updateSettings } from "./tune.js";
     b: 2,
     alwaysThinkingEnabled: true,
   });
+
   const r = updateSettings(before, "outputStyle", "Learning");
   assert.equal(r.error, undefined);
   const after = JSON.parse(r.text);
@@ -32,6 +33,7 @@ import { isFable, noTrailers, readTunables, updateSettings } from "./tune.js";
     "outputStyle",
     undefined,
   );
+
   assert.equal(r.error, undefined);
   assert.ok(!("outputStyle" in JSON.parse(r.text)), "key removed, not nulled");
   assert.equal(JSON.parse(r.text).other, 1);
@@ -76,6 +78,7 @@ import { isFable, noTrailers, readTunables, updateSettings } from "./tune.js";
     "subagentPromptCacheTtl",
     undefined,
   );
+
   assert.equal(r.error, undefined);
   assert.ok(!("subagentPromptCacheTtl" in JSON.parse(r.text)), "key removed, not nulled");
   assert.equal(JSON.parse(r.text).other, 1);
@@ -157,6 +160,7 @@ import { isFable, noTrailers, readTunables, updateSettings } from "./tune.js";
     "advisorModel",
     undefined,
   );
+
   assert.equal(r.error, undefined);
   assert.ok(!("advisorModel" in JSON.parse(r.text)), "key removed, not nulled");
   assert.equal(JSON.parse(r.text).other, 1);
@@ -179,11 +183,13 @@ import { isFable, noTrailers, readTunables, updateSettings } from "./tune.js";
   const set = updateSettings("{}", "autoUpdatesChannel", "stable");
   assert.equal(set.error, undefined);
   assert.equal(JSON.parse(set.text).autoUpdatesChannel, "stable");
+
   const cleared = updateSettings(
     '{"autoUpdatesChannel":"stable","other":1}',
     "autoUpdatesChannel",
     undefined,
   );
+
   assert.equal(cleared.error, undefined);
   assert.ok(!("autoUpdatesChannel" in JSON.parse(cleared.text)), "key removed, not nulled");
   assert.equal(JSON.parse(cleared.text).other, 1);
@@ -193,7 +199,10 @@ console.log("tune ok");
 
 /** The written document, or the refusal as a thrown error: every block below expects a write. */
 const written = (r: ReturnType<typeof updateSettings>) => {
-  if (r.error !== undefined) throw new Error(r.error);
+  if (r.error !== undefined) {
+    throw new Error(r.error);
+  }
+
   return JSON.parse(r.text);
 };
 
@@ -234,8 +243,8 @@ const written = (r: ReturnType<typeof updateSettings>) => {
   );
   assert.match(String(updateSettings("{}", "taskOutputMaxChars", 8000.5).error), /whole number/);
   assert.deepEqual(readTunables('{"bashOutputMaxChars":30000,"taskOutputMaxChars":32000}'), {
-    bashOutputMaxChars: 30000,
-    taskOutputMaxChars: 32000,
+    bashOutputMaxChars: 30_000,
+    taskOutputMaxChars: 32_000,
   });
 }
 
@@ -243,13 +252,25 @@ const written = (r: ReturnType<typeof updateSettings>) => {
 // that is how the CLI is told to add nothing; only an absent value removes the field.
 {
   const one = updateSettings('{"model":"opus"}', "attribution.commit", "");
-  if (one.error !== undefined) throw new Error(one.error);
+
+  if (one.error !== undefined) {
+    throw new Error(one.error);
+  }
+
   assert.deepEqual(JSON.parse(one.text), { model: "opus", attribution: { commit: "" } });
   const two = updateSettings(one.text, "attribution.sessionUrl", false);
-  if (two.error !== undefined) throw new Error(two.error);
+
+  if (two.error !== undefined) {
+    throw new Error(two.error);
+  }
+
   assert.deepEqual(JSON.parse(two.text).attribution, { commit: "", sessionUrl: false });
   const back = updateSettings(two.text, "attribution.commit", undefined);
-  if (back.error !== undefined) throw new Error(back.error);
+
+  if (back.error !== undefined) {
+    throw new Error(back.error);
+  }
+
   assert.deepEqual(JSON.parse(back.text).attribution, { sessionUrl: false }, "one field goes");
   const empty = updateSettings(back.text, "attribution.sessionUrl", undefined);
   assert.deepEqual(written(empty), { model: "opus" }, "the object goes with its last field");

@@ -4,7 +4,8 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { defaultAccountDir } from "../accounts.js";
-import { BoxRow, type LoginRoutes, LoginSteps, useLoginFlow } from "./boxes.js";
+import { BoxRow, LoginSteps, useLoginFlow } from "./boxes.js";
+import type { LoginRoutes } from "./boxes.js";
 import { subscribe } from "./events.js";
 import { t, useLocale } from "./i18n.js";
 import { BOXES_EVENT } from "./picker.js";
@@ -52,18 +53,20 @@ const post = <T,>(path: string, body: object): Promise<T> =>
 export function Accounts({ tick }: { tick: number }) {
   useLocale();
   const { colours } = useBoxColours();
-  const [rows, setRows] = useState<AccountRow[] | null>(null);
+  const [rows, setRows] = useState<Array<AccountRow> | null>(null);
   const [status, setStatus] = useState<Record<string, AccountStatus | null>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ name: "", configDir: "" });
+
   /** The list, then each account's login; a failed read keeps what is on screen. */
   const load = () => {
     fetch(`${ROUTE}/accounts`)
-      .then((r) => readJson<{ accounts: AccountRow[] }>(r))
+      .then((r) => readJson<{ accounts: Array<AccountRow> }>(r))
       .then((b) => {
         setRows(b.accounts);
+
         return b.accounts.length === 0
           ? undefined
           : fetch(`${ROUTE}/accounts/status`)
@@ -76,29 +79,35 @@ export function Accounts({ tick }: { tick: number }) {
                 setStatus(Object.fromEntries(s.accounts.map((a) => [a.provider, a.status]))),
               );
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((error_: Error) => setError(error_.message));
   };
+
   useEffect(load, [tick]);
   useEffect(() => {
     window.addEventListener(BOXES_EVENT, load);
+
     return () => window.removeEventListener(BOXES_EVENT, load);
   }, []);
+
   /** Run one write, then re-read here and in every other view on this page. */
   const act = (job: Promise<unknown>) => {
     setBusy(true);
     setError("");
+
     return job
       .then(() => window.dispatchEvent(new Event(BOXES_EVENT)))
-      .catch((e: Error) => {
-        setError(e.message);
-        throw e;
+      .catch((error_: Error) => {
+        setError(error_.message);
+        throw error_;
       })
       .finally(() => setBusy(false));
   };
+
   const { login, setLogin, startLogin, submitLogin } = useLoginFlow(
     () => window.dispatchEvent(new Event(BOXES_EVENT)),
     ACCOUNT_LOGIN,
   );
+
   /** Submit the Add account form: POST the draft; on success clear and close the form, on a
    *  refusal keep it open with the server's text in the alert line. */
   const add = (e: React.FormEvent) => {
@@ -111,7 +120,9 @@ export function Accounts({ tick }: { tick: number }) {
       () => {},
     );
   };
+
   const suggested = defaultAccountDir(draft.name);
+
   return (
     <div data-omc-accounts="">
       {error && (
@@ -121,7 +132,8 @@ export function Accounts({ tick }: { tick: number }) {
       )}
       {(rows ?? []).map((a) => {
         const st = status[a.provider];
-        const facts: ReactNode[] = !a.mounted
+
+        const facts: Array<ReactNode> = !a.mounted
           ? [
               <span key="off" style={{ color: T.err }}>
                 {t("accounts.notMounted", { provider: a.provider })}
@@ -150,6 +162,7 @@ export function Accounts({ tick }: { tick: number }) {
                     ]
                   : []),
               ];
+
         return (
           <div key={a.provider} data-omc-account={a.provider} data-omc-account-source={a.source}>
             <BoxRow

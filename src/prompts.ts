@@ -16,9 +16,13 @@ const NAMED = 12;
 
 /** The prompt Review my changes writes into the composer. Never sent by the plugin: the person
  *  reads it, edits it, sends it. */
-export const reviewPrompt = (paths: readonly string[]): string => {
+export const reviewPrompt = (paths: ReadonlyArray<string>): string => {
   const head = "Review my uncommitted changes. Start with correctness, then anything risky.";
-  if (paths.length === 0) return head;
+
+  if (paths.length === 0) {
+    return head;
+  }
+
   return paths.length > NAMED
     ? `${head} ${paths.length} files changed.`
     : `${head} Files: ${paths.join(", ")}`;
@@ -33,7 +37,10 @@ export interface OpinionFinding {
 
 /** What a second opinion's Send to Claude writes into the composer: the reviewing model named, then
  *  one line per finding. Never sent by the plugin: the person reads it, edits it, sends it. */
-export const secondOpinionSteer = (model: string, findings: readonly OpinionFinding[]): string =>
+export const secondOpinionSteer = (
+  model: string,
+  findings: ReadonlyArray<OpinionFinding>,
+): string =>
   `A second model (${model}) reviewed the changes from your last turn and raised the points below. Check each one against the code. Fix the ones that hold, and say briefly why the others do not.\n\n${findings
     .map((f) => `- [${f.kind}] ${f.where ? `${f.where} ` : ""}${f.text}`)
     .join("\n")}`;

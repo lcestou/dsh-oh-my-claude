@@ -5,7 +5,8 @@
 // Box-aware through the same helpers the instructions list uses, so an ssh box lists its own.
 import { join } from "node:path";
 import z from "@deepseek-ai/schemastery";
-import { type FsBox, listDirsAt, readTextAt } from "./remote-fs.js";
+import { listDirsAt, readTextAt } from "./remote-fs.js";
+import type { FsBox } from "./remote-fs.js";
 import { projectLevels } from "./repo.js";
 
 export interface SkillEntry {
@@ -31,25 +32,43 @@ export interface SkillHead {
  */
 export function parseSkillHead(text: string): SkillHead {
   const lines = text.split(/\r?\n/);
-  if (lines[0]?.trim() !== "---") return {};
+
+  if (lines[0]?.trim() !== "---") {
+    return {};
+  }
+
   const head: SkillHead = {};
+
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i] ?? "";
-    if (line.trim() === "---") break;
+
+    if (line.trim() === "---") {
+      break;
+    }
+
     const m = /^(name|description):\s*(.*)$/.exec(line);
-    if (m === null) continue;
+
+    if (m === null) {
+      continue;
+    }
+
     const key = m[1] === "name" ? "name" : "description";
     let value = (m[2] ?? "").trim();
+
     if (value === ">" || value === "|" || value === ">-" || value === "|-") {
       value = (lines[i + 1] ?? "").trim();
     }
+
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
-    )
+    ) {
       value = value.slice(1, -1);
+    }
+
     head[key] = value;
   }
+
   return head;
 }
 
@@ -58,22 +77,33 @@ export function parseSkillHead(text: string): SkillHead {
  * On an ssh box the heads are not read: a hundred skills would be a hundred round trips, so the
  * rows carry the directory names alone and the listing costs one round trip per directory.
  */
-async function skillsUnder(box: FsBox, dir: string, scope: string): Promise<SkillEntry[]> {
+async function skillsUnder(box: FsBox, dir: string, scope: string): Promise<Array<SkillEntry>> {
   const level = await listDirsAt(box, dir).catch(() => null);
-  if (level === null) return [];
-  if (box.sshHost)
+
+  if (level === null) {
+    return [];
+  }
+
+  if (box.sshHost) {
     return level.names.map((name) => ({
       name,
       scope,
       path: join(dir, name, "SKILL.md"),
       description: "",
     }));
+  }
+
   const reads = await Promise.all(
     level.names.map(async (name) => {
       const path = join(dir, name, "SKILL.md");
       const text = await readTextAt(box, path).catch(() => null);
-      if (text === null) return null;
+
+      if (text === null) {
+        return null;
+      }
+
       const head = parseSkillHead(text);
+
       return {
         name: head.name || name,
         scope,
@@ -82,6 +112,7 @@ async function skillsUnder(box: FsBox, dir: string, scope: string): Promise<Skil
       };
     }),
   );
+
   return reads.filter((s): s is SkillEntry => s !== null);
 }
 
@@ -97,20 +128,31 @@ const Installed = z.object({
  */
 async function installedPlugins(box: FsBox, claudeHome: string): Promise<Map<string, string>> {
   const out = new Map<string, string>();
+
   const text = await readTextAt(box, join(claudeHome, "plugins", "installed_plugins.json")).catch(
     () => null,
   );
-  if (text === null) return out;
+
+  if (text === null) {
+    return out;
+  }
+
   let parsed: ReturnType<typeof Installed>;
+
   try {
     parsed = Installed(JSON.parse(text));
   } catch {
     return out;
   }
+
   for (const [key, records] of Object.entries(parsed.plugins ?? {})) {
     const at = records.find((r) => r.installPath)?.installPath;
-    if (at) out.set(key, at);
+
+    if (at) {
+      out.set(key, at);
+    }
   }
+
   return out;
 }
 
@@ -125,11 +167,12 @@ export async function listSkills(
   cwd: string,
   claudeHome: string,
   box: FsBox = {},
-): Promise<SkillEntry[]> {
+): Promise<Array<SkillEntry>> {
   const [installed, levels] = await Promise.all([
     installedPlugins(box, claudeHome),
     projectLevels(box, cwd),
   ]);
+
   const [user, project, plugins] = await Promise.all([
     skillsUnder(box, join(claudeHome, "skills"), "user"),
     Promise.all(levels.map((dir) => skillsUnder(box, join(dir, ".claude", "skills"), "project"))),
@@ -139,8 +182,15 @@ export async function listSkills(
       ),
     ),
   ]);
+
   const nearest = new Map<string, SkillEntry>();
-  for (const entry of project.flat()) if (!nearest.has(entry.name)) nearest.set(entry.name, entry);
+
+  for (const entry of project.flat()) {
+    if (!nearest.has(entry.name)) {
+      nearest.set(entry.name, entry);
+    }
+  }
+
   return [...user, ...nearest.values(), ...plugins.flat()];
 }
 
@@ -157,6 +207,7 @@ export const isWritableSkillScope = (scope: string): scope is "user" | "project"
  *  prompt for the person to replace. An empty description falls back to a placeholder line. */
 export function skillTemplate(name: string, description: string): string {
   const desc = description.trim() || "One line: what this skill does and when to use it.";
+
   return `---\nname: ${name}\ndescription: ${desc}\n---\n\n# ${name}\n\nWrite the skill here. The first paragraph tells Claude when to reach for it, so say what the skill does and when it applies.\n\n## Steps\n\n1. \n`;
 }
 
@@ -168,8 +219,17 @@ export function skillTargetPath(
   claudeHome: string,
   cwd: string | undefined,
 ): string | null {
-  if (!validSkillName(name)) return null;
-  if (scope === "user") return join(claudeHome, "skills", name, "SKILL.md");
-  if (scope === "project") return cwd ? join(cwd, ".claude", "skills", name, "SKILL.md") : null;
+  if (!validSkillName(name)) {
+    return null;
+  }
+
+  if (scope === "user") {
+    return join(claudeHome, "skills", name, "SKILL.md");
+  }
+
+  if (scope === "project") {
+    return cwd ? join(cwd, ".claude", "skills", name, "SKILL.md") : null;
+  }
+
   return null;
 }

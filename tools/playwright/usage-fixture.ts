@@ -12,7 +12,7 @@ export type HistoryCase = "full" | "empty" | "none";
 
 /** `n` ended windows `len` apart, the newest an hour before `now`, percents from `pcts` in turn,
  *  every fourth one partial. Reset times are rounded to the minute, as the route sends them. */
-const ended = (n: number, len: number, pcts: number[], now: number): JsonDoc[] =>
+const ended = (n: number, len: number, pcts: Array<number>, now: number): Array<JsonDoc> =>
   Array.from({ length: n }, (_, i) => ({
     resetsAt: Math.round((now - H - (n - 1 - i) * len) / 60_000) * 60_000,
     percent: pcts[i % pcts.length] ?? 0,
@@ -36,15 +36,22 @@ export function usageFixture(which: HistoryCase, now: number): JsonDoc {
     live("Weekly", 64, now + 3 * D, { kind: "weekly" }),
     live("Fable weekly", 12, now + 3 * D, { model: "Fable" }),
   ];
+
   const reply: JsonDoc = { ok: true, fetchedAt: now, windows, host: "fixture", email: null };
-  if (which === "full")
+
+  if (which === "full") {
     reply.history = {
       session: ended(12, 5 * H, [22, 40, 95, 63, 75, 18], now),
       weekly: ended(8, 7 * D, [48, 71, 33, 90, 52], now),
       "model:Fable": ended(3, 7 * D, [5, 12, 9], now),
       "model:Opus": ended(4, 7 * D, [30, 44, 20, 61], now),
     };
-  if (which === "empty") reply.history = { session: [], weekly: [], "model:Fable": [] };
+  }
+
+  if (which === "empty") {
+    reply.history = { session: [], weekly: [], "model:Fable": [] };
+  }
+
   return reply;
 }
 

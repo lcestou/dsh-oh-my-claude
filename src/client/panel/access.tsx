@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { subscribe } from "../events.js";
 import type { PermissionModeState } from "../events.js";
-import { meta, T, readJson, ROUTE, activeClaudeSession, type ClientCtx } from "../shared.js";
-import { t, useLocale, type OmcKey } from "../i18n.js";
+import { meta, T, readJson, ROUTE, activeClaudeSession } from "../shared.js";
+import type { ClientCtx } from "../shared.js";
+import { t, useLocale } from "../i18n.js";
+import type { OmcKey } from "../i18n.js";
 import { Menu } from "@deepseek-ai/dsh-client-ui-primitives";
 import {
   IconChevronDownOutlineRegular,
@@ -21,9 +23,11 @@ import { useStickyAnchorFix } from "./menu-anchor.js";
 
 /** The mode to show for a session: the process's own when one runs, else the one the next spawn gets. */
 const shownMode = (snap: PermissionModeState): string => snap.liveMode ?? snap.mode;
+
 /** The stored mode when it differs from the running process's, else empty: what the footer notes. */
 const pendingMode = (snap: PermissionModeState): string =>
   snap.liveMode && snap.liveMode !== snap.mode ? snap.mode : "";
+
 /** What `GET /permissions` reports: the rules and hooks the session's live process loaded. */
 /** What `GET /permissions` returns on success. A failure answers 409, which `readJson` throws, so
  *  the failed arm never reaches state: the reason lands in `permissionsError` instead. */
@@ -61,16 +65,27 @@ const MODE_KEYS = [
 const ModeGlyph = ({ mode }: { mode: string }) => {
   // SAFETY: widening the readonly tuple to string[] only loosens `includes`; the membership check
   // is what makes `presetForMode` safe to call with an arbitrary string.
-  const preset = (MODE_KEYS as readonly string[]).includes(mode) ? presetForMode(mode) : "";
-  if (preset === "read-only") return <PermissionIconReadOnlyRegular aria-hidden />;
-  if (preset === "workspace-write") return <PermissionIconWorkspaceWriteRegular aria-hidden />;
-  if (preset === "danger-full-access") return <PermissionIconFullAccessRegular aria-hidden />;
+  const preset = (MODE_KEYS as ReadonlyArray<string>).includes(mode) ? presetForMode(mode) : "";
+
+  if (preset === "read-only") {
+    return <PermissionIconReadOnlyRegular aria-hidden />;
+  }
+
+  if (preset === "workspace-write") {
+    return <PermissionIconWorkspaceWriteRegular aria-hidden />;
+  }
+
+  if (preset === "danger-full-access") {
+    return <PermissionIconFullAccessRegular aria-hidden />;
+  }
+
   return null;
 };
+
 /** How a Claude mode is labelled in the menu, translated; a mode not in `MODE_KEYS` shows raw. */
 const modeLabel = (m: string): string =>
   // SAFETY: the membership check guarantees `panel.access.mode.<m>` is a defined dictionary key.
-  (MODE_KEYS as readonly string[]).includes(m) ? t(`panel.access.mode.${m}` as OmcKey) : m;
+  (MODE_KEYS as ReadonlyArray<string>).includes(m) ? t(`panel.access.mode.${m}` as OmcKey) : m;
 
 /**
  * Imperative rework: relabels dsh's own trigger and injects Claude-mode rows into its menu.
@@ -94,23 +109,33 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
       // shield adopted that trigger and rewrote its label with the session's CLI mode, so the
       // Settings row read "Full access" whatever the menu had checked (owner, 2026-09-22).
       const anchor = anchorRef.current;
+
       const root =
         anchor?.closest("form") ??
         anchor?.closest('[data-composer-card], [class*="composer" i]') ??
         anchor?.parentElement;
-      if (!root) return null;
+
+      if (!root) {
+        return null;
+      }
+
       // SAFETY: querySelectorAll returns NodeList; we cast because the selector is exact.
       const found = Array.from(
         root.querySelectorAll<HTMLButtonElement>(
           'button[aria-label^="Access mode"], button[aria-label^="访问模式"]',
         ),
       );
+
       const trigger =
         found[0] ??
         Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find(
           (b) => b.closest('[role="dialog"]') === null && presetOfText(b.textContent) !== undefined,
         );
-      if (!trigger) return null;
+
+      if (!trigger) {
+        return null;
+      }
+
       return trigger;
     };
 
@@ -120,11 +145,17 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
       // A settings file can refuse bypass mode while this trigger still reads "Full access". The
       // scope it is refused in, once known, marks the label and the menu row.
       let bypassRefusedIn = "";
+
       const labelSpan = (): HTMLElement | null => {
-        for (const child of Array.from(trigger.children))
-          if (child instanceof HTMLElement && child.className.includes("Label")) return child;
+        for (const child of Array.from(trigger.children)) {
+          if (child instanceof HTMLElement && child.className.includes("Label")) {
+            return child;
+          }
+        }
+
         return trigger.children[1] instanceof HTMLElement ? trigger.children[1] : null;
       };
+
       // dsh's own label and aria-label, kept for the cleanup; refreshed whenever dsh rewrites them.
       let lastDshLabelText = labelSpan()?.textContent ?? "";
       let lastDshAriaLabel = trigger.getAttribute("aria-label") ?? "";
@@ -136,22 +167,35 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
       // Apply our Claude-mode label to the trigger's label span and aria-label. Compares against
       // the DOM, so our own write is a no-op and a rewrite by dsh is overwritten again.
       const reapplyLabel = () => {
-        if (!trigger.isConnected || !currentMode) return;
+        if (!trigger.isConnected || !currentMode) {
+          return;
+        }
+
         const refused = bypassRefusedIn !== "" && currentMode === "bypassPermissions";
         const text = `${modeLabel(currentMode)}${refused ? " ⚠" : ""}`;
         const target = labelSpan();
+
         if (target && target.textContent !== text) {
-          if (target.textContent !== ourLabelText) lastDshLabelText = target.textContent ?? "";
+          if (target.textContent !== ourLabelText) {
+            lastDshLabelText = target.textContent ?? "";
+          }
+
           target.textContent = text;
           ourLabelText = text;
         }
+
         const newAria = t("panel.access.ariaLabel", {
           text,
           refused: refused ? t("panel.access.ariaRefused") : "",
         });
+
         const aria = trigger.getAttribute("aria-label") ?? "";
+
         if (aria !== newAria) {
-          if (aria !== ourAriaLabel) lastDshAriaLabel = aria;
+          if (aria !== ourAriaLabel) {
+            lastDshAriaLabel = aria;
+          }
+
           trigger.setAttribute("aria-label", newAria);
           ourAriaLabel = newAria;
         }
@@ -159,8 +203,11 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
 
       // Observe dsh rewriting the trigger so we re-apply our label whenever it does.
       const labelObserver = new MutationObserver(() => {
-        if (trigger.isConnected) reapplyLabel();
+        if (trigger.isConnected) {
+          reapplyLabel();
+        }
       });
+
       // SAFETY: DOM MutationObserverInit.attributes accepts boolean; TS 7 lib narrows the
       // modern string[] variant to boolean only. We observe all attributes (true) rather than
       // filtering to aria-label alone because the narrower form is not expressible in this TS lib.
@@ -195,14 +242,19 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         .catch(() => {});
 
       const parent = trigger.parentElement;
-      if (!parent)
+
+      if (!parent) {
         return () => {
           labelObserver.disconnect();
         };
+      }
 
       // Watch for dsh's menu to appear and inject our rows into its viewport.
       const menuObserver = new MutationObserver(() => {
-        if (!parent.isConnected) return;
+        if (!parent.isConnected) {
+          return;
+        }
+
         // The open menu is the signal, not the trigger: dsh 0.1.5 stopped setting aria-expanded on
         // it, so gating on that attribute skipped every injection and left dsh's three presets in
         // place of our six Claude rows. `parent` is the small modes box, not the composer, so one
@@ -220,29 +272,44 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         // dropdown and its pick never showed (owner, 2026-09-22). A trigger that says it is
         // closed has no menu of its own open (0.1.5 sets no such attribute, and an absent one
         // says nothing), and a dsh modal dialog on screen means the composer is behind it.
-        if (trigger.getAttribute("aria-expanded") === "false") return;
+        if (trigger.getAttribute("aria-expanded") === "false") {
+          return;
+        }
+
         if (
           document.querySelector(
             '[role="dialog"][aria-modal="true"]:not([aria-label="Oh My Claude"])',
           ) !== null
-        )
+        ) {
           return;
+        }
+
         const menus = [
           // dsh 0.1.5: inline, hung off the trigger inside the modes box.
           ...parent.querySelectorAll<HTMLElement>('[role="menu"]'),
           // dsh 0.1.6 and later: portalled, a direct child of the body.
           ...document.body.querySelectorAll<HTMLElement>(':scope > [role="menu"]'),
         ];
-        if (menus.length === 0) return;
+
+        if (menus.length === 0) {
+          return;
+        }
+
         for (const dshMenu of menus) {
           // Our own rows, not the attribute, say whether this menu is done: dsh re-renders the menu
           // through the same element, which drops the six rows we appended and unhides its three
           // while leaving every attribute we set in place. Trusting the mark there left the menu
           // showing dsh's presets with no way back to ours until it was closed and reopened.
-          if (dshMenu.querySelector("[data-mode]")) continue;
+          if (dshMenu.querySelector("[data-mode]")) {
+            continue;
+          }
+
           const menuItems = Array.from(dshMenu.querySelectorAll<HTMLElement>('[role="menuitem"]'));
           const hasPreset = menuItems.some((el) => presetOfText(el.textContent) !== undefined);
-          if (!hasPreset) continue;
+
+          if (!hasPreset) {
+            continue;
+          }
 
           dshMenu.setAttribute("data-dsh-oh-my-claude", "1");
           // dsh re-renders the open menu through the same element, which drops our rows. Inline
@@ -253,22 +320,28 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
 
           // Take template from the first itemWrap (parent of the first menuitem).
           const firstItemWrap = menuItems[0]?.parentElement;
-          if (!firstItemWrap) continue;
+
+          if (!firstItemWrap) {
+            continue;
+          }
 
           // Find the token containing "selected" across all three original menuitems.
           let selectedToken = "";
           // dsh marks the selected row with a class token and a trailing check svg; both are copied
           // onto our selected clone only.
           let checkMark: Element | null = null;
+
           for (const el of menuItems) {
             const tokens = el.className.split(" ");
             const found = tokens.find((tok) => tok.includes("selected"));
+
             if (found) {
               selectedToken = found;
               checkMark = el.querySelector(":scope > svg");
               break;
             }
           }
+
           // SAFETY: firstItemWrap exists only when menuItems[0] exists; checked above.
           const baseClass = selectedToken
             ? menuItems[0]!.className
@@ -279,11 +352,19 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
 
           // Record each original row's icon svg keyed by preset id via labels.
           const svgByPresetId: Record<string, string> = {};
+
           for (const el of menuItems) {
             const svgEl = el.querySelector<SVGSVGElement>("svg");
-            if (!svgEl) continue;
+
+            if (!svgEl) {
+              continue;
+            }
+
             const presetId = presetOfText(el.textContent)?.id;
-            if (presetId) svgByPresetId[presetId] = svgEl.outerHTML;
+
+            if (presetId) {
+              svgByPresetId[presetId] = svgEl.outerHTML;
+            }
           }
 
           // Hide the three original wraps.
@@ -311,17 +392,27 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
             const wrap = firstItemWrap.cloneNode(true) as HTMLElement;
             wrap.style.display = ""; // the template was hidden before cloning
             const menuitem = wrap.querySelector<HTMLElement>("button[role='menuitem']");
-            if (!menuitem) continue;
+
+            if (!menuitem) {
+              continue;
+            }
 
             menuitem.className =
               m === currentMode && selectedToken ? `${baseClass} ${selectedToken}` : baseClass;
             menuitem.setAttribute("aria-checked", m === currentMode ? "true" : "false");
-            for (const inherited of menuitem.querySelectorAll(":scope > svg")) inherited.remove();
-            if (m === currentMode && checkMark) menuitem.append(checkMark.cloneNode(true));
+
+            for (const inherited of menuitem.querySelectorAll(":scope > svg")) {
+              inherited.remove();
+            }
+
+            if (m === currentMode && checkMark) {
+              menuitem.append(checkMark.cloneNode(true));
+            }
 
             // SAFETY: PRESET_FOR_MODE has exactly the six Claude modes as keys.
-            const presetId = PRESET_FOR_MODE[m as keyof typeof PRESET_FOR_MODE];
+            const presetId = PRESET_FOR_MODE[m];
             const iconSpan = menuitem.querySelector<HTMLElement>("span[class*='Icon']");
+
             if (iconSpan && svgByPresetId[presetId]) {
               iconSpan.innerHTML = svgByPresetId[presetId];
             }
@@ -330,24 +421,32 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
             const labelChild = Array.from(menuitem.children).find(
               (c) => c instanceof HTMLElement && c.className.includes("Label"),
             );
+
             if (labelChild instanceof HTMLElement) {
               labelChild.textContent = modeLabel(m);
             } else {
               const textNode = Array.from(menuitem.childNodes).find(
                 (n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim(),
               );
-              if (textNode instanceof Text) textNode.textContent = modeLabel(m);
+
+              if (textNode instanceof Text) {
+                textNode.textContent = modeLabel(m);
+              }
             }
 
             menuitem.setAttribute("data-mode", m);
             menuitem.addEventListener("click", () => {
               // The snapshot fetched at open may still be in flight on a fast click: fetch then.
               (stateSnapshot ? Promise.resolve(stateSnapshot) : fetchMode()).then((snap) => {
-                if (!snap) return;
+                if (!snap) {
+                  return;
+                }
+
                 stateSnapshot = snap;
                 pick(snap);
               });
             });
+
             const pick = (snap: PermissionModeState) => {
               // A pinned mode already in force above its shield: sending it on would widen dsh's
               // shield to the mode's preset, so the pick only closes the menu.
@@ -355,8 +454,10 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                 document.dispatchEvent(
                   new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
                 );
+
                 return;
               }
+
               const need = presetForMode(m);
               const have = snap.accessMode;
               // The label takes the pick at once. What follows is a dsh command, a settle and two
@@ -366,10 +467,12 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
               const wasMode = currentMode;
               currentMode = m;
               reapplyLabel();
+
               const revert = () => {
                 currentMode = wasMode;
                 reapplyLabel();
               };
+
               const doSet = () => {
                 const clearDefault = clearsOverride(m, snap);
                 fetch(`${ROUTE}/permission-mode`, {
@@ -382,55 +485,77 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                     if (reply.error) {
                       revert();
                       const errEl = parent.querySelector<HTMLElement>("[data-err]");
-                      if (errEl) errEl.textContent = reply.error;
+
+                      if (errEl) {
+                        errEl.textContent = reply.error;
+                      }
                     } else {
                       fetchMode().then((next) => {
-                        if (next) currentMode = shownMode(next);
+                        if (next) {
+                          currentMode = shownMode(next);
+                        }
+
                         reapplyLabel();
                       });
                     }
                   })
-                  .catch((e) => {
+                  .catch((error) => {
                     revert();
                     const errEl = parent.querySelector<HTMLElement>("[data-err]");
-                    if (errEl) errEl.textContent = e instanceof Error ? e.message : String(e);
+
+                    if (errEl) {
+                      errEl.textContent = error instanceof Error ? error.message : String(error);
+                    }
                   });
               };
+
               if (need !== have) {
                 const live = ctx.sessions.binding?.(sessionId)?.session;
+
                 if (!live) {
                   revert();
                   const errEl = parent.querySelector<HTMLElement>("[data-err]");
-                  if (errEl) errEl.textContent = t("panel.access.notMaterialized");
+
+                  if (errEl) {
+                    errEl.textContent = t("panel.access.notMaterialized");
+                  }
+
                   return;
                 }
+
                 live
                   .command(`/permission ${need}`)
                   .then((reply) => {
                     if (!reply || !reply.ok) {
                       revert();
                       const errEl = parent.querySelector<HTMLElement>("[data-err]");
-                      if (errEl)
+
+                      if (errEl) {
                         errEl.textContent =
                           reply?.error?.message ?? t("panel.access.commandFailed");
+                      }
                     } else {
                       setTimeout(doSet, 700);
                     }
                   })
-                  .catch((e) => {
+                  .catch((error) => {
                     revert();
                     const errEl = parent.querySelector<HTMLElement>("[data-err]");
-                    if (errEl) errEl.textContent = e instanceof Error ? e.message : String(e);
+
+                    if (errEl) {
+                      errEl.textContent = error instanceof Error ? error.message : String(error);
+                    }
                   });
               } else {
                 doSet();
               }
+
               document.dispatchEvent(
                 new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
               );
             };
 
-            viewport.appendChild(wrap);
+            viewport.append(wrap);
           }
 
           // Why the Full access row will not take, on the menu that offers it.
@@ -438,7 +563,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
             const note = document.createElement("div");
             Object.assign(note.style, { ...meta, color: T.err, padding: "8px 10px" });
             note.textContent = t("panel.access.fullAccessRefused", { scope: bypassRefusedIn });
-            viewport.appendChild(note);
+            viewport.append(note);
           }
 
           // Error wrap at the bottom. Padding lives in a class so an empty slot collapses via
@@ -447,13 +572,14 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
             const st = document.createElement("style");
             st.id = "omc-access-err-style";
             st.textContent = ".omc-access-err{padding:8px 10px}.omc-access-err:empty{padding:0}";
-            document.head.appendChild(st);
+            document.head.append(st);
           }
+
           const errWrap = document.createElement("div");
           errWrap.setAttribute("data-err", "1");
           errWrap.className = "omc-access-err";
           Object.assign(errWrap.style, { ...meta, color: T.err });
-          viewport.appendChild(errWrap);
+          viewport.append(errWrap);
 
           // A portalled menu is positioned from JavaScript: dsh measures its height once, on open,
           // and clamps `top` so the box sits inside a 12px margin. Six rows where it measured three
@@ -469,6 +595,7 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
           }
         }
       });
+
       menuObserver.observe(parent, { childList: true, subtree: true });
       menuObserver.observe(document.body, { childList: true });
 
@@ -478,8 +605,15 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
         // Restore trigger's label text and aria-label to what dsh last rendered.
         // Give dsh back its own label and aria-label.
         const restoreTarget = labelSpan();
-        if (restoreTarget && lastDshLabelText) restoreTarget.textContent = lastDshLabelText;
-        if (lastDshAriaLabel) trigger.setAttribute("aria-label", lastDshAriaLabel);
+
+        if (restoreTarget && lastDshLabelText) {
+          restoreTarget.textContent = lastDshLabelText;
+        }
+
+        if (lastDshAriaLabel) {
+          trigger.setAttribute("aria-label", lastDshAriaLabel);
+        }
+
         // If a marked menu is currently open, unhide original wraps and remove ours. Both places
         // are checked for the same reason the injection above checks both, and in the same order.
         const markedMenu =
@@ -487,8 +621,10 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
           parent.querySelector<HTMLElement>('[role="menu"][data-dsh-oh-my-claude]') ??
           // dsh 0.1.6 and later: portalled to the body.
           document.body.querySelector<HTMLElement>(':scope > [role="menu"][data-dsh-oh-my-claude]');
+
         if (markedMenu) {
           const vp = markedMenu.querySelector<HTMLElement>('[role="presentation"]') ?? markedMenu;
+
           for (const wrap of vp.querySelectorAll<HTMLElement>("[class*='itemWrap']")) {
             if (wrap.hasAttribute("data-mode")) {
               wrap.remove();
@@ -496,8 +632,12 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
               wrap.style.display = "";
             }
           }
+
           const errEl = vp.querySelector<HTMLElement>("[data-err]");
-          if (errEl) errEl.remove();
+
+          if (errEl) {
+            errEl.remove();
+          }
         }
       };
     };
@@ -506,32 +646,51 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
     let stop: (() => void) | undefined;
     let hidden: HTMLButtonElement | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
+
     const attempt = () => {
       const found = build();
-      if (!found) return false;
+
+      if (!found) {
+        return false;
+      }
+
       hidden = found;
       stop = start(found);
+
       return true;
     };
+
     if (mine() && !attempt()) {
       let attempts = 0;
       timer = setInterval(() => {
         attempts++;
-        if (!mine() || attempt() || attempts >= 40) clearInterval(timer);
+
+        if (!mine() || attempt() || attempts >= 40) {
+          clearInterval(timer);
+        }
       }, 500);
     }
+
     // Every second: leave when the session stops being Claude's, come back when it is again, and
     // re-attach when dsh re-rendered its trigger (the node we hooked left the document).
     const watchdog = setInterval(() => {
       const claude = mine();
+
       if (stop && (!claude || !hidden?.isConnected)) {
         stop();
         stop = undefined;
       }
-      if (!stop && claude) attempt();
+
+      if (!stop && claude) {
+        attempt();
+      }
     }, 1000);
+
     return () => {
-      if (timer) clearInterval(timer);
+      if (timer) {
+        clearInterval(timer);
+      }
+
       clearInterval(watchdog);
       stop?.();
     };
@@ -568,11 +727,15 @@ const fetchModeState = (sessionId: string): Promise<PermissionModeState | null> 
 /** Inject the trigger's hover/focus rule once, so a hot reload's stale copy never survives. */
 const ensureAccessTriggerStyle = (): void => {
   const existing = document.getElementById("dsh-oh-my-claude-access-trigger");
-  if (existing) return;
+
+  if (existing) {
+    return;
+  }
+
   const el = document.createElement("style");
   el.id = "dsh-oh-my-claude-access-trigger";
   el.textContent = ACCESS_TRIGGER_CSS;
-  document.head.appendChild(el);
+  document.head.append(el);
 };
 
 /** The capsule the composer's permission control wears at rest: dsh's trigger shape, our hook. */
@@ -625,7 +788,10 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
   useEffect(() => {
     let live = true;
     fetchModeState(sessionId).then((snap) => {
-      if (!live || !snap) return;
+      if (!live || !snap) {
+        return;
+      }
+
       setMode(shownMode(snap));
       setPending(pendingMode(snap));
     });
@@ -633,9 +799,12 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
     fetch(`${ROUTE}/feature-switches${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`)
       .then((r) => readJson<FeatureSwitches>(r))
       .then((s) => {
-        if (live) setBypassRefusedIn(s.bypassDisabled?.scope ?? "");
+        if (live) {
+          setBypassRefusedIn(s.bypassDisabled?.scope ?? "");
+        }
       })
       .catch(() => {});
+
     return () => {
       live = false;
     };
@@ -646,20 +815,31 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
   // another tab. One read when the note first shows covers a stream that is down.
   useEffect(() => {
     const off = subscribe("permission-mode", (session, data) => {
-      if (session !== sessionId) return;
+      if (session !== sessionId) {
+        return;
+      }
+
       setMode(shownMode(data));
       setPending(pendingMode(data));
     });
+
     return off;
   }, [sessionId]);
   useEffect(() => {
-    if (!pending) return;
+    if (!pending) {
+      return;
+    }
+
     let live = true;
     fetchModeState(sessionId).then((snap) => {
-      if (!live || !snap) return;
+      if (!live || !snap) {
+        return;
+      }
+
       setMode(shownMode(snap));
       setPending(pendingMode(snap));
     });
+
     return () => {
       live = false;
     };
@@ -677,13 +857,20 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
   const pick = (m: string) => {
     setOpen(false);
     fetchModeState(sessionId).then((snap) => {
-      if (!snap) return; // nothing to compare against; leave the current mode as is
+      if (!snap) {
+        return;
+      } // nothing to compare against; leave the current mode as is
+
       // A pinned mode already in force above its shield: sending it on would widen dsh's shield.
-      if (keepsShield(m, snap)) return;
+      if (keepsShield(m, snap)) {
+        return;
+      }
+
       const wasMode = mode;
       setMode(m); // optimistic, like the shield's reapplyLabel
       const revert = () => setMode(wasMode);
       const need = presetForMode(m);
+
       const settle = () => {
         const clearDefault = clearsOverride(m, snap);
         fetch(`${ROUTE}/permission-mode`, {
@@ -704,18 +891,22 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
               setPending(pendingMode(reply));
             }
           })
-          .catch((e) => {
+          .catch((error_) => {
             revert();
-            setError(e instanceof Error ? e.message : String(e));
+            setError(error_ instanceof Error ? error_.message : String(error_));
           });
       };
+
       if (need !== snap.accessMode) {
         const live = ctx.sessions.binding?.(sessionId)?.session;
+
         if (!live) {
           revert();
           setError(t("panel.access.notMaterialized"));
+
           return;
         }
+
         live
           .command(`/permission ${need}`)
           .then((reply) => {
@@ -726,9 +917,9 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
               setTimeout(settle, 700);
             }
           })
-          .catch((e) => {
+          .catch((error_) => {
             revert();
-            setError(e instanceof Error ? e.message : String(e));
+            setError(error_ instanceof Error ? error_.message : String(error_));
           });
       } else {
         settle();
@@ -737,6 +928,7 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
   };
 
   const chevronOpen = open ? { transform: "rotate(180deg)" } : undefined;
+
   // The six rows go to dsh's Menu as data, the way dsh's own permission control hands it its three:
   // dsh draws the glyph cell, the label and the trailing check with its own classes, so the rows
   // track dsh's menu styling on every line instead of a copy of its numbers. The refused note and
@@ -746,6 +938,7 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
     icon: <ModeGlyph mode={m} />,
     label: bypassRefusedIn !== "" && m === "bypassPermissions" ? `${modeLabel(m)} ⚠` : modeLabel(m),
   }));
+
   const footer = [
     ...(bypassRefused
       ? [
@@ -767,6 +960,7 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
       : []),
     ...(error ? [{ type: "label" as const, id: "error", text: error }] : []),
   ];
+
   const accessMenuProps = {
     open,
     onClose: () => setOpen(false),
@@ -816,5 +1010,6 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
       </button>
     ),
   };
+
   return <Menu {...accessMenuProps} />;
 }

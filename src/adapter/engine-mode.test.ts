@@ -23,15 +23,21 @@ const on = { engineOn: true, "enginePreset:engine": true } as const;
 
 // The master switch off: nothing applies, whatever is ticked under it.
 assert.equal(engineOverlay(base, { "enginePreset:engine": true }, "engine"), base, "master off");
+
 // Off for the session's preset, no preset, or none ticked: the very same object comes back.
 assert.equal(engineOverlay(base, {}, "engine"), base);
+
 assert.equal(engineOverlay(base, on, "standard"), base, "another preset keeps the config");
+
 assert.equal(engineOverlay(base, on, null), base, "no preset recorded");
+
 assert.equal(engineOverlay(base, on, undefined), base);
 
 // On: the whole bundle, and the defaults of every other key untouched.
 const engine = engineOverlay(base, on, "engine");
+
 assert.notEqual(engine, base);
+
 assert.deepEqual(
   {
     systemPrompt: engine.systemPrompt,
@@ -52,17 +58,24 @@ assert.deepEqual(
     thinkingDisplay: "summarized",
   },
 );
+
 assert.equal(engine.command, base.command, "keys engine mode does not own stay as configured");
+
 assert.equal(base.isolate, false, "the plugin's own config is not edited");
+
 assert.notEqual(engineDigest(engine), undefined, "so the process spec keys a new process");
 
 // A skipped option keeps the config's own value.
 const noIsolate = engineOverlay(base, { ...on, "engineSkip:engine:isolate": true }, "engine");
+
 assert.equal(noIsolate.isolate, false);
+
 assert.equal(noIsolate.systemPrompt, "dsh");
+
 const allSkipped = Object.fromEntries(
   ENGINE_OPTIONS.map((o) => [engineSkipKey(o, "engine"), true]),
 );
+
 assert.deepEqual(
   engineOverlay(base, { ...on, ...allSkipped }, "engine").builtinTools,
   base.builtinTools,
@@ -77,6 +90,7 @@ assert.deepEqual(
     [engineSkipKey("isolate", "assistant")]: true,
     [engineSkipKey("thinkingDisplay", "engine")]: true,
   };
+
   const engineMode = engineOverlay(base, hints, "engine");
   assert.equal(engineMode.isolate, true, "engine keeps isolate");
   assert.equal(engineMode.thinkingDisplay, base.thinkingDisplay, "engine's own skip applies");
@@ -89,14 +103,19 @@ assert.deepEqual(
 // The chat's row mask: dsh's prompt goes out only for a ticked mode, with the switch on and the
 // mode's system-prompt box left in.
 assert.equal(engineSendsDshPrompt(on, "engine"), true);
+
 assert.equal(engineSendsDshPrompt({ "enginePreset:engine": true }, "engine"), false, "master off");
+
 assert.equal(engineSendsDshPrompt(on, "standard"), false);
+
 assert.equal(engineSendsDshPrompt(on, null), false);
+
 assert.equal(
   engineSendsDshPrompt({ ...on, [engineSkipKey("systemPrompt", "engine")]: true }, "engine"),
   false,
   "the mode's own skip",
 );
+
 // A preset service that throws, or none, reads as no preset.
 // SAFETY: partial fakes; presetOfSession reads sessions.get and the preset service only
 assert.equal(
@@ -113,7 +132,9 @@ assert.equal(
   ),
   null,
 );
+
 assert.equal(presetOfSession(undefined, "s1"), null);
+
 assert.equal(
   presetOfSession(
     {
@@ -125,6 +146,7 @@ assert.equal(
   "engine",
   "a loaded session reads its preset",
 );
+
 assert.equal(
   presetOfSession(
     {
@@ -151,6 +173,7 @@ assert.deepEqual(enginePresets({ "enginePreset:a": true, "enginePreset:b": true,
     JSON.stringify({ engineOn: true, "enginePreset:engine": true }),
   );
   const presets: Record<string, string> = { s1: "engine", s2: "standard" };
+
   // SAFETY: partial fake; sessionConfigOf reads sessions.get and the preset service only
   const ctx = {
     on() {},
@@ -160,6 +183,7 @@ assert.deepEqual(enginePresets({ "enginePreset:a": true, "enginePreset:b": true,
         ? { presetForSession: (s: { id: string }) => presets[s.id] ?? null }
         : undefined,
   } as unknown as PluginContext;
+
   const a = new ClaudeCodeAdapter(ctx, Config({}));
   const s1 = await a.sessionConfigOf("s1");
   assert.equal(s1.isolate, true, "the engine preset's session runs in engine mode");
@@ -172,12 +196,14 @@ assert.deepEqual(enginePresets({ "enginePreset:a": true, "enginePreset:b": true,
   await writeFile(join(STATE_DIR, "hints.json"), "{}");
   assert.equal(await a.sessionConfigOf("s1"), a.config);
   assert.equal(a.configFor("s1"), a.config);
+
   // A dsh with no preset service is engine mode off.
   // SAFETY: partial fake, as above
   const bare = new ClaudeCodeAdapter(
     { on() {}, sessions: { get: () => ({}) }, get: () => undefined } as unknown as PluginContext,
     Config({}),
   );
+
   await writeFile(
     join(STATE_DIR, "hints.json"),
     JSON.stringify({ engineOn: true, "enginePreset:engine": true }),

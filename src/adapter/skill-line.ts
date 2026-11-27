@@ -13,9 +13,13 @@ export function claudeCommandFiles(
   command: string,
   cwd: string | undefined,
   claudeHome: string,
-): string[] {
-  if (!/^[a-z0-9][a-z0-9_-]*$/i.test(command)) return [];
+): Array<string> {
+  if (!/^[a-z0-9][a-z0-9_-]*$/i.test(command)) {
+    return [];
+  }
+
   const roots = [...(cwd ? [join(cwd, ".claude")] : []), claudeHome];
+
   return roots.flatMap((root) => [
     join(root, "skills", command, "SKILL.md"),
     join(root, "commands", `${command}.md`),
@@ -35,18 +39,24 @@ export async function claudeCommandText(
 ): Promise<{ path: string; body: string } | undefined> {
   for (const path of claudeCommandFiles(command, cwd, claudeHome)) {
     let text: string;
+
     try {
       text = await readFile(path, "utf8");
     } catch {
       continue;
     }
+
     const body = text
       .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
       // A function, so a `$&` or `$'` typed as an argument is inserted as text, not as a pattern.
       .replaceAll("$ARGUMENTS", () => rawInput.trim())
       .trim();
-    if (body !== "") return { path, body };
+
+    if (body !== "") {
+      return { path, body };
+    }
   }
+
   return undefined;
 }
 
@@ -57,8 +67,9 @@ export async function claudeCommandText(
  */
 export function skillContent(name: string, path: string, body: string): string {
   const base = path.endsWith("SKILL.md") ? path.slice(0, -"/SKILL.md".length) : undefined;
+
   return [
-    `<skill_content name="${name.replace(/[&"<>]/g, "")}">`,
+    `<skill_content name="${name.replaceAll(/[&"<>]/g, "")}">`,
     "<skill_resources>",
     base === undefined
       ? "This is a Claude Code custom command; it has no resources of its own."

@@ -2,7 +2,8 @@
 // terminal, one switch each, with each description opening on the keys it takes. They sit
 // together so the card has one place that says what the keyboard does, and dsh's own Keyboard
 // shortcuts dialog lists the same rows (`shortcut-rows.ts`).
-import { t, useLocale, type OmcKey } from "./i18n.js";
+import { t, useLocale } from "./i18n.js";
+import type { OmcKey } from "./i18n.js";
 import { useHintFlag } from "./hints.js";
 import { RecallSwitch } from "./settings-card.js";
 import { Switch } from "./switch.js";
@@ -22,6 +23,7 @@ function ShortcutRow({
   hook: string;
 }) {
   const [off, setOff] = useHintFlag(hint);
+
   return (
     <div
       {...{ [hook]: "" }}
@@ -46,6 +48,7 @@ function ShortcutRow({
 /** The group: a heading, then prompt recall, history search and edit last prompt. */
 export function ShortcutSwitches() {
   useLocale();
+
   return (
     <fieldset
       data-omc-shortcut-switches=""

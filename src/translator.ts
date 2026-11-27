@@ -1,31 +1,37 @@
 import type { StreamChunk, ContentBlockType, LlmFailure, TokenUsage } from "@deepseek-ai/dsh-llm";
-import {
-  type ClaudeEvent,
-  type ClaudeStreamPartial,
-  type ClaudeContentBlock,
-  type DshCall,
-  toolResultText,
-  type SettingsKey,
+import { toolResultText } from "./process.js";
+import type {
+  ClaudeEvent,
+  ClaudeStreamPartial,
+  ClaudeContentBlock,
+  DshCall,
+  SettingsKey,
 } from "./process.js";
 import { NATIVE_TOOL_MAP, commandNames } from "./adapter/cli.js";
-import { TurnRecord, finishReason } from "./adapter/turn.js";
+import type { TurnRecord } from "./adapter/turn.js";
+import { finishReason } from "./adapter/turn.js";
 import { suggestRule } from "./permissions.js";
 import type { JsonValue } from "./dsh.js";
 import { OWN_TOOL_NAMES } from "./mcp-config.js";
-import { pluginErrorsOf, type PluginLoadError } from "./plugins.js";
-import { serverIsChinese, serverText, type ServerKey } from "./locale.js";
+import { pluginErrorsOf } from "./plugins.js";
+import type { PluginLoadError } from "./plugins.js";
+import { serverIsChinese, serverText } from "./locale.js";
+import type { ServerKey } from "./locale.js";
 import { gateNoteOf } from "./test-gate.js";
 
 // ---------------------------------------------------------------------------
 // stream-json → dsh chunks (moved from src/adapter.ts)
 
 const TOOL_TEXT_LIMIT = 600;
+
 /** Cut text to `n` characters with an ellipsis, or return it whole when it fits. */
 const clip = (s: string, n = TOOL_TEXT_LIMIT): string => (s.length > n ? `${s.slice(0, n)}…` : s);
 const DENIED_RE = /requires? approval|permission (was )?denied|not allowed/i;
+
 /** Auto mode's own refusal: the CLI's classifier names a reason in brackets, and nothing a dsh
  *  access mode could change would have let the call through, so it is reported apart. */
 const AUTO_DENIED_RE = /denied by the Claude Code auto mode classifier\. Reason: \[([^\]]+)\]/;
+
 /** Every Claude Code tool except the dsh MCP relay gets a session row: mapped names pick the
  *  client's bash/read/edit presenters, the rest (TodoWrite, ToolSearch, Skill, mcp__*) the generic one. */
 const isNativeTool = (toolName: string) => toolName !== "" && !toolName.startsWith("mcp__dsh__");
@@ -84,6 +90,7 @@ const EXT_LANG = {
 const langOf = (path: string): string => {
   const m = /\.([a-z0-9]+)$/i.exec(path);
   const ext = m?.[1]?.toLowerCase() ?? "";
+
   // SAFETY: `ext in EXT_LANG` proves ext is a key, so the keyof assertion holds
   return ext in EXT_LANG ? (EXT_LANG[ext as keyof typeof EXT_LANG] ?? "") : "";
 };
@@ -91,12 +98,17 @@ const langOf = (path: string): string => {
 /** Wrap body in a fence long enough to survive any backtick run inside it. */
 const fence = (body: string, lang = ""): string => {
   let ticks = "```";
-  while (body.includes(ticks)) ticks += "`";
+
+  while (body.includes(ticks)) {
+    ticks += "`";
+  }
+
   return `${ticks}${lang}\n${body}\n${ticks}`;
 };
 
 /** The value when it is a string, else "", so a missing tool input field reads as empty. */
 const asStr = (v: unknown): string => (typeof v === "string" ? v : "");
+
 /** True only for a plain object, so an array or null is never read as a record. */
 const isRec = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -105,12 +117,17 @@ const isRec = (v: unknown): v is Record<string, unknown> =>
 const shellId = (inp: Record<string, unknown>): string => asStr(inp.bash_id ?? inp.shell_id);
 
 const MAX_BODY_LINES = 18;
+
 /** Clamp a fenced body to its first `max` lines, with a count of what was elided. A tool-heavy turn
  *  floods the transcript with full read/bash/diff dumps; the head plus a tail count keeps each row
  *  scannable without hiding that more exists. */
 export function capLines(body: string, max = MAX_BODY_LINES): string {
   const lines = body.split("\n");
-  if (lines.length <= max) return body;
+
+  if (lines.length <= max) {
+    return body;
+  }
+
   return `${lines.slice(0, max).join("\n")}\n${serverText("moreLines", { n: String(lines.length - max) })}`;
 }
 
@@ -135,6 +152,7 @@ const TOOL_ICON = new Map<string, string>([
   ["enter_plan_mode", "☰"],
   ["slash_command", "⌘"],
 ]);
+
 /** The string with its first character upper-cased; an empty string stays empty. */
 const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -155,17 +173,23 @@ const words = (name: string): string => cap(name.replaceAll("_", " "));
 /** An MCP tool's own name: `mcp__dsh__subagent` is dsh's `subagent`, not a tool called `Mcp`. */
 const mcpName = (name: string): string | undefined => {
   const parts = name.split("__");
-  if (parts.length < 3 || parts[0] !== "mcp") return undefined;
+
+  if (parts.length < 3 || parts[0] !== "mcp") {
+    return undefined;
+  }
+
   // A server mounted by a Claude Code plugin is registered as `plugin_<plugin>_<server>`, and the
   // two are usually the same word: `plugin_context-mode_context-mode`. The header reads the
   // server's own name.
   let server = parts[1]!;
   const m = /^plugin_(.+)$/.exec(server);
+
   if (m) {
     const rest = m[1]!;
     const half = rest.slice(0, Math.floor(rest.length / 2));
     server = rest === `${half}_${half}` ? half : rest;
   }
+
   return `${server} · ${parts.slice(2).join(" ")}`;
 };
 
@@ -192,6 +216,7 @@ const TOOL_WORD = new Map<string, ServerKey>([
  *  its glyph and HEADER_MARK, never by the word, so a Chinese header folds like an English one. */
 const label = (name: string): string => {
   const key = TOOL_WORD.get(name);
+
   // `pwsh` is the one tool whose name is not its word: it is the product PowerShell, in any language.
   const human =
     mcpName(name) ??
@@ -202,6 +227,7 @@ const label = (name: string): string => {
         : name === "pwsh"
           ? "PowerShell"
           : words(name));
+
   return `${TOOL_ICON.get(name) ?? "◆"}${HEADER_MARK} ${human}`;
 };
 
@@ -215,20 +241,25 @@ const prefixed = (text: string, mark: "-" | "+"): string =>
 /** A native tool call as markdown: an icon-led plain header, arguments in the fence that suits the tool. */
 export function formatToolCall(name: string, inputJson: string): string {
   let inp: Record<string, unknown> = {};
+
   try {
     // SAFETY: inputJson is Claude's own tool_use input, stored verbatim; shape read defensively below
     inp = JSON.parse(inputJson) as Record<string, unknown>;
   } catch {
     inp = {};
   }
+
   const file = asStr(inp.file_path);
+
   switch (name) {
     case "bash":
     case "pwsh": {
       const desc = asStr(inp.description);
       const lang = name === "pwsh" ? "powershell" : "bash";
+
       return `${label(name)}${desc ? ` · ${desc}` : ""}\n${fence(capLines(asStr(inp.command)), lang)}`;
     }
+
     case "read":
       return `${label("read")} \`${file}\``;
     case "write":
@@ -240,13 +271,16 @@ export function formatToolCall(name: string, inputJson: string): string {
       // SAFETY: `edits` is Claude's own MultiEdit input; the array check is above and each entry's
       // fields are read through `asStr`, which answers "" for anything that is not a string.
       const edits = Array.isArray(inp.edits)
-        ? (inp.edits as Record<string, unknown>[])
+        ? (inp.edits as Array<Record<string, unknown>>)
         : [{ old_string: inp.old_string, new_string: inp.new_string }];
+
       const diff = edits
         .map((e) => `${prefixed(asStr(e.old_string), "-")}\n${prefixed(asStr(e.new_string), "+")}`)
         .join("\n");
+
       return `${label("edit")} \`${file}\`\n${fence(capLines(diff), "diff")}`;
     }
+
     case "grep":
       return `${label("grep")} \`${asStr(inp.pattern)}\`${inp.path ? ` in \`${asStr(inp.path)}\`` : ""}`;
     case "glob":
@@ -258,45 +292,57 @@ export function formatToolCall(name: string, inputJson: string): string {
     case "todo_write": {
       // The list itself is the point: a JSON dump of it said nothing at a glance.
       const todos = Array.isArray(inp.todos) ? inp.todos : [];
+
       const rows = todos
         .map((t) => {
           const item = isRec(t) ? t : {};
           const status = asStr(item.status);
           const box = status === "completed" ? "x" : status === "in_progress" ? "~" : " ";
+
           return `- [${box}] ${asStr(item.content)}`;
         })
         .join("\n");
+
       return `${label("todo_write")} ${todos.length} item${todos.length === 1 ? "" : "s"}\n${fence(capLines(rows), "markdown")}`;
     }
+
     case "task": {
       // Which subagent, and what it was told. The prompt is the whole brief, so it rides the cap.
       const kind = asStr(inp.subagent_type);
       const desc = asStr(inp.description);
       const head = `${label("task")}${kind ? ` \`${kind}\`` : ""}${desc ? ` · ${desc}` : ""}`;
       const prompt = asStr(inp.prompt);
+
       return prompt ? `${head}\n${fence(capLines(prompt), "markdown")}` : head;
     }
+
     case "exit_plan_mode":
     case "enter_plan_mode": {
       const plan = asStr(inp.plan);
+
       return plan ? `${label(name)}\n${fence(capLines(plan), "markdown")}` : label(name);
     }
+
     case "slash_command":
       return `${label("slash_command")} \`${asStr(inp.command)}\``;
     case "bash_output": {
       // The CLI names the same handle two ways: BashOutput takes `bash_id`, KillShell `shell_id`.
       // Both are read either way here so a rename on one side does not blank the header.
       const filter = asStr(inp.filter);
+
       return `${label("bash_output")} \`${shellId(inp)}\`${filter ? ` matching \`${filter}\`` : ""}`;
     }
+
     case "kill_shell":
       return `${label("kill_shell")} \`${shellId(inp)}\``;
     case "notebook_edit": {
       const cell = asStr(inp.cell_id);
       const head = `${label("notebook_edit")} \`${asStr(inp.notebook_path)}\`${cell ? ` cell \`${cell}\`` : ""}`;
       const src = asStr(inp.new_source);
+
       return src ? `${head}\n${fence(capLines(src), "python")}` : head;
     }
+
     default: {
       // `capLines` caps at 18 lines and `JSON.stringify` writes one, so an unknown tool's header
       // used to print its whole input on a single line, a `Task` call's entire subagent prompt,
@@ -305,6 +351,7 @@ export function formatToolCall(name: string, inputJson: string): string {
         Object.keys(inp).length > 0
           ? JSON.stringify(inp, (_k, v: unknown) => (typeof v === "string" ? clip(v, 300) : v), 2)
           : inputJson;
+
       return `${label(name)}\n${fence(capLines(pretty), "json")}`;
     }
   }
@@ -319,8 +366,13 @@ export function formatToolResult(
 ): string {
   // Same shape as the call header (`❯ Bash · List files`): the dot, then a capitalized word.
   const head = `${label(name)} · ${serverText(isError ? "toolError" : "toolResult")}`;
-  if (isError) return `${head}\n${fence(capLines(body))}`;
+
+  if (isError) {
+    return `${head}\n${fence(capLines(body))}`;
+  }
+
   const lang = name === "read" ? langOf(filePath) : "";
+
   return `${head}\n${fence(capLines(body), lang)}`;
 }
 
@@ -342,6 +394,7 @@ function usageEvent(u: {
   const output = u.output_tokens ?? 0;
   const cacheRead = u.cache_read_input_tokens ?? 0;
   const cacheWrite = u.cache_creation_input_tokens ?? 0;
+
   // Every counter is written even at zero. `aggregateAttempts` keeps a turn's cache bucket only
   // when *every* attempt of that turn carries one (`cacheRead.every(isCount)`), so a single step
   // that omits a zero drops the cache-hit row off the whole turn rather than adding nothing to it.
@@ -352,10 +405,13 @@ function usageEvent(u: {
     cacheWriteTokens: cacheWrite,
     totalTokens: input + cacheRead + cacheWrite + output,
   };
+
   // Same all-or-nothing rule as the cache bucket, and `normalizeUsage` rejects the turn outright if
   // reasoning ever exceeds output, so the count is clamped rather than trusted.
-  if (u.reasoning_tokens !== undefined)
+  if (u.reasoning_tokens !== undefined) {
     usage.reasoningTokens = Math.min(u.reasoning_tokens, output);
+  }
+
   return { type: "usage", usage };
 }
 
@@ -379,6 +435,7 @@ const BENIGN_EVENTS = new Set([
   "dsh_relay",
   "keep_alive",
 ]);
+
 // stream_event sub-types with no renderable delta (SSE bookkeeping).
 const BENIGN_PARTIALS = new Set(["message_delta", "message_stop", "ping"]);
 
@@ -391,8 +448,10 @@ export const TASK_TERMINAL = new Set(["completed", "failed", "killed", "stopped"
  *  it sent it. */
 const taskStatus = (status: string): string => {
   const key = TASK_STATUS.get(status);
+
   return key ? serverText(key) : status;
 };
+
 /** The task statuses the CLI reports, as server-text keys. */
 const TASK_STATUS = new Map<string, ServerKey>([
   ["completed", "taskCompleted"],
@@ -406,6 +465,7 @@ const TASK_STATUS = new Map<string, ServerKey>([
  *  finishes quickly never draws a line at all. */
 const HEARTBEAT_STEPS = [30, 60, 120, 300, 600];
 const HEARTBEAT_REPEAT = 300;
+
 /** The next heartbeat mark after `elapsed` seconds. */
 const nextHeartbeat = (elapsed: number): number =>
   HEARTBEAT_STEPS.find((s) => s > elapsed) ??
@@ -414,10 +474,19 @@ const nextHeartbeat = (elapsed: number): number =>
 /** `45s`, `4m30s`, `1h2m`: how long a call has been running, in the shortest form that stays exact. */
 export function elapsedText(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));
-  if (s < 60) return `${s}s`;
+
+  if (s < 60) {
+    return `${s}s`;
+  }
+
   const m = Math.floor(s / 60);
-  if (m < 60) return s % 60 ? `${m}m${s % 60}s` : `${m}m`;
+
+  if (m < 60) {
+    return s % 60 ? `${m}m${s % 60}s` : `${m}m`;
+  }
+
   const h = Math.floor(m / 60);
+
   return m % 60 ? `${h}h${m % 60}m` : `${h}h`;
 }
 
@@ -426,6 +495,7 @@ export function elapsedText(seconds: number): string {
 const THINK_FLOOR = 1000;
 const THINK_STEPS = [THINK_FLOOR, 2000, 5000, 10_000, 20_000];
 const THINK_REPEAT = 20_000;
+
 /** The next thinking mark after `tokens`. */
 const nextThinkStep = (tokens: number): number =>
   THINK_STEPS.find((s) => s > tokens) ?? (Math.floor(tokens / THINK_REPEAT) + 1) * THINK_REPEAT;
@@ -433,6 +503,7 @@ const nextThinkStep = (tokens: number): number =>
 /** `1k`, `4.6k`, `23k`: an estimate, so one decimal below 10k and none above it. */
 export function tokensText(tokens: number): string {
   const k = Math.max(0, tokens) / 1000;
+
   return `${k < 10 ? Math.round(k * 10) / 10 : Math.round(k)}k`;
 }
 
@@ -445,24 +516,29 @@ export function resetClock(
 ): string {
   const away = ms - Date.now();
   const clock: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit", timeZone: zone };
+
   const opts: Intl.DateTimeFormatOptions =
     away <= 24 * 60 * 60 * 1000
       ? clock
       : away <= 7 * 24 * 60 * 60 * 1000
         ? { weekday: "short", ...clock }
         : { month: "short", day: "numeric", ...clock };
+
   // In Chinese the clock is 24-hour with 周一 and 9月8日, the way a Chinese reader writes it; the
   // English trims ":00" and lowercases am/pm to match the CLI's own banner.
   if (serverIsChinese()) {
     const zh = new Date(ms)
       .toLocaleString("zh-CN", { ...opts, hour: "2-digit", hour12: false })
       .replace(/^(周.)(?=\d)/, "$1 ");
+
     return `${zh} (${zone})`;
   }
+
   const text = new Date(ms)
     .toLocaleString("en-US", opts)
     .replace(":00", "")
     .replace(/\s([AP]M)/i, (_, half: string) => half.toLowerCase());
+
   return `${text} (${zone})`;
 }
 
@@ -519,6 +595,7 @@ export interface LiveTask {
   /** When a terminal status landed; unset while the task runs. */
   endedAt?: number;
 }
+
 /** How many ended tasks a session keeps on its list; the oldest ended one goes when a new one ends. */
 export const ENDED_TASKS_KEPT = 10;
 
@@ -534,10 +611,13 @@ export interface HookRun {
   output: string;
   at: number;
 }
+
 /** How many hook runs a session keeps; this box runs dozens per tool call, so a turn can fill it. */
 export const HOOK_RUNS_KEPT = 100;
+
 /** The longest hook output a kept run carries. */
 export const HOOK_OUTPUT_LIMIT = 4000;
+
 /** What one task frame changes on a `LiveTask`; `task_started` sets everything, the rest a status. */
 export interface LiveTaskPatch {
   description?: string;
@@ -545,6 +625,7 @@ export interface LiveTaskPatch {
   subagentType?: string;
   status: string;
 }
+
 /** Apply one task frame to a session's live list: a start inserts, a status updates, a terminal
  *  status keeps the row with `endedAt` set so its output can still be read, and the oldest ended
  *  rows go past `ENDED_TASKS_KEPT`. A status for a task the map never saw is dropped (its start was
@@ -558,17 +639,25 @@ export function applyTaskPatch(
   now: number,
 ): void {
   const row = tasks.get(taskId);
+
   if (TASK_TERMINAL.has(patch.status)) {
-    if (!row || row.endedAt !== undefined) return;
+    if (!row || row.endedAt !== undefined) {
+      return;
+    }
+
     row.status = patch.status;
     row.endedAt = now;
+
     const ended = [...tasks.values()]
       .filter((t) => t.endedAt !== undefined)
       .toSorted((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
-    for (const old of ended.slice(0, Math.max(0, ended.length - ENDED_TASKS_KEPT)))
+
+    for (const old of ended.slice(0, Math.max(0, ended.length - ENDED_TASKS_KEPT))) {
       tasks.delete(old.id);
-  } else if (row) row.status = patch.status;
-  else if (patch.description !== undefined)
+    }
+  } else if (row) {
+    row.status = patch.status;
+  } else if (patch.description !== undefined) {
     tasks.set(taskId, {
       id: taskId,
       description: patch.description,
@@ -577,6 +666,7 @@ export function applyTaskPatch(
       status: patch.status,
       at: now,
     });
+  }
 }
 
 /** The CLI's guess at the next prompt after a turn, as the composer card offers it. */
@@ -656,7 +746,7 @@ export class Translator {
   streamedId: string | undefined;
   finished: boolean;
   denied: number;
-  autoDenied: string[]; // tool calls Claude Code refused because a non-interactive run cannot ask
+  autoDenied: Array<string>; // tool calls Claude Code refused because a non-interactive run cannot ask
   toolPending: boolean; // a tool_use block closed and its result has not arrived yet
   private calls = new Set<string>(); // tool_use ids of the streamed message not yet echoed as results
   private streaming = false; // a top-level message is between its message_start and message_stop
@@ -698,10 +788,10 @@ export class Translator {
   redact?: (s: string) => string;
   /** Injected: the CLI's slash-command catalog and tool names from its init frame. */
   onInit?: (
-    commands: string[],
-    tools: string[],
-    pluginErrors?: PluginLoadError[],
-    pluginWarnings?: PluginLoadError[],
+    commands: Array<string>,
+    tools: Array<string>,
+    pluginErrors?: Array<PluginLoadError>,
+    pluginWarnings?: Array<PluginLoadError>,
   ) => void;
   /** Running figures for the turn's status row: the thinking estimate as it climbs, and output tokens
    *  once a usage frame names them. Fired on the frames that carry them, nothing is polled. */
@@ -759,12 +849,18 @@ export class Translator {
    */
   private fireToolCall(callId: string, toolName: string, input: string): number | undefined {
     const seen = this.firedCalls.get(callId);
-    if (seen !== undefined) return seen;
+
+    if (seen !== undefined) {
+      return seen;
+    }
+
     const seq = this.onToolCall?.(callId, toolName, input);
+
     if (seq !== undefined) {
       this.firedCalls.set(callId, seq);
       this.callInputs.set(callId, input);
     }
+
     return seq;
   }
 
@@ -812,10 +908,10 @@ export class Translator {
     onResult?: (summary: TurnRecord) => void;
     redact?: (s: string) => string;
     onInit?: (
-      commands: string[],
-      tools: string[],
-      pluginErrors?: PluginLoadError[],
-      pluginWarnings?: PluginLoadError[],
+      commands: Array<string>,
+      tools: Array<string>,
+      pluginErrors?: Array<PluginLoadError>,
+      pluginWarnings?: Array<PluginLoadError>,
     ) => void;
     onProgress?: (progress: TurnProgress) => void;
     onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
@@ -888,9 +984,16 @@ export class Translator {
   /** Warn once when a CLI event/block type is neither handled nor knowingly ignored, so a Claude
    *  Code stream-json schema change shows up loud in the log instead of as silently dropped output. */
   noteUnknown(where: string, type: string | null | undefined) {
-    if (type === null || type === undefined) return;
+    if (type === null || type === undefined) {
+      return;
+    }
+
     const key = `${where}:${type}`;
-    if (this.unknownSeen.has(key)) return;
+
+    if (this.unknownSeen.has(key)) {
+      return;
+    }
+
     this.unknownSeen.add(key);
     this.log(
       "warn",
@@ -902,14 +1005,19 @@ export class Translator {
    *  signature and never any text; announcing those eagerly draws an empty bubble. */
   startBlock(blockType: string, prefix = "") {
     const block: TranslatorBlock = { index: this.index++, blockType, text: "", started: false };
+
     return { block, events: prefix ? this.delta(block, prefix) : [] };
   }
 
   /** Text for a block, with its block-start ahead of the first non-empty piece. Empty in, empty out. */
-  delta(block: TranslatorBlock, text: string): StreamChunk[] {
-    if (!text) return [];
+  delta(block: TranslatorBlock, text: string): Array<StreamChunk> {
+    if (!text) {
+      return [];
+    }
+
     block.text += text;
-    const events: StreamChunk[] = [];
+    const events: Array<StreamChunk> = [];
+
     if (!block.started) {
       block.started = true;
       // SAFETY: blocks are opened with "text", "reasoning" or "tool-call"; hidden ones never announce
@@ -919,13 +1027,18 @@ export class Translator {
         blockType: block.blockType as ContentBlockType,
       });
     }
+
     events.push({ type: this.deltaType(block), index: block.index, text });
+
     return events;
   }
 
   /** Close a block; one that never got text was never announced and closes silently. */
-  endBlock(block: TranslatorBlock): StreamChunk[] {
-    if (!block.started) return [];
+  endBlock(block: TranslatorBlock): Array<StreamChunk> {
+    if (!block.started) {
+      return [];
+    }
+
     return [
       {
         type: "block-end",
@@ -944,7 +1057,10 @@ export class Translator {
    * is the one dsh-fallback-models switches models on, so a fallback chain can answer instead.
    */
   noteRefusal(category: string, said: string): void {
-    if (this.refusal) return;
+    if (this.refusal) {
+      return;
+    }
+
     const why = category ? ` (${category})` : "";
     this.refusal = {
       message: serverText("refusedReply", { why, said: said ? `: ${said}` : "" }),
@@ -954,36 +1070,49 @@ export class Translator {
 
   /** Emit a whole block at once, block-start then delta then block-end, for text that arrives in one
    *  piece rather than streamed in fragments. */
-  wholeBlock(blockType: string, text: string): StreamChunk[] {
+  wholeBlock(blockType: string, text: string): Array<StreamChunk> {
     const { block, events } = this.startBlock(blockType);
     events.push(...this.delta(block, text), ...this.endBlock(block));
+
     return events;
   }
 
   /** Map one Claude Code stream-json event into the StreamChunks the client renders, or [] when the
    *  event carries nothing to show. Handshake and benign events return [], and the many system
    *  subtypes ride the reasoning lane so they read as model activity rather than as chat text. */
-  translate(event: ClaudeEvent): StreamChunk[] {
+  translate(event: ClaudeEvent): Array<StreamChunk> {
     // Every frame of model output moves the stall clock the status row reads; the CLI's own line
     // watches its response length for the same purpose.
-    if (event?.type === "stream_event" || event?.type === "assistant")
+    if (event?.type === "stream_event" || event?.type === "assistant") {
       this.onProgress?.({ frame: true });
+    }
+
     switch (event?.type) {
       case "system": {
         if (event.subtype === "init") {
           const names = commandNames(event.slash_commands);
-          const tools: string[] = [];
-          if (Array.isArray(event.tools))
-            for (const t of event.tools) if (String(t) === t) tools.push(t);
+          const tools: Array<string> = [];
+
+          if (Array.isArray(event.tools)) {
+            for (const t of event.tools) {
+              if (String(t) === t) {
+                tools.push(t);
+              }
+            }
+          }
+
           const pluginErrors = pluginErrorsOf(event.plugin_errors ?? null);
           const pluginWarnings = pluginErrorsOf(event.plugin_warnings ?? null);
+
           if (
             names.length > 0 ||
             tools.length > 0 ||
             pluginErrors.length > 0 ||
             pluginWarnings.length > 0
-          )
+          ) {
             this.onInit?.(names, tools, pluginErrors, pluginWarnings);
+          }
+
           // In -p mode an ANTHROPIC_API_KEY in the environment wins over the claude.ai login
           // (probed 2026-10-20 on 2.1.304: the init frame names the source and the turn billed
           // the key). dsh loads the launch folder's .env, so a key meant for another tool bills
@@ -991,14 +1120,19 @@ export class Translator {
           // every user message, so the adapter's `noteApiKey` remembers the line on the process;
           // with no hook (a bare translator) the line draws. `apiKeyHelper` is a setting someone
           // chose and gets no line.
-          if (event.apiKeySource === "ANTHROPIC_API_KEY" && (this.noteApiKey?.() ?? true))
+          if (event.apiKeySource === "ANTHROPIC_API_KEY" && (this.noteApiKey?.() ?? true)) {
             return this.wholeBlock("reasoning", serverText("apiKeyBilling"));
+          }
+
           return [];
         }
+
         if (event.subtype === "thinking_tokens") {
           this.onProgress?.({ thinking: event.estimated_tokens ?? 0 });
+
           return this.thinkingTokens(event.estimated_tokens ?? 0);
         }
+
         // Compaction opens with a `status:"compacting"` frame, then a long silent stretch while the
         // CLI summarizes, then `compact_boundary` when done. Announce the start at once so the silence
         // is explained; the boundary line reports the result. A failed run gets neither boundary nor a
@@ -1010,22 +1144,33 @@ export class Translator {
           // A nested agent's request is not the line's; the frame carries no parent id in the probe,
           // so the last partial's owner decides (see the chunk 0 probe).
           if (event.status === "requesting") {
-            if (!this.nested) this.onProgress?.({ mode: "requesting" });
+            if (!this.nested) {
+              this.onProgress?.({ mode: "requesting" });
+            }
+
             return [];
           }
+
           if (event.status === "compacting") {
             // The CLI repeats this frame every 30 s until the boundary, so the announcement is guarded
             // but the tick is not: a 141-second compaction was measured on 2026-09-14, and no other
             // frame arrives in that window to move the stall clock the status row reads.
             this.onProgress?.({ frame: true });
-            if (this.compacting) return [];
+
+            if (this.compacting) {
+              return [];
+            }
+
             this.compacting = true;
             this.onProgress?.({ compacting: true });
+
             return this.wholeBlock("reasoning", serverText("compacting"));
           }
+
           if (event.compact_result === "failed") {
             this.compacting = false;
             this.onProgress?.({ compacting: false });
+
             return this.wholeBlock(
               "reasoning",
               serverText("compactFailed", {
@@ -1033,31 +1178,39 @@ export class Translator {
               }),
             );
           }
+
           return [];
         }
+
         // Auto-memory traffic: one line each way, so the Memory button's count is explained.
         if (event.subtype === "memory_saved") {
           const paths = event.written_paths ?? [];
           const names = paths.map((f) => f.split(/[\\/]/).at(-1) ?? f).join(", ");
+
           return this.wholeBlock(
             "reasoning",
             `${event.verb ?? "Saved"} ${paths.length} ${paths.length === 1 ? "memory" : "memories"}${names ? `: ${names}` : ""}`,
           );
         }
+
         if (event.subtype === "memory_recall") {
           const n = event.memories?.length ?? 0;
+
           return n > 0
             ? this.wholeBlock("reasoning", `Recalled ${n} ${n === 1 ? "memory" : "memories"}`)
             : [];
         }
+
         // Hook lifecycle: this box runs dozens of hooks per tool call, so only a hook that failed,
         // was cancelled or exited non-zero gets a reasoning line; a clean run and hook_started are
         // silent. Outcome literals in the CLI are "success", "error" and "cancelled".
         if (event.subtype === "hook_response") {
           const exitCode = event.exit_code;
+
           const failed =
             (event.outcome !== undefined && event.outcome !== "success") ||
             (Number.isFinite(exitCode) && exitCode !== 0);
+
           const out = (event.output || event.stdout || event.stderr || "").trim();
           this.onHookRun?.({
             name: event.hook_name ?? "?",
@@ -1067,13 +1220,19 @@ export class Translator {
             output: out.length > HOOK_OUTPUT_LIMIT ? `${out.slice(0, HOOK_OUTPUT_LIMIT)}…` : out,
             at: Date.now(),
           });
-          if (!failed) return [];
+
+          if (!failed) {
+            return [];
+          }
+
           const tail = Number.isFinite(exitCode) ? `exit ${exitCode}` : (event.outcome ?? "failed");
+
           return this.wholeBlock(
             "reasoning",
             `⚠ Hook ${event.hook_name ?? "?"} (${event.hook_event ?? "?"}) ${tail}${out ? `: ${clip(out)}` : ""}`,
           );
         }
+
         // Task frames from the CLI's built-in subagent runner. Each task_started opens a block (if it
         // has a task_id) so task_progress can append to it; task_started with no task_id emits the
         // closed one-line form. task_progress appends short lines when something changes (last_tool_name
@@ -1083,9 +1242,11 @@ export class Translator {
         if (event.subtype === "task_started") {
           const taskId = event.task_id;
           const startLine = `Task${event.is_backgrounded ? " (background)" : ""}: ${event.description ?? taskId ?? "?"}${event.subagent_type ? ` [${event.subagent_type}]` : ""}`;
+
           if (!taskId) {
             return this.wholeBlock("reasoning", startLine);
           }
+
           const { block, events } = this.startBlock("reasoning", startLine);
           this.taskBlocks.set(taskId, { block, lastSummary: undefined, lastToolName: undefined });
           this.onTask?.(taskId, {
@@ -1094,12 +1255,18 @@ export class Translator {
             subagentType: event.subagent_type,
             status: "running",
           });
+
           return events;
         }
+
         if (event.subtype === "task_progress") {
           const taskId = event.task_id ?? "";
           const entry = this.taskBlocks.get(taskId);
-          if (!entry) return [];
+
+          if (!entry) {
+            return [];
+          }
+
           const summary = (event.summary ?? "").trim();
           const toolName = event.last_tool_name ?? "";
           // The CLI rewrites `description` per step ("Running Count lines in src/process.ts",
@@ -1109,29 +1276,43 @@ export class Translator {
           const description = (event.description ?? "").trim();
           const summaryChanged = summary && summary !== entry.lastSummary;
           const toolNameChanged = toolName && toolName !== entry.lastToolName;
+
           const descriptionChanged =
             description && description !== entry.lastDescription && description !== summary;
-          if (!summaryChanged && !toolNameChanged && !descriptionChanged) return [];
+
+          if (!summaryChanged && !toolNameChanged && !descriptionChanged) {
+            return [];
+          }
+
           const usage = event.usage ?? {};
           const input = usage.input_tokens ?? 0;
           const output = usage.output_tokens ?? 0;
-          const lines: string[] = [];
+          const lines: Array<string> = [];
+
           if (toolNameChanged) {
             let toolLine = clip(toolName);
-            if (input > 0 || output > 0) toolLine += ` · ${input}→${output}t`;
+
+            if (input > 0 || output > 0) {
+              toolLine += ` · ${input}→${output}t`;
+            }
+
             lines.push(toolLine);
             entry.lastToolName = toolName;
           }
+
           if (descriptionChanged) {
             lines.push(clip(description));
             entry.lastDescription = description;
           }
+
           if (summaryChanged) {
             lines.push(clip(summary));
             entry.lastSummary = summary;
           }
+
           return this.delta(entry.block, `\n${lines.join("\n")}`);
         }
+
         if (event.subtype === "task_notification") {
           const taskId = event.task_id ?? "";
           const entry = this.taskBlocks.get(taskId);
@@ -1142,21 +1323,31 @@ export class Translator {
           // A report is whatever the subagent wrote, so it is masked like a tool result is.
           const handed = this.redact ? this.redact(handedRaw) : handedRaw;
           const summary = handed || (event.summary ?? "").trim();
+
           const completionLine = serverText("taskLine", {
             status: taskStatus(event.status ?? "done"),
             detail: summary ? clip(summary) : taskId || "?",
           });
+
           if (!entry) {
-            if (taskId !== "") this.onTask?.(taskId, { status: event.status ?? "completed" });
+            if (taskId !== "") {
+              this.onTask?.(taskId, { status: event.status ?? "completed" });
+            }
+
             return this.wholeBlock("reasoning", completionLine);
           }
-          const events: StreamChunk[] = [];
-          events.push(...this.delta(entry.block, `\n${completionLine}`));
-          events.push(...this.endBlock(entry.block));
+
+          const events: Array<StreamChunk> = [];
+          events.push(
+            ...this.delta(entry.block, `\n${completionLine}`),
+            ...this.endBlock(entry.block),
+          );
           this.taskBlocks.delete(taskId);
           this.onTask?.(taskId, { status: event.status ?? "completed" });
+
           return events;
         }
+
         // task_updated carries the transitions a notification never sends: a task that dies, is
         // killed or is paused. Without it a dead task's block stays open until the result frame
         // force-closes it at the end of the turn.
@@ -1164,34 +1355,52 @@ export class Translator {
           const entry = this.taskBlocks.get(event.task_id ?? "");
           const patch = event.patch ?? {};
           const status = typeof patch.status === "string" ? patch.status : "";
+
           // Above the block guard: a background task outlives the turn that started it, the next
           // turn's translator has no block for it, and its status is still the live list's.
-          if (status && event.task_id) this.onTask?.(event.task_id, { status });
-          if (!entry || !status || status === entry.lastStatus) return [];
+          if (status && event.task_id) {
+            this.onTask?.(event.task_id, { status });
+          }
+
+          if (!entry || !status || status === entry.lastStatus) {
+            return [];
+          }
+
           entry.lastStatus = status;
+
           if (!TASK_TERMINAL.has(status)) {
             // Only a pause is worth a line: pending and running are the states it passes through.
             return status === "paused"
               ? this.delta(entry.block, `\n${serverText("taskPaused")}`)
               : [];
           }
+
           const error = typeof patch.error === "string" ? patch.error.trim() : "";
+
           const events = this.delta(
             entry.block,
             `\n${error ? serverText("taskLine", { status: taskStatus(status), detail: clip(error) }) : serverText("taskEnded", { status: taskStatus(status) })}`,
           );
+
           events.push(...this.endBlock(entry.block));
           this.taskBlocks.delete(event.task_id ?? "");
+
           return events;
         }
+
         // The CLI re-sends the whole command catalog when a skill or custom command appears
         // mid-session; the bridge's copy is otherwise stale until the next spawn. Correctness, not
         // display, so it draws nothing.
         if (event.subtype === "commands_changed") {
           const names = commandNames(event.commands);
-          if (names.length > 0) this.onInit?.(names, []);
+
+          if (names.length > 0) {
+            this.onInit?.(names, []);
+          }
+
           return [];
         }
+
         // A silent switch to a weaker model during a long unattended run is invisible otherwise.
         if (event.subtype === "model_fallback") {
           const from = event.original_model ?? "";
@@ -1200,11 +1409,13 @@ export class Translator {
           const why = event.trigger ? ` (${event.trigger})` : "";
           const said = (event.content ?? "").trim();
           this.onModel?.({ kind: "model_fallback", from, to, content: said || undefined });
+
           return this.wholeBlock(
             "reasoning",
             said ? `⚠ ${clip(said)}` : `⚠ ${serverText("modelFallback")}${pair}${why}`,
           );
         }
+
         // The safety classifier flagged the message and the turn fell back to a safer model. This is
         // the Fable→Opus safeguard switch; it rides the reasoning lane like every other system line.
         if (event.subtype === "model_refusal_fallback") {
@@ -1223,11 +1434,13 @@ export class Translator {
           });
           const pair = from && to ? `: ${from} → ${to}` : from || to ? `: ${from || to}` : "";
           const why = cat ? ` (${cat} safeguard)` : "";
+
           return this.wholeBlock(
             "reasoning",
             said ? `⚠ ${clip(said)}` : `⚠ ${serverText("modelSwitched")}${pair}${why}`,
           );
         }
+
         // Flagged, and no fallback ran: the turn ends on a refusal. A `result` frame follows on its
         // own, so nothing is awaited here; this line is the record of why the turn stopped.
         if (event.subtype === "model_refusal_no_fallback") {
@@ -1244,11 +1457,16 @@ export class Translator {
             category: cat || undefined,
             content: said || undefined,
           });
+
           // Under refusalAsFailure nothing is drawn: any chunk past block-start commits the attempt,
           // and a committed attempt is one a fallback plugin (dsh-fallback-models) will not retry.
           // The failure the result frame ends the turn with carries the same words.
-          if (this.refusalAsFailure) return [];
+          if (this.refusalAsFailure) {
+            return [];
+          }
+
           const why = cat ? ` (${cat} safeguard)` : "";
+
           return this.wholeBlock(
             "reasoning",
             said
@@ -1256,6 +1474,7 @@ export class Translator {
               : `⛔ ${from ? serverText("requestBlockedOn", { from }) : serverText("requestBlocked")}${why}`,
           );
         }
+
         // The usage-credit / switch-default gate (secondary to the refusal frames). The CLI's own
         // `content` is the whole line ("Switched to X — now your default model · …").
         if (event.subtype === "model_consent_fallback") {
@@ -1271,38 +1490,51 @@ export class Translator {
             content: said || undefined,
           });
           const pair = from && to ? `: ${from} → ${to}` : from || to ? `: ${from || to}` : "";
+
           return this.wholeBlock(
             "reasoning",
             said ? `⚠ ${clip(said)}` : `⚠ ${serverText("modelSwitched")}${pair}`,
           );
         }
+
         // The loop's own banner. This box runs many hooks and `info` is documented as transcript
         // only, so only a suggestion or worse is drawn, plus anything that ended the turn early,
         // whatever its level, since a turn stopping without explanation is the confusing case.
         if (event.subtype === "informational") {
           const said = (event.content ?? "").trim();
           const loud = event.level === "suggestion" || event.level === "warning";
-          if (!said || (!loud && !event.prevent_continuation)) return [];
+
+          if (!said || (!loud && !event.prevent_continuation)) {
+            return [];
+          }
+
           const stopped = event.prevent_continuation ? "⛔ " : "⚠ ";
+
           return this.wholeBlock("reasoning", `${stopped}${clip(said)}`);
         }
+
         // A denial as it happens, with the reason. The result frame still reports the count at the
         // end of the turn; this is the only place the CLI says which rule refused and why.
         if (event.subtype === "permission_denied") {
           const tool = clip(event.tool_name || "tool");
+
           const reason =
             typeof event.decision_reason === "string"
               ? event.decision_reason
               : (event.message ?? "");
+
           const why = reason.trim();
+
           return this.wholeBlock(
             "reasoning",
             `⚠ ${serverText("denied", { tool })}${why ? `: ${clip(why)}` : ""}`,
           );
         }
+
         if (event.subtype === "background_tasks_changed") {
           return [];
         }
+
         // The CLI retries a failed API call by itself (up to max_retries, backing off). Without a
         // line here the turn looks like it is working while nothing happens: dsh only sees silence
         // and keeps the spinner verb. Worded like the CLI's own retry banner: the error, the wait,
@@ -1311,9 +1543,11 @@ export class Translator {
           const err = event.error ?? {};
           const wait = Math.round((event.retry_delay_ms ?? 0) / 1000);
           const resetsAt = err.rate_limits?.resets_at;
+
           const reset = Number.isFinite(resetsAt)
             ? ` (${serverText("resets", { when: resetClock((resetsAt ?? 0) * 1000, this.timeZone) })})`
             : "";
+
           // api_error is the same failure without the retry framing, and it alone says whether the
           // connection itself is down. That is worth naming, since it reads as the model hanging.
           const down = err.is_network_down
@@ -1321,20 +1555,29 @@ export class Translator {
             : err.connection
               ? ` · ${err.connection}`
               : "";
+
           const head =
             err.formatted ?? err.message ?? `${serverText("apiError")} ${err.status ?? ""}`.trim();
+
           const retrying = event.subtype === "api_retry" || event.retry_delay_ms !== undefined;
+
           const tail = retrying
             ? ` · ${serverText("retryingIn", { s: String(wait) })}${reset} · ${serverText("attempt", { n: String(event.attempt ?? "?"), max: String(event.max_retries ?? "?") })}`
             : reset;
+
           // A 5xx (529 included) is Anthropic's side; the status page can say whether it is known.
           const code = err.status ?? 0;
           const status = code >= 500 ? (this.statusNote?.(code) ?? "") : "";
+
           return this.wholeBlock("reasoning", `⚠ ${head}${down}${tail}${status}`);
         }
+
         // Claude Code compacted its own context (auto or /compact). One line so the user knows
         // why the model may have lost detail; every other system subtype is handshake noise.
-        if (event.subtype !== "compact_boundary") return [];
+        if (event.subtype !== "compact_boundary") {
+          return [];
+        }
+
         this.compacting = false; // re-arm: a second compaction in the same turn announces again
         this.onProgress?.({ compacting: false });
         const meta = event.compact_metadata ?? {};
@@ -1344,19 +1587,25 @@ export class Translator {
         // is skipped when the CLI withheld the first number. The summary itself never reaches us:
         // the CLI feeds it straight into the next prompt and does not put it on the stream.
         const parts = [how];
+
         if (Number.isFinite(meta.pre_tokens)) {
           parts.push(serverText("tokensBefore", { n: String(meta.pre_tokens) }));
-          if (Number.isFinite(meta.post_tokens))
+
+          if (Number.isFinite(meta.post_tokens)) {
             parts.push(serverText("tokensAfter", { n: String(meta.post_tokens) }));
+          }
         }
+
         if (Number.isFinite(meta.duration_ms)) {
           parts.push(`${(Number(meta.duration_ms) / 1000).toFixed(1)}s`);
         }
+
         return this.wholeBlock(
           "reasoning",
           `✓ ${serverText("compacted", { parts: parts.join(serverText("listSep")) })}`,
         );
       }
+
       case "tool_progress":
         return this.toolProgress(event);
       case "stream_event":
@@ -1370,9 +1619,13 @@ export class Translator {
         // A subagent's refusal is its own; only the conversation's own reply ends the turn.
         if (event.message?.stop_reason === "refusal" && !event.parent_tool_use_id) {
           this.noteRefusal("", "");
+
           // The CLI's error text for the refusal; drawn, it would commit the attempt (see above).
-          if (this.refusalAsFailure) return [];
+          if (this.refusalAsFailure) {
+            return [];
+          }
         }
+
         return this.assistant(
           event.message?.content ?? [],
           event.parent_tool_use_id,
@@ -1386,15 +1639,18 @@ export class Translator {
         // CLI sends that text as a plain string (2.1.332), not as a block array, so both shapes
         // are read before the array-only path below.
         const first = Array.isArray(content) ? content[0] : undefined;
+
         const text =
           typeof content === "string"
             ? content
             : first?.type === "text" && typeof first.text === "string"
               ? first.text
               : undefined;
+
         const gate =
           event.isSynthetic === true && text !== undefined ? gateNoteOf(text) : undefined;
-        if (gate)
+
+        if (gate) {
           return this.wholeBlock(
             "reasoning",
             serverText("testGateFixing", {
@@ -1402,26 +1658,39 @@ export class Translator {
               tries: String(gate.tries),
             }),
           );
-        if (!Array.isArray(content)) return [];
+        }
+
+        if (!Array.isArray(content)) {
+          return [];
+        }
+
         return this.toolResults(
           content,
           event.parent_tool_use_id,
           event.tool_use_result?.handbackReport?.text,
         );
       }
+
       case "result": {
         this.finished = true;
-        const events: StreamChunk[] = [];
+        const events: Array<StreamChunk> = [];
+
         // Close any open task blocks that were never notified (process killed, turn cancelled).
         for (const [, entry] of this.taskBlocks) {
           events.push(...this.endBlock(entry.block));
         }
+
         this.taskBlocks.clear();
+
         // Same for a call that never reported a result: its block would otherwise stay open.
-        for (const [, entry] of this.heartbeatBlocks) events.push(...this.endBlock(entry.block));
+        for (const [, entry] of this.heartbeatBlocks) {
+          events.push(...this.endBlock(entry.block));
+        }
+
         this.heartbeatBlocks.clear();
         events.push(...this.endThinking());
         this.closeThinking();
+
         if (this.denied > 0 && !event.is_error) {
           const n = this.denied;
           events.push(
@@ -1431,6 +1700,7 @@ export class Translator {
             ),
           );
         }
+
         if (this.autoDenied.length > 0 && !event.is_error) {
           const n = this.autoDenied.length;
           const reasons = [...new Set(this.autoDenied)].join(", ");
@@ -1441,11 +1711,13 @@ export class Translator {
             ),
           );
         }
+
         if (event.usage) {
           // Kept, not emitted: `takeStepUsage` spends it only if this turn streamed no partials.
           this.resultUsage = event.usage;
           this.onProgress?.({ output: event.usage.output_tokens ?? 0 });
         }
+
         // Per-turn accounting: forward the summary to the adapter's ring buffer.
         // SAFETY: these fields are emitted by the Claude Code CLI on the result frame; they may not be in every schema version
         const e = event as {
@@ -1454,9 +1726,11 @@ export class Translator {
           duration_api_ms?: unknown;
           num_turns?: unknown;
         };
+
         const totalCost = Number(e.total_cost_usd);
         const durationMs = Number(e.duration_ms);
         const apiMs = Number(e.duration_api_ms);
+
         if (Number.isFinite(totalCost) || Number.isFinite(durationMs)) {
           const record: TurnRecord = {
             at: Date.now(),
@@ -1469,31 +1743,45 @@ export class Translator {
             cacheRead: event.usage?.cache_read_input_tokens ?? 0,
             cacheWrite: event.usage?.cache_creation_input_tokens ?? 0,
           };
-          if (!Number.isFinite(totalCost)) record.noTotals = true;
+
+          if (!Number.isFinite(totalCost)) {
+            record.noTotals = true;
+          }
+
           // The frame names the calls a rule refused without ever naming the rule: `tool_name`,
           // `tool_use_id` and `tool_input`, nothing else. Only the rule-shaped label is kept, since
           // the record is written to disk and a tool input carries file contents and secrets.
           // SAFETY: the field is off the wire and absent from ClaudeEvent, so it is read as unknown
           // and the shape below is checked by Array.isArray plus the ?? on every member.
           const denied = (event as { permission_denials?: unknown }).permission_denials;
+
           if (Array.isArray(denied)) {
             const labels = new Set<string>();
+
             // SAFETY: each member is used only through `?.` and `??`, so a frame of another shape,
             // a null member included, yields the bare tool name rather than throwing.
-            const calls = denied as ({
+            const calls = denied as Array<{
               tool_name?: string;
               tool_input?: Record<string, JsonValue>;
-            } | null)[];
-            for (const call of calls)
+            } | null>;
+
+            for (const call of calls) {
               labels.add(suggestRule(call?.tool_name ?? "", call?.tool_input ?? {}));
-            if (labels.size > 0) record.denials = [...labels];
+            }
+
+            if (labels.size > 0) {
+              record.denials = [...labels];
+            }
           }
+
           this.onResult?.(record);
         }
+
         // What the last step spent, before the chunk that ends the stream: dsh fails a stream that
         // emits anything "after terminal finish", and this frame is what closes the final step of
         // every turn. The adapter's own call after this one then finds nothing left to spend.
         const stepUsage = this.takeStepUsage();
+
         // A rejection that named no reset, on a turn the CLI itself ended as an error, is the API
         // throttling requests and not a plan window: the result carries the CLI's own sentence
         // ("Server is temporarily limiting requests (not your usage limit)"), and that is what the
@@ -1502,16 +1790,25 @@ export class Translator {
           this.limitFailure?.providerRetryAfterMs === undefined && event.is_error
             ? undefined
             : this.limitFailure;
-        if (event.stop_reason === "refusal") this.noteRefusal("", "");
+
+        if (event.stop_reason === "refusal") {
+          this.noteRefusal("", "");
+        }
+
         const refused =
           this.refusalAsFailure && (this.refusalFinal || event.stop_reason === "refusal")
             ? this.refusal
             : undefined;
+
         // A refused attempt's usage is not sent under refusalAsFailure: a usage chunk commits the
         // attempt, and dsh-fallback-models retries on another model only an uncommitted one. Its
         // tokens go unreported to dsh, which is the price of letting the fallback answer.
         this.refusalEnded = refused !== undefined && !this.aborting && !limit;
-        if (!this.refusalEnded) events.push(...stepUsage);
+
+        if (!this.refusalEnded) {
+          events.push(...stepUsage);
+        }
+
         events.push({
           type: "finish",
           reason: this.aborting
@@ -1522,30 +1819,45 @@ export class Translator {
                 ? { kind: "error", failure: refused }
                 : finishReason(event, this.hostLabel, this.routerOnly, this.settingsKey, this.via),
         });
+
         return events;
       }
+
       case "rate_limit_event": {
         // Emitted on every run. Status is allowed | allowed_warning | rejected (SDK types);
         // only "rejected" is a limit. allowed_warning means "near the cap", the turn goes on.
         // Treating it as an error ended turns early and dsh's retry re-sent the prompt.
         const info = event.rate_limit_info ?? {};
         const status = info.status ?? "allowed";
-        if (status !== "rejected") return [];
+
+        if (status !== "rejected") {
+          return [];
+        }
+
         // Extra usage on and not itself exhausted: the request went through on credits. The CLI
         // shows no limit here, so neither does the turn.
         const covered =
           info.isUsingOverage === true ||
           info.overageStatus === "allowed" ||
           info.overageStatus === "allowed_warning";
-        if (covered) return [];
+
+        if (covered) {
+          return [];
+        }
+
         // Credits exhausted too: their own reset is the one that matters.
         const resetsAt =
           info.overageStatus === "rejected" && Number.isFinite(info.overageResetsAt)
             ? info.overageResetsAt
             : info.resetsAt;
+
         const resetAt = Number.isFinite(resetsAt) ? (resetsAt ?? 0) * 1000 : 0;
         const resetMs = resetAt - Date.now();
-        if (resetMs > 0) this.limitResetAt = resetAt;
+
+        if (resetMs > 0) {
+          this.limitResetAt = resetAt;
+        }
+
         // Right after this frame the CLI sends its own sentence as a synthetic assistant message
         // ("You've reached your Fable limit. Switch to another model, or manage usage credits at
         // …"), then the result frame. That message is the only authority on what went wrong, so
@@ -1553,12 +1865,15 @@ export class Translator {
         // The cause may be a cap, an org setting or an outage, but the user reads the CLI's
         // own words, and this row adds only which window it was and when it reopens.
         const name = serverText(LIMIT_NAMES.get(info.rateLimitType ?? "") ?? "limitUsage");
+
         const clock =
           resetMs > 0
             ? ` · ${serverText("resets", { when: resetClock(resetAt, this.timeZone) })}`
             : "";
+
         const waiting =
           resetMs > 0 && this.continueAfterLimit ? ` · ${serverText("continuingAtReset")}` : "";
+
         // dsh retries a RATE_LIMIT within half a second unless it is told how long to wait. With no
         // reset ahead there is nothing to tell it, and the retry reopens a step whose prompt Claude
         // already has: the turn then died as "no user message" and hid this failure.
@@ -1566,12 +1881,21 @@ export class Translator {
           message: `${serverText("hitLimit", { name })}${clock}${waiting}`,
           code: resetMs > 0 ? "RATE_LIMIT" : "PROVIDER_ERROR",
         };
-        if (resetMs > 0) failure.providerRetryAfterMs = resetMs;
+
+        if (resetMs > 0) {
+          failure.providerRetryAfterMs = resetMs;
+        }
+
         this.limitFailure = failure;
+
         return [];
       }
+
       default:
-        if (!BENIGN_EVENTS.has(event?.type)) this.noteUnknown("event", event?.type);
+        if (!BENIGN_EVENTS.has(event?.type)) {
+          this.noteUnknown("event", event?.type);
+        }
+
         return [];
     }
   }
@@ -1582,14 +1906,16 @@ export class Translator {
    *  fallback: it carries the whole turn's usage, so on a turn of several steps charging it to
    *  whichever step happened to see it is what left every other step with no sample at all, and
    *  `deriveTurnTokenUsage` drops the turn's pill unless every step has one. */
-  takeStepUsage(): StreamChunk[] {
+  takeStepUsage(): Array<StreamChunk> {
     const summed = this.sawUsageDelta ? usageEvent(this.stepUsage) : undefined;
+
     // No partials on the wire: an older CLI without `--include-partial-messages`, where the result
     // frame is the only usage there is and the multi-step turn stays unprovable as it is today.
     const fallback =
       summed === undefined && this.resultUsage !== undefined
         ? usageEvent(this.resultUsage)
         : undefined;
+
     // Both sources are spent whichever one answered. The last step of a turn sees the deltas *and*
     // the result frame, so leaving the unused one behind let the adapter's own call at the step's
     // end fire a second chunk, a duplicate, and after the terminal finish this frame already
@@ -1604,6 +1930,7 @@ export class Translator {
     this.sawUsageDelta = false;
     this.resultUsage = undefined;
     const chunk = summed ?? fallback;
+
     return chunk === undefined ? [] : [chunk];
   }
 
@@ -1613,6 +1940,7 @@ export class Translator {
    *  the status row reads rather than drawing, and skips a nested agent so its tokens are not added. */
   partial(ev: ClaudeStreamPartial, subagent = false) {
     this.nested = subagent;
+
     switch (ev.type) {
       case "message_start": {
         this.sawPartial = true;
@@ -1620,6 +1948,7 @@ export class Translator {
         // dropping a different one. See `assistant`.
         this.streamedId = ev.message?.id;
         this.open.clear();
+
         // A nested agent's message (the CLI's Task tool) is not the line's: the parent's Task is
         // still in flight, so the flag holds, and its calls never enter the set, so clearing here
         // would drop the parent's still-open calls (a Task beside a Bash).
@@ -1629,21 +1958,26 @@ export class Translator {
           this.dshBlocks.clear(); // block indexes restart per message; a nested one keeps the line's
           this.streaming = true;
         }
+
         // One whitespace token at the step's first message_start, the response's first byte. dsh
         // times a step's first token off the first non-empty delta in its stream, and this plugin
         // streamed none for a silent think (Fable) until the counter's first mark, a thousand
         // tokens in, and none at all for a message that went straight to a tool call, whose block
         // lands whole at its stop: a 23 s step read as 23 s to first token, 0.3 s of decode and
         // 3,980 tokens a second (2026-09-23). dsh draws no block whose text trims to nothing.
-        let marker: StreamChunk[] = [];
+        let marker: Array<StreamChunk> = [];
+
         if (!this.tokened && !this.nested) {
           this.tokened = true;
           const opened = this.startBlock("reasoning", " ");
           marker = [...opened.events, ...this.endBlock(opened.block)];
         }
+
         this.closeThinking();
+
         return [...this.endThinking(), ...marker];
       }
+
       case "content_block_start":
         return this.openBlock(ev.index ?? -1, ev.content_block ?? {});
       case "content_block_delta": {
@@ -1651,46 +1985,69 @@ export class Translator {
         // Hidden native-tool blocks still need their input JSON accumulated.
         const apiIndex = ev.index ?? -1;
         const cbMeta = this.cbMeta.get(apiIndex);
+
         if (cbMeta && ev.delta?.partial_json !== undefined) {
           const partial = ev.delta?.partial_json ?? "";
+
           // Store accumulated input on the meta so content_block_stop can emit tool/call.
-          if (!cbMeta.id) return [];
+          if (!cbMeta.id) {
+            return [];
+          }
+
           const existing = this.callInputs.get(cbMeta.id);
           this.callInputs.set(cbMeta.id, (existing ?? "") + partial);
+
           return [];
         }
+
         const dshCall = this.dshCalls.get(this.dshBlocks.get(apiIndex) ?? "");
+
         if (dshCall && ev.delta?.partial_json !== undefined) {
           dshCall.args += ev.delta.partial_json;
+
           return [];
         }
-        if (!block || block.index < 0) return [];
+
+        if (!block || block.index < 0) {
+          return [];
+        }
+
         const d = ev.delta ?? {};
         const text = d.text ?? d.thinking ?? d.partial_json ?? "";
+
         return this.delta(block, text);
       }
+
       case "content_block_stop": {
         const block = this.open.get(ev.index ?? -1);
-        if (!block) return [];
+
+        if (!block) {
+          return [];
+        }
+
         const apiIndex = ev.index ?? -1;
         // Native tool: its input is now complete. Either hand it to the dsh session (onToolCall)
         // or draw it inline as a formatted markdown block that rides this turn's ordered stream.
         const cbMeta = this.cbMeta.get(apiIndex);
-        let inlineCall: StreamChunk[] = [];
+        let inlineCall: Array<StreamChunk> = [];
+
         if (cbMeta?.id) {
           this.cbMeta.delete(apiIndex);
           // Hidden blocks accumulate input via callInputs in the delta handler; live blocks use block.text.
           const input = this.callInputs.get(cbMeta.id) ?? block.text;
+
           // SAFETY: NATIVE_TOOL_MAP is a closed literal type; keyof narrows index access to known keys
           const mapped =
             NATIVE_TOOL_MAP[(cbMeta.name ?? "") as keyof typeof NATIVE_TOOL_MAP] ??
             cbMeta.name ??
             "";
+
           // Gate on the id, never on the input: a tool called with no arguments (`ExitPlanMode`,
           // `ListMcpResources`, any MCP tool called with `{}`) streams one `input_json_delta`
           // carrying `""`, and skipping the call for it left the result frame firing alone.
           // That frame only looks up the id, and that orphan is what the assembler throws on.
           const args = input || "{}";
+
           if (this.onToolCall) {
             this.fireToolCall(cbMeta.id, mapped, args);
           } else {
@@ -1700,20 +2057,25 @@ export class Translator {
             inlineCall = this.wholeBlock("text", formatToolCall(mapped, args));
           }
         }
+
         this.open.delete(apiIndex);
         this.dshBlocks.delete(apiIndex);
         // A finished tool_use block means the CLI is now running that tool: no stream events until
         // its result arrives, however long it takes. Callers read this to pause their idle timer.
         this.setToolPending(block.tool === true);
         // The estimate resets at the next content_block_start, so the counter ends with its block.
-        let done: StreamChunk[] = [];
+        let done: Array<StreamChunk> = [];
+
         if (block === this.thinkingBlock) {
           done = this.endThinking();
           this.closeThinking();
         }
+
         const tail = block.index < 0 ? done : [...done, ...this.endBlock(block)];
+
         return [...tail, ...inlineCall];
       }
+
       default:
         // `message_delta` is the only frame carrying usage while the turn is still running: the
         // `result` frame reports it too, but not until the turn is over, which is too late for a
@@ -1725,41 +2087,52 @@ export class Translator {
           // number below, so a frame of another shape counts nothing rather than throwing.
           const u = (ev as { usage?: Record<string, unknown> }).usage;
           const out = countOf(u?.output_tokens);
+
           if (out > 0) {
             this.turnOutput += out;
             this.onProgress?.({ output: this.turnOutput });
           }
+
           if (u !== undefined && !subagent) {
             // Measured on 2.1.270: the four counters summed over a turn's `message_delta` frames
             // equal the result frame's to the token, thinking included. Subagent messages are left
             // out because the result frame leaves them out too, and the two have to agree.
             this.sawUsageDelta = true;
             this.stepUsage.output_tokens += out;
+
             // The latest call's prompt is the context as it stands; a frame without one (none
             // seen, but a delta that reports output only would do it) leaves the last call's.
             const prompt =
               countOf(u.input_tokens) +
               countOf(u.cache_read_input_tokens) +
               countOf(u.cache_creation_input_tokens);
+
             if (prompt > 0) {
               this.stepUsage.input_tokens = countOf(u.input_tokens);
               this.stepUsage.cache_read_input_tokens = countOf(u.cache_read_input_tokens);
               this.stepUsage.cache_creation_input_tokens = countOf(u.cache_creation_input_tokens);
             }
+
             // SAFETY: read as unknown off the wire and passed straight to `countOf`, which yields 0
             // for anything that is not a positive number, so a frame of another shape adds nothing.
             const details = u.output_tokens_details as { thinking_tokens?: unknown } | undefined;
             this.stepUsage.reasoning_tokens += countOf(details?.thinking_tokens);
           }
+
           return [];
         }
+
         // The CLI's line goes to `tool-use` at message_stop whatever the message held; the belt in
         // setToolPending covers a relay step that exits before this frame is read.
         if (ev?.type === "message_stop" && !this.nested) {
           this.streaming = false;
           this.onProgress?.({ mode: "tool-use" });
         }
-        if (!BENIGN_PARTIALS.has(ev?.type)) this.noteUnknown("stream event", ev?.type);
+
+        if (!BENIGN_PARTIALS.has(ev?.type)) {
+          this.noteUnknown("stream event", ev?.type);
+        }
+
         return [];
     }
   }
@@ -1771,10 +2144,14 @@ export class Translator {
    *  the block is hidden. Native-tool input is accumulated until its stop frame, and a dsh tool under
    *  relay stays hidden, so only visible text, thinking and tool rows get a block-start. */
   openBlock(apiIndex: number, cb: { type?: string; id?: string; name?: string }) {
-    let opened: { block: TranslatorBlock; events: StreamChunk[] };
+    let opened: { block: TranslatorBlock; events: Array<StreamChunk> };
+
     if (cb.type === "text") {
       opened = this.startBlock("text");
-      if (!this.nested) this.onProgress?.({ mode: "responding" });
+
+      if (!this.nested) {
+        this.onProgress?.({ mode: "responding" });
+      }
     } else if (cb.type === "thinking") {
       opened = this.startBlock("reasoning");
       this.thinkingBlock = opened.block;
@@ -1786,17 +2163,26 @@ export class Translator {
       );
     } else if (cb.type === "tool_use") {
       // The CLI's `tool-input`, drawn the same as responding: right-to-left sweep, down arrow.
-      if (!this.nested) this.onProgress?.({ mode: "responding" });
+      if (!this.nested) {
+        this.onProgress?.({ mode: "responding" });
+      }
+
       const toolName = cb.name ?? "";
+
       // A nested agent's call is its own to answer; in the parent's set a child killed before its
       // echo would hold the line in tool-use until the next message.
-      if (cb.id && !this.nested) this.calls.add(cb.id);
+      if (cb.id && !this.nested) {
+        this.calls.add(cb.id);
+      }
+
       const dsh = toolName.startsWith("mcp__dsh__");
+
       if (dsh && cb.id) {
         this.dshIds.add(cb.id);
         this.dshCalls.set(cb.id, { name: toolName.slice("mcp__dsh__".length), args: "" });
         this.dshBlocks.set(apiIndex, cb.id);
       }
+
       // Native tools: hide the raw block and accumulate input; content_block_stop draws the row
       // (a dsh session row when onToolCall is wired, else a formatted inline markdown block).
       if (isNativeTool(toolName) && cb.id && (this.onToolCall || this.toolActivity)) {
@@ -1808,8 +2194,10 @@ export class Translator {
           started: false,
           tool: true,
         });
+
         return [];
       }
+
       // A dsh call draws no block of its own: dsh draws a relayed one, and `toolResults` gives one
       // that ran in the bridge a row once its result is in.
       if (!this.toolActivity || dsh) {
@@ -1820,41 +2208,55 @@ export class Translator {
           started: false,
           tool: true,
         });
+
         return [];
       }
+
       opened = this.startBlock(...this.toolLead(cb));
       opened.block.tool = true;
     } else {
       this.noteUnknown("content block", cb.type);
+
       return [];
     }
+
     this.open.set(apiIndex, opened.block);
+
     return opened.events;
   }
 
   /** A whole assistant message as chunks. A subagent's message folds into one reasoning row, and
    *  the echo of a message that already streamed as deltas is dropped. */
   assistant(
-    content: ClaudeContentBlock[],
+    content: Array<ClaudeContentBlock>,
     parentToolUseId: string | null | undefined,
     id?: string,
   ) {
     // Claude Code subagent output (--forward-subagent-text) arrives as whole messages tagged with the
     // parent tool id; it never comes as partials, so it is always rendered, folded into reasoning.
     if (parentToolUseId) {
-      if (!this.toolActivity) return [];
+      if (!this.toolActivity) {
+        return [];
+      }
+
       const text = content.flatMap((b) => (b.type === "text" && b.text ? [b.text] : [])).join("\n");
+
       return text
         ? this.wholeBlock("reasoning", `↳ ${serverText("subagent")}\n${clip(text, this.limit)}`)
         : [];
     }
+
     // The whole-message echo of what just streamed as deltas is a duplicate and is dropped. The
     // guard used to be `sawPartial` alone, which latched on the first `message_start` and stayed
     // set for the rest of the run, so it also swallowed the assistant message the CLI sends on its
     // own after refusing a turn on a rate limit, the one text that names the cap that was hit and
     // whether credits still apply. Only the id that was actually streamed is an echo.
-    if (this.sawPartial && (id === undefined || id === this.streamedId)) return [];
-    const events: StreamChunk[] = [];
+    if (this.sawPartial && (id === undefined || id === this.streamedId)) {
+      return [];
+    }
+
+    const events: Array<StreamChunk> = [];
+
     // A message that never streamed keeps the same call set the streamed path builds at
     // `message_start` and at each tool block, so `callsOutstanding` holds without partials too.
     // The CLI sends such a message one frame per block under one id, so only a new id starts over.
@@ -1862,14 +2264,20 @@ export class Translator {
       this.calls.clear();
       this.wholeId = id;
     }
+
     for (const b of content) {
-      if (b.type === "text" && b.text) events.push(...this.wholeBlock("text", b.text));
-      else if (b.type === "thinking" && b.thinking)
+      if (b.type === "text" && b.text) {
+        events.push(...this.wholeBlock("text", b.text));
+      } else if (b.type === "thinking" && b.thinking) {
         events.push(...this.wholeBlock("reasoning", b.thinking));
-      else if (b.type === "tool_use") {
-        if (b.id) this.calls.add(b.id);
+      } else if (b.type === "tool_use") {
+        if (b.id) {
+          this.calls.add(b.id);
+        }
+
         const toolName = b.name ?? "";
         const dsh = toolName.startsWith("mcp__dsh__");
+
         if (dsh) {
           this.dshIds.add(b.id);
           this.dshCalls.set(b.id, {
@@ -1877,11 +2285,13 @@ export class Translator {
             args: JSON.stringify(b.input ?? {}),
           });
         }
+
         // Native tools render as session rows (onToolCall) or an inline markdown block.
         if (isNativeTool(toolName) && b.id) {
           const args = JSON.stringify(b.input ?? {});
           // SAFETY: NATIVE_TOOL_MAP is a closed literal type; keyof narrows index access to known keys
           const mapped = NATIVE_TOOL_MAP[toolName as keyof typeof NATIVE_TOOL_MAP] ?? toolName;
+
           if (this.onToolCall) {
             this.fireToolCall(b.id, mapped, args);
           } else if (this.toolActivity) {
@@ -1889,15 +2299,21 @@ export class Translator {
             this.callNames.set(b.id, mapped);
             events.push(...this.wholeBlock("text", formatToolCall(mapped, args)));
           }
+
           continue;
         }
-        if (!this.toolActivity || dsh) continue;
+
+        if (!this.toolActivity || dsh) {
+          continue;
+        }
+
         const [kind, lead] = this.toolLead(b);
         events.push(
           ...this.wholeBlock(kind, lead + clip(JSON.stringify(b.input ?? {}), this.limit)),
         );
       }
     }
+
     return events;
   }
 
@@ -1907,7 +2323,7 @@ export class Translator {
    *  took the mark meant for the call beside it. A call already relayed and waiting for its echo
    *  is not a candidate either. An id whose name was never seen counts as relayable, the safe
    *  side: at worst the batch waits out its window. */
-  relayableIds(): string[] {
+  relayableIds(): Array<string> {
     return [...this.dshIds].filter(
       (id) => !this.relayed.has(id) && !OWN_TOOL_NAMES.has(this.dshCalls.get(id)?.name ?? ""),
     );
@@ -1921,11 +2337,15 @@ export class Translator {
     const candidates = this.relayableIds();
     const exact = new Set(toolUseIds.filter((id) => id !== undefined && candidates.includes(id)));
     const rest = candidates.filter((id) => !exact.has(id));
+
     for (const id of toolUseIds) {
       // A stamped id that is no candidate (a block this translator never saw) marks nothing:
       // giving it the oldest candidate would hide that call's own result.
       const mark = id === undefined ? rest.shift() : exact.has(id) ? id : undefined;
-      if (mark !== undefined) this.relayed.add(mark);
+
+      if (mark !== undefined) {
+        this.relayed.add(mark);
+      }
     }
   }
 
@@ -1944,42 +2364,63 @@ export class Translator {
    *  carrying the live elapsed time, and a subagent retrying an API failure. A call that finishes
    *  inside 30 seconds never sends one, so a block here means "this one is genuinely slow".
    *  Without it a ten-minute Bash call is indistinguishable from a hung process. */
-  toolProgress(event: Extract<ClaudeEvent, { type: "tool_progress" }>): StreamChunk[] {
-    if (!this.toolActivity) return [];
+  toolProgress(event: Extract<ClaudeEvent, { type: "tool_progress" }>): Array<StreamChunk> {
+    if (!this.toolActivity) {
+      return [];
+    }
+
     const name = clip(event.tool_name || "tool");
     const retry = event.subagent_retry;
+
     if (retry) {
       // Not a heartbeat and not on a clock: the only signal that a subagent is quietly retrying.
       const attempt = retry.attempt ?? 0;
       const max = retry.max_retries ?? 0;
       const count = attempt && max ? ` ${attempt}/${max}` : attempt ? ` ${attempt}` : "";
       const why = retry.error_category || (retry.error_status ? `HTTP ${retry.error_status}` : "");
+
       const wait = retry.retry_delay_ms
         ? `, ${serverText("retryingInMid", { s: String(Math.round(retry.retry_delay_ms / 1000)) })}`
         : "";
+
       const who = event.subagent_type ? `${name} [${event.subagent_type}]` : name;
+
       return this.wholeBlock(
         "reasoning",
         `↻ ${serverText("attemptFailed", { who, count })}${why ? `: ${why}` : ""}${wait}`,
       );
     }
+
     const id = event.tool_use_id;
-    if (!event.heartbeat || !id) return [];
+
+    if (!event.heartbeat || !id) {
+      return [];
+    }
+
     const elapsed = event.elapsed_time_seconds ?? 0;
     const entry = this.heartbeatBlocks.get(id);
+
     if (!entry) {
       const tag = event.parent_tool_use_id ? "↳ " : "";
+
       const { block, events } = this.startBlock(
         "reasoning",
         `${tag}⏱ ${name} running · ${elapsedText(elapsed)}`,
       );
+
       this.heartbeatBlocks.set(id, { block, nextAt: nextHeartbeat(elapsed) });
+
       return events;
     }
+
     // Every heartbeat after the first only writes when it passes the next mark, so a long call
     // grows a handful of lines rather than one every 30 seconds.
-    if (elapsed < entry.nextAt) return [];
+    if (elapsed < entry.nextAt) {
+      return [];
+    }
+
     entry.nextAt = nextHeartbeat(elapsed);
+
     return this.delta(entry.block, `\n⏱ ${elapsedText(elapsed)}`);
   }
 
@@ -1987,18 +2428,31 @@ export class Translator {
    *  draws: when the thinking text streams, the reasoning block itself is the progress, and a
    *  counter beside it would say the same thing twice. Fable-class models return thinking blocks
    *  that carry a signature and no text, and this is the only sign they are working. */
-  thinkingTokens(total: number): StreamChunk[] {
-    if (this.thinkingBlock?.started) return this.endThinking();
+  thinkingTokens(total: number): Array<StreamChunk> {
+    if (this.thinkingBlock?.started) {
+      return this.endThinking();
+    }
+
     const entry = this.thinking;
+
     if (!entry) {
-      if (total < THINK_FLOOR) return [];
+      if (total < THINK_FLOOR) {
+        return [];
+      }
+
       const { block, events } = this.startBlock("reasoning", `~${tokensText(total)} tokens`);
       this.thinking = { block, nextAt: nextThinkStep(total) };
+
       return events;
     }
+
     // One frame per delta arrives, so only a crossed mark writes.
-    if (total < entry.nextAt) return [];
+    if (total < entry.nextAt) {
+      return [];
+    }
+
     entry.nextAt = nextThinkStep(total);
+
     // Each mark on its own line, no ` → ` chain: dsh's Think summary is a nowrap line that follows the
     // end (data-follow-end), so the collapsed row shows the newest figure while the expanded block
     // keeps the ladder.
@@ -2013,23 +2467,35 @@ export class Translator {
    *  false and would never flip. */
   private setToolPending(v: boolean): void {
     if (this.toolPending !== v) {
-      if (v && !this.nested) this.onProgress?.({ tool: v, mode: "tool-use" });
-      else this.onProgress?.({ tool: v });
+      if (v && !this.nested) {
+        this.onProgress?.({ tool: v, mode: "tool-use" });
+      } else {
+        this.onProgress?.({ tool: v });
+      }
     }
+
     this.toolPending = v;
   }
 
   /** The thinking block is over, or the turn is: tell the status row, once per open block. */
   private closeThinking(): void {
-    if (this.thinkingBlock) this.onProgress?.({ thinkingOpen: false });
+    if (this.thinkingBlock) {
+      this.onProgress?.({ thinkingOpen: false });
+    }
+
     this.thinkingBlock = undefined;
   }
 
   /** Close the counter: the thinking block it stood in for is over, or the turn is. */
-  endThinking(): StreamChunk[] {
+  endThinking(): Array<StreamChunk> {
     const entry = this.thinking;
-    if (!entry) return [];
+
+    if (!entry) {
+      return [];
+    }
+
     this.thinking = undefined;
+
     return this.endBlock(entry.block);
   }
 
@@ -2044,10 +2510,15 @@ export class Translator {
   }
 
   /** Close the elapsed-time block a slow call opened, whichever way its result is drawn. */
-  endHeartbeat(toolUseId: string): StreamChunk[] {
+  endHeartbeat(toolUseId: string): Array<StreamChunk> {
     const entry = this.heartbeatBlocks.get(toolUseId);
-    if (!entry) return [];
+
+    if (!entry) {
+      return [];
+    }
+
     this.heartbeatBlocks.delete(toolUseId);
+
     return this.endBlock(entry.block);
   }
 
@@ -2057,13 +2528,18 @@ export class Translator {
    *  a subagent's report from the frame's `tool_use_result`, drawn in place of the result text,
    *  which then only says the report was delivered as a message. */
   toolResults(
-    content: ClaudeContentBlock[],
+    content: Array<ClaudeContentBlock>,
     parentToolUseId: string | null | undefined,
     handback?: string,
   ) {
     this.nested = parentToolUseId != null;
-    for (const b of content)
-      if (b.type === "tool_result" && b.tool_use_id) this.calls.delete(b.tool_use_id);
+
+    for (const b of content) {
+      if (b.type === "tool_result" && b.tool_use_id) {
+        this.calls.delete(b.tool_use_id);
+      }
+    }
+
     // The CLI's next request goes out once every call of the message has answered; results echo
     // one frame each, never batched, so an echo with calls still out is a tool still in flight.
     // Reported without the change gate: a step's fresh translator starts at false and the record
@@ -2075,18 +2551,31 @@ export class Translator {
       // row read the whole tool wait as a stall the moment the tool answered.
       this.onProgress?.({ tool: false, frame: true });
     }
-    if (!this.toolActivity) return [];
-    const events: StreamChunk[] = [];
+
+    if (!this.toolActivity) {
+      return [];
+    }
+
+    const events: Array<StreamChunk> = [];
     const single = content.filter((b) => b.type === "tool_result").length === 1;
+
     for (const b of content) {
-      if (b.type !== "tool_result") continue;
+      if (b.type !== "tool_result") {
+        continue;
+      }
+
       // A subagent's report the CLI delivered as a message: the result text is a note saying so.
       // Only for the frame's one result, and not for a refusal, whose own text is read below.
       const rawText = ((single && !b.is_error && handback?.trim()) || toolResultText(b)).trim();
       const raw = this.redact ? this.redact(rawText) : rawText;
       const auto = b.is_error ? AUTO_DENIED_RE.exec(raw) : null;
-      if (auto) this.autoDenied.push(auto[1]!);
-      else if (b.is_error && DENIED_RE.test(raw)) this.denied++;
+
+      if (auto) {
+        this.autoDenied.push(auto[1]!);
+      } else if (b.is_error && DENIED_RE.test(raw)) {
+        this.denied++;
+      }
+
       const body = clip(raw || "(empty)", this.limit);
       const tag = parentToolUseId ? "↳ " : "";
       const toolUseId = b.tool_use_id ?? "";
@@ -2094,27 +2583,34 @@ export class Translator {
       const dsh = this.dshIds.delete(toolUseId);
       const dshCall = this.dshCalls.get(toolUseId);
       this.dshCalls.delete(toolUseId);
-      if (dsh && this.relayed.delete(toolUseId)) continue; // dsh drew the native call and result
+
+      if (dsh && this.relayed.delete(toolUseId)) {
+        continue;
+      } // dsh drew the native call and result
+
       // A dsh call dsh never saw: it ran inside the bridge (no live turn to take it, or one of the
       // bridge's own tools). It gets the row a relayed call gets, call and result together, now
       // that both are known. Never answer text: it would read as words the model wrote.
       if (dsh && this.onToolCall && this.onToolResult) {
         const name = dshCall?.name ?? serverText("dshTool");
+
         // Under its bridge name, so the row's writer can tell it from one of Claude's own tools.
         if (
           this.fireToolCall(toolUseId, `mcp__dsh__${name}`, dshCall?.args || "{}") !== undefined
         ) {
           this.callInputs.delete(toolUseId);
           this.firedCalls.delete(toolUseId);
+
           try {
             this.onToolResult(toolUseId, raw, b.is_error ?? false);
             continue;
-          } catch (err) {
-            this.log("warn", `bridge tool result append failed: ${err}`);
+          } catch (error) {
+            this.log("warn", `bridge tool result append failed: ${error}`);
             // fall through to render it as reasoning, like a native result that failed to append
           }
         }
       }
+
       // Inline native result: draw a formatted markdown block matching its call, in stream order.
       if (!this.onToolResult && this.callNames.has(toolUseId)) {
         const name = this.callNames.get(toolUseId)!;
@@ -2123,17 +2619,20 @@ export class Translator {
         this.callInputs.delete(toolUseId);
         this.firedCalls.delete(toolUseId);
         let filePath = "";
+
         try {
           // SAFETY: argsJson is Claude's own tool_use input; only file_path is read, defensively
           filePath = asStr((JSON.parse(argsJson) as { file_path?: unknown }).file_path);
         } catch {
           filePath = "";
         }
+
         events.push(
           ...this.wholeBlock("text", formatToolResult(name, filePath, body, b.is_error ?? false)),
         );
         continue;
       }
+
       // Native tool result: append a dsh session row, skip reasoning text.
       if (this.onToolResult && !this.callInputs.has(toolUseId)) {
         // Not a native tool we tracked. Fall through to old behavior.
@@ -2143,6 +2642,7 @@ export class Translator {
         this.callInputs.delete(toolUseId);
         this.firedCalls.delete(toolUseId);
         let meta: object | undefined;
+
         try {
           // SAFETY: argsJson was produced by Claude's tool_use input and stored verbatim; the shape is trusted here
           interface EditCallInput {
@@ -2150,8 +2650,10 @@ export class Translator {
             old_string: string;
             new_string: string;
           }
+
           // SAFETY: JSON.parse output cast to EditCallInput; fields validated below with truthiness checks
           const inp = JSON.parse(argsJson) as EditCallInput;
+
           if (inp.file_path && inp.old_string && inp.new_string) {
             meta = {
               diffs: [{ path: inp.file_path, oldText: inp.old_string, newText: inp.new_string }],
@@ -2160,14 +2662,17 @@ export class Translator {
         } catch {
           // ignore malformed input JSON
         }
+
         try {
           this.onToolResult(toolUseId, raw, b.is_error ?? false, meta);
-        } catch (err) {
-          this.log("warn", `native tool result append failed: ${err}`);
+        } catch (error) {
+          this.log("warn", `native tool result append failed: ${error}`);
           // fall through to render reasoning text as before
         }
+
         continue;
       }
+
       // Without session rows, a dsh call that ran inside the bridge folds into reasoning beside
       // the other tools' results.
       const tool = dshCall?.name ?? serverText("dshTool");
@@ -2179,6 +2684,7 @@ export class Translator {
         ),
       );
     }
+
     return events;
   }
 }

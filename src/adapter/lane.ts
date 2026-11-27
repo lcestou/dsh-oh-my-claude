@@ -5,8 +5,10 @@
 // text, so a queued `/skill` rewritten into plain words stayed in the queue, and the only way to
 // steer it was to copy the text, delete the row and send it again (owner, 2026-11-11). The adapter
 // uses what is here to move such a row, and to queue a steer that was edited into a command.
-import { type LocaleSettingsReader, serverText } from "../locale.js";
-import { type LooseMessage, textOf } from "./prompt.js";
+import { serverText } from "../locale.js";
+import type { LocaleSettingsReader } from "../locale.js";
+import { textOf } from "./prompt.js";
+import type { LooseMessage } from "./prompt.js";
 
 /** How many queued command rows are remembered. A row leaves when it is moved; one that ran or was
  *  deleted is only pushed out by newer ones, so the cap is what bounds the set. */
@@ -24,11 +26,17 @@ export class CommandRows {
 
   /** Remember a row; a message without an id cannot be found again and is skipped. */
   add(id: string | undefined): void {
-    if (!id) return;
+    if (!id) {
+      return;
+    }
+
     this.ids.delete(id);
     this.ids.add(id);
+
     // SAFETY: the set is over the cap, so it has a first value
-    if (this.ids.size > REMEMBERED) this.ids.delete(this.ids.values().next().value!);
+    if (this.ids.size > REMEMBERED) {
+      this.ids.delete(this.ids.values().next().value!);
+    }
   }
 
   /** Whether the bridge queued this row and it has not been moved since. */
@@ -46,8 +54,12 @@ export class CommandRows {
  *  bridge queued, typed by a person, whose words no longer open with a command. A row whose
  *  arguments alone changed is still a command and stays. Blank text never moves. */
 export function leavesQueue(m: LooseMessage, rows: CommandRows): boolean {
-  if (!rows.has(m.id) || m.source?.kind !== "user") return false;
+  if (!rows.has(m.id) || m.source?.kind !== "user") {
+    return false;
+  }
+
   const text = textOf(m.content);
+
   return text.trim() !== "" && commandNameOf(text) === undefined;
 }
 
@@ -61,8 +73,12 @@ export function busyEnterOf(read: LocaleSettingsReader | undefined): "queue" | "
     // SAFETY: the descriptor's value is the entry's live config; for dsh's conversation plugin
     // that is `{ busyEnter }`, and any other entry reads as undefined through the optional chain.
     const value = entry.value as { busyEnter?: unknown } | undefined;
-    if (value?.busyEnter !== undefined) return value.busyEnter === "steer" ? "steer" : "queue";
+
+    if (value?.busyEnter !== undefined) {
+      return value.busyEnter === "steer" ? "steer" : "queue";
+    }
   }
+
   return "queue";
 }
 

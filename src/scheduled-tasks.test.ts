@@ -41,6 +41,7 @@ const transcript = (calls: Array<{ name: string; input: Record<string, unknown> 
     { name: "CronCreate", input: { name: "hourly", schedule: "0 * * * *" } },
     { name: "CronDelete", input: { name: "hourly" } },
   ]);
+
   const tasks = sessionTasksFrom(folded);
   assert.deepEqual(
     tasks.map((t) => t.name),
@@ -57,6 +58,7 @@ const transcript = (calls: Array<{ name: string; input: Record<string, unknown> 
     { name: "CronCreate", input: { schedule: "0 9 * * *" } },
     { name: "Bash", input: { command: "echo not a cron job" } },
   ]);
+
   assert.deepEqual(sessionTasksFrom(folded), []);
 }
 
@@ -66,6 +68,7 @@ const transcript = (calls: Array<{ name: string; input: Record<string, unknown> 
     { name: "ProposeGoal", input: { goal: "first idea" } },
     { name: "ProposeGoal", input: { goal: "ship the tab" } },
   ]);
+
   const goal = goalFrom(folded);
   assert.equal(goal?.text, "ship the tab");
   assert.equal(goal?.at, Date.parse("2026-09-07T02:00:01.000Z"));
@@ -113,6 +116,7 @@ const transcript = (calls: Array<{ name: string; input: Record<string, unknown> 
       updatedAt: at + 5,
     },
   });
+
   const goals = dshGoalsFrom([
     snap("a", "active", 100, { maxGoalRounds: 3 }),
     { type: "user/message", data: {} },
@@ -124,6 +128,7 @@ const transcript = (calls: Array<{ name: string; input: Record<string, unknown> 
     },
     { type: "goal/change", data: { operation: "edit", goal: { id: 7 } } },
   ]);
+
   assert.deepEqual(
     goals.map((g) => [g.id, g.phase]),
     [

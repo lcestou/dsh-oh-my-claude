@@ -6,37 +6,38 @@ import { createECDH } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  clickUrl,
-  deliver,
-  type Note,
-  Notifier,
-  type NotifyRequest,
-  notifyDelayIn,
-} from "./notify.js";
+import { clickUrl, deliver, Notifier, notifyDelayIn } from "./notify.js";
+import type { Note, NotifyRequest } from "./notify.js";
 import { addDevice, readDevices, validateDevice, writeNotifyConfig } from "../notify-store.js";
 import { hub } from "../events.js";
 import type { ServerResponse } from "node:http";
 
 /** Poll `cond` every 5 ms for up to 2 s; a fixed sleep flakes under a loaded suite. */
 async function until(cond: () => boolean): Promise<void> {
-  for (let i = 0; i < 400 && !cond(); i++) await new Promise((r) => setTimeout(r, 5));
+  for (let i = 0; i < 400 && !cond(); i++) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
 }
+
 const quiet = () => {};
 
 /** A notifier at delay 0 whose sends land in `sent`. */
 function rig(hints: Record<string, boolean | number>) {
-  const sent: Note[] = [];
+  const sent: Array<Note> = [];
+
   const n = new Notifier({
     dir: "/nonexistent",
     hints: async () => hints,
     send: async (_dir, note) => {
       sent.push(note);
+
       return { webhook: "none", sent: 0, failed: 0, removed: 0 };
     },
   });
+
   return { n, sent };
 }
+
 const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
   sessionId: "s1",
   event: "finished",
@@ -139,12 +140,14 @@ const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
     webhookUrl: "https://hook.example/x",
     openUrl: "https://dsh.example",
   });
+
   const calls: Array<{
     url: string;
     headers: Record<string, string>;
     body: unknown;
     redirect?: string;
   }> = [];
+
   const fake = (async (url: string, init: RequestInit) => {
     calls.push({
       url,
@@ -152,11 +155,14 @@ const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
       body: init.body,
       redirect: init.redirect,
     });
+
     return new Response(null, { status: url.endsWith("/dead") ? 410 : 201 });
   }) as unknown as typeof fetch;
+
   const note: Note = { event: "approval", session: "s1", title: "T", message: "M", tool: "Bash" };
   // A stand-in stream on the hub, to see the removal reach open Settings tabs.
-  const frames: string[] = [];
+  const frames: Array<string> = [];
+
   const stream = {
     write: (t: string) => frames.push(t),
     writeHead: () => stream,
@@ -165,6 +171,7 @@ const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
     end: () => undefined,
     writableNeedDrain: false,
   };
+
   hub.attach(stream as unknown as ServerResponse, null, []);
   const report = await deliver(dir, note, quiet, fake);
   assert.deepEqual(report, { webhook: "ok", sent: 1, failed: 0, removed: 1 });
@@ -192,9 +199,11 @@ const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
   // close() also stops the hub's heartbeat timer, which would keep this process alive.
   hub.close();
 }
+
 // A send that throws (a key file that cannot be written) is logged, never left unhandled.
 {
-  const logged: string[] = [];
+  const logged: Array<string> = [];
+
   const n = new Notifier({
     dir: "/nonexistent",
     hints: async () => ({ notifyOn: true, notifyDelayMs: 0 }),
@@ -202,11 +211,14 @@ const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
       throw new Error("EACCES push-vapid.json");
     },
   });
+
   let unhandled = false;
+
   /** Marks any rejection nothing listened to while this block runs. */
   const onUnhandled = () => {
     unhandled = true;
   };
+
   process.on("unhandledRejection", onUnhandled);
   n.schedule(req({ log: (_level, msg) => logged.push(msg) }));
   await until(() => logged.length > 0);
@@ -215,4 +227,5 @@ const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
   assert.equal(unhandled, false, "a failed send is not an unhandled rejection");
   assert.match(logged[0] ?? "", /send failed: EACCES/);
 }
+
 console.log("notify ok");

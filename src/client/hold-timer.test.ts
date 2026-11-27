@@ -22,6 +22,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   await wait(80);
   assert.equal(fired, 1, "never fires twice");
 }
+
 {
   let fired = 0;
   const timer = holdTimer(30, () => fired++);
@@ -31,15 +32,18 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   await wait(80);
   assert.equal(fired, 0, "a stopped timer never fires");
 }
+
 {
   // The time left is the running time only, read off the clock it is given.
   let clock = 0;
   let fired = 0;
+
   const timer = holdTimer(
     50,
     () => fired++,
     () => clock,
   );
+
   timer.run();
   clock = 40;
   timer.pause();
@@ -50,4 +54,5 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
   await wait(40);
   assert.equal(fired, 1);
 }
+
 console.log("hold-timer ok");

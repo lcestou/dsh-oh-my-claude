@@ -10,6 +10,7 @@ import { notifyRoutes } from "./notify.js";
 
 let status = 0;
 let reply: Record<string, unknown> = {};
+
 const ctx = {
   ROUTE_PREFIX: "/dsh-oh-my-claude",
   json: (_res: ServerResponse, s: number, v: Record<string, unknown>) => {
@@ -19,12 +20,14 @@ const ctx = {
   readBody: async (req: IncomingMessage & { body?: unknown }) => req.body ?? {},
   log: () => {},
 } as unknown as RouteCtx;
+
 const routes = notifyRoutes(ctx);
 
 /** Send one request through the group; returns what it answered, or UNHANDLED. */
 async function send(method: string, path: string, body?: unknown) {
   const req = { method, body } as unknown as IncomingMessage;
   const url = new URL(path, "http://dsh");
+
   return routes(req, {} as ServerResponse, url);
 }
 
@@ -72,4 +75,5 @@ async function send(method: string, path: string, body?: unknown) {
   assert.equal(reply.publicKey, first, "the box keeps one VAPID pair");
   assert.equal(await send("GET", "/dsh-oh-my-claude/other"), UNHANDLED, "other paths fall through");
 }
+
 console.log("notify routes ok");

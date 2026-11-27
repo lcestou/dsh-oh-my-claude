@@ -12,16 +12,10 @@ import {
   restoreBak,
   SURFACE,
   writeLog,
-  type Catalog,
 } from "./session-repair.js";
-import {
-  loadSessionRepairs,
-  recordRepair,
-  saveSessionRepairs,
-  trace,
-  type SessionRepairRecord,
-  type SessionRepairsFile,
-} from "./state.js";
+import type { Catalog } from "./session-repair.js";
+import { loadSessionRepairs, recordRepair, saveSessionRepairs, trace } from "./state.js";
+import type { SessionRepairRecord, SessionRepairsFile } from "./state.js";
 
 /** A session log header as `list()` hands it: the id and cwd `locate` needs. */
 export interface HealHeader {
@@ -40,7 +34,7 @@ export interface HealHost {
       id: string,
       access: "read",
     ): Promise<{
-      read?(offset: number): Promise<{ events: readonly { type: string }[] }>;
+      read?(offset: number): Promise<{ events: ReadonlyArray<{ type: string }> }>;
       close(): Promise<void>;
     }>;
     locate?(meta: { id: string; cwd?: string }): { kind: string; path: string };
@@ -69,18 +63,24 @@ const headerOf = (item: HealHeader | { header: HealHeader }): HealHeader =>
  *  decoded, so it costs no second parse. A not-found error reads as undefined: nothing to heal. */
 export async function probeLoad(host: HealHost, id: string): Promise<string | undefined> {
   let handle: Awaited<ReturnType<HealHost["persistence"]["open"]>>;
+
   try {
     handle = await host.persistence.open(id, "read");
-  } catch (e) {
-    if (e instanceof Error && e.name === "SessionPersistenceNotFoundError") return undefined;
-    return errorText(e);
+  } catch (error) {
+    if (error instanceof Error && error.name === "SessionPersistenceNotFoundError") {
+      return undefined;
+    }
+
+    return errorText(error);
   }
+
   try {
     const events = handle.read ? (await handle.read(0)).events : [];
     const first = events.find((e) => SURFACE.has(e.type));
+
     return first !== undefined && first.type !== "system/message" ? HEADLESS : undefined;
-  } catch (e) {
-    return errorText(e);
+  } catch (error) {
+    return errorText(error);
   } finally {
     await handle.close().catch(() => {});
   }
@@ -95,6 +95,7 @@ export function rawLogPath(message: string): string | undefined {
 async function statPair(path: string): Promise<{ mtimeMs: number; size: number }> {
   try {
     const st = await stat(path);
+
     return { mtimeMs: st.mtimeMs, size: st.size };
   } catch {
     return { mtimeMs: 0, size: 0 };
@@ -113,17 +114,23 @@ export async function healLog(
 ): Promise<SessionRepairRecord> {
   const settle = async (record: SessionRepairRecord): Promise<SessionRepairRecord> => {
     await recordRepair(host.stateDir, id, record);
+
     const what = record.did
       ? `drops ${record.did.droppedCalls}, head ${record.did.addedHead}, closes ${record.did.closedCalls}`
       : (record.reason ?? "");
+
     await note(host, `heal ${id}: ${record.verdict} (${what}) ${path}`);
-    if (record.verdict !== "fine")
+
+    if (record.verdict !== "fine") {
       host.log(
         record.verdict === "healed" ? "info" : "warn",
         `session log ${record.verdict}: ${id} (${what})`,
       );
+    }
+
     return record;
   };
+
   const unknown = async (why: string): Promise<SessionRepairRecord> =>
     settle({
       path,
@@ -132,29 +139,48 @@ export async function healLog(
       reason: why.slice(0, 300),
       at: Date.now(),
     });
+
   let log: ReturnType<typeof readLog>;
+
   try {
     log = readLog(path);
-  } catch (e) {
-    return unknown(`read failed: ${errorText(e)}`);
+  } catch (error) {
+    return unknown(`read failed: ${errorText(error)}`);
   }
+
   const catalog = await host.catalog();
-  if (catalog === undefined) return unknown("no session-format catalog");
+
+  if (catalog === undefined) {
+    return unknown("no session-format catalog");
+  }
+
   const fixed = repair(structuredClone(log.rows), log.header.version);
   const refused = migrate(catalog, log.header, structuredClone(fixed.rows));
-  if (refused !== undefined) return unknown(refused);
-  if (!fixed.addedHead && fixed.droppedCalls === 0 && fixed.closedCalls === 0)
+
+  if (refused !== undefined) {
+    return unknown(refused);
+  }
+
+  if (!fixed.addedHead && fixed.droppedCalls === 0 && fixed.closedCalls === 0) {
     return unknown(`nothing to repair for: ${reason.slice(0, 200)}`);
+  }
+
   const bak = writeLog(path, log.header, fixed.rows);
+
   const did = {
     droppedCalls: fixed.droppedCalls,
     addedHead: fixed.addedHead,
     closedCalls: fixed.closedCalls,
   };
+
   const again = await probeLoad(host, id);
-  if (again === undefined)
+
+  if (again === undefined) {
     return settle({ path, ...(await statPair(path)), verdict: "healed", bak, did, at: Date.now() });
+  }
+
   restoreBak(path, bak);
+
   return settle({
     path,
     ...(await statPair(path)),
@@ -176,31 +202,41 @@ export async function sweepRefusedLogs(
 ): Promise<{ healed: number; unknown: number; rolledBack: number }> {
   const zeros = { healed: 0, unknown: 0, rolledBack: 0 };
   const catalog = await host.catalog();
+
   if (catalog?.currentVersion === undefined) {
     host.log("warn", "sweep skipped: no session-format catalog");
+
     return zeros;
   }
+
   const locate = host.persistence.locate;
+
   if (locate === undefined) {
     host.log("info", "sweep skipped: this dsh does not locate a session's log");
+
     return zeros;
   }
+
   const file = await loadSessionRepairs(host.stateDir);
   const seen = new Set<string>();
+
   let fine = 0,
     healed = 0,
     unknown = 0,
     rolledBack = 0,
     unchanged = 0,
     older = 0;
+
   for (const item of await host.persistence.list()) {
     const header = headerOf(item);
     const path = locate.call(host.persistence, { id: header.id, cwd: header.cwd }).path;
     const pair = await statPair(path);
+
     if (pair.size === 0 && pair.mtimeMs === 0) {
       older++;
       continue;
     }
+
     seen.add(header.id);
     const prior = file.logs[header.id];
     // A log that loaded, or was healed, is not probed again until it changes. One still refused
@@ -208,12 +244,15 @@ export async function sweepRefusedLogs(
     // could not, and the file's stat says nothing about that. Those are few, and a probe is one
     // read-open.
     const settled = prior?.verdict === "fine" || prior?.verdict === "healed";
+
     if (prior && settled && prior.mtimeMs === pair.mtimeMs && prior.size === pair.size) {
       unchanged++;
       continue;
     }
+
     try {
       const verdict = await probeLoad(host, header.id);
+
       if (verdict === undefined) {
         fine++;
         await recordRepair(host.stateDir, header.id, {
@@ -224,9 +263,14 @@ export async function sweepRefusedLogs(
         });
       } else if (knownRefusal(verdict)) {
         const record = await healLog(host, header.id, path, verdict);
-        if (record.verdict === "healed") healed++;
-        else if (record.verdict === "rolled-back") rolledBack++;
-        else unknown++;
+
+        if (record.verdict === "healed") {
+          healed++;
+        } else if (record.verdict === "rolled-back") {
+          rolledBack++;
+        } else {
+          unknown++;
+        }
       } else {
         unknown++;
         await recordRepair(host.stateDir, header.id, {
@@ -237,29 +281,37 @@ export async function sweepRefusedLogs(
           at: Date.now(),
         });
       }
-    } catch (e) {
+    } catch (error) {
       unknown++;
       await recordRepair(host.stateDir, header.id, {
         path,
         ...pair,
         verdict: "unknown",
-        reason: errorText(e).slice(0, 300),
+        reason: errorText(error).slice(0, 300),
         at: Date.now(),
       });
     }
+
     await new Promise((r) => setImmediate(r));
   }
+
   const next = await loadSessionRepairs(host.stateDir);
+
   for (const [id, rec] of Object.entries(next.logs)) {
     const pair = await statPair(rec.path);
-    if (pair.size === 0 && pair.mtimeMs === 0 && !seen.has(id)) delete next.logs[id];
+
+    if (pair.size === 0 && pair.mtimeMs === 0 && !seen.has(id)) {
+      delete next.logs[id];
+    }
   }
+
   next.lastSweepAt = Date.now();
   await saveSessionRepairs(host.stateDir, next);
   host.log(
     "info",
     `sweep: ${seen.size + older} logs, ${fine} fine, ${healed} healed, ${unknown} unknown, ${rolledBack} rolled back, ${unchanged} unchanged, ${older} older generation`,
   );
+
   return { healed, unknown, rolledBack };
 }
 
@@ -279,15 +331,25 @@ export interface RepairsSummary {
  *  entry's time so a dismissal can name it. */
 export function repairsSummary(file: SessionRepairsFile, seenAt: number): RepairsSummary {
   const out: RepairsSummary = { healed: 0, unknown: 0, rolledBack: 0, at: 0, refused: [] };
+
   for (const [id, rec] of Object.entries(file.logs)) {
-    if (rec.at <= seenAt) continue;
-    if (rec.verdict === "healed" || rec.verdict === "reseeded") out.healed++;
-    else if (rec.verdict === "unknown") {
+    if (rec.at <= seenAt) {
+      continue;
+    }
+
+    if (rec.verdict === "healed" || rec.verdict === "reseeded") {
+      out.healed++;
+    } else if (rec.verdict === "unknown") {
       out.unknown++;
       out.refused.push({ id });
-    } else if (rec.verdict === "rolled-back") out.rolledBack++;
-    else continue;
+    } else if (rec.verdict === "rolled-back") {
+      out.rolledBack++;
+    } else {
+      continue;
+    }
+
     out.at = Math.max(out.at, rec.at);
   }
+
   return out;
 }

@@ -11,8 +11,8 @@ import {
   ENGINE_OPTIONS,
   ENGINE_PRESET_PREFIX,
   engineSkipKey,
-  type EngineOption,
 } from "../adapter/engine-mode.js";
+import type { EngineOption } from "../adapter/engine-mode.js";
 
 /** One preset as the `/presets` route lists it. */
 interface PresetRow {
@@ -49,10 +49,22 @@ const ROW = { display: "flex", alignItems: "center", gap: 8, fontSize: 13 } as c
 /** dsh's own name for one of its built-in modes, which its registry lists by id alone; undefined
  *  for any other preset, which carries the name it was declared with. */
 function builtInName(id: string): string | undefined {
-  if (id === "standard") return t("main.settingsUi.engineModeStandard");
-  if (id === "ptc") return t("main.settingsUi.engineModePtc");
-  if (id === "minimal") return t("main.settingsUi.engineModeMinimal");
-  if (id === "cordis") return t("main.settingsUi.engineModeCreator");
+  if (id === "standard") {
+    return t("main.settingsUi.engineModeStandard");
+  }
+
+  if (id === "ptc") {
+    return t("main.settingsUi.engineModePtc");
+  }
+
+  if (id === "minimal") {
+    return t("main.settingsUi.engineModeMinimal");
+  }
+
+  if (id === "cordis") {
+    return t("main.settingsUi.engineModeCreator");
+  }
+
   return undefined;
 }
 
@@ -61,6 +73,7 @@ function builtInName(id: string): string | undefined {
 function PresetBox({ preset }: { preset: PresetRow }) {
   const [on, setOn] = useHintFlag(ENGINE_PRESET_PREFIX + preset.id);
   const name = builtInName(preset.id) ?? preset.name;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <label style={ROW}>
@@ -96,6 +109,7 @@ function PresetBox({ preset }: { preset: PresetRow }) {
 function OptionBox({ option, preset }: { option: EngineOption; preset: string }) {
   const [skip, setSkip] = useHintFlag(engineSkipKey(option, preset));
   const [label, hint] = OPTION_TEXT[option];
+
   return (
     <label style={{ ...ROW, alignItems: "flex-start" }}>
       <input
@@ -121,22 +135,30 @@ function useTickedPresets(): Set<string> {
   const [ticked, setTicked] = useState<Set<string>>(new Set());
   useEffect(() => {
     let live = true;
+
     /** Re-reads the store and keeps the ids whose `enginePreset:` key is on. */
     const read = (): void =>
       void loadHints().then((h) => {
-        if (!live) return;
+        if (!live) {
+          return;
+        }
+
         const ids = Object.keys(h)
           .filter((k) => k.startsWith(ENGINE_PRESET_PREFIX) && h[k] === true)
           .map((k) => k.slice(ENGINE_PRESET_PREFIX.length));
+
         setTicked(new Set(ids));
       });
+
     read();
     window.addEventListener(HINTS_EVENT, read);
+
     return () => {
       live = false;
       window.removeEventListener(HINTS_EVENT, read);
     };
   }, []);
+
   return ticked;
 }
 
@@ -152,23 +174,26 @@ function useTickedPresets(): Set<string> {
  */
 export function EngineModeCard() {
   useLocale();
-  const [presets, setPresets] = useState<PresetRow[] | undefined>();
+  const [presets, setPresets] = useState<Array<PresetRow> | undefined>();
   const [reads, setReads] = useState(0);
   useEffect(() => {
     let live = true;
     fetch(`${ROUTE}/presets`)
-      .then((r) => readJson<{ presets?: PresetRow[] }>(r))
+      .then((r) => readJson<{ presets?: Array<PresetRow> }>(r))
       .then((r) => live && setPresets(r.presets ?? []))
       .catch(() => live && setPresets([]));
+
     return () => {
       live = false;
     };
   }, [reads]);
   const [on, setOn] = useHintFlag(ENGINE_ON_KEY);
   const ticked = useTickedPresets();
+
   const tickedNames = (presets ?? [])
     .filter((p) => ticked.has(p.id))
     .map((p) => builtInName(p.id) ?? p.name);
+
   return (
     <>
       <div

@@ -24,11 +24,17 @@ const row = (id: string, text: string, kind = "user") =>
 
 // A command line is a slash and a name, leading space ignored, as dsh's composer reads a draft.
 assert.equal(commandNameOf("/unslop tidy this"), "unslop");
+
 assert.equal(commandNameOf("  /ship"), "ship");
+
 assert.equal(commandNameOf("/plugin:skill a b"), "plugin:skill");
+
 assert.equal(commandNameOf("please /unslop this"), undefined);
+
 assert.equal(commandNameOf("/"), undefined);
+
 assert.equal(commandNameOf("/ tmp is full"), undefined);
+
 assert.equal(commandNameOf(""), undefined);
 
 // Only a row the bridge queued, typed by a person, whose words stopped being a command, leaves.
@@ -43,8 +49,12 @@ assert.equal(commandNameOf(""), undefined);
   assert.equal(leavesQueue(row("a", "plain", "plugin"), rows), false, "not typed by a person");
   rows.delete("a");
   assert.equal(leavesQueue(row("a", "plain"), rows), false, "forgotten once moved");
+
   // The cap pushes out the oldest; a row added again counts as newest.
-  for (let i = 0; i < 200; i++) rows.add(`n${i}`);
+  for (let i = 0; i < 200; i++) {
+    rows.add(`n${i}`);
+  }
+
   rows.add("n0");
   rows.add("last");
   assert.equal(rows.has("n0"), true);
@@ -58,6 +68,7 @@ assert.equal(commandNameOf(""), undefined);
   const reads = (forms: Array<{ ns?: string; value?: object }>) => ({
     describe: () => forms,
   });
+
   assert.equal(
     busyEnterOf(reads([{ ns: "x", value: {} }, { value: { busyEnter: "steer" } }])),
     "steer",
@@ -71,16 +82,17 @@ assert.equal(commandNameOf(""), undefined);
 
 /** What a fake agent recorded: ids taken out of the inbox, and messages steered and queued. */
 interface Moves {
-  removed: string[];
-  steered: string[];
-  queued: string[];
+  removed: Array<string>;
+  steered: Array<string>;
+  queued: Array<string>;
 }
 
 /** An adapter over a fake dsh: one agent holding `pending` in its queue, the busy-Enter preference
  *  as given, and the `session/event` handler the adapter registered. */
-function setup(pending: LooseMessage[], busyEnter: string | undefined, status = "running") {
+function setup(pending: Array<LooseMessage>, busyEnter: string | undefined, status = "running") {
   const moves: Moves = { removed: [], steered: [], queued: [] };
   const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+
   const agent = {
     status,
     inbox: {
@@ -88,6 +100,7 @@ function setup(pending: LooseMessage[], busyEnter: string | undefined, status = 
       nextTurn: pending,
       remove(id: string) {
         moves.removed.push(id);
+
         return true;
       },
     },
@@ -98,6 +111,7 @@ function setup(pending: LooseMessage[], busyEnter: string | undefined, status = 
       moves.queued.push(String(m.id));
     },
   };
+
   // SAFETY: partial fake; the code under test reads the event hook, the agent and the settings form
   const ctx = {
     on(name: string, fn: (session: unknown, event: unknown) => void) {
@@ -109,8 +123,10 @@ function setup(pending: LooseMessage[], busyEnter: string | undefined, status = 
         ? { describe: () => [{ ns: "ui-conversation", value: { busyEnter } }] }
         : undefined,
   } as unknown as PluginContext;
+
   const adapter = new ClaudeCodeAdapter(ctx, Config({}));
   adapter.stateDir = tempDir("omc-lane-");
+
   /** dsh's splice event for an edit of `m` in the queue, then one turn of the microtask queue. */
   const edited = async (m: LooseMessage) => {
     handlers["session/event"]?.(
@@ -122,6 +138,7 @@ function setup(pending: LooseMessage[], busyEnter: string | undefined, status = 
     );
     await Promise.resolve();
   };
+
   return { adapter, moves, edited };
 }
 
@@ -141,12 +158,14 @@ function setup(pending: LooseMessage[], busyEnter: string | undefined, status = 
 // left it a command, when the bridge never queued it, and when no turn is running.
 {
   const plain = row("q1", "plain words");
+
   for (const pref of ["queue", undefined]) {
     const { adapter, moves, edited } = setup([plain], pref);
     adapter.commandRows.add("q1");
     await edited(plain);
     assert.deepEqual(moves, { removed: [], steered: [], queued: [] }, `preference ${pref}`);
   }
+
   {
     const still = row("q1", "/unslop the other file");
     const { adapter, moves, edited } = setup([still], "steer");
@@ -155,17 +174,20 @@ function setup(pending: LooseMessage[], busyEnter: string | undefined, status = 
     assert.deepEqual(moves.steered, [], "arguments changed, still a command");
     assert.equal(adapter.commandRows.has("q1"), true, "and still remembered for a later edit");
   }
+
   {
     const { moves, edited } = setup([plain], "steer");
     await edited(plain);
     assert.deepEqual(moves.steered, [], "a row the user queued as plain text is theirs to steer");
   }
+
   {
     const { adapter, moves, edited } = setup([plain], "steer", "idle");
     adapter.commandRows.add("q1");
     await edited(plain);
     assert.deepEqual(moves.steered, [], "no running turn to steer into");
   }
+
   {
     // Gone from the queue by the time the move runs (the turn ended and took it).
     const { adapter, moves, edited } = setup([], "steer");
@@ -184,6 +206,7 @@ function setup(pending: LooseMessage[], busyEnter: string | undefined, status = 
   agent.steer = () => {
     throw new Error("turn just ended");
   };
+
   adapter.commandRows.add("q1");
   await edited(plain);
   assert.deepEqual(moves.removed, ["q1"]);
@@ -191,15 +214,20 @@ function setup(pending: LooseMessage[], busyEnter: string | undefined, status = 
 }
 
 /** Put one typed steer on hold, as the steer card's Edit does, and save it with new words. */
-async function saveHeld(text: string, bridged: string[]) {
+async function saveHeld(text: string, bridged: Array<string>) {
   const { adapter, moves } = setup([], "steer");
-  for (const name of bridged) adapter.bridged.set(name, () => {});
+
+  for (const name of bridged) {
+    adapter.bridged.set(name, () => {});
+  }
+
   // SAFETY: the held message as dsh's inbox handed it over
   const held = row("m1", "also look at the tests") as unknown as Message;
   const timer = setTimeout(() => {}, 60_000);
   adapter.heldSteers.set("s1", new Map([["m1", { messages: [held], text: "x", timer }]]));
   const reply = await adapter.releaseHold("s1", "m1", { text });
   clearTimeout(timer);
+
   return { adapter, moves, reply };
 }
 
@@ -212,6 +240,7 @@ async function saveHeld(text: string, bridged: string[]) {
   assert.deepEqual(moves.steered, []);
   assert.equal(adapter.commandRows.has("m1"), true);
 }
+
 // Anything else is still a steer: plain words, a name Claude Code does not have, and the plugin's
 // own commands, which dsh runs and Claude Code would not.
 for (const text of ["look at the readme too", "/nosuch thing", "/btw what is this"]) {
@@ -226,7 +255,9 @@ assert.equal(
   lineReceipt("/unslop x", "running", "sent"),
   "/unslop x added to the queue, for when this turn ends",
 );
+
 assert.equal(lineReceipt("/unslop x", "idle", "sent"), "sent");
+
 assert.equal(lineReceipt("/unslop x", undefined, "sent"), "sent");
 
 console.log("lane ok");

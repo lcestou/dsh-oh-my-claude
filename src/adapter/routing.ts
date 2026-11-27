@@ -1,10 +1,12 @@
 // Where one mount's Claude Code traffic goes, read from what a router leaves in Claude Code's own
 // config rather than from any router's files: a base URL, and names for the aliases it remaps.
 // The model listing follows the answer (`mergeCatalog`), and so does the Settings card.
-import { type FSWatcher, watch } from "node:fs";
+import { watch } from "node:fs";
+import type { FSWatcher } from "node:fs";
 import type { FirstPartyProbe } from "../first-party.js";
 import type { ServerKey } from "../locale.js";
-import { type AliasNames, aliasNamesIn } from "../sessions.js";
+import { aliasNamesIn } from "../sessions.js";
+import type { AliasNames } from "../sessions.js";
 import { proxyBaseUrl } from "./catalog.js";
 
 /**
@@ -48,6 +50,7 @@ const CLOUD_FLAGS = [
   "CLAUDE_CODE_USE_VERTEX",
   "CLAUDE_CODE_USE_FOUNDRY",
 ] as const;
+
 /** The CLI's own reading of a boolean variable: anything but blank, `0`, `false`, `no`, `off`. */
 const envOn = (value: string | undefined): boolean =>
   value !== undefined && !["", "0", "false", "no", "off"].includes(value.trim().toLowerCase());
@@ -61,8 +64,13 @@ export function routeEnvIn(env: Record<string, string | undefined>): RouteEnv {
     aliasNames: aliasNamesIn(env),
     aliasModels: aliasNamesIn(env, ""),
   };
+
   const baseUrl = env.ANTHROPIC_BASE_URL?.trim();
-  if (baseUrl) out.baseUrl = baseUrl;
+
+  if (baseUrl) {
+    out.baseUrl = baseUrl;
+  }
+
   return out;
 }
 
@@ -88,18 +96,34 @@ export function routeOf(
   mount: { forwards: boolean },
   known: (baseUrl: string) => FirstPartyProbe,
 ): Route {
-  if (env.cloud) return { state: "unknown" };
+  if (env.cloud) {
+    return { state: "unknown" };
+  }
+
   const baseUrl = proxyBaseUrl(env.baseUrl);
-  if (!baseUrl) return { state: "direct" };
+
+  if (!baseUrl) {
+    return { state: "direct" };
+  }
+
   let host = baseUrl;
+
   try {
     host = new URL(baseUrl).host;
   } catch {
     /* not a URL: the CLI will refuse it too, and the text as written is the honest host */
   }
-  if (mount.forwards) return { state: "direct", host };
+
+  if (mount.forwards) {
+    return { state: "direct", host };
+  }
+
   const answer = known(baseUrl);
-  if (answer === undefined) return { state: "unknown", host };
+
+  if (answer === undefined) {
+    return { state: "unknown", host };
+  }
+
   return { state: answer ? "direct" : "routed", host };
 }
 
@@ -112,26 +136,31 @@ const SCOPE_TEXT = new Map<string, ServerKey>([
   ["managed", "settingsScopeManaged"],
   ["environment", "settingsScopeEnvironment"],
 ]);
+
 /** The text key for a scope name; one this file does not know reads as the box's own file. */
 export const settingsScopeText = (scope: string): ServerKey =>
   SCOPE_TEXT.get(scope) ?? "settingsScopeUser";
 
 /** The settings files whose `env` can route the CLI, by name: the user's and the managed one. */
 const SETTINGS_FILES = new Set(["settings.json", "managed-settings.json"]);
+
 /** How long a burst of writes to a settings file is left to settle before it is read. */
 export const SETTINGS_SETTLE_MS = 400;
 
 /** The watches kept per directory, on the process, each with one listener per mount. */
 const WATCHES = Symbol.for("dsh-oh-my-claude.routeWatches");
+
 interface Watched {
   fw: FSWatcher;
   timer?: ReturnType<typeof setTimeout>;
   listeners: Map<string, () => void>;
 }
+
 /** The process-wide registry, made on first use. */
 const watches = (): Map<string, Watched> => {
   // SAFETY: this plugin's own key on globalThis, typed here once
   const g = globalThis as typeof globalThis & { [WATCHES]?: Map<string, Watched> };
+
   return (g[WATCHES] ??= new Map());
 };
 
@@ -148,22 +177,34 @@ const watches = (): Map<string, Watched> => {
 export function watchSettingsIn(dir: string, key: string, changed: () => void): void {
   const all = watches();
   const kept = all.get(dir);
+
   if (kept) {
     kept.listeners.set(key, changed);
+
     return;
   }
+
   try {
     const entry: Watched = {
       listeners: new Map([[key, changed]]),
       fw: watch(dir, { persistent: false }, (_event, name) => {
-        if (name === null || !SETTINGS_FILES.has(name)) return;
-        if (entry.timer) clearTimeout(entry.timer);
+        if (name === null || !SETTINGS_FILES.has(name)) {
+          return;
+        }
+
+        if (entry.timer) {
+          clearTimeout(entry.timer);
+        }
+
         entry.timer = setTimeout(() => {
-          for (const listener of entry.listeners.values()) listener();
+          for (const listener of entry.listeners.values()) {
+            listener();
+          }
         }, SETTINGS_SETTLE_MS);
         entry.timer.unref();
       }),
     };
+
     entry.fw.on("error", () => {
       entry.fw.close();
       all.delete(dir);
@@ -177,8 +218,12 @@ export function watchSettingsIn(dir: string, key: string, changed: () => void): 
 /** Close every watch; tests leave none behind. */
 export const unwatchSettings = () => {
   for (const entry of watches().values()) {
-    if (entry.timer) clearTimeout(entry.timer);
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+    }
+
     entry.fw.close();
   }
+
   watches().clear();
 };

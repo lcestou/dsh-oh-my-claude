@@ -8,7 +8,8 @@
 // measured: menu top + scroller scrollTop held constant while the trigger never moved). A plain
 // scroll with no growth does not do it, and dsh's own permission menu drifts the same way.
 // Re-resolving the anchor on each scroll puts the menu back before the frame paints.
-import { useEffect, type RefObject } from "react";
+import { useEffect } from "react";
+import type { RefObject } from "react";
 
 /** The inline-style surface the two helpers below touch; a real element satisfies it. */
 export type StyledBox = {
@@ -26,7 +27,10 @@ export function menuFor<E extends StyledBox>(
   anchorName: string,
   candidates: Iterable<E>,
 ): E | undefined {
-  if (anchorName === "" || anchorName === "none") return undefined;
+  if (anchorName === "" || anchorName === "none") {
+    return undefined;
+  }
+
   for (const el of candidates) {
     if (
       el.getAttribute("role") === "menu" &&
@@ -35,6 +39,7 @@ export function menuFor<E extends StyledBox>(
       return el;
     }
   }
+
   return undefined;
 }
 
@@ -46,7 +51,11 @@ export function menuFor<E extends StyledBox>(
  */
 export function reanchor(menu: StyledBox): void {
   const name = menu.style.getPropertyValue("position-anchor");
-  if (name === "") return;
+
+  if (name === "") {
+    return;
+  }
+
   menu.style.setProperty("position-anchor", "none");
   void menu.getBoundingClientRect();
   menu.style.setProperty("position-anchor", name);
@@ -56,8 +65,12 @@ export function reanchor(menu: StyledBox): void {
 function anchorNameOf(el: Element | null): string {
   for (let e = el; e !== null; e = e.parentElement) {
     const name = getComputedStyle(e).getPropertyValue("anchor-name").trim();
-    if (name !== "" && name !== "none") return name;
+
+    if (name !== "" && name !== "none") {
+      return name;
+    }
   }
+
   return "";
 }
 
@@ -68,13 +81,21 @@ function anchorNameOf(el: Element | null): string {
  */
 export function useStickyAnchorFix(open: boolean, trigger: RefObject<HTMLElement | null>): void {
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
+
     const onScroll = () => {
       const menus = document.querySelectorAll<HTMLElement>("body > [role='menu']");
       const menu = menuFor(anchorNameOf(trigger.current), menus);
-      if (menu) reanchor(menu);
+
+      if (menu) {
+        reanchor(menu);
+      }
     };
+
     window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+
     return () => window.removeEventListener("scroll", onScroll, { capture: true });
   }, [open, trigger]);
 }

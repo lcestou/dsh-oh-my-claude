@@ -13,8 +13,8 @@ import {
   ago,
   activeClaudeSession,
   boxParam,
-  type ClientCtx,
 } from "../shared.js";
+import type { ClientCtx } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
 import { retentionNote, useFeatureSwitches } from "./restore.js";
 import { RewoundEvent } from "../edit-last.js";
@@ -29,11 +29,12 @@ interface RewindPrompt {
   time: number;
   text: string;
 }
+
 interface RewindReply {
   ok: boolean;
   dryRun: boolean;
   error?: string;
-  filesChanged?: string[];
+  filesChanged?: Array<string>;
   insertions?: number;
   deletions?: number;
 }
@@ -72,7 +73,7 @@ export function RewindBody({
   useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const isClaude = activeClaudeSession(ctx) === sessionId;
-  const [prompts, setPrompts] = useState<RewindPrompt[]>([]);
+  const [prompts, setPrompts] = useState<Array<RewindPrompt>>([]);
   const [picked, setPicked] = useState<RewindPrompt | null>(null);
   const [preview, setPreview] = useState<RewindReply | null>(null);
   const [busy, setBusy] = useState(false);
@@ -81,7 +82,10 @@ export function RewindBody({
   const [historyOff] = useHintFlag("historySearchOff");
 
   useEffect(() => {
-    if (!cwd) return;
+    if (!cwd) {
+      return;
+    }
+
     let live = true;
     setPicked(null);
     setPreview(null);
@@ -91,16 +95,19 @@ export function RewindBody({
     fetch(
       `${ROUTE}/rewind?session=${encodeURIComponent(sessionId)}&cwd=${encodeURIComponent(cwd)}&full=1${boxParam(ctx, sessionId)}`,
     )
-      .then((r) => readJson<{ prompts?: RewindPrompt[] }>(r))
+      .then((r) => readJson<{ prompts?: Array<RewindPrompt> }>(r))
       .then((b) => live && setPrompts(b.prompts ?? []))
-      .catch((e: Error) => live && setError(e.message));
+      .catch((error_: Error) => live && setError(error_.message));
+
     return () => {
       live = false;
     };
   }, [cwd, sessionId]);
+
   const run = async (uuid: string, dryRun: boolean) => {
     setBusy(true);
     setError("");
+
     try {
       const reply = await readJson<RewindReply>(
         await fetch(`${ROUTE}/rewind`, {
@@ -109,43 +116,55 @@ export function RewindBody({
           body: JSON.stringify({ session: sessionId, uuid, dryRun }),
         }),
       );
+
       setPreview(reply);
+
       if (!dryRun && reply.ok) {
         // The walk's list now holds prompts the transcript no longer has; recall re-reads it,
         // and the composer (`edit-last.ts`) takes the dropped prompt back to edit and resend.
         window.dispatchEvent(new RewoundEvent(sessionId, picked?.text));
         onClose();
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     } finally {
       setBusy(false);
     }
   };
+
   const pick = (p: RewindPrompt) => {
     setPicked(p);
     setPreview(null);
     run(p.id, true);
   };
+
   // Esc Esc: the newest prompt the person typed (not a notice this plugin sent, such as the
   // reattach line after a dsh restart) is picked once the list is in; spent at once so a Back
   // press is not undone by the next render.
   useEffect(() => {
     const latest = prompts.find((p) => !p.text.trimStart().startsWith(PLUGIN_NOTICE));
-    if (!pickLatest || latest === undefined) return;
+
+    if (!pickLatest || latest === undefined) {
+      return;
+    }
+
     onPicked?.();
     pick(latest);
     // Only the flag and the list: a re-render for the preview must not pick (and post) again.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- pick is a per-render closure
   }, [pickLatest, prompts]);
 
-  if (!isClaude || !cwd) return null;
+  if (!isClaude || !cwd) {
+    return null;
+  }
+
   // History search opens on Ctrl+R, which a phone does not have, so a touch screen gets a button
   // here, the tab that already lists past prompts. A mouse never sees it.
   const historyButton = picked === null && !historyOff && touchScreen();
   // The file half of a rewind needs checkpoints; without them the button still moves the
   // conversation, so say which half is missing before it is pressed rather than after.
   const noFiles = switches?.checkpointingDisabled === true;
+
   return (
     <div style={bodyFlow}>
       {historyButton && (

@@ -14,9 +14,9 @@ import {
   ROUTE,
   ago,
   claudeProviderOf,
-  type ClientCtx,
   code,
 } from "../shared.js";
+import type { ClientCtx } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
 import { shortPath } from "./shared.js";
 
@@ -39,7 +39,7 @@ interface MemoryFile {
 export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
-  const [files, setFiles] = useState<MemoryFile[]>([]);
+  const [files, setFiles] = useState<Array<MemoryFile>>([]);
   const [dir, setDir] = useState("");
   const [file, setFile] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -53,16 +53,21 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
   // Every call names the session's own mount, so a session on a box lists and edits that box's
   // memories rather than this PC's.
   const provider = claudeProviderOf(ctx, sessionId);
+
   const q = [
     cwd ? `cwd=${encodeURIComponent(cwd)}` : "",
     provider === undefined ? "" : `provider=${encodeURIComponent(provider)}`,
   ]
     .filter((p) => p !== "")
     .join("&");
+
   const refresh = (signal?: AbortSignal) => {
-    if (!cwd) return;
+    if (!cwd) {
+      return;
+    }
+
     fetch(`${ROUTE}/memory?${q}`, { signal })
-      .then((r) => readJson<{ dir?: string; files?: MemoryFile[] }>(r))
+      .then((r) => readJson<{ dir?: string; files?: Array<MemoryFile> }>(r))
       .then((b) => {
         setFiles(b.files ?? []);
         setDir(b.dir ?? "");
@@ -71,15 +76,19 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
       // An in-flight list outlives the tab being closed, and its reply landed on a component that
       // is gone: React drops the state write and the error branch painted an error nobody asked
       // for. The abort is the teardown, and its own rejection is not a failure to report.
-      .catch((e: Error) => {
-        if (signal?.aborted !== true) setListError(e.message);
+      .catch((error_: Error) => {
+        if (signal?.aborted !== true) {
+          setListError(error_.message);
+        }
       });
   };
+
   // Re-list every half minute: Claude writes memories mid-turn.
   useEffect(() => {
     const stop = new AbortController();
     refresh(stop.signal);
     const timer = setInterval(() => refresh(stop.signal), 30_000);
+
     return () => {
       clearInterval(timer);
       stop.abort();
@@ -88,21 +97,28 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
 
   const openFile = async (n: string) => {
     setError("");
+
     try {
       const body = await readJson<{ text: string }>(
         await fetch(`${ROUTE}/memory?${q}&name=${encodeURIComponent(n)}`),
       );
+
       setFile(n);
       setText(body.text);
       setSaved(body.text);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     }
   };
+
   const save = async () => {
-    if (!file) return;
+    if (!file) {
+      return;
+    }
+
     setBusy(true);
     setError("");
+
     try {
       await readJson(
         await fetch(`${ROUTE}/memory?${q}`, {
@@ -113,31 +129,39 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
       );
       setSaved(text);
       refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     } finally {
       setBusy(false);
     }
   };
+
   const remove = async () => {
-    if (!file || !window.confirm(t("panel.memory.deleteConfirm", { file }))) return;
+    if (!file || !window.confirm(t("panel.memory.deleteConfirm", { file }))) {
+      return;
+    }
+
     setBusy(true);
     setError("");
+
     try {
       await readJson(
         await fetch(`${ROUTE}/memory?${q}&name=${encodeURIComponent(file)}`, { method: "DELETE" }),
       );
       setFile(null);
       refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     } finally {
       setBusy(false);
     }
   };
 
-  if (!cwd) return <span style={stateText}>{t("panel.memory.noWorkspace")}</span>;
-  if (files.length === 0)
+  if (!cwd) {
+    return <span style={stateText}>{t("panel.memory.noWorkspace")}</span>;
+  }
+
+  if (files.length === 0) {
     return (
       <div style={bodyFlow} data-omc-memory-empty="">
         {listError ? (
@@ -160,7 +184,10 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
         )}
       </div>
     );
+  }
+
   const dirty = text !== saved;
+
   return (
     <div style={bodyFlow}>
       {file === null ? (
@@ -232,7 +259,9 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
             autoFocus
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") save();
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                save();
+              }
             }}
             style={{ ...code, minHeight: 300, resize: "vertical", whiteSpace: "pre-wrap" }}
           />

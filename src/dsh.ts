@@ -6,21 +6,29 @@ import type { ContentBlock, GenerateOptions, Message } from "@deepseek-ai/dsh-ll
 
 /** Map of providerId → adapter on globalThis (hot-reload cross-plugin process adoption; per-instance). */
 export const ADAPTER_CURRENT = Symbol.for("dsh-oh-my-claude.adapter");
+
 /** Map of providerId → timer on globalThis (scoped outside cordis to survive plugin re-instantiation). */
 export const RESUME_TIMER = Symbol.for("dsh-oh-my-claude.resume-timer");
+
 /** One interval per dsh process that puts loaded sessions' transcripts under watch. */
 export const WATCH_SWEEP = Symbol.for("dsh-oh-my-claude.watch-sweep");
+
 /** One map per dsh process of Claude Code updaters by box host, and the timer that ticks them. */
 export const CLAUDE_UPDATERS = Symbol.for("dsh-oh-my-claude.claude-updaters");
 export const CLAUDE_UPDATE_TICK = Symbol.for("dsh-oh-my-claude.claude-update-tick");
+
 /** Symbol for the Claude process registry on globalThis (adopted processes across hot reloads). */
 export const PROCESS_REGISTRY = Symbol.for("dsh-oh-my-claude.processes");
+
 /** Per-session turn accounting on globalThis: the route registered at boot must read the buffer a hot-reloaded adapter fills. */
 export const TURN_RECORDS = Symbol.for("dsh-oh-my-claude.turns");
+
 /** The CLI's last slash-command catalog, so a hot-reloaded adapter re-registers the bridge without a new init frame. */
 export const COMMAND_CATALOG = Symbol.for("dsh-oh-my-claude.commands");
+
 /** dsh session ids marked temporary (/temporary): their Claude processes keep no transcript. */
 export const TEMPORARY_SESSIONS = Symbol.for("dsh-oh-my-claude.temporary");
+
 /** Per-session permission-mode overrides on globalThis: the panel writes them through the default
  * mount while the mount that spawns the session reads them, so the map cannot be per-instance. */
 export const PERMISSION_MODE_OVERRIDES = Symbol.for("dsh-oh-my-claude.permission-modes");
@@ -30,14 +38,16 @@ export const COMPACT_OWNED = Symbol.for("dsh-oh-my-claude.compact-owned");
 
 /** The same brand dsh-llm puts on GenerateOptions.sessionId, so ids flow through without casts. */
 export type SessionId = NonNullable<GenerateOptions["sessionId"]>;
+
 /** Any JSON document; what MCP tool arguments and relay payloads are made of. */
 export type JsonValue =
   | string
   | number
   | boolean
   | null
-  | JsonValue[]
+  | Array<JsonValue>
   | { [key: string]: JsonValue };
+
 /** dsh session ids are plain strings on the wire; this is the one place they get their brand. */
 export const asSessionId = (id: string): SessionId =>
   // SAFETY: the brand only marks provenance; every id reaching the adapter came from dsh itself
@@ -63,7 +73,7 @@ export interface SessionEvent {
   time: number;
   data: Record<string, JsonValue>;
   surfaceOp?: "append";
-  sourceEventSeqs?: number[];
+  sourceEventSeqs?: Array<number>;
 }
 
 export interface Session {
@@ -73,22 +83,22 @@ export interface Session {
   /** Deprecated in dsh 0.1.6, which permits existing calls and prohibits new ones. The five reads
    * left in the adapter are tracked in notes; `eventAt` and `ownEvents` are gone from this mirror
    * because nothing here ever called them. */
-  snapshotEvents(fromSeq?: number, toSeqExclusive?: number): readonly SessionEvent[];
+  snapshotEvents(fromSeq?: number, toSeqExclusive?: number): ReadonlyArray<SessionEvent>;
   isOwnSeq(seq: number): boolean;
   get seq(): number;
   append<T extends string>(
     type: T,
     data: Record<string, JsonValue>,
-    ...opts: unknown[]
+    ...opts: Array<unknown>
   ): SessionEvent;
-  deriveMessages(): Message[];
+  deriveMessages(): Array<Message>;
   /** The folded `request/header`; `config` is the route the last request ran on, and `tools` is
    *  exactly what dsh offers the model next, so code mode shows only `run_code` there. */
   requestHeader():
     | {
         version: number;
         config?: { provider?: string; model?: string };
-        readonly tools?: readonly ToolSchema[];
+        readonly tools?: ReadonlyArray<ToolSchema>;
       }
     | undefined;
   requestContext(): { provider?: string; model?: string } | undefined;
@@ -97,26 +107,26 @@ export interface Session {
 export interface SessionStore {
   create(
     id?: SessionId,
-    options?: { seed?: readonly SessionEvent[]; meta?: { cwd?: string; createdAt?: number } },
+    options?: { seed?: ReadonlyArray<SessionEvent>; meta?: { cwd?: string; createdAt?: number } },
   ): Session;
   prepare(
     id?: SessionId,
-    options?: { seed?: readonly SessionEvent[]; meta?: { cwd?: string; createdAt?: number } },
+    options?: { seed?: ReadonlyArray<SessionEvent>; meta?: { cwd?: string; createdAt?: number } },
   ): Session;
   enter(session: Session): () => void;
   announce(session: Session): void;
   flush(session: Session): Promise<boolean>;
   get(id: SessionId): Session | undefined;
-  list(): Session[];
+  list(): Array<Session>;
   fork(source: Session | SessionId, boundary?: number, childSessionId?: SessionId): Session;
-  on?(event: string, cb: (...args: unknown[]) => void): void;
+  on?(event: string, cb: (...args: Array<unknown>) => void): void;
 }
 
 /** Mirrors: @deepseek-ai/dsh-session-query `SessionObservation`, the fields a wake reads. A lease:
  *  dispose it when done. */
 export interface SessionObservationLease extends Disposable {
   readonly header: { parentSession?: string; origin?: string };
-  readonly events: readonly SessionEvent[];
+  readonly events: ReadonlyArray<SessionEvent>;
 }
 
 /** Mirrors: @deepseek-ai/dsh-session-query `SessionQueryEngine`, narrowed. */
@@ -133,7 +143,7 @@ export interface SubagentMessenger {
   sendMessage(
     sender: Agent,
     targetId: SessionId,
-    content: ContentBlock[],
+    content: Array<ContentBlock>,
     options: { signal: AbortSignal },
   ): Promise<string>;
 }
@@ -176,9 +186,9 @@ export interface Agent {
    *  also types agents dsh built some other way. `replace` and `remove` answer false once the
    *  message is no longer pending. */
   readonly inbox?: {
-    readonly nextStep: readonly Message[];
+    readonly nextStep: ReadonlyArray<Message>;
     /** The queue: what waits for the running turn to end. */
-    readonly nextTurn?: readonly Message[];
+    readonly nextTurn?: ReadonlyArray<Message>;
     replace(messageId: string, message: Message): boolean;
     remove(messageId: string): boolean;
   };
@@ -205,8 +215,8 @@ export interface AgentRegistry {
   enter(agent: Agent, owner: Agent | undefined): () => void;
   announce(agent: Agent): void;
   get(id: SessionId): Agent | undefined;
-  list(): Agent[];
-  roots(): Agent[];
+  list(): Array<Agent>;
+  roots(): Array<Agent>;
 }
 
 /** Mirrors: @deepseek-ai/dsh-subprocess/lib/types/types.d.ts */
@@ -220,7 +230,7 @@ export interface SubprocessHandle {
 }
 
 export interface SubprocessSpawnSpec {
-  argv: readonly string[];
+  argv: ReadonlyArray<string>;
   cwd: string;
   stdio: {
     stdin: "ignore" | "pipe" | { data: string };
@@ -277,11 +287,11 @@ export interface AskUserQuestionItem {
 export interface AskUserQuestionRequest {
   agent?: Agent;
   signal?: AbortSignal;
-  questions: AskUserQuestionItem[];
+  questions: Array<AskUserQuestionItem>;
 }
 
 export interface AskUserQuestionAnswer {
-  answers?: Array<{ id: string; custom?: string; selected?: string[] }>;
+  answers?: Array<{ id: string; custom?: string; selected?: Array<string> }>;
 }
 
 export interface UserQuestionService {
@@ -295,7 +305,7 @@ export interface Workspace {
   id: WorkspaceId;
   path: string;
   title: string;
-  sessionIds: SessionId[];
+  sessionIds: Array<SessionId>;
   /** Put a flushed session on this workspace's list; dsh checks its stored cwd is this path. */
   attachSession(sessionId: SessionId): Promise<void>;
 }
@@ -303,10 +313,10 @@ export interface Workspace {
 export interface WorkspaceRegistry {
   create(path: string, title?: string): Promise<Workspace>;
   get(id: WorkspaceId): Workspace | undefined;
-  list(): Workspace[];
+  list(): Array<Workspace>;
   delete(id: WorkspaceId): Promise<boolean>;
-  insertBefore(id: WorkspaceId, beforeId?: WorkspaceId): Promise<readonly WorkspaceId[]>;
-  get archivedSessionIds(): readonly SessionId[];
+  insertBefore(id: WorkspaceId, beforeId?: WorkspaceId): Promise<ReadonlyArray<WorkspaceId>>;
+  get archivedSessionIds(): ReadonlyArray<SessionId>;
   archiveSession(sessionId: SessionId): Promise<void>;
   resolveByPath(path: string): Promise<Workspace | undefined>;
   /** Takes a session off the archived list, under the registry's own lock. */
@@ -360,8 +370,8 @@ export interface SessionController {
 export interface SessionWaitState {
   cursor: number;
   running: boolean;
-  queue: readonly unknown[] | null;
-  pendingInput: readonly unknown[];
+  queue: ReadonlyArray<unknown> | null;
+  pendingInput: ReadonlyArray<unknown>;
 }
 
 /** Mirrors: @deepseek-ai/dsh-attachment/lib/types/index.d.ts */
@@ -397,15 +407,18 @@ export interface ToolExec {
   arguments: Record<string, JsonValue>;
   callId: string;
 }
+
 /** A registered dsh tool as the MCP bridge drives it: execute, then render if the tool renders. */
 export interface DshTool {
   execute(args: Record<string, JsonValue>, exec: ToolExec): Promise<JsonValue>;
   output?: { render?: (args: Record<string, JsonValue>, returned: JsonValue) => JsonValue };
 }
+
 export interface DshToolsRegistry {
-  schemas(agent: Agent): ToolSchema[];
+  schemas(agent: Agent): Array<ToolSchema>;
   get(name: string, agent: Agent): DshTool | undefined;
 }
+
 /** Mirrors: @deepseek-ai/dsh-host-webserver/lib/types/index.d.ts */
 export interface WebServer {
   readonly port: number;
@@ -423,6 +436,7 @@ export interface WebServer {
     ) => Promise<void>;
   }): () => void;
 }
+
 /** Mirrors: @deepseek-ai/dsh-client-connection (host half): trusted-host plus login-cookie check. */
 export interface ConnectionPolicy {
   /** Gone from dsh past 0.2.2-rc.5 (harness #8266), whose web server checks each route's `auth`
@@ -430,6 +444,7 @@ export interface ConnectionPolicy {
    *  only because of it. */
   requestRejection?(req: import("node:http").IncomingMessage): number | undefined;
 }
+
 /** Mirrors: @deepseek-ai/dsh-session-persistence-jsonl/lib/types/index.d.ts */
 export interface SessionPersistence {
   /** dsh 0.1.5 answers `{ header, revision, sizeBytes? }` snapshots; older dsh answered headers.
@@ -453,7 +468,7 @@ export interface SessionPersistence {
   ): Promise<
     SessionWriteHandle & {
       header: SessionHeader;
-      read(offset?: number): Promise<{ events: SessionEvent[] }>;
+      read(offset?: number): Promise<{ events: Array<SessionEvent> }>;
     }
   >;
   /** dsh 0.1.7: the stored log's absolute path from its header, without touching the disk. */
@@ -462,7 +477,7 @@ export interface SessionPersistence {
 
 /** Mirrors: @deepseek-ai/dsh-session-persistence/lib/types/handle.d.ts (write half). */
 export interface SessionWriteHandle {
-  append(events: readonly SessionEvent[]): Promise<void>;
+  append(events: ReadonlyArray<SessionEvent>): Promise<void>;
   flush(): Promise<void>;
   close(): Promise<void>;
 }
@@ -480,11 +495,11 @@ export interface PluginContext {
         provider: string;
         displayName: string;
         settingsNs: string;
-        settingsPath: string[];
+        settingsPath: Array<string>;
       }>,
     ) => import("@deepseek-ai/dsh-llm").DirectoryRegistrationHandle;
     registerAdapter: (
-      providers: string[],
+      providers: Array<string>,
       adapter: import("@deepseek-ai/dsh-llm").LlmAdapter,
     ) => import("@deepseek-ai/dsh-llm").AdapterRegistrationHandle;
     /** The `[File …]` text dsh sends for one attached file in this environment, the same string
@@ -568,7 +583,7 @@ export interface PluginContext {
         commandId?: string;
         rawInput: string;
         /** The admitted image and file blocks, in submission order; empty unless declared. */
-        attachments: readonly ContentBlock[];
+        attachments: ReadonlyArray<ContentBlock>;
         signal: AbortSignal;
       }) =>
         | { kind: "success"; text?: string }
@@ -602,15 +617,19 @@ export interface PluginContext {
   connection?: ConnectionPolicy;
   // Cordis proxy methods mixed onto ctx. `global` hears events emitted in other scopes too (an
   // agent's `agent/created` is emitted in that agent's own).
-  on?(event: string, cb: (...args: unknown[]) => void, options?: { global?: boolean }): void;
-  emit?(event: string, ...args: unknown[]): void;
+  on?(event: string, cb: (...args: Array<unknown>) => void, options?: { global?: boolean }): void;
+  emit?(event: string, ...args: Array<unknown>): void;
   /** Runs `cb` once every named service is mounted; `host` is the scoped context. */
-  inject?(deps: string[], cb: (host: PluginContext) => void): void;
+  inject?(deps: Array<string>, cb: (host: PluginContext) => void): void;
   /** Registers a disposable side effect; the callback returns its disposer. */
   effect?(fn: () => (() => void) | void, label?: string): void;
   /** Mounts a child plugin under this context (cordis); mounted under an agent's `ctx`, its
    *  registrations are scoped to that agent and unwind with it. The fiber it returns is not read. */
-  plugin?(definition: { name: string; inject?: string[]; apply(ctx: PluginContext): void }): object;
+  plugin?(definition: {
+    name: string;
+    inject?: Array<string>;
+    apply(ctx: PluginContext): void;
+  }): object;
   /** dsh's compaction seam (`dsh-compaction`) at the root, mounted when a backend is. dsh's web and
    *  desktop profiles disable it and mount one inside each agent preset; see `agentPresets`. */
   get(name: "compaction"): CompactionService | undefined;
@@ -634,5 +653,5 @@ export interface CompactionService {
     agent: Agent,
     signal: AbortSignal,
     sourceCommandId?: string,
-  ): Promise<{ shadowedSeqs: readonly number[]; shadowedTokenCount: number } | null>;
+  ): Promise<{ shadowedSeqs: ReadonlyArray<number>; shadowedTokenCount: number } | null>;
 }

@@ -15,18 +15,27 @@
 export interface LocaleSettingsReader {
   /** `redactSecrets` is the name dsh-settings reads; it ignores any other, and then answers
    *  with every plugin's secret fields in the clear. */
-  describe?(options?: { redactSecrets?: boolean }): readonly { ns?: unknown; value?: unknown }[];
+  describe?(options?: {
+    redactSecrets?: boolean;
+  }): ReadonlyArray<{ ns?: unknown; value?: unknown }>;
 }
 
 /** The stored language tag, or undefined when dsh has none or offers no read. */
 const preferenceOf = (read: LocaleSettingsReader): string | undefined => {
   for (const entry of read.describe?.({ redactSecrets: true }) ?? []) {
-    if (entry.ns !== "locale") continue;
+    if (entry.ns !== "locale") {
+      continue;
+    }
+
     // SAFETY: the descriptor's value is the entry's live config, which for dsh-client-locale is
     // `{ preference }`; anything else reads as no preference through the optional chain below.
     const value = entry.value as { preference?: string } | undefined;
-    if (value?.preference !== undefined) return value.preference;
+
+    if (value?.preference !== undefined) {
+      return value.preference;
+    }
   }
+
   return undefined;
 };
 
@@ -379,8 +388,11 @@ let reader: LocaleSettingsReader | undefined;
  *  English. Returns the disposer that forgets it. */
 export function bindServerLocale(settings: LocaleSettingsReader | undefined): () => void {
   reader = settings;
+
   return () => {
-    if (reader === settings) reader = undefined;
+    if (reader === settings) {
+      reader = undefined;
+    }
   };
 }
 
@@ -388,7 +400,10 @@ export function bindServerLocale(settings: LocaleSettingsReader | undefined): ()
  *  namespace not registered yet) reads as English. */
 export function serverIsChinese(read: LocaleSettingsReader | undefined = reader): boolean {
   try {
-    if (read === undefined) return false;
+    if (read === undefined) {
+      return false;
+    }
+
     return preferenceOf(read)?.toLowerCase().startsWith("zh") ?? false;
   } catch {
     return false;
@@ -398,5 +413,8 @@ export function serverIsChinese(read: LocaleSettingsReader | undefined = reader)
 /** The server string for `key` in the stored language, `{name}` placeholders filled. */
 export function serverText(key: ServerKey, params?: Record<string, string>): string {
   const text: string = serverIsChinese() ? ZH[key] : EN[key];
-  return params ? text.replace(/\{(\w+)\}/g, (whole, name: string) => params[name] ?? whole) : text;
+
+  return params
+    ? text.replaceAll(/\{(\w+)\}/g, (whole, name: string) => params[name] ?? whole)
+    : text;
 }

@@ -28,19 +28,21 @@ import {
   nodeSpawner,
   shq,
   sshArgs,
-  type ClaudeProcessSpec,
-  type FarEnv,
-  type SubprocessHandle,
 } from "./process.js";
+import type { ClaudeProcessSpec, FarEnv, SubprocessHandle } from "./process.js";
 
 /** Under the far `$HOME`; unquoted in the scripts so the far shell expands it. */
 const HOLD_ROOT = '"$HOME"/.local/state/dsh-oh-my-claude/hold';
+
 /** First line of an attach: everything before it is a login shell's banner, not the CLI. */
 export const READY = "OMC-HOLD-READY";
+
 /** Last line of an attach that saw the CLI end; the rest of the line is its exit code. */
 export const EXIT = "OMC-HOLD-EXIT ";
+
 /** A line of the CLI's stderr, replayed after the exit so the failure row has something to say. */
 export const ERR = "OMC-HOLD-ERR ";
+
 /** The attach script's exit status when the far dir is not there (a `rm` on the box, or never made). */
 export const GONE = 44;
 
@@ -51,7 +53,7 @@ export interface HoldRecord {
   /** The far dir's basename under HOLD_ROOT. */
   name: string;
   command: string;
-  args: string[];
+  args: Array<string>;
   /** The far cwd the CLI was started in. */
   cwd: string;
   procSpec: ClaudeProcessSpec;
@@ -65,6 +67,7 @@ export interface HoldRecord {
 /** One far dir per spawn, never reused: a respawn must not tail the log of the CLI it replaced. */
 export function holdName(providerId: string, sessionId: string, stamp = Date.now()): string {
   const h = createHash("sha256").update(`${providerId}:${sessionId}`).digest("hex").slice(0, 16);
+
   return `${h}-${stamp.toString(36)}`;
 }
 
@@ -81,7 +84,7 @@ export function holdStartScript(
   name: string,
   cwd: string,
   command: string,
-  args: string[],
+  args: Array<string>,
   far?: FarEnv,
   base: NodeJS.ProcessEnv = process.env,
 ): string {
@@ -94,6 +97,7 @@ export function holdStartScript(
   // The box token comes on the start ssh's stdin (`farTokenLine`), never in this script's argv;
   // exported here, the CLI under `setsid` inherits it.
   const token = farTokenLine(far) ? `${FAR_TOKEN_READ} || exit 71; ` : "";
+
   return (
     token +
     `d=${dirOf(name)}; mkdir -p "$d" && mkfifo "$d"/in || exit 70; ` +
@@ -143,12 +147,20 @@ export type HoldLine =
  *  READY banner and drops everything else, and once ready it reads exit, stderr and output lines,
  *  defaulting an unreadable exit code to 255. */
 export function parseHoldLine(line: string, ready: boolean): HoldLine | undefined {
-  if (!ready) return line === READY ? { kind: "ready" } : undefined;
+  if (!ready) {
+    return line === READY ? { kind: "ready" } : undefined;
+  }
+
   if (line.startsWith(EXIT)) {
     const code = Number.parseInt(line.slice(EXIT.length), 10);
+
     return { kind: "exit", code: Number.isNaN(code) ? 255 : code };
   }
-  if (line.startsWith(ERR)) return { kind: "err", line: line.slice(ERR.length) };
+
+  if (line.startsWith(ERR)) {
+    return { kind: "err", line: line.slice(ERR.length) };
+  }
+
   return { kind: "out", line };
 }
 
@@ -179,26 +191,35 @@ export function holdHandle(
 ): SubprocessHandle {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
-  const pending: string[] = [];
+  const pending: Array<string> = [];
   let current: SubprocessHandle | undefined;
   let ready = false;
   let ended = false;
   let killed = false;
   let attempt = 0;
   let resolveDone: ((v: { exitCode: number | null; signal: string | null }) => void) | undefined;
+
   const done = new Promise<{ exitCode: number | null; signal: string | null }>((r) => {
     resolveDone = r;
   });
+
   const settle = (code: number | null, signal: string | null) => {
-    if (ended) return;
+    if (ended) {
+      return;
+    }
+
     ended = true;
     stdout.end();
     stderr.end();
     onExit?.();
     resolveDone?.({ exitCode: code, signal });
   };
+
   const attach = () => {
-    if (ended) return;
+    if (ended) {
+      return;
+    }
+
     ready = false;
     const ssh = run(holdAttachScript(name, offset));
     current = ssh;
@@ -215,6 +236,7 @@ export function holdHandle(
     ssh.stdout.on("data", (chunk: Buffer | string) => {
       rest += typeof chunk === "string" ? chunk : decoder.write(chunk);
       let nl = rest.indexOf("\n");
+
       while (nl !== -1) {
         const raw = rest.slice(0, nl);
         rest = rest.slice(nl + 1);
@@ -222,62 +244,98 @@ export function holdHandle(
         nl = rest.indexOf("\n");
       }
     });
+
     const onLine = (raw: string) => {
-      if (ended) return; // the streams are closed; a late line has nowhere to go
+      if (ended) {
+        return;
+      } // the streams are closed; a late line has nowhere to go
+
       const parsed = parseHoldLine(raw, ready);
-      if (parsed === undefined) return;
+
+      if (parsed === undefined) {
+        return;
+      }
+
       if (parsed.kind === "ready") {
         ready = true;
         attempt = 0;
+
         // Written while no attach was ready: a far dir that turned out gone would have lost them,
         // so they wait for the FIFO to be there.
-        for (const line of pending) ssh.stdin.write(line);
+        for (const line of pending) {
+          ssh.stdin.write(line);
+        }
+
         pending.length = 0;
+
         return;
       }
+
       if (parsed.kind === "out") {
         // The file holds each line plus its newline; count what the file holds, not what the
         // terminal showed, so the next attach starts on a line boundary.
         offset += Buffer.byteLength(raw, "utf8") + 1;
         onOffset(offset);
         stdout.write(`${raw}\n`);
+
         return;
       }
+
       if (parsed.kind === "err") {
         stderr.write(`${parsed.line}\n`);
+
         return;
       }
+
       settle(parsed.code, null);
     };
+
     void ssh.done.then((outcome) => {
-      if (ended || current !== ssh) return;
+      if (ended || current !== ssh) {
+        return;
+      }
+
       current = undefined;
+
       if (outcome.exitCode === GONE) {
         stderr.write("hold: the far session directory is gone\n");
         settle(-1, "hold-gone");
+
         return;
       }
+
       // No exit line: the ssh went, not the CLI. Come back from where we were.
       const delay = reattachDelay(attempt++);
       setTimeout(attach, delay).unref();
     });
   };
+
   const stdin = new Writable({
     write(chunk, _enc, cb) {
       const text = String(chunk);
-      if (current && ready) current.stdin.write(text);
-      else pending.push(text);
+
+      if (current && ready) {
+        current.stdin.write(text);
+      } else {
+        pending.push(text);
+      }
+
       cb();
     },
   });
+
   attach();
+
   return {
     stdin,
     stdout,
     stderr,
     done,
     terminate: () => {
-      if (killed || ended) return;
+      if (killed || ended) {
+        return;
+      }
+
       killed = true;
       // A separate ssh: the attached one is busy tailing, and the exit line arrives through it.
       const k = run(holdKillScript(name));
@@ -290,9 +348,13 @@ export function holdHandle(
 
 /** A holds.json value with every field a reattach needs, or nothing. */
 export function asHoldRecord(raw: unknown): HoldRecord | undefined {
-  if (typeof raw !== "object" || raw === null) return undefined;
+  if (typeof raw !== "object" || raw === null) {
+    return undefined;
+  }
+
   // SAFETY: a non-null object from this plugin's own file; each field is checked before use
   const r = raw as Record<string, unknown>;
+
   if (
     typeof r.sessionId !== "string" ||
     typeof r.host !== "string" ||
@@ -304,8 +366,10 @@ export function asHoldRecord(raw: unknown): HoldRecord | undefined {
     r.procSpec === null ||
     typeof r.offset !== "number" ||
     typeof r.startedAt !== "number"
-  )
+  ) {
     return undefined;
+  }
+
   return {
     sessionId: r.sessionId,
     host: r.host,

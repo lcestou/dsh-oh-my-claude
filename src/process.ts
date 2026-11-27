@@ -26,6 +26,7 @@ import type { ContextSizes, ContextSource } from "./context-sources.js";
 import { STATE_DIR } from "./state.js";
 import { SOCKET_PATH_MAX, keeperSocketPath } from "./keeper-socket.js";
 import { isWebUrl } from "./web-url.js";
+
 export type { JsonValue } from "./dsh.js";
 
 /** Errors reach us as `unknown`; this is the one place they become text. */
@@ -35,15 +36,28 @@ export const errorText = (e: unknown): string => (e instanceof Error ? e.message
  *  kinds render as their bracketed type. */
 export function toolResultText(block: { content?: unknown }): string {
   const c = block.content;
-  if (typeof c === "string") return c;
-  if (Array.isArray(c)) return c.map(toolResultBlockText).join("\n");
+
+  if (typeof c === "string") {
+    return c;
+  }
+
+  if (Array.isArray(c)) {
+    return c.map(toolResultBlockText).join("\n");
+  }
+
   return "";
 }
 
 /** One block of a tool_result content array: its text, or its type in brackets. */
 function toolResultBlockText(b: unknown): string {
-  if (typeof b !== "object" || b === null || !("type" in b)) return "[unknown]";
-  if (b.type === "text") return "text" in b ? String(b.text) : "undefined";
+  if (typeof b !== "object" || b === null || !("type" in b)) {
+    return "[unknown]";
+  }
+
+  if (b.type === "text") {
+    return "text" in b ? String(b.text) : "undefined";
+  }
+
   return `[${typeof b.type === "string" ? b.type : "unknown"}]`;
 }
 
@@ -102,15 +116,21 @@ const SCRUBBED_NAME = /KEY|PASSWORD|SECRET|TOKEN/i;
  */
 export function credentialEnv(base: NodeJS.ProcessEnv) {
   const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(base))
-    if (v !== undefined && SCRUBBED_NAME.test(k) && !/^DSH_/i.test(k)) out[k] = v;
+
+  for (const [k, v] of Object.entries(base)) {
+    if (v !== undefined && SCRUBBED_NAME.test(k) && !/^DSH_/i.test(k)) {
+      out[k] = v;
+    }
+  }
+
   return out;
 }
 
 /** The FORWARDED_ENV pairs set in `base`, in that order. */
-export function forwardedEnv(base: NodeJS.ProcessEnv = process.env): [string, string][] {
-  return FORWARDED_ENV.flatMap((key): [string, string][] => {
+export function forwardedEnv(base: NodeJS.ProcessEnv = process.env): Array<[string, string]> {
+  return FORWARDED_ENV.flatMap((key): Array<[string, string]> => {
     const value = base[key];
+
     return value === undefined || value === "" ? [] : [[key, value]];
   });
 }
@@ -131,17 +151,32 @@ export const removesName = (override: Record<string, string> | undefined, key: s
  *  way): the CLI reads some names for their presence, and an empty value is not an absent one. */
 export function childEnv(base: NodeJS.ProcessEnv, override?: Record<string, string>) {
   const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(base)) if (v !== undefined) env[k] = v;
-  if (process.platform !== "win32") env.PATH = withClaudeDirs(env.PATH);
+
+  for (const [k, v] of Object.entries(base)) {
+    if (v !== undefined) {
+      env[k] = v;
+    }
+  }
+
+  if (process.platform !== "win32") {
+    env.PATH = withClaudeDirs(env.PATH);
+  }
+
   Object.assign(env, CHILD_ENV, override ?? {});
-  for (const k of Object.keys(override ?? {})) if (removesName(override, k)) delete env[k];
+
+  for (const k of Object.keys(override ?? {})) {
+    if (removesName(override, k)) {
+      delete env[k];
+    }
+  }
+
   return env;
 }
 
 /** Where Claude Code's installers put `claude` (the native installer, the old local install, Homebrew,
  *  npm and bun globals, Volta). An app started from the macOS Dock or Finder, DSH Desktop among
  *  them, gets a PATH of `/usr/bin:/bin:/usr/sbin:/sbin`, which holds none of these. */
-export function claudeDirs(home = homedir()): string[] {
+export function claudeDirs(home = homedir()): Array<string> {
   return [
     join(home, ".local", "bin"),
     join(home, ".claude", "local"),
@@ -158,6 +193,7 @@ export function claudeDirs(home = homedir()): string[] {
  *  find the node that sits beside it. */
 export function withClaudeDirs(path: string | undefined, dirs = claudeDirs()): string {
   const have = (path ?? "").split(delimiter).filter(Boolean);
+
   return [...have, ...dirs.filter((d) => !have.includes(d))].join(delimiter);
 }
 
@@ -173,14 +209,25 @@ export function resolveCommand(
   exists: (p: string) => boolean = existsSync,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  if (!command || command.includes("/") || command.includes(sep)) return command;
+  if (!command || command.includes("/") || command.includes(sep)) {
+    return command;
+  }
+
   const win = platform === "win32";
   const name = win && !/\.[a-z0-9]+$/i.test(command) ? `${command}.exe` : command;
+
   for (const dir of [...(path ?? "").split(delimiter).filter(Boolean), ...dirs]) {
-    if (exists(join(dir, name))) return join(dir, name);
+    if (exists(join(dir, name))) {
+      return join(dir, name);
+    }
+
     const npm = join(dir, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe");
-    if (win && command === "claude" && exists(npm)) return npm;
+
+    if (win && command === "claude" && exists(npm)) {
+      return npm;
+    }
   }
+
   return command;
 }
 
@@ -225,7 +272,7 @@ export type ClaudeEvent =
       compact_error?: string;
       // subtype "memory_saved": the auto-memory files Claude just wrote; "memory_recall": the ones
       // it pulled into context at the start of a turn.
-      written_paths?: string[];
+      written_paths?: Array<string>;
       verb?: string;
       memories?: Array<{ path?: string; scope?: string }>;
       // subtype "hook_started" / "hook_response": hook lifecycle events, only emitted when
@@ -351,7 +398,7 @@ export type ClaudeEvent =
       type: "user";
       /** Blocks for a tool result. A plain string for text the CLI wrote itself: a slash
        *  command's output (`<local-command-stdout>`), the summary that follows a compaction. */
-      message?: { content?: string | ClaudeContentBlock[] };
+      message?: { content?: string | Array<ClaudeContentBlock> };
       parent_tool_use_id?: string | null;
       /** What the CLI records beside a tool result. `handbackReport` holds a subagent's report
        *  when the result text is only the note that it was delivered as a message. */
@@ -364,7 +411,7 @@ export type ClaudeEvent =
       is_error?: boolean;
       stop_reason?: string;
       result?: unknown;
-      errors?: unknown[];
+      errors?: Array<unknown>;
       api_error_status?: number;
       subtype?: string;
       usage?: {
@@ -431,9 +478,9 @@ export interface RelayResult {
   text: string;
   isError?: boolean;
   /** The images in dsh's result (read_image answers with one), as dsh stored them. */
-  refs?: ImageAttachmentRef[];
+  refs?: Array<ImageAttachmentRef>;
   /** Those images loaded for the MCP reply, which carries them as image content. */
-  images?: { mediaType: string; data: string }[];
+  images?: Array<{ mediaType: string; data: string }>;
 }
 
 /** A dsh tool Claude called over the bridge, as its tool_use block streamed: the name without the
@@ -461,7 +508,7 @@ export interface ClaudeAssistantMessage {
   id?: string;
   model?: string;
   role?: string;
-  content?: ClaudeContentBlock[];
+  content?: Array<ClaudeContentBlock>;
   /** "refusal" on the CLI's error frame for a reply the model refused or a classifier stopped. */
   stop_reason?: string | null;
 }
@@ -491,7 +538,7 @@ export interface ClaudeStreamPartial {
  */
 export function nodeSpawner(
   command: string,
-  args: string[],
+  args: Array<string>,
   cwd: string,
   envOverride?: Record<string, string>,
 ): SubprocessHandle {
@@ -500,6 +547,7 @@ export function nodeSpawner(
     stdio: ["pipe", "pipe", "pipe"],
     env: childEnv(process.env, envOverride),
   });
+
   return {
     stdin: child.stdin,
     stdout: child.stdout,
@@ -518,7 +566,9 @@ export function nodeSpawner(
     terminate: () => {
       child.kill();
       setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
       }, 5000).unref();
     },
   };
@@ -561,13 +611,16 @@ export const seamSpawner =
  *  remote seam provider: this box's folders go to the other machine, where they are most likely
  *  absent and harmless. */
 function seamPath(base: NodeJS.ProcessEnv) {
-  if (process.platform === "win32" || base.PATH === undefined) return {};
+  if (process.platform === "win32" || base.PATH === undefined) {
+    return {};
+  }
+
   return { PATH: withClaudeDirs(base.PATH) };
 }
 
 /** POSIX single-quote a string for a remote shell: wrap in `'...'`, escaping any embedded quote. */
 export function shq(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
+  return `'${value.replaceAll("'", String.raw`'\''`)}'`;
 }
 
 /** The local `ssh` argv that runs `script` on `host`. BatchMode: key auth only, so a missing key or
@@ -584,7 +637,10 @@ export function shq(value: string): string {
  * Found by a security review, 2026-09-21.
  */
 export function sshArgs(host: string, script: string) {
-  if (!isSshHost(host)) throw new Error(`not an ssh host: ${JSON.stringify(host.slice(0, 80))}`);
+  if (!isSshHost(host)) {
+    throw new Error(`not an ssh host: ${JSON.stringify(host.slice(0, 80))}`);
+  }
+
   return [...SSH_OPTS, "--", host, script];
 }
 
@@ -613,17 +669,24 @@ export function controlSocketDir(
 ): string | undefined {
   const candidates =
     runtime === undefined ? [join(state, "ssh")] : [join(runtime, "omc-ssh"), join(state, "ssh")];
+
   for (const dir of candidates) {
-    if (dir.length + 1 + CONTROL_NAME > SOCKET_PATH_MAX) continue;
+    if (dir.length + 1 + CONTROL_NAME > SOCKET_PATH_MAX) {
+      continue;
+    }
+
     try {
       make(dir);
+
       return dir;
     } catch {
       // Unwritable: try the next one, and share nothing rather than fail every ssh.
     }
   }
+
   return undefined;
 }
+
 const SSH_CONTROL_DIR = controlSocketDir(process.env.XDG_RUNTIME_DIR, STATE_DIR, (dir) =>
   mkdirSync(dir, { recursive: true, mode: 0o700 }),
 );
@@ -683,7 +746,7 @@ export interface FarEnv {
  * CLI listens to, as it does for a local spawn (`localEnvOverride`). The box token is left out on
  * purpose: argv shows in `ps` on both ends, so it travels on stdin instead (`farTokenLine`).
  */
-export function farEnvPairs(far: FarEnv = {}): [string, string][] {
+export function farEnvPairs(far: FarEnv = {}): Array<[string, string]> {
   return windowEnvPairs(far.window);
 }
 
@@ -696,13 +759,20 @@ const STANDARD_WINDOW = 200_000;
  * CLAUDE_CODE_DISABLE_1M_CONTEXT: from 2.1.323 the CLI takes a model id it does not know for a
  * 1M model, and a 200K model behind a proxy then never compacts in time and fails its turns.
  */
-export function windowEnvPairs(window: number | undefined): [string, string][] {
-  if (window === undefined) return [];
-  const pairs: [string, string][] = [
+export function windowEnvPairs(window: number | undefined): Array<[string, string]> {
+  if (window === undefined) {
+    return [];
+  }
+
+  const pairs: Array<[string, string]> = [
     ["CLAUDE_CODE_MAX_CONTEXT_TOKENS", String(window)],
     ["CLAUDE_CODE_AUTO_COMPACT_WINDOW", String(window)],
   ];
-  if (window <= STANDARD_WINDOW) pairs.push(["CLAUDE_CODE_DISABLE_1M_CONTEXT", "1"]);
+
+  if (window <= STANDARD_WINDOW) {
+    pairs.push(["CLAUDE_CODE_DISABLE_1M_CONTEXT", "1"]);
+  }
+
   return pairs;
 }
 
@@ -719,8 +789,14 @@ export const FAR_TOKEN_READ =
  * short and hand the rest to the CLI as input.
  */
 export function farTokenLine(far: FarEnv = {}): string {
-  if (!far.token) return "";
-  if (/[\r\n]/.test(far.token)) throw new Error("the box token has a line break in it");
+  if (!far.token) {
+    return "";
+  }
+
+  if (/[\r\n]/.test(far.token)) {
+    throw new Error("the box token has a line break in it");
+  }
+
   return `${far.token}\n`;
 }
 
@@ -738,7 +814,7 @@ export function farTokenLine(far: FarEnv = {}): string {
 export function sshInvocation(
   host: string,
   command: string,
-  args: string[],
+  args: Array<string>,
   cwd: string,
   far?: FarEnv,
   base: NodeJS.ProcessEnv = process.env,
@@ -749,6 +825,7 @@ export function sshInvocation(
   const cli = [command, ...args].map(shq).join(" ");
   const remote = stdinFirst ? `sh -c ${shq(`${FAR_TOKEN_READ} && exec "$@"`)} sh ${cli}` : cli;
   const script = `cd ${shq(cwd)} 2>/dev/null || cd "$HOME"; exec env ${env} ${remote}`;
+
   return { command: "ssh", args: sshArgs(host, script), stdinFirst };
 }
 
@@ -763,8 +840,12 @@ export const sshSpawner =
   (command, args, cwd) => {
     const inv = sshInvocation(host, command, args, resolveCwd(cwd), far);
     const child = nodeSpawner(inv.command, inv.args, ".");
+
     // Before the caller has the handle, so no stream-json can go ahead of the token.
-    if (inv.stdinFirst) child.stdin.write(inv.stdinFirst);
+    if (inv.stdinFirst) {
+      child.stdin.write(inv.stdinFirst);
+    }
+
     return child;
   };
 
@@ -777,11 +858,19 @@ export function userTurnLine(content: unknown, uuid?: string, composed = false):
   // Built in order, not spread: the key order is the byte order of the line, and the line without a
   // uuid must stay what it was before the steer card.
   const line: { type: "user"; uuid?: string } & Record<string, unknown> = { type: "user" };
-  if (uuid) line.uuid = uuid;
+
+  if (uuid) {
+    line.uuid = uuid;
+  }
+
   line.session_id = "";
   line.message = { role: "user", content };
   line.parent_tool_use_id = null;
-  if (composed) line.client_composed = true;
+
+  if (composed) {
+    line.client_composed = true;
+  }
+
   return `${JSON.stringify(line)}\n`;
 }
 
@@ -797,7 +886,10 @@ export function interruptLine(requestId: string): string {
 
 /** A control response payload as JSON, or undefined when it is not representable. */
 export function toJsonValue(v: unknown): JsonValue | undefined {
-  if (v === undefined) return undefined;
+  if (v === undefined) {
+    return undefined;
+  }
+
   try {
     // SAFETY: a JSON round trip yields JSON by construction
     return JSON.parse(JSON.stringify(v)) as JsonValue;
@@ -810,10 +902,11 @@ export function toJsonValue(v: unknown): JsonValue | undefined {
 export interface RewindResult {
   canRewind: boolean;
   error?: string;
-  filesChanged?: string[];
+  filesChanged?: Array<string>;
   insertions?: number;
   deletions?: number;
 }
+
 /** Whether a `cancel_async_message` reply says the CLI gave the message back. False for anything
  *  else, including a reply shape a newer CLI changed, so a doubt reads as "already sent". */
 export function decodeCancelled(v: JsonValue | undefined): boolean {
@@ -824,11 +917,23 @@ export function decodeCancelled(v: JsonValue | undefined): boolean {
 export function decodeRewindResult(v: JsonValue | undefined): RewindResult {
   const r = typeof v === "object" && v !== null && !Array.isArray(v) ? v : {};
   const out: RewindResult = { canRewind: r.canRewind === true };
-  if (typeof r.error === "string") out.error = r.error;
-  if (Array.isArray(r.filesChanged))
+
+  if (typeof r.error === "string") {
+    out.error = r.error;
+  }
+
+  if (Array.isArray(r.filesChanged)) {
     out.filesChanged = r.filesChanged.filter((f): f is string => typeof f === "string");
-  if (typeof r.insertions === "number") out.insertions = r.insertions;
-  if (typeof r.deletions === "number") out.deletions = r.deletions;
+  }
+
+  if (typeof r.insertions === "number") {
+    out.insertions = r.insertions;
+  }
+
+  if (typeof r.deletions === "number") {
+    out.deletions = r.deletions;
+  }
+
   return out;
 }
 
@@ -847,6 +952,7 @@ export const turnDelta = (total: number, soFar: number): number =>
 export const appliedEffort = (response: JsonValue | undefined): string | undefined => {
   const applied = isRecord(response) ? response.applied : undefined;
   const effort = isRecord(applied) ? applied.effort : undefined;
+
   return str(effort);
 };
 
@@ -865,7 +971,11 @@ export const appliedUltracode = (
   response: JsonValue | undefined,
 ): { on: boolean; available: boolean } | undefined => {
   const applied = isRecord(response) ? response.applied : undefined;
-  if (!isRecord(applied)) return undefined;
+
+  if (!isRecord(applied)) {
+    return undefined;
+  }
+
   return { on: applied.ultracode === true, available: applied.ultracodeAvailable === true };
 };
 
@@ -887,36 +997,52 @@ export interface RunningTotals {
 export const costStateOf = (transcript: string): RunningTotals | undefined => {
   for (let end = transcript.length; end > 0;) {
     const at = transcript.lastIndexOf('"type":"cost-state"', end - 1);
-    if (at < 0) return undefined;
+
+    if (at < 0) {
+      return undefined;
+    }
+
     const start = transcript.lastIndexOf("\n", at) + 1;
     const stop = transcript.indexOf("\n", at);
+
     try {
       const row: unknown = JSON.parse(transcript.slice(start, stop < 0 ? undefined : stop));
+
       if (typeof row === "object" && row !== null) {
         // SAFETY: a non-null object off JSON.parse; both members are checked as numbers below
         const { totalCostUSD: cost, totalAPIDuration: api } = row as Record<string, unknown>;
-        if (typeof cost === "number" && typeof api === "number" && cost >= 0 && api >= 0)
+
+        if (typeof cost === "number" && typeof api === "number" && cost >= 0 && api >= 0) {
           return { costUsd: cost, apiMs: api };
+        }
       }
     } catch {
       // A torn line: the row before it is the last one the CLI could have read back.
     }
+
     end = start;
   }
+
   return undefined;
 };
 
 /** Every `cost-state` row of a transcript that parses, in file order: the totals each process
  *  that exited left behind. Empty for a transcript with none. */
-export const costStatesOf = (transcript: string): RunningTotals[] => {
-  const out: RunningTotals[] = [];
+export const costStatesOf = (transcript: string): Array<RunningTotals> => {
+  const out: Array<RunningTotals> = [];
+
   for (let at = transcript.indexOf('"type":"cost-state"'); at >= 0;) {
     const start = transcript.lastIndexOf("\n", at) + 1;
     const stop = transcript.indexOf("\n", at);
     const row = costStateOf(transcript.slice(start, stop < 0 ? undefined : stop));
-    if (row) out.push(row);
+
+    if (row) {
+      out.push(row);
+    }
+
     at = stop < 0 ? -1 : transcript.indexOf('"type":"cost-state"', stop);
   }
+
   return out;
 };
 
@@ -925,7 +1051,8 @@ export const costStatesOf = (transcript: string): RunningTotals[] => {
  *  out-of-window tool schemas. Classify on this, never on the English name." Absent from a CLI
  *  older than 2.1, where the name and `isDeferred` are all there is. */
 export type ContextRowKind = "used" | "free" | "buffer" | "deferred";
-const ROW_KINDS: ContextRowKind[] = ["used", "free", "buffer", "deferred"];
+
+const ROW_KINDS: Array<ContextRowKind> = ["used", "free", "buffer", "deferred"];
 
 /** The slice of a `get_context_usage` answer this plugin reports: the CLI's own token count per category. */
 export interface ContextUsage {
@@ -942,41 +1069,70 @@ export interface ContextUsage {
    *  so the session's next turn replaces the process and the guess ends there. */
   followsNext?: true;
 }
+
 /** Decodes a `get_context_usage` answer, returning an all-zero report when the payload is missing
  *  or not an object rather than throwing. */
 export function decodeContextUsage(v: JsonValue | undefined): ContextUsage {
   const r = typeof v === "object" && v !== null && !Array.isArray(v) ? v : {};
   const categories: ContextUsage["categories"] = [];
-  if (Array.isArray(r.categories))
+
+  if (Array.isArray(r.categories)) {
     for (const c of r.categories) {
-      if (typeof c !== "object" || c === null || Array.isArray(c)) continue;
-      if (typeof c.name !== "string" || typeof c.tokens !== "number") continue;
+      if (typeof c !== "object" || c === null || Array.isArray(c)) {
+        continue;
+      }
+
+      if (typeof c.name !== "string" || typeof c.tokens !== "number") {
+        continue;
+      }
+
       const row: ContextUsage["categories"][number] = {
         name: c.name,
         tokens: c.tokens,
         deferred: c.isDeferred === true,
       };
+
       const kind = ROW_KINDS.find((k) => k === c.kind);
-      if (kind) row.kind = kind;
+
+      if (kind) {
+        row.kind = kind;
+      }
+
       categories.push(row);
     }
+  }
+
   const out: ContextUsage = {
     categories,
     totalTokens: typeof r.totalTokens === "number" ? r.totalTokens : 0,
     maxTokens: typeof r.maxTokens === "number" ? r.maxTokens : 0,
     percentage: typeof r.percentage === "number" ? r.percentage : 0,
   };
-  if (typeof r.model === "string") out.model = r.model;
-  if (typeof r.autocompactSource === "string") out.autocompact = r.autocompactSource;
+
+  if (typeof r.model === "string") {
+    out.model = r.model;
+  }
+
+  if (typeof r.autocompactSource === "string") {
+    out.autocompact = r.autocompactSource;
+  }
+
   return out;
 }
 
 /** The text of a `get_task_output` answer: its `output` string when the CLI sent one, else the
  *  whole answer as JSON so an unexpected shape is still readable, and "" for nothing. */
 export function decodeTaskOutput(v: JsonValue | undefined): string {
-  if (v === undefined || v === null) return "";
+  if (v === undefined || v === null) {
+    return "";
+  }
+
   const r = typeof v === "object" && !Array.isArray(v) ? v : {};
-  if (typeof r.output === "string") return r.output;
+
+  if (typeof r.output === "string") {
+    return r.output;
+  }
+
   return JSON.stringify(v);
 }
 
@@ -984,6 +1140,7 @@ export function decodeTaskOutput(v: JsonValue | undefined): string {
 export function decodeTitle(v: JsonValue | undefined): string | undefined {
   const r = typeof v === "object" && v !== null && !Array.isArray(v) ? v : {};
   const title = typeof r.title === "string" ? r.title.trim() : "";
+
   return title.length > 0 ? title : undefined;
 }
 
@@ -998,42 +1155,61 @@ export interface WorkspaceDiff {
     removed: number;
     binary: boolean;
     untracked: boolean;
-    hunks: Array<{ oldStart: number; newStart: number; lines: string[] }>;
+    hunks: Array<{ oldStart: number; newStart: number; lines: Array<string> }>;
   }>;
 }
+
 /** True only for a non-null, non-array object, so a decoded CLI answer can be read by key without a
  *  guard on every field. */
 const isRecord = (v: JsonValue | undefined): v is Record<string, JsonValue> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
+
 /** Return the number as-is, or 0 when the CLI omitted or mis-typed the field, so a missing count
  *  reads as zero rather than NaN. */
 const num = (x: JsonValue | undefined) => (typeof x === "number" ? x : 0);
+
 /** Return the string as-is, or undefined when the CLI omitted or mis-typed the field. */
 const str = (x: JsonValue | undefined) => (typeof x === "string" ? x : undefined);
+
 /** A `get_workspace_diff` answer as totals, per-file counts and hunks, skipping malformed entries. */
 export function decodeWorkspaceDiff(v: JsonValue | undefined): WorkspaceDiff {
   const outer = isRecord(v) ? v : {};
   const d = isRecord(outer.diff) ? outer.diff : outer;
   const stats = isRecord(d.stats) ? d.stats : {};
   const hunksByPath = new Map<string, WorkspaceDiff["files"][number]["hunks"]>();
-  if (Array.isArray(d.hunks))
+
+  if (Array.isArray(d.hunks)) {
     for (const entry of d.hunks) {
-      if (!isRecord(entry) || typeof entry.path !== "string" || !Array.isArray(entry.hunks))
+      if (!isRecord(entry) || typeof entry.path !== "string" || !Array.isArray(entry.hunks)) {
         continue;
+      }
+
       const list: WorkspaceDiff["files"][number]["hunks"] = [];
+
       for (const h of entry.hunks) {
-        if (!isRecord(h)) continue;
+        if (!isRecord(h)) {
+          continue;
+        }
+
         const lines = Array.isArray(h.lines)
           ? h.lines.filter((l): l is string => typeof l === "string")
           : [];
+
         list.push({ oldStart: num(h.oldStart), newStart: num(h.newStart), lines });
       }
+
       hunksByPath.set(entry.path, list);
     }
+  }
+
   const files: WorkspaceDiff["files"] = [];
-  if (Array.isArray(d.perFileStats))
+
+  if (Array.isArray(d.perFileStats)) {
     for (const f of d.perFileStats) {
-      if (!isRecord(f) || typeof f.path !== "string") continue;
+      if (!isRecord(f) || typeof f.path !== "string") {
+        continue;
+      }
+
       files.push({
         path: f.path,
         added: num(f.added),
@@ -1043,6 +1219,8 @@ export function decodeWorkspaceDiff(v: JsonValue | undefined): WorkspaceDiff {
         hunks: hunksByPath.get(f.path) ?? [],
       });
     }
+  }
+
   return {
     filesCount: num(stats.filesCount),
     linesAdded: num(stats.linesAdded),
@@ -1058,15 +1236,20 @@ export interface PermissionRules {
   directories: Array<{ path: string; source: string }>;
   managedOnly: boolean;
 }
+
 /** A `list_permission_rules` answer as rules, workspace directories and a managed-only flag,
  *  skipping malformed entries. */
 export function decodePermissionRules(v: JsonValue | undefined): PermissionRules {
   const outer = isRecord(v) ? v : {};
   const state = isRecord(outer.state) ? outer.state : {};
   const rules: PermissionRules["rules"] = [];
-  if (Array.isArray(state.rules))
+
+  if (Array.isArray(state.rules)) {
     for (const r of state.rules) {
-      if (!isRecord(r)) continue;
+      if (!isRecord(r)) {
+        continue;
+      }
+
       const behavior = typeof r.behavior === "string" ? r.behavior : "";
       const source = typeof r.source === "string" ? r.source : "";
       const rule = typeof r.rule === "string" ? r.rule : "";
@@ -1076,13 +1259,21 @@ export function decodePermissionRules(v: JsonValue | undefined): PermissionRules
       const text = prefix !== undefined && emphasis !== undefined ? `${prefix} ${emphasis}` : rule;
       rules.push({ behavior, source, rule, text });
     }
+  }
+
   const directories: PermissionRules["directories"] = [];
-  if (Array.isArray(state.workspaceDirectories))
+
+  if (Array.isArray(state.workspaceDirectories)) {
     for (const d of state.workspaceDirectories) {
-      if (!isRecord(d) || typeof d.path !== "string") continue;
+      if (!isRecord(d) || typeof d.path !== "string") {
+        continue;
+      }
+
       const source = typeof d.source === "string" ? d.source : "";
       directories.push({ path: d.path, source });
     }
+  }
+
   return {
     rules,
     directories,
@@ -1094,29 +1285,39 @@ export function decodePermissionRules(v: JsonValue | undefined): PermissionRules
 export interface HooksListing {
   hooks: Array<{ event: string; matcher: string; source: string; text: string }>;
 }
+
 /** A `get_hooks_listing` answer as per-hook rows, skipping malformed entries. */
 export function decodeHooksListing(v: JsonValue | undefined): HooksListing {
   const outer = isRecord(v) ? v : {};
   const hooks: HooksListing["hooks"] = [];
-  if (Array.isArray(outer.hooks))
+
+  if (Array.isArray(outer.hooks)) {
     for (const h of outer.hooks) {
-      if (!isRecord(h) || typeof h.event !== "string") continue;
+      if (!isRecord(h) || typeof h.event !== "string") {
+        continue;
+      }
+
       const event = h.event;
       const matcher = typeof h.matcher === "string" ? h.matcher : "";
+
       const source =
         typeof h.sourceLabel === "string"
           ? h.sourceLabel
           : typeof h.source === "string"
             ? h.source
             : "";
+
       const text =
         typeof h.displayText === "string" && h.displayText.length > 0
           ? h.displayText
           : typeof h.commandText === "string"
             ? h.commandText
             : "";
+
       hooks.push({ event, matcher, source, text });
     }
+  }
+
   return { hooks };
 }
 
@@ -1128,32 +1329,45 @@ export interface McpServerStatus {
   error?: string;
   /** Bare tool names this server contributes. Filled from the init frame by the adapter, not by
    *  `mcp_status`, which does not report tools; absent when no init frame has been seen. */
-  tools?: string[];
+  tools?: Array<string>;
   /** This server's tools have been pinned back to asking on the live process. The adapter's own
    *  record, not the CLI's: `mcp_status` reports connection and nothing about permissions. */
   asking?: boolean;
 }
+
 /** An `mcp_status` answer as one row per server, with its own error kept when it is not connected. */
-export function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[] {
+export function decodeMcpStatus(v: JsonValue | undefined): Array<McpServerStatus> {
   const r = isRecord(v) ? v : {};
-  const out: McpServerStatus[] = [];
-  if (Array.isArray(r.mcpServers))
+  const out: Array<McpServerStatus> = [];
+
+  if (Array.isArray(r.mcpServers)) {
     for (const m of r.mcpServers) {
-      if (!isRecord(m) || typeof m.name !== "string") continue;
+      if (!isRecord(m) || typeof m.name !== "string") {
+        continue;
+      }
+
       const entry: McpServerStatus = {
         name: m.name,
         status: typeof m.status === "string" ? m.status : "unknown",
       };
+
       const info = isRecord(m.serverInfo) ? m.serverInfo : {};
-      if (typeof info.version === "string") entry.version = info.version;
+
+      if (typeof info.version === "string") {
+        entry.version = info.version;
+      }
+
       // SAFETY: defensive typeof checks match I/O boundary style; keep error or message if present
       if (typeof m.error === "string") {
         entry.error = m.error;
       } else if (typeof m.message === "string") {
         entry.error = m.message;
       }
+
       out.push(entry);
     }
+  }
+
   return out;
 }
 
@@ -1163,7 +1377,11 @@ export function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[] {
  *  against 2.1.278 on 2026-09-20. */
 export function mcpAuthUrl(v: JsonValue | undefined): string | null | undefined {
   const r = isRecord(v) ? v : {};
-  if (typeof r.authUrl !== "string" || r.authUrl === "") return undefined;
+
+  if (typeof r.authUrl !== "string" || r.authUrl === "") {
+    return undefined;
+  }
+
   return isWebUrl(r.authUrl) ? r.authUrl : null;
 }
 
@@ -1172,6 +1390,7 @@ export function mcpAuthUrl(v: JsonValue | undefined): string | null | undefined 
  *  panel would otherwise tell someone their login failed when they are already signed in. */
 export function mcpAuthNeedsNothing(v: JsonValue | undefined): boolean {
   const r = isRecord(v) ? v : {};
+
   return r.requiresUserAction === false;
 }
 
@@ -1182,15 +1401,20 @@ export interface CliModel {
   displayName: string;
   /** The CLI picker's one-line blurb ("Opus 5 with 1M context · Best for everyday, complex tasks"). */
   description?: string;
-  efforts: string[];
+  efforts: Array<string>;
 }
+
 /** A `list_models` answer: what `claude --model` accepts for this login, aliases included. */
-export function decodeCliModels(v: JsonValue | undefined): CliModel[] {
+export function decodeCliModels(v: JsonValue | undefined): Array<CliModel> {
   const r = isRecord(v) ? v : {};
-  const out: CliModel[] = [];
-  if (Array.isArray(r.models))
+  const out: Array<CliModel> = [];
+
+  if (Array.isArray(r.models)) {
     for (const m of r.models) {
-      if (!isRecord(m) || typeof m.value !== "string") continue;
+      if (!isRecord(m) || typeof m.value !== "string") {
+        continue;
+      }
+
       const row: CliModel = {
         value: m.value,
         resolvedModel: typeof m.resolvedModel === "string" ? m.resolvedModel : m.value,
@@ -1205,9 +1429,15 @@ export function decodeCliModels(v: JsonValue | undefined): CliModel[] {
             : []
         ).filter((e): e is string => typeof e === "string"),
       };
-      if (typeof m.description === "string") row.description = m.description;
+
+      if (typeof m.description === "string") {
+        row.description = m.description;
+      }
+
       out.push(row);
     }
+  }
+
   return out;
 }
 
@@ -1220,31 +1450,53 @@ export interface ElicitationRequest {
   url?: string;
   requested_schema?: JsonValue;
 }
+
 type SchemaProp = {
   key: string;
   type: string;
-  enum?: string[];
+  enum?: Array<string>;
   title?: string;
   description?: string;
 };
+
 /** Pull a schema's top-level properties out of an MCP elicitation request, or undefined when it has
  *  no usable properties or more than 20. */
-function schemaProps(schema: JsonValue | undefined): SchemaProp[] | undefined {
+function schemaProps(schema: JsonValue | undefined): Array<SchemaProp> | undefined {
   const s = isRecord(schema) ? schema : {};
   const props = isRecord(s.properties) ? s.properties : undefined;
-  if (!props) return undefined;
-  const out: SchemaProp[] = [];
+
+  if (!props) {
+    return undefined;
+  }
+
+  const out: Array<SchemaProp> = [];
+
   for (const [key, def] of Object.entries(props)) {
-    if (!isRecord(def)) return undefined;
+    if (!isRecord(def)) {
+      return undefined;
+    }
+
     const type = typeof def.type === "string" ? def.type : "string";
     const prop: SchemaProp = { key, type };
-    if (Array.isArray(def.enum)) prop.enum = def.enum.map((e) => String(e));
-    if (typeof def.title === "string") prop.title = def.title;
-    if (typeof def.description === "string") prop.description = def.description;
+
+    if (Array.isArray(def.enum)) {
+      prop.enum = def.enum.map((e) => String(e));
+    }
+
+    if (typeof def.title === "string") {
+      prop.title = def.title;
+    }
+
+    if (typeof def.description === "string") {
+      prop.description = def.description;
+    }
+
     out.push(prop);
   }
+
   return out.length > 0 && out.length <= 20 ? out : undefined;
 }
+
 /**
  * An MCP elicitation as dsh questions: one per top-level schema property. Enum and boolean
  * properties become choices, strings and numbers a custom answer. Undefined when the schema has
@@ -1253,11 +1505,19 @@ function schemaProps(schema: JsonValue | undefined): SchemaProp[] | undefined {
 export function elicitationQuestions(
   request: ElicitationRequest,
   requestId: string,
-): AskUserQuestionItem[] | undefined {
-  if (request.mode === "url") return undefined;
+): Array<AskUserQuestionItem> | undefined {
+  if (request.mode === "url") {
+    return undefined;
+  }
+
   const props = schemaProps(request.requested_schema);
-  if (!props) return undefined;
+
+  if (!props) {
+    return undefined;
+  }
+
   const header = request.display_name ?? request.mcp_server_name ?? "MCP server";
+
   return props.map((p, index) => {
     const item: AskUserQuestionItem = {
       id: `${requestId}:${p.key}`,
@@ -1269,29 +1529,46 @@ export function elicitationQuestions(
           : (p.enum ?? []).map((label) => ({ label })),
       multiSelect: false,
     };
-    if (index === 0 && request.message) item.detail = request.message;
+
+    if (index === 0 && request.message) {
+      item.detail = request.message;
+    }
+
     return item;
   });
 }
+
 /** dsh's answers → the elicitation result the CLI relays: accept with content, or cancel. */
 export function elicitationResult(
   request: ElicitationRequest,
-  response: { answers?: Array<{ id: string; custom?: string; selected?: string[] }> },
+  response: { answers?: Array<{ id: string; custom?: string; selected?: Array<string> }> },
   requestId: string,
 ): Record<string, JsonValue> {
   const props = schemaProps(request.requested_schema) ?? [];
   const byId = new Map((response?.answers ?? []).map((a) => [a.id, a]));
   const content: Record<string, JsonValue> = {};
+
   for (const p of props) {
     const a = byId.get(`${requestId}:${p.key}`);
     const raw = (typeof a?.custom === "string" && a.custom) || a?.selected?.[0] || "";
-    if (raw === "") continue;
-    if (p.type === "boolean") content[p.key] = raw === "Yes";
-    else if (p.type === "number" || p.type === "integer") {
+
+    if (raw === "") {
+      continue;
+    }
+
+    if (p.type === "boolean") {
+      content[p.key] = raw === "Yes";
+    } else if (p.type === "number" || p.type === "integer") {
       const n = Number(raw);
-      if (Number.isFinite(n)) content[p.key] = n;
-    } else content[p.key] = raw;
+
+      if (Number.isFinite(n)) {
+        content[p.key] = n;
+      }
+    } else {
+      content[p.key] = raw;
+    }
   }
+
   return Object.keys(content).length > 0 ? { action: "accept", content } : { action: "cancel" };
 }
 
@@ -1299,6 +1576,7 @@ export function elicitationResult(
 export function isResultLine(line: string): boolean {
   try {
     const parsed: unknown = JSON.parse(line);
+
     // SAFETY: a non-null object compared to one literal, never trusted as typed
     return (
       typeof parsed === "object" &&
@@ -1317,6 +1595,7 @@ export function isBackgroundTasksFrame(line: string): boolean {
     const parsed: unknown = JSON.parse(line);
     // SAFETY: a non-null object; each field is compared to a literal, never trusted as typed
     const r = parsed as { type?: unknown; subtype?: unknown };
+
     return (
       typeof parsed === "object" &&
       parsed !== null &&
@@ -1337,9 +1616,14 @@ export function isBackgroundTasksFrame(line: string): boolean {
 export function isIdleReply(line: string): boolean {
   try {
     const parsed: unknown = JSON.parse(line);
-    if (typeof parsed !== "object" || parsed === null) return false;
+
+    if (typeof parsed !== "object" || parsed === null) {
+      return false;
+    }
+
     // SAFETY: a non-null object; each field is compared to a literal, never trusted as typed
     const r = parsed as { type?: unknown; is_error?: unknown; subtype?: unknown };
+
     return r.type === "result" && r.is_error !== true && r.subtype !== "error_during_execution";
   } catch {
     return false; // not JSON: nextEvent() files it under `stray`
@@ -1376,55 +1660,88 @@ export const denyResult = (toolUseId: string, message: string) => ({
 export function parseQuestions(
   input: Record<string, unknown>,
   toolUseId: string,
-): AskUserQuestionItem[] | undefined {
+): Array<AskUserQuestionItem> | undefined {
   const list = input?.questions;
-  if (!Array.isArray(list) || list.length === 0 || list.length > 20) return undefined;
-  const out: AskUserQuestionItem[] = [];
+
+  if (!Array.isArray(list) || list.length === 0 || list.length > 20) {
+    return undefined;
+  }
+
+  const out: Array<AskUserQuestionItem> = [];
+
   for (const [index, item] of list.entries()) {
-    if (!item || typeof item !== "object" || typeof item.question !== "string" || !item.question)
+    if (!item || typeof item !== "object" || typeof item.question !== "string" || !item.question) {
       return undefined;
+    }
+
     const options: AskUserQuestionItem["options"] = [];
     // dsh's option has a label and a description only; a preview (a mockup, a snippet) rides
     // under the question as `detail`, one fenced block per option, four backticks so a preview
     // that holds a fence of its own survives.
-    const previews: string[] = [];
+    const previews: Array<string> = [];
+
     for (const o of Array.isArray(item.options) ? item.options : []) {
-      if (!o || typeof o.label !== "string" || !o.label) return undefined;
+      if (!o || typeof o.label !== "string" || !o.label) {
+        return undefined;
+      }
+
       const optObj: AskUserQuestionItem["options"][number] = {
         label: o.label,
       };
-      if (typeof o.description === "string" && o.description) optObj.description = o.description;
+
+      if (typeof o.description === "string" && o.description) {
+        optObj.description = o.description;
+      }
+
       options.push(optObj);
-      if (typeof o.preview === "string" && o.preview.trim() !== "")
+
+      if (typeof o.preview === "string" && o.preview.trim() !== "") {
         previews.push(`**${o.label}**\n\n\`\`\`\`\n${o.preview.trim()}\n\`\`\`\``);
+      }
     }
+
     const outItem: AskUserQuestionItem = {
       id: `${toolUseId}:${index}`,
       question: item.question,
       options,
       multiSelect: item.multiSelect === true,
     };
-    if (typeof item.header === "string" && item.header) outItem.header = item.header;
-    if (previews.length > 0) outItem.detail = previews.join("\n\n");
+
+    if (typeof item.header === "string" && item.header) {
+      outItem.header = item.header;
+    }
+
+    if (previews.length > 0) {
+      outItem.detail = previews.join("\n\n");
+    }
+
     out.push(outItem);
   }
+
   return out;
 }
 
 /** dsh answers → the `answers` map Claude expects back in updatedInput, keyed by question text. */
 export function answersFor(
   questions: Array<{ id: string; question: string; multiSelect?: boolean }>,
-  response: { answers?: Array<{ id: string; custom?: string; selected?: string[] }> },
+  response: { answers?: Array<{ id: string; custom?: string; selected?: Array<string> }> },
 ) {
   const byId = new Map((response?.answers ?? []).map((a) => [a.id, a]));
   const answers: Record<string, string> = {};
+
   for (const q of questions) {
     const a = byId.get(q.id);
     const custom = typeof a?.custom === "string" && a.custom ? a.custom : undefined;
-    if (!a) answers[q.question] = "";
-    else if (!q.multiSelect && custom) answers[q.question] = custom;
-    else answers[q.question] = [...(a.selected ?? []), ...(custom ? [custom] : [])].join(", ");
+
+    if (!a) {
+      answers[q.question] = "";
+    } else if (!q.multiSelect && custom) {
+      answers[q.question] = custom;
+    } else {
+      answers[q.question] = [...(a.selected ?? []), ...(custom ? [custom] : [])].join(", ");
+    }
   }
+
   return answers;
 }
 
@@ -1436,12 +1753,20 @@ export function permissionReason(
 ): string {
   const head = request?.title ?? request?.description ?? "";
   let detail = "";
+
   // Any tool that runs a command line (`Bash`, and `PowerShell` on Windows) shows the command.
-  if (typeof input?.command === "string") detail = input.command;
-  else if (typeof input?.file_path === "string") detail = input.file_path;
-  else if (typeof input?.url === "string") detail = input.url;
-  else if (input && typeof input === "object") detail = JSON.stringify(input);
+  if (typeof input?.command === "string") {
+    detail = input.command;
+  } else if (typeof input?.file_path === "string") {
+    detail = input.file_path;
+  } else if (typeof input?.url === "string") {
+    detail = input.url;
+  } else if (input && typeof input === "object") {
+    detail = JSON.stringify(input);
+  }
+
   const text = [head, detail].filter(Boolean).join(": ");
+
   return text.length > 400 ? `${text.slice(0, 400)}…` : text || toolName;
 }
 
@@ -1450,7 +1775,7 @@ export const TIMEOUT = Symbol("timeout");
 
 /** Async line queue over a child's stdout: `next()` resolves with the next line, or null once the child is gone. */
 export class LineQueue {
-  lines: (string | ClaudeEvent | Record<string, unknown>)[];
+  lines: Array<string | ClaudeEvent | Record<string, unknown>>;
   waiters: Array<(line: string | typeof TIMEOUT | null) => void>;
   closed: boolean;
 
@@ -1465,6 +1790,7 @@ export class LineQueue {
    *  before its reader. */
   push(line: string | ClaudeEvent | Record<string, unknown>) {
     const w = this.waiters.shift();
+
     if (w && line !== null) {
       // SAFETY: TIMEOUT is never pushed; only strings or parsed objects reach here
       w(line as string);
@@ -1476,30 +1802,44 @@ export class LineQueue {
    *  readers see the end. */
   close() {
     this.closed = true;
-    for (const w of this.waiters.splice(0)) w(null);
+
+    for (const w of this.waiters.splice(0)) {
+      w(null);
+    }
   }
   /** Resolve with the next queued line, a timeout after `timeoutMs` with nothing, or null once the
    *  queue is closed. */
   next(timeoutMs?: number): Promise<string | typeof TIMEOUT | null> {
     if (this.lines.length > 0) {
       const line = this.lines.shift();
+
       // SAFETY: TIMEOUT sentinel is never stored in lines; only strings or objects arrive here
       return Promise.resolve((line ?? null) as string | typeof TIMEOUT | null);
     }
-    if (this.closed) return Promise.resolve(null);
+
+    if (this.closed) {
+      return Promise.resolve(null);
+    }
+
     return new Promise((resolve) => {
       const waiter = (line: string | typeof TIMEOUT | null) => {
         clearTimeout(timer);
         resolve(line);
       };
+
       const timer =
         timeoutMs === undefined
           ? undefined
           : setTimeout(() => {
               const i = this.waiters.indexOf(waiter);
-              if (i >= 0) this.waiters.splice(i, 1);
+
+              if (i >= 0) {
+                this.waiters.splice(i, 1);
+              }
+
               resolve(TIMEOUT);
             }, timeoutMs);
+
       this.waiters.push(waiter);
     });
   }
@@ -1508,7 +1848,7 @@ export class LineQueue {
 /** Everything one turn needs, as `prepare()` returns it; the process keeps the last one. */
 export interface TurnPrep {
   cwd: string;
-  args: string[];
+  args: Array<string>;
   session?: { id: string; resuming: boolean };
   spec: ClaudeProcessSpec;
   accessMode?: string;
@@ -1623,6 +1963,7 @@ export interface KeeperPaths {
   spec: string;
   info: string;
 }
+
 /** The keeper's socket, spec and info files, all one level under the keeper's directory. */
 const keeperPaths = (dir: string): KeeperPaths => ({
   dir,
@@ -1650,10 +1991,18 @@ export interface KeeperInfo {
 export function readKeeperInfo(dir: string): KeeperInfo | undefined {
   try {
     const parsed: unknown = JSON.parse(readFileSync(keeperPaths(dir).info, "utf8"));
-    if (typeof parsed !== "object" || parsed === null) return undefined;
+
+    if (typeof parsed !== "object" || parsed === null) {
+      return undefined;
+    }
+
     // SAFETY: keeper.json is written by keeper.ts from a typed object; each field is re-checked below
     const p = parsed as Partial<KeeperInfo>;
-    if (typeof p.pid !== "number" || typeof p.sessionId !== "string") return undefined;
+
+    if (typeof p.pid !== "number" || typeof p.sessionId !== "string") {
+      return undefined;
+    }
+
     return {
       pid: p.pid,
       claudePid: typeof p.claudePid === "number" ? p.claudePid : -1,
@@ -1679,9 +2028,13 @@ export function readKeeperInfo(dir: string): KeeperInfo | undefined {
  *  alive" here, or the orphan kill that follows sends SIGTERM to the user's whole login session
  *  (2026-09-17: a dsh-web restart logged the owner out of the desktop). */
 export const pidAlive = (pid: number): boolean => {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+
   try {
     process.kill(pid, 0);
+
     return true;
   } catch {
     return false;
@@ -1706,6 +2059,7 @@ function cmdlineOf(pid: number | "self"): string {
  *  old record or the new one, never a half-written file it would take for no holder at all. */
 function recordHolder(dir: string): void {
   const tmp = join(dir, `${HOLDER_FILE}.${process.pid}.tmp`);
+
   try {
     writeFileSync(tmp, JSON.stringify({ pid: process.pid, cmdline: cmdlineOf("self") }), {
       mode: 0o600,
@@ -1733,20 +2087,40 @@ function recordHolder(dir: string): void {
 export function keeperHolder(dir: string): number | undefined {
   let pid: number;
   let cmdline = "";
+
   try {
     const parsed: unknown = JSON.parse(readFileSync(join(dir, HOLDER_FILE), "utf8"));
-    if (typeof parsed !== "object" || parsed === null) return undefined;
+
+    if (typeof parsed !== "object" || parsed === null) {
+      return undefined;
+    }
+
     // SAFETY: holder.json is written by recordHolder from a typed object; each field is re-checked
     const p = parsed as { pid?: unknown; cmdline?: unknown };
-    if (typeof p.pid !== "number") return undefined;
+
+    if (typeof p.pid !== "number") {
+      return undefined;
+    }
+
     pid = p.pid;
-    if (typeof p.cmdline === "string") cmdline = p.cmdline;
+
+    if (typeof p.cmdline === "string") {
+      cmdline = p.cmdline;
+    }
   } catch {
     return undefined;
   }
-  if (pid === process.pid || !pidAlive(pid)) return undefined;
+
+  if (pid === process.pid || !pidAlive(pid)) {
+    return undefined;
+  }
+
   const now = cmdlineOf(pid);
-  if (cmdline && now && now !== cmdline) return undefined;
+
+  if (cmdline && now && now !== cmdline) {
+    return undefined;
+  }
+
   return pid;
 }
 
@@ -1763,11 +2137,13 @@ function keeperLogTail(dir: string): string {
       .map((l) => l.replace(/^\S+ /, ""))
       .filter((l) => l && !l.startsWith("exit code="))
       .pop();
+
     return last ? `: ${last}` : "";
   } catch {
     return "";
   }
 }
+
 /**
  * Attach to a keeper's socket and present it as a SubprocessHandle: stdin lines become `in`
  * messages, `out`/`err` lines feed the readable sides, `exit` settles `done`, terminate sends
@@ -1777,14 +2153,18 @@ function keeperLogTail(dir: string): string {
 export function attachKeeper(dir: string, timeoutMs = 5000): Promise<SubprocessHandle> {
   const paths = keeperPaths(dir);
   const sockPath = readKeeperSpec(dir)?.sock ?? paths.sock;
+
   return new Promise((resolve, reject) => {
     const started = Date.now();
+
     const tryConnect = () => {
       const sock = connect(sockPath);
       sock.once("error", () => {
-        if (Date.now() - started > timeoutMs)
+        if (Date.now() - started > timeoutMs) {
           reject(new Error(`keeper at ${dir} did not answer${keeperLogTail(dir)}`));
-        else setTimeout(tryConnect, 150);
+        } else {
+          setTimeout(tryConnect, 150);
+        }
       });
       sock.once("connect", () => {
         sock.removeAllListeners("error");
@@ -1792,23 +2172,31 @@ export function attachKeeper(dir: string, timeoutMs = 5000): Promise<SubprocessH
         recordHolder(dir);
         const stdout = new PassThrough();
         const stderr = new PassThrough();
+
         let resolveDone:
           | ((v: { exitCode: number | null; signal: string | null }) => void)
           | undefined;
+
         const done = new Promise<{ exitCode: number | null; signal: string | null }>((r) => {
           resolveDone = r;
         });
+
         let settled = false;
         // The keeper's number for each stdout line, by its index on this handle, until acked.
         const numbers = new Map<number, number>();
         let lineIndex = 0;
+
         const settle = (code: number | null, signal: string | null) => {
-          if (settled) return;
+          if (settled) {
+            return;
+          }
+
           settled = true;
           stdout.end();
           stderr.end();
           resolveDone?.({ exitCode: code, signal });
         };
+
         createInterface({ input: sock, crlfDelay: Infinity }).on("line", (raw) => {
           let msg: {
             t?: string;
@@ -1817,31 +2205,46 @@ export function attachKeeper(dir: string, timeoutMs = 5000): Promise<SubprocessH
             code?: number | null;
             signal?: string | null;
           };
+
           try {
             // SAFETY: the peer is this plugin's keeper.ts; fields are checked before use
             msg = JSON.parse(raw) as typeof msg;
           } catch {
             return;
           }
+
           if (msg.t === "out" && typeof msg.line === "string") {
             // A keeper from before acks sends no number; its lines are not kept, so nothing is acked.
-            if (typeof msg.n === "number") numbers.set(lineIndex, msg.n);
+            if (typeof msg.n === "number") {
+              numbers.set(lineIndex, msg.n);
+            }
+
             lineIndex++;
             stdout.write(`${msg.line}\n`);
-          } else if (msg.t === "err" && typeof msg.line === "string") stderr.write(`${msg.line}\n`);
-          else if (msg.t === "exit") settle(msg.code ?? null, msg.signal ?? null);
+          } else if (msg.t === "err" && typeof msg.line === "string") {
+            stderr.write(`${msg.line}\n`);
+          } else if (msg.t === "exit") {
+            settle(msg.code ?? null, msg.signal ?? null);
+          }
         });
         // A closed socket with no `exit` first means the keeper is gone (crashed, or another dsh
         // took the connection); either way this handle's process is over for us.
         sock.on("close", () => settle(-1, "socket-closed"));
+
         const stdin = new Writable({
           write(chunk, _enc, cb) {
             const text = String(chunk);
-            for (const line of text.split("\n"))
-              if (line !== "") sock.write(`${JSON.stringify({ t: "in", line: `${line}\n` })}\n`);
+
+            for (const line of text.split("\n")) {
+              if (line !== "") {
+                sock.write(`${JSON.stringify({ t: "in", line: `${line}\n` })}\n`);
+              }
+            }
+
             cb();
           },
         });
+
         sock.write(`${JSON.stringify({ t: "hello", acks: true })}\n`);
         resolve({
           stdin,
@@ -1853,13 +2256,21 @@ export function attachKeeper(dir: string, timeoutMs = 5000): Promise<SubprocessH
           },
           ack: (index) => {
             const n = numbers.get(index);
-            if (n === undefined) return;
+
+            if (n === undefined) {
+              return;
+            }
+
             numbers.delete(index);
-            if (!sock.destroyed) sock.write(`${JSON.stringify({ t: "ack", n })}\n`);
+
+            if (!sock.destroyed) {
+              sock.write(`${JSON.stringify({ t: "ack", n })}\n`);
+            }
           },
         });
       });
     };
+
     tryConnect();
   });
 }
@@ -1871,33 +2282,49 @@ export function attachKeeper(dir: string, timeoutMs = 5000): Promise<SubprocessH
 export function lazyHandle(pending: Promise<SubprocessHandle>): SubprocessHandle {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
-  const queued: string[] = [];
+  const queued: Array<string> = [];
   let real: SubprocessHandle | undefined;
   let killed = false;
+
   const settled = pending.then(
     (h) => {
       real = h;
       h.stdout.pipe(stdout);
       h.stderr.pipe(stderr);
-      for (const line of queued) h.stdin.write(line);
+
+      for (const line of queued) {
+        h.stdin.write(line);
+      }
+
       queued.length = 0;
-      if (killed) h.terminate();
+
+      if (killed) {
+        h.terminate();
+      }
+
       return h.done;
     },
     (error: Error) => {
       stderr.write(`keeper: ${error.message}\n`);
       stdout.end();
       stderr.end();
+
       return { exitCode: -1, signal: null };
     },
   );
+
   const stdin = new Writable({
     write(chunk, _enc, cb) {
-      if (real) real.stdin.write(String(chunk));
-      else queued.push(String(chunk));
+      if (real) {
+        real.stdin.write(String(chunk));
+      } else {
+        queued.push(String(chunk));
+      }
+
       cb();
     },
   });
+
   return {
     stdin,
     stdout,
@@ -1915,7 +2342,7 @@ export function lazyHandle(pending: Promise<SubprocessHandle>): SubprocessHandle
 /** The keeper's record of the process it babysits, written at spawn and read after a restart. */
 export interface KeeperSpec {
   command: string;
-  args: string[];
+  args: Array<string>;
   cwd: string;
   env: Record<string, string>;
   sessionId: string;
@@ -1934,11 +2361,22 @@ export interface KeeperSpec {
 export function readKeeperSpec(dir: string): KeeperSpec | undefined {
   try {
     const parsed: unknown = JSON.parse(readFileSync(keeperPaths(dir).spec, "utf8"));
-    if (typeof parsed !== "object" || parsed === null) return undefined;
+
+    if (typeof parsed !== "object" || parsed === null) {
+      return undefined;
+    }
+
     // SAFETY: spec.json is written by spawnKeeper from a KeeperSpec; the fields that matter are re-checked
     const s = parsed as KeeperSpec;
-    if (typeof s.command !== "string" || !Array.isArray(s.args) || typeof s.sessionId !== "string")
+
+    if (
+      typeof s.command !== "string" ||
+      !Array.isArray(s.args) ||
+      typeof s.sessionId !== "string"
+    ) {
       return undefined;
+    }
+
     return s;
   } catch {
     return undefined;
@@ -1947,7 +2385,7 @@ export function readKeeperSpec(dir: string): KeeperSpec | undefined {
 
 /** Launch the keeper in its own systemd user scope when possible (a service restart's cgroup kill
  *  then misses it), else as a detached process with its own group. */
-export function launchKeeper(argv: string[], unit: string): void {
+export function launchKeeper(argv: Array<string>, unit: string): void {
   /** Launch the keeper fully detached with stdio discarded, so it survives the parent that started
    *  it. */
   const detached = () => {
@@ -1955,15 +2393,19 @@ export function launchKeeper(argv: string[], unit: string): void {
       detached: true,
       stdio: "ignore",
     });
+
     c.unref();
   };
+
   try {
     const started = Date.now();
+
     const c = spawn(
       "systemd-run",
       ["--user", "--scope", "--quiet", "--collect", `--unit=${unit}`, ...argv],
       { detached: true, stdio: "ignore" },
     );
+
     c.on("error", detached);
     // With --scope, systemd-run runs the keeper itself and lives as long as it does. One that exits
     // with an error straight away never started it: it is installed but cannot reach the user bus
@@ -1972,7 +2414,9 @@ export function launchKeeper(argv: string[], unit: string): void {
     // this every turn died as "keeper did not answer" (found 2026-09-21 running dsh under Electron
     // with a cleared environment). Decided on exit, not by a probe up front, so nothing blocks.
     c.on("exit", (code) => {
-      if (scopeFailed(code, Date.now() - started)) detached();
+      if (scopeFailed(code, Date.now() - started)) {
+        detached();
+      }
     });
     c.unref();
   } catch {
@@ -1994,13 +2438,14 @@ export function scopeFailed(code: number | null, elapsedMs: number): boolean {
 export async function spawnKeeper(
   dir: string,
   spec: KeeperSpec,
-  launch: (argv: string[]) => void,
+  launch: (argv: Array<string>) => void,
 ): Promise<SubprocessHandle> {
   const paths = { ...keeperPaths(dir), sock: keeperSocketPath(dir) };
   // Owner-only: the spec holds the child's whole environment, a login token and the bridge key
   // among it, and the socket beside it takes stdin lines from whoever can open it.
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(paths.spec, JSON.stringify({ ...spec, sock: paths.sock }), { mode: 0o600 });
+
   // A respawn reuses the session's directory while the previous keeper still listens for up to
   // 3 s after its Claude died. Left in place, that socket is what attachKeeper connects to first,
   // binding the new handle to the dying process (2026-09-06 21:27: "claude exited 143" on a model
@@ -2010,17 +2455,19 @@ export async function spawnKeeper(
   } catch {
     // no stale socket
   }
+
   // fileURLToPath, not `.pathname`: the pathname keeps %20 for a space and a leading slash before a
   // Windows drive letter, so the keeper script is not found under either.
   const keeperJs = fileURLToPath(new URL("./keeper.js", import.meta.url));
   launch([process.execPath, keeperJs, dir]);
+
   return attachKeeper(dir, 8000);
 }
 
 /** How a child is started: locally, or on a box over ssh. The adapter holds one per provider. */
 export type Spawner = (
   command: string,
-  args: string[],
+  args: Array<string>,
   cwd: string,
   envOverride?: Record<string, string>,
 ) => SubprocessHandle;
@@ -2043,7 +2490,7 @@ export type WaitingSteer = {
   /** Epoch ms of the first record, for ordering. */
   at: number;
   /** Present only when the message carries a file or image. */
-  attachments?: SteerAttachment[];
+  attachments?: Array<SteerAttachment>;
 } & (
   | {
       /** The stdin line's uuid, which `cancel_async_message` names. */
@@ -2077,18 +2524,33 @@ export type WaitingSteer = {
  * without the key are not parsed, so the hot path stays cheap.
  */
 export function statusMode(line: string): string | undefined {
-  if (!line.includes('"permissionMode"')) return undefined;
-  if (!line.includes('"status"') && !line.includes('"init"')) return undefined;
+  if (!line.includes('"permissionMode"')) {
+    return undefined;
+  }
+
+  if (!line.includes('"status"') && !line.includes('"init"')) {
+    return undefined;
+  }
+
   let parsed: unknown;
+
   try {
     parsed = JSON.parse(line);
   } catch {
     return undefined;
   }
-  if (typeof parsed !== "object" || parsed === null) return undefined;
+
+  if (typeof parsed !== "object" || parsed === null) {
+    return undefined;
+  }
+
   // SAFETY: a non-null object; each field is compared to a literal or type-checked before use
   const r = parsed as { type?: unknown; subtype?: unknown; permissionMode?: unknown };
-  if (r.type !== "system" || (r.subtype !== "status" && r.subtype !== "init")) return undefined;
+
+  if (r.type !== "system" || (r.subtype !== "status" && r.subtype !== "init")) {
+    return undefined;
+  }
+
   return typeof r.permissionMode === "string" ? r.permissionMode : undefined;
 }
 
@@ -2102,7 +2564,7 @@ export class ClaudeProcess {
    *  last accepted `set_permission_mode` or the CLI's own status frame set. `spec.mode` stays the launch mode on purpose, since
    *  the CLI takes a live switch to bypassPermissions only from a process launched in it. */
   liveMode: string;
-  args: string[];
+  args: Array<string>;
   cwd: string;
   busy: boolean;
   /** A turn has taken this process and has not marked it `busy` yet: the spawn's own waits (the
@@ -2119,7 +2581,7 @@ export class ClaudeProcess {
   exitCode: number | undefined;
   queue: LineQueue;
   /** The stdout index of each line in `queue`, in order, for `used` once nextEvent takes it. */
-  queuedIndexes: number[] = [];
+  queuedIndexes: Array<number> = [];
   child: SubprocessHandle;
   key?: string;
   resuming?: boolean;
@@ -2227,7 +2689,7 @@ export class ClaudeProcess {
     command = "claude",
     spawner = nodeSpawner,
   }: {
-    args: string[];
+    args: Array<string>;
     cwd: string;
     spec: ClaudeProcessSpec;
     onExit?: ClaudeProcessOnExit;
@@ -2258,18 +2720,29 @@ export class ClaudeProcess {
       // The CLI's own mode changes (EnterPlanMode, an approved plan) reach the plugin only here;
       // the bridge's plan-mode gate reads liveMode. The frame still queues as before.
       const reported = statusMode(line);
-      if (reported !== undefined) this.liveMode = reported;
+
+      if (reported !== undefined) {
+        this.liveMode = reported;
+      }
+
       // Consumed here, not queued: the frame lands after the result that ended the turn, when no
       // turn is reading, and a queued copy would open the next turn as an unknown event.
-      if (line.includes('"prompt_suggestion"') && this.noteSuggestion(line))
+      if (line.includes('"prompt_suggestion"') && this.noteSuggestion(line)) {
         return this.used(index);
+      }
+
       // Same reason: the frame lands at startup and after a rename, outside any turn.
-      if (line.includes('"session_title_changed"') && this.noteTitle(line)) return this.used(index);
+      if (line.includes('"session_title_changed"') && this.noteTitle(line)) {
+        return this.used(index);
+      }
+
       // The CLI sends this snapshot right behind the answer to a re-sent `initialize` (an adoption),
       // and the translator draws nothing for it. Queued, it woke idle sessions after every dsh
       // restart, and the keeper replayed it on the next one, since no turn ever used it.
-      if (line.includes('"background_tasks_changed"') && isBackgroundTasksFrame(line))
+      if (line.includes('"background_tasks_changed"') && isBackgroundTasksFrame(line)) {
         return this.used(index);
+      }
+
       // `"type":"result"` is how the CLI's JSON spells it; a result inside a tool's text would
       // need the space-free key too, and a false positive only lets a suggestion through early.
       if (line.includes('"type":"result"')) {
@@ -2278,24 +2751,35 @@ export class ClaudeProcess {
         // follows this result, if the CLI sends one, is the new guess.
         this.suggestion = undefined;
       }
+
       if (line.includes('"control_response"')) {
         try {
           // SAFETY: I/O boundary; the listener branches on `type` and ignores anything else
           const event = JSON.parse(line) as ClaudeEvent;
-          if (this.controlListener?.(event)) return this.used(index);
+
+          if (this.controlListener?.(event)) {
+            return this.used(index);
+          }
+
           // Every control_response answers a request this plugin sent. One nobody took came after
           // its waiter gave up (initialize waits 15 s, mcp_reconnect 10 s) or answers an interrupt
           // whose turn had ended. Queued, it woke an idle session after a restart, and the keeper
           // replayed it to every boot until a turn read it (#241). No turn reads it for anything.
-          if (event.type === "control_response") return this.used(index);
+          if (event.type === "control_response") {
+            return this.used(index);
+          }
         } catch {
           // not JSON: queue it like any other line
         }
       }
+
       // Output of a turn the CLI is running counts as use, so the idle reaper never ends a process
       // mid-turn only because no dsh turn is attached to it: an adopted keeper whose drain wake gave
       // up, or a tool that outlasts the drain window after a restart (#241 review).
-      if (TURN_FRAME_TEXT.test(line)) this.lastUsed = Date.now();
+      if (TURN_FRAME_TEXT.test(line)) {
+        this.lastUsed = Date.now();
+      }
+
       // Only nextEvent takes from the queue, and it takes lines in the order they were queued.
       this.queuedIndexes.push(index);
       this.queue.push(line);
@@ -2314,16 +2798,20 @@ export class ClaudeProcess {
   closed(code: number, onExit: ClaudeProcessOnExit | undefined) {
     this.exitCode = code;
     this.queue.close();
-    for (const r of this.relays.values())
+
+    for (const r of this.relays.values()) {
       r.reject(new Error(`claude exited ${this.exitCode} while dsh ran its tool call`));
+    }
+
     this.relays.clear();
+
     try {
       onExit?.(this);
-    } catch (e) {
+    } catch (error) {
       // The known throw: a plugin reload disposed the adapter before its process ended, and the
       // callback's read of a dsh service fails on the inactive context. That mount has no tab
       // left to update, and the new mount republishes its own state. Any other throw still shows.
-      process.emitWarning(`claude exit callback failed: ${errorText(e)}`);
+      process.emitWarning(`claude exit callback failed: ${errorText(error)}`);
     }
   }
 
@@ -2335,14 +2823,20 @@ export class ClaudeProcess {
   /** Write a stdin line to the child, returning false when it has exited, so a line to a dead
    *  process is not silently dropped. */
   write(line: string): boolean {
-    if (!this.alive) return false;
+    if (!this.alive) {
+      return false;
+    }
+
     this.child.stdin.write(line);
+
     return true;
   }
 
   /** Terminate the child while it is alive, so killing an already-dead process is a no-op. */
   kill() {
-    if (this.alive) this.child.terminate();
+    if (this.alive) {
+      this.child.terminate();
+    }
   }
 
   /** Queue a synthetic event for the turn loop (the MCP bridge relaying a dsh tool call). */
@@ -2357,30 +2851,44 @@ export class ClaudeProcess {
    *  data handler, and a hot-reloaded adapter behind it would take the host down. */
   noteSuggestion(line: string): boolean {
     let parsed: unknown;
+
     try {
       parsed = JSON.parse(line);
     } catch {
       return false;
     }
-    if (typeof parsed !== "object" || parsed === null) return false;
+
+    if (typeof parsed !== "object" || parsed === null) {
+      return false;
+    }
+
     // SAFETY: a non-null object; each field is compared to a literal before use
     const r = parsed as { type?: unknown; suggestion?: unknown };
-    if (r.type !== "prompt_suggestion" || typeof r.suggestion !== "string") return false;
+
+    if (r.type !== "prompt_suggestion" || typeof r.suggestion !== "string") {
+      return false;
+    }
+
     const text = r.suggestion.trim();
+
     if (text === "" || !this.resultSeen) {
       try {
         this.onSuggestionDropped?.(text === "" ? "empty" : "before a result");
       } catch {
         // as below: readline's data handler must not throw
       }
+
       return true;
     }
+
     this.suggestion = { text, at: Date.now() };
+
     try {
       this.onSuggestion?.();
     } catch {
       // logged by the adapter when it can; nothing else to do here
     }
+
     return true;
   }
 
@@ -2390,32 +2898,51 @@ export class ClaudeProcess {
    *  CLI clearing one) is consumed and ignored: dsh has no notion of an unnamed live session. */
   noteTitle(line: string): boolean {
     let parsed: unknown;
+
     try {
       parsed = JSON.parse(line);
     } catch {
       return false;
     }
-    if (typeof parsed !== "object" || parsed === null) return false;
+
+    if (typeof parsed !== "object" || parsed === null) {
+      return false;
+    }
+
     // SAFETY: a non-null object; each field is compared to a literal before use
     const r = parsed as { type?: unknown; subtype?: unknown; title?: unknown };
-    if (r.type !== "system" || r.subtype !== "session_title_changed") return false;
+
+    if (r.type !== "system" || r.subtype !== "session_title_changed") {
+      return false;
+    }
+
     const title = typeof r.title === "string" ? r.title.trim() : "";
-    if (title === "" || title === this.title) return true;
+
+    if (title === "" || title === this.title) {
+      return true;
+    }
+
     this.title = title;
+
     try {
       this.onTitle?.(title);
     } catch {
       // as above: readline's data handler must not throw
     }
+
     return true;
   }
 
   /** A `result` line while no turn is reading: Claude just finished a turn of its own. Tell the
    *  adapter (`onIdleResult`) so it can open a dsh turn and show the reply now. */
   noteIdleResult(line: string) {
-    if (!line.includes('"result"')) return;
+    if (!line.includes('"result"')) {
+      return;
+    }
+
     if (this.interruptOwed && isResultLine(line)) {
       this.interruptOwed = false;
+
       // The answer and the tail before it are spent: queued since the interrupt by the reader
       // above, and left there they would reach the next turn as its own frames (the CLI's cancel
       // notice as a line of text, the answer as a stale result drawing a rule). Only taken when
@@ -2426,20 +2953,35 @@ export class ClaudeProcess {
           this.interruptMark ?? this.queue.lines.length - 1,
           this.queue.lines.length - 1,
         );
+
         this.queue.lines.splice(from);
-        for (const index of this.queuedIndexes.splice(from)) this.used(index);
+
+        for (const index of this.queuedIndexes.splice(from)) {
+          this.used(index);
+        }
       }
+
       this.interruptMark = undefined;
+
       return;
     }
-    if (this.busy || !this.onIdleResult) return;
-    if (!isIdleReply(line)) return;
+
+    if (this.busy || !this.onIdleResult) {
+      return;
+    }
+
+    if (!isIdleReply(line)) {
+      return;
+    }
+
     try {
       // A throw here is inside readline's data handler: it would take the whole host down.
       // The adapter behind the callback may have been hot-reloaded away (dead cordis scope).
       const r: unknown = this.onIdleResult();
-      if (typeof r === "object" && r !== null && "catch" in r && typeof r.catch === "function")
+
+      if (typeof r === "object" && r !== null && "catch" in r && typeof r.catch === "function") {
         r.catch(() => {});
+      }
     } catch {
       // logged by the adapter when it can; nothing else to do here
     }
@@ -2449,14 +2991,21 @@ export class ClaudeProcess {
    *  from a stale background-task completion. */
   countStaleResults() {
     let n = 0;
+
     for (const line of this.queue.lines) {
-      if (typeof line !== "string" || !line.includes('"result"')) continue;
+      if (typeof line !== "string" || !line.includes('"result"')) {
+        continue;
+      }
+
       try {
-        if (JSON.parse(line).type === "result") n++;
+        if (JSON.parse(line).type === "result") {
+          n++;
+        }
       } catch {
         // not JSON: nextEvent() files it under `stray`
       }
     }
+
     return n;
   }
 
@@ -2476,13 +3025,24 @@ export class ClaudeProcess {
    *  it waits for the next prompt instead of opening a turn. */
   hasTurnOutput(): boolean {
     return this.queue.lines.some((line) => {
-      if (typeof line !== "string") return true;
+      if (typeof line !== "string") {
+        return true;
+      }
+
       try {
         const parsed: unknown = JSON.parse(line);
-        if (typeof parsed !== "object" || parsed === null) return false;
+
+        if (typeof parsed !== "object" || parsed === null) {
+          return false;
+        }
+
         // SAFETY: a non-null object; each field is compared to a literal, never trusted as typed
         const r = parsed as { type?: unknown; subtype?: unknown };
-        if (r.type === "system") return r.subtype === "task_notification";
+
+        if (r.type === "system") {
+          return r.subtype === "task_notification";
+        }
+
         return typeof r.type === "string" && TURN_FRAMES.has(r.type);
       } catch {
         return false;
@@ -2493,16 +3053,28 @@ export class ClaudeProcess {
   /** The background tasks whose `task_notification` waits in the queue, oldest first: what Claude
    *  is answering when it replies with no turn reading. Empty when it replied for another reason
    *  (a scheduled wakeup), or when a turn already read the frames. */
-  finishedTasks(): FinishedTask[] {
-    const tasks: FinishedTask[] = [];
+  finishedTasks(): Array<FinishedTask> {
+    const tasks: Array<FinishedTask> = [];
+
     for (const line of this.queue.lines) {
-      if (typeof line !== "string" || !line.includes("task_notification")) continue;
+      if (typeof line !== "string" || !line.includes("task_notification")) {
+        continue;
+      }
+
       try {
         const parsed: unknown = JSON.parse(line);
-        if (typeof parsed !== "object" || parsed === null) continue;
+
+        if (typeof parsed !== "object" || parsed === null) {
+          continue;
+        }
+
         // SAFETY: a non-null object; each field is checked for its type before use
         const r = parsed as { type?: unknown; subtype?: unknown } & Record<string, unknown>;
-        if (r.type !== "system" || r.subtype !== "task_notification") continue;
+
+        if (r.type !== "system" || r.subtype !== "task_notification") {
+          continue;
+        }
+
         tasks.push({
           taskId: typeof r.task_id === "string" ? r.task_id : "",
           status: typeof r.status === "string" ? r.status : "completed",
@@ -2512,6 +3084,7 @@ export class ClaudeProcess {
         // not JSON: nothing to name
       }
     }
+
     return tasks;
   }
 
@@ -2529,14 +3102,29 @@ export class ClaudeProcess {
     // that is never going to answer open forever. A warning, a progress bar or a shell banner
     // would each do it.
     const deadline = timeoutMs === undefined ? undefined : Date.now() + timeoutMs;
+
     for (;;) {
       const left = deadline === undefined ? undefined : Math.max(0, deadline - Date.now());
       const line = await this.queue.next(left);
-      if (line === null) return null;
-      if (line === TIMEOUT) return { type: "timeout" };
-      if (typeof line === "object") return line; // injected by inject()
+
+      if (line === null) {
+        return null;
+      }
+
+      if (line === TIMEOUT) {
+        return { type: "timeout" };
+      }
+
+      if (typeof line === "object") {
+        return line;
+      } // injected by inject()
+
       const index = this.queuedIndexes.shift();
-      if (index !== undefined) this.used(index);
+
+      if (index !== undefined) {
+        this.used(index);
+      }
+
       try {
         // SAFETY: this is the I/O boundary; a parsed line is treated as a CLI event and every
         // consumer branches on `type` with a logged fallback for shapes it does not know.

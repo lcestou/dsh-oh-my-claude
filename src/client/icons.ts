@@ -87,41 +87,59 @@ const blank: IconComponent = () => null;
 
 export const IconAgentPresetOutlineMedium =
   exported.IconAgentPresetOutlineMedium ?? exported.IconAgentPresetOutline16 ?? blank;
+
 export const IconApiOutlineRegular =
   exported.IconApiOutlineRegular ?? exported.IconApiOutline14 ?? blank;
+
 export const IconBrowseOutlineMedium =
   exported.IconBrowseOutlineMedium ?? exported.IconBrowseOutline16 ?? blank;
+
 export const IconChecklistOutlineRegular =
   exported.IconChecklistOutlineRegular ?? exported.IconChecklistOutline14 ?? blank;
+
 export const IconCheckOutlineMedium =
   exported.IconCheckOutlineMedium ?? exported.IconCheckOutline16 ?? blank;
+
 export const IconChevronDownOutlineRegular =
   exported.IconChevronDownOutlineRegular ?? exported.IconChevronDownOutline14 ?? blank;
+
 export const IconChevronRightOutlineRegular =
   exported.IconChevronRightOutlineRegular ?? exported.IconChevronRightOutline14 ?? blank;
+
 export const IconCodeOutlineMedium =
   exported.IconCodeOutlineMedium ?? exported.IconCodeOutline16 ?? blank;
+
 export const IconEditOutlineMedium =
   exported.IconEditOutlineMedium ?? exported.IconEditOutline16 ?? blank;
+
 export const IconFolderCloseMedium =
   exported.IconFolderCloseMedium ?? exported.IconFolderClose16 ?? blank;
+
 export const IconFolderOpenMedium =
   exported.IconFolderOpenMedium ?? exported.IconFolderOpen16 ?? blank;
+
 export const IconListPenOutlineMedium =
   exported.IconListPenOutlineMedium ?? exported.IconListPenOutline16 ?? blank;
+
 export const IconPaperclipOutlineRegular =
   exported.IconPaperclipOutlineRegular ??
   exported.IconPaperclipOutline14 ??
   exported.IconPaperclipOutline16 ??
   blank;
+
 export const IconPlusOutlineMedium =
   exported.IconPlusOutlineMedium ?? exported.IconPlusOutline16 ?? blank;
+
 export const IconSearchOutlineMedium =
   exported.IconSearchOutlineMedium ?? exported.IconSearchOutline16 ?? blank;
+
 export const IconSkillOutlineMedium =
   exported.IconSkillOutlineMedium ?? exported.IconSkillOutline16 ?? blank;
+
 export const IconSparkleMedium = exported.IconSparkleMedium ?? exported.IconSparkle16 ?? blank;
 export const PermissionIconReadOnlyRegular = exported.PermissionIconReadOnlyRegular ?? blank;
+
 export const PermissionIconWorkspaceWriteRegular =
   exported.PermissionIconWorkspaceWriteRegular ?? blank;
+
 export const PermissionIconFullAccessRegular = exported.PermissionIconFullAccessRegular ?? blank;

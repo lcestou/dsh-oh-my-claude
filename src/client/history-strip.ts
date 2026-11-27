@@ -4,7 +4,8 @@
 // tab stops and twelve targets under the 24 px minimum, where one strip is one of each.
 import { activeLocale, t } from "./i18n.js";
 import { ACCENT, T } from "./shared.js";
-import { typicalPercent, type HistoryEnded, type UsageHistory } from "../usage-history.js";
+import { typicalPercent } from "../usage-history.js";
+import type { HistoryEnded, UsageHistory } from "../usage-history.js";
 
 /** When a window ended, short: weekday and time inside the last six days, month and day beyond,
  *  in dsh's language like the reset line above it. */
@@ -40,7 +41,7 @@ const seriesRank = (s: string): number =>
   s === "session" ? 0 : s === "weekly" ? 1 : s.startsWith("model:") ? 2 : 3;
 
 /** The series with ended windows that no live row drew, in display order. */
-export function absentSeries(history: UsageHistory, drawn: ReadonlySet<string>): string[] {
+export function absentSeries(history: UsageHistory, drawn: ReadonlySet<string>): Array<string> {
   return Object.keys(history)
     .filter((s) => !drawn.has(s) && (history[s]?.length ?? 0) > 0)
     .toSorted((a, b) => seriesRank(a) - seriesRank(b) || a.localeCompare(b));
@@ -54,8 +55,11 @@ export function absentSeries(history: UsageHistory, drawn: ReadonlySet<string>):
  * strip with the mouse or moving focus out puts the caption back. A touch pick stays until focus
  * moves, since a finger has no "leave".
  */
-export function historyStrip(label: string, list: readonly HistoryEnded[]): HTMLElement | null {
-  if (list.length === 0) return null;
+export function historyStrip(label: string, list: ReadonlyArray<HistoryEnded>): HTMLElement | null {
+  if (list.length === 0) {
+    return null;
+  }
+
   const wrap = document.createElement("div");
   wrap.setAttribute("data-omc-usage-history", "");
   wrap.style.cssText = "grid-column:1 / -1;padding-top:4px";
@@ -69,13 +73,18 @@ export function historyStrip(label: string, list: readonly HistoryEnded[]): HTML
   // 24 px tall so the one target meets the minimum size; the bars fill its lower 18 px.
   bars.style.cssText =
     "display:flex;align-items:flex-end;gap:2px;height:24px;padding-top:6px;box-sizing:border-box;cursor:default;touch-action:manipulation;border-radius:3px;outline-offset:2px;margin-bottom:6px";
+
   const els = list.map((e) => {
     const pct = Math.max(0, Math.min(100, e.percent));
     // The same thresholds as the window's own bar above, so a red stub means what a red bar means.
     const tone = pct >= 90 ? T.err : pct >= 70 ? T.warn : ACCENT;
     const bar = document.createElement("span");
     bar.setAttribute("data-omc-usage-history-bar", String(e.resetsAt));
-    if (e.partial) bar.setAttribute("data-omc-usage-history-partial", "");
+
+    if (e.partial) {
+      bar.setAttribute("data-omc-usage-history-partial", "");
+    }
+
     bar.setAttribute("aria-hidden", "true");
     // A partial window is drawn hollow (its outline at full strength, a faint fill), so "at least"
     // reads as a shape, not as a dimmer colour that turns red into brown in dark mode.
@@ -83,21 +92,29 @@ export function historyStrip(label: string, list: readonly HistoryEnded[]): HTML
       ? `flex:1 1 0;max-width:10px;height:${Math.max(4, pct)}%;box-sizing:border-box;border-radius:1px;border:1.5px solid ${tone};background:color-mix(in srgb, ${tone} 22%, transparent)`
       : `flex:1 1 0;max-width:10px;height:${Math.max(2, pct)}%;border-radius:1px;background:${tone};opacity:0.85`;
     bars.append(bar);
+
     return bar;
   });
+
   const caption = document.createElement("div");
   caption.setAttribute("data-omc-usage-history-caption", "");
   caption.style.cssText = `color:${T.quiet};font-size:11px;line-height:16px;font-variant-numeric:tabular-nums`;
   const typical = typicalPercent(list);
+
   const resting =
     typical === undefined
       ? t("main.usage.historyLabel")
       : t("main.usage.historyTypical", { percent: typical });
+
   let picked = list.length - 1;
+
   /** Pick bar `i` (clamped), or none: outline the picked bar and put its line in the caption and
    *  the slider's value; with none, the caption rests on the label or the typical figure. */
   const pick = (i: number | null) => {
-    if (i !== null) picked = Math.max(0, Math.min(list.length - 1, i));
+    if (i !== null) {
+      picked = Math.max(0, Math.min(list.length - 1, i));
+    }
+
     els.forEach((el, n) => {
       el.style.boxShadow = i !== null && n === picked ? `0 0 0 1px ${T.text}` : "";
     });
@@ -106,12 +123,15 @@ export function historyStrip(label: string, list: readonly HistoryEnded[]): HTML
     bars.setAttribute("aria-valuetext", barText(entry));
     caption.textContent = i === null ? resting : barText(entry);
   };
+
   /** The bar under a pointer, by its share of the strip's width. */
   const at = (x: number): number => {
     const box = bars.getBoundingClientRect();
-    const used = els.length ? els[els.length - 1]!.getBoundingClientRect().right - box.left : 0;
+    const used = els.length ? els.at(-1)!.getBoundingClientRect().right - box.left : 0;
+
     return Math.floor(((x - box.left) / Math.max(1, used)) * list.length);
   };
+
   bars.addEventListener("pointermove", (ev) => ev.pointerType === "mouse" && pick(at(ev.clientX)));
   bars.addEventListener("pointerdown", (ev) => pick(at(ev.clientX)));
   bars.addEventListener("pointerleave", (ev) => ev.pointerType === "mouse" && pick(null));
@@ -124,13 +144,19 @@ export function historyStrip(label: string, list: readonly HistoryEnded[]): HTML
         : ev.key === "ArrowRight" || ev.key === "ArrowUp"
           ? 1
           : 0;
+
     const to =
       ev.key === "Home" ? 0 : ev.key === "End" ? list.length - 1 : move ? picked + move : undefined;
-    if (to === undefined) return;
+
+    if (to === undefined) {
+      return;
+    }
+
     ev.preventDefault();
     pick(to);
   });
   pick(null);
   wrap.append(bars, caption);
+
   return wrap;
 }

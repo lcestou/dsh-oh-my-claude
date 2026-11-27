@@ -15,10 +15,12 @@ import { Config } from "./config.js";
 
 // SAFETY: partial fake; these cases read the event hook and nothing else of the context
 const ctx = { on() {} } as unknown as PluginContext;
+
 /** A fresh adapter with its own state dir. */
 const adapterHere = () => {
   const a = new ClaudeCodeAdapter(ctx, Config({}));
   a.stateDir = tempDir("omc-routed-");
+
   return a;
 };
 
@@ -32,6 +34,7 @@ assert.equal(
   }),
   false,
 );
+
 assert.equal(
   countsForWorkspaceMemory({ model: "claude-fable-5-2", temporary: false, origin: undefined }),
   true,
@@ -43,6 +46,7 @@ assert.equal(
   const window = () => resolveModelInfo("claude-code", "claude-opus-5-5").context?.contextWindow;
   const before = window();
   const a = adapterHere();
+
   /** A live process that answers `get_context_usage` with a 123,456 window. */
   const procWith = (via: string | undefined) => {
     // SAFETY: partial fake of the process; the read uses these fields and the control listener
@@ -66,11 +70,14 @@ assert.equal(
             },
           });
         }, 0);
+
         return true;
       },
     };
+
     return proc;
   };
+
   a.processes.set("claude-code:routed", procWith("127.0.0.1:15721"));
   assert.equal((await a.contextUsage("routed")).ok, true);
   assert.equal(window(), before, "a routed read leaves Claude Opus's remembered window alone");
@@ -82,12 +89,14 @@ assert.equal(
 // A wait for Claude's limit to lift does not wake the session once the box talks to a router.
 {
   const a = adapterHere();
-  const woken: string[] = [];
+  const woken: Array<string> = [];
   a.sessionProvider = () => undefined;
   a.wake = async (sessionId: string) => {
     woken.push(sessionId);
+
     return true;
   };
+
   // SAFETY: the probe's reply shape, as far as `stillLimitedUntil` reads it
   /** A usage answer with no window at its cap. */
   const lifted = (async () => ({ ok: true, fetchedAt: 0, windows: [] })) as any;
@@ -133,4 +142,5 @@ assert.equal(
 }
 
 console.log("routed isolation ok");
+
 process.exit(0);

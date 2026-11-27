@@ -3,15 +3,8 @@
 // shadows `message-quotes` in the same cell instead, and dsh's admission still decides when it opens.
 import { useEffect, useRef, useState } from "react";
 import { t, useLocale } from "./i18n.js";
-import {
-  ROUTE,
-  T,
-  DOCK_ATTR,
-  inputStyle,
-  panelSurface,
-  useActiveClaude,
-  type ClientCtx,
-} from "./shared.js";
+import { ROUTE, T, DOCK_ATTR, inputStyle, panelSurface, useActiveClaude } from "./shared.js";
+import type { ClientCtx } from "./shared.js";
 import { askBody, chatSelection, QUOTE_MAX } from "./selection.js";
 import { useHintFlag } from "./hints.js";
 
@@ -48,6 +41,7 @@ export interface SelectionActionsProps {
 const keepSelection = (e: React.PointerEvent) => e.preventDefault();
 
 const SURFACE = "[data-text-interaction-surface]";
+
 /** dsh's gap between its popover and the passage. */
 const PASSAGE_GAP = 8;
 
@@ -64,42 +58,59 @@ interface PassageAnchor {
 const placementArea = (range: Range, surface: Element) => {
   const area = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
   const column = surface.parentElement?.getBoundingClientRect();
+
   if (column) {
     area.left = Math.max(area.left, column.left);
     area.right = Math.min(area.right, column.right);
   }
+
   const start = range.commonAncestorContainer;
+
   for (let el = start instanceof Element ? start : start.parentElement; el; el = el.parentElement) {
     const style = getComputedStyle(el);
     const box = el.getBoundingClientRect();
+
     if (/auto|scroll|hidden|clip/.test(style.overflowX)) {
       area.left = Math.max(area.left, box.left);
       area.right = Math.min(area.right, box.right);
     }
+
     if (/auto|scroll|hidden|clip/.test(style.overflowY)) {
       area.top = Math.max(area.top, box.top);
       area.bottom = Math.min(area.bottom, box.bottom);
     }
   }
+
   const composer = surface
     .closest("[data-conversation-scroll]")
     ?.querySelector("[data-composer-seat]")
     ?.getBoundingClientRect();
-  if (composer && composer.height > 0) area.bottom = Math.min(area.bottom, composer.top);
+
+  if (composer && composer.height > 0) {
+    area.bottom = Math.min(area.bottom, composer.top);
+  }
+
   return area;
 };
 
 /** Text with all whitespace dropped, to compare a range's text with dsh's projection of it. */
-const withoutSpace = (value: string) => value.replace(/\s+/g, "");
+const withoutSpace = (value: string) => value.replaceAll(/\s+/g, "");
 
 /** The anchor for a selection dsh has just placed its popover for: the first line in view, as
  *  dsh's `place()` picks it. Null when the range does not hold the passage dsh read; a range's text
  *  may carry what dsh's leaves out (a code block's label and Copy button) and lacks its line breaks. */
 const passageAnchor = (range: Range | null, surface: Element | null, text: string) => {
-  if (range === null || surface === null || range.collapsed) return null;
-  if (!withoutSpace(range.toString()).includes(withoutSpace(text))) return null;
+  if (range === null || surface === null || range.collapsed) {
+    return null;
+  }
+
+  if (!withoutSpace(range.toString()).includes(withoutSpace(text))) {
+    return null;
+  }
+
   const area = placementArea(range, surface);
   const lines = [...range.getClientRects()];
+
   const line = Math.max(
     0,
     lines.findIndex(
@@ -107,7 +118,9 @@ const passageAnchor = (range: Range | null, surface: Element | null, text: strin
         r.right > area.left && r.left < area.right && r.bottom > area.top && r.top < area.bottom,
     ),
   );
+
   const top = lines[line]?.top ?? range.getBoundingClientRect().top;
+
   return { range, line, above: surface.getBoundingClientRect().bottom <= top };
 };
 
@@ -123,23 +136,34 @@ function usePinnedPanel(
     const panel = panelRef.current;
     const surface = panel?.closest<HTMLElement>(SURFACE);
     const passage = anchor.current;
-    if (!open || !panel || !surface || !passage) return;
+
+    if (!open || !panel || !surface || !passage) {
+      return;
+    }
+
     let dy = 0;
+
     const align = () => {
       const lines = passage.range.getClientRects();
       const at = lines.item(Math.min(passage.line, lines.length - 1));
-      if (at === null || at.height === 0) return;
+
+      if (at === null || at.height === 0) {
+        return;
+      }
+
       const box = panel.getBoundingClientRect();
       const target = passage.above ? at.top - PASSAGE_GAP - box.height : at.bottom + PASSAGE_GAP;
       dy += target - box.top;
       panel.style.transform = `translate(0px, ${dy}px)`;
     };
+
     // The surface's own box stays where dsh puts it; it must not catch clicks meant for the chat.
     surface.style.pointerEvents = "none";
     const moved = new MutationObserver(align);
     moved.observe(surface, { attributes: true, attributeFilter: ["style"] });
     const resized = new ResizeObserver(align);
     resized.observe(panel);
+
     return () => {
       moved.disconnect();
       resized.disconnect();
@@ -157,6 +181,7 @@ function usePinnedPanel(
 export function SelectionActions(props: SelectionActionsProps) {
   useLocale();
   const { ctx, sessionId = "", readText, dismiss, clearSelection, inputActions } = props;
+
   // dsh's own Quote's condition (message-quotes' QuoteSelectionAction).
   const enabled =
     props.useSession?.(
@@ -165,6 +190,7 @@ export function SelectionActions(props: SelectionActionsProps) {
         (s.subagent === null ||
           (s.subagent.address.mode === "continuable" && s.subagent.parentAvailable === true)),
     ) ?? true;
+
   const claude = useActiveClaude(ctx, sessionId);
   const [off] = useHintFlag("selectionOff");
   const [passage, setPassage] = useState<string | null>(null);
@@ -178,6 +204,7 @@ export function SelectionActions(props: SelectionActionsProps) {
   const mounted = useRef(false);
   useEffect(() => {
     mounted.current = true;
+
     return () => {
       mounted.current = false;
     };
@@ -186,21 +213,27 @@ export function SelectionActions(props: SelectionActionsProps) {
   // On a touch screen the dock above the composer carries the actions; dsh's popover is closed.
   const touch = props.docked !== true && touchScreen();
   useEffect(() => {
-    if (!enabled || touch) dismiss?.();
+    if (!enabled || touch) {
+      dismiss?.();
+    }
   }, [enabled, touch, dismiss]);
   useEffect(() => {
-    if (passage !== null) fieldRef.current?.focus();
+    if (passage !== null) {
+      fieldRef.current?.focus();
+    }
   }, [passage]);
 
   const quoteLabel = props.t;
+
   if (
     !enabled ||
     touch ||
     readText === undefined ||
     dismiss === undefined ||
     quoteLabel === undefined
-  )
+  ) {
     return null;
+  }
 
   const close = () => {
     clearSelection?.();
@@ -209,14 +242,25 @@ export function SelectionActions(props: SelectionActionsProps) {
 
   const quote = () => {
     const text = readText();
-    if (text === null) return dismiss();
-    if (inputActions?.insertQuote?.(text) !== true) return;
+
+    if (text === null) {
+      return dismiss();
+    }
+
+    if (inputActions?.insertQuote?.(text) !== true) {
+      return;
+    }
+
     close();
   };
 
   const openAsk = (e: React.MouseEvent<HTMLButtonElement>) => {
     const text = readText();
-    if (text === null) return dismiss();
+
+    if (text === null) {
+      return dismiss();
+    }
+
     const selection = document.getSelection();
     const range = selection?.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
     // Read while the buttons stand where dsh put them, before the panel grows and dsh re-places it.
@@ -225,24 +269,39 @@ export function SelectionActions(props: SelectionActionsProps) {
   };
 
   const ask = async () => {
-    if (passage === null || asking) return;
+    if (passage === null || asking) {
+      return;
+    }
+
     setAsking(true);
     setNote("");
+
     try {
       const r = await fetch(`${ROUTE}/side-questions`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(askBody(sessionId, question, passage)),
       });
+
       // dsh's clearSelection and dismiss act on whatever selection and popover are current: once
       // this popover is gone (a click elsewhere), a late answer must leave the next one alone.
-      if (!mounted.current) return;
-      if (r.ok) return close();
+      if (!mounted.current) {
+        return;
+      }
+
+      if (r.ok) {
+        return close();
+      }
+
       setNote(t(r.status === 409 ? "main.selection.noProcess" : "main.selection.askFailed"));
     } catch {
-      if (mounted.current) setNote(t("main.selection.askFailed"));
+      if (mounted.current) {
+        setNote(t("main.selection.askFailed"));
+      }
     } finally {
-      if (mounted.current) setAsking(false);
+      if (mounted.current) {
+        setAsking(false);
+      }
     }
   };
 
@@ -252,9 +311,14 @@ export function SelectionActions(props: SelectionActionsProps) {
   const onFieldKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Escape" && e.nativeEvent.isComposing) {
       e.stopPropagation();
+
       return;
     }
-    if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+
+    if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) {
+      return;
+    }
+
     e.preventDefault();
     void ask();
   };
@@ -313,7 +377,7 @@ export function SelectionActions(props: SelectionActionsProps) {
           whiteSpace: "nowrap",
         }}
       >
-        {passage.replace(/\s+/g, " ").trim()}
+        {passage.replaceAll(/\s+/g, " ").trim()}
       </div>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
         <textarea
@@ -381,37 +445,59 @@ export function TouchSelectionDock({
   const dockRef = useRef<HTMLDivElement>(null);
   const pressedInside = useRef(false);
   useEffect(() => {
-    if (!touch) return;
+    if (!touch) {
+      return;
+    }
+
     const onDown = (e: PointerEvent) => {
       pressedInside.current =
         e.target instanceof Node && dockRef.current?.contains(e.target) === true;
     };
+
     // Read once the selection holds still for a moment: a phone extends a selection word by word
     // as the handles move, and the row appearing mid-drag would grow the composer stack and shift
     // the chat under the finger (the old bar's 2026-09-24 fix, for a triple-click).
     let settle: ReturnType<typeof setTimeout> | undefined;
+
     const read = () => {
       const text = chatSelection(document.getSelection(), document.body);
-      if (text !== null) return setPicked(text);
-      if (pressedInside.current) return;
+
+      if (text !== null) {
+        return setPicked(text);
+      }
+
+      if (pressedInside.current) {
+        return;
+      }
+
       // A question being typed survives a stray tap; anything else outside the chat, a sidebar or
       // header selection among them, drops the passage so Quote never inserts a stale one.
-      if (dockRef.current?.querySelector("textarea")?.value.trim()) return;
+      if (dockRef.current?.querySelector("textarea")?.value.trim()) {
+        return;
+      }
+
       setPicked(null);
     };
+
     const onChange = () => {
       clearTimeout(settle);
       settle = setTimeout(read, 250);
     };
+
     window.addEventListener("pointerdown", onDown, true);
     document.addEventListener("selectionchange", onChange);
+
     return () => {
       clearTimeout(settle);
       window.removeEventListener("pointerdown", onDown, true);
       document.removeEventListener("selectionchange", onChange);
     };
   }, [touch]);
-  if (!touch || picked === null || !sessionId) return null;
+
+  if (!touch || picked === null || !sessionId) {
+    return null;
+  }
+
   return (
     <div
       ref={dockRef}
@@ -451,9 +537,10 @@ export function mountSelectionActions(ctx: ClientCtx): void {
         },
         (props) => <SelectionActions {...props} ctx={ctx} />,
       );
-    } catch (e) {
+    } catch (error) {
       // A dsh that refuses the shadow keeps its own Quote; Ask is simply absent.
-      console.warn("[oh-my-claude] selection actions not registered:", e);
+      console.warn("[oh-my-claude] selection actions not registered:", error);
+
       return () => {};
     }
   });
@@ -473,6 +560,7 @@ export function mountSelectionActions(ctx: ClientCtx): void {
         />
       ),
     );
+
     return null;
   });
 }

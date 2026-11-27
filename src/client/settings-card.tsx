@@ -1,10 +1,7 @@
 // The switches and fields on the Settings "Oh My Claude" card from the browser's side, plus the two
 // dock components that read the same hints. The entry renders them inside the card it builds.
-import {
-  type RememberedModel,
-  blankSessionTarget,
-  loadSessionDefault,
-} from "./new-session-default.js";
+import { blankSessionTarget, loadSessionDefault } from "./new-session-default.js";
+import type { RememberedModel } from "./new-session-default.js";
 import { t, useLocale } from "./i18n.js";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -19,13 +16,13 @@ import {
   ACCENT,
   isClaudeSession,
   claudeProviderOf,
-  type ClientCtx,
   openSessionId,
   numberOr,
   guard,
   nested,
   DOCK_CARD,
 } from "./shared.js";
+import type { ClientCtx } from "./shared.js";
 import { themeOf } from "./theme.js";
 import { StarNudge } from "./update-pill.js";
 import { livingModelId } from "../model-ids.js";
@@ -35,9 +32,11 @@ import { COMPACT_AT, COMPACT_AT_CHOICES, compactThreshold } from "./nudge.js";
 import { BOXES_EVENT, SETTINGS_EVENT } from "./picker.js";
 import { LiveNote } from "./live-note.js";
 import { useViewRead } from "./view-read.js";
-import { CustomModelsEditor, type CustomModelEntry, putCustomModels } from "./custom-models.js";
+import { CustomModelsEditor, putCustomModels } from "./custom-models.js";
+import type { CustomModelEntry } from "./custom-models.js";
 import { SizeSelect } from "./model-size.js";
-import { type BoxRoute, RouteLine, routeNote } from "./route-line.js";
+import { RouteLine, routeNote } from "./route-line.js";
+import type { BoxRoute } from "./route-line.js";
 import { Switch } from "./switch.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
 import { RECAP_AWAY_MS, RECAP_AWAY_CHOICES, recapAwayIn } from "./notices.js";
@@ -45,13 +44,8 @@ import { SETTINGS_SCOPES, SCOPE_LABELS } from "./settings.js";
 // Type only, so nothing from the server half reaches the bundle: the row renders what the route
 // answered, and the route is the only thing that knows how to work the answer out.
 import type { ClaudeMdState } from "../switches.js";
-import {
-  type ChatFlowNode,
-  contextDrops,
-  maskedRows,
-  MASTER_KEY,
-  OFF_KEY,
-} from "../context-sources.js";
+import { contextDrops, maskedRows, MASTER_KEY, OFF_KEY } from "../context-sources.js";
+import type { ChatFlowNode } from "../context-sources.js";
 import { HINTS_EVENT, loadHints, useHintValue, writeHints, useHintFlag } from "./hints.js";
 import { BoxColoursList } from "./box-colour-swatch.js";
 
@@ -82,18 +76,32 @@ const appliedModel = new Set<string>();
 export function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useEffect(() => {
     const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
-    if (!entry || entry.blank === false || !entry.cwd) return;
+
+    if (!entry || entry.blank === false || !entry.cwd) {
+      return;
+    }
+
     const current = claudeProviderOf(ctx, sessionId);
     const picked = entry.projectionValues?.modelSelection?.next?.provider;
-    if (appliedModel.has(sessionId)) return;
+
+    if (appliedModel.has(sessionId)) {
+      return;
+    }
+
     appliedModel.add(sessionId);
     let live = true;
+
     const runApply = async () => {
       const hints = await loadHints();
-      if (!live) return;
+
+      if (!live) {
+        return;
+      }
+
       // The workspace's own memory first, the box default after it; blankSessionTarget holds the
       // order. Memory off reads as "nothing remembered", so the default then applies everywhere.
       const q = `cwd=${encodeURIComponent(entry.cwd ?? "")}`;
+
       const [saved, def] = await Promise.all([
         hints.workspaceModelOff === true
           ? Promise.resolve(undefined)
@@ -104,39 +112,59 @@ export function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ct
               ),
         loadSessionDefault(),
       ]);
-      if (!live) return;
+
+      if (!live) {
+        return;
+      }
+
       // Read again here, not only at mount: the reads above are async, and a click in the picker
       // during them is a pick this must not overwrite.
       const pickedNow =
         ctx.sessions.list.getSnapshot()?.byId[sessionId]?.projectionValues?.modelSelection?.next
           ?.provider ?? picked;
+
       const target = blankSessionTarget({ current, picked: pickedNow, saved, def });
-      if (!target) return;
+
+      if (!target) {
+        return;
+      }
+
       const dir = ctx.modelDirectories.directoryFor(sessionId);
       const now = dir.store.getSnapshot().current;
+
       // Strict on the effort too: a target with none means the model's default, so a blank that
       // came up on the same model at another effort is still switched.
       if (
         now?.provider === target.provider &&
         now.model === target.model &&
         now.reasoningEffort === target.reasoningEffort
-      )
+      ) {
         return;
-      if (!dir.select) return;
+      }
+
+      if (!dir.select) {
+        return;
+      }
+
       const done = await dir.select(target);
+
       // dsh answers a failed selection rather than throwing. An effort the model does not take is
       // the likely cause (a default set before a model lost a level), so the model alone is tried
       // once more and the blank still opens on it.
-      if (done && done.ok === false && target.reasoningEffort !== undefined)
+      if (done && !done.ok && target.reasoningEffort !== undefined) {
         await dir.select({ provider: target.provider, model: target.model });
+      }
     };
+
     // A session dsh has not bound yet throws from directoryFor (see claudeProviderOf); a route
     // that is not there answers an error. Neither is this component's problem to report.
     void runApply().catch(() => {});
+
     return () => {
       live = false;
     };
   }, [ctx, sessionId]);
+
   return null;
 }
 
@@ -153,27 +181,50 @@ export function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ct
 export function StaleModelRepair({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useEffect(() => {
     let dir: ReturnType<ClientCtx["modelDirectories"]["directoryFor"]>;
+
     try {
       dir = ctx.modelDirectories.directoryFor(sessionId);
     } catch {
       return; // unbound in this tab (see claudeProviderOf)
     }
+
     let settled = false;
+
     const repair = guard(() => {
-      if (settled) return;
-      const snap = dir.store.getSnapshot();
-      const cur = snap.current;
-      if (!cur?.provider.startsWith("claude-code")) return;
-      const offered = snap.groups?.find((g) => g.id === cur.provider)?.models.map((m) => m.id);
-      if (!offered || offered.length === 0) return; // the catalog has not loaded yet
-      if (offered.includes(cur.model)) {
-        settled = true;
+      if (settled) {
         return;
       }
-      if (ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) return;
+
+      const snap = dir.store.getSnapshot();
+      const cur = snap.current;
+
+      if (!cur?.provider.startsWith("claude-code")) {
+        return;
+      }
+
+      const offered = snap.groups?.find((g) => g.id === cur.provider)?.models.map((m) => m.id);
+
+      if (!offered || offered.length === 0) {
+        return;
+      } // the catalog has not loaded yet
+
+      if (offered.includes(cur.model)) {
+        settled = true;
+
+        return;
+      }
+
+      if (ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) {
+        return;
+      }
+
       settled = true;
       const living = livingModelId(cur.model, offered);
-      if (!living || !dir.select) return;
+
+      if (!living || !dir.select) {
+        return;
+      }
+
       const pick = dir.select;
       // Only on a box that talks to Anthropic. Behind a router the list is the router's: a model
       // missing from it is set aside, not renamed, and moving the session to its family's alias
@@ -181,33 +232,43 @@ export function StaleModelRepair({ sessionId, ctx }: { sessionId: string; ctx: C
       // cannot be told nothing is moved either. An older server sends no state and is repaired
       // as before; a failed read repairs nothing, and the next open asks again.
       void fetch(`${ROUTE}/models?all=1`)
-        .then((r) => readJson<{ models?: PickerBox[] }>(r))
+        .then((r) => readJson<{ models?: Array<PickerBox> }>(r))
         .then((b) => {
           const route = b.models?.find((box) => box.provider === cur.provider)?.route;
-          if (route !== undefined && route.state !== "direct") return;
+
+          if (route !== undefined && route.state !== "direct") {
+            return;
+          }
+
           // The read took a moment, and a turn may have started or the model been changed in
           // it. Either way this repair is off: left unsettled, the next store change (the turn
           // ending) runs it again from the top.
           const now = dir.store.getSnapshot().current;
           const moved = now?.provider !== cur.provider || now.model !== cur.model;
+
           if (moved || ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) {
             settled = false;
+
             return;
           }
+
           return pick({ provider: cur.provider, model: living });
         })
         .catch(() => {});
     });
+
     repair();
     // The directory store for the catalog arriving, the list store for the turn ending: a session
     // found mid-turn is repaired the moment it stops running.
     const offDir = dir.store.subscribe(repair);
     const offList = ctx.sessions.list.subscribe?.(repair);
+
     return () => {
       offDir();
       offList?.();
     };
   }, [ctx, sessionId]);
+
   return null;
 }
 
@@ -239,7 +300,9 @@ export function StarterCard({
     fetch(`${ROUTE}/starter?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<StarterReply>(r))
       .then((b) => {
-        if (fresh()) setStarter(b);
+        if (fresh()) {
+          setStarter(b);
+        }
       })
       .catch(() => {}); // no store yet: the card simply does not appear
   });
@@ -247,6 +310,7 @@ export function StarterCard({
   // The session on screen now, for a save that answers after the card moved to another one.
   const shownSession = useRef(sessionId);
   shownSession.current = sessionId;
+
   // The card says what the store did, not what the click did: a save that never reached the route
   // has to say so, or the opener is quietly gone by the next tab.
   const save = (text: string) => {
@@ -265,6 +329,7 @@ export function StarterCard({
           wrote();
           setStarter({ session: text, fallback: text });
         }
+
         setNote(r.ok ? t("main.starter.saved") : t("main.starter.saveFailed"));
       })
       .catch(() => {
@@ -277,9 +342,14 @@ export function StarterCard({
   // message. `!== false` rather than `=== true` so a session missing from the snapshot (the moment a
   // tab opens) still counts as blank.
   const blank = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.blank !== false;
-  if (!blank || starter === null) return null;
+
+  if (!blank || starter === null) {
+    return null;
+  }
+
   const opener = starter.session || starter.fallback;
   const busy = draft !== "" && draft !== opener; // they are writing something of their own
+
   const saveLabel =
     note !== "" ? note : busy ? t("main.starter.saveDraft") : t("main.starter.saved");
 
@@ -293,6 +363,7 @@ export function StarterCard({
     background: "transparent",
     flex: "none",
   };
+
   const clipped: CSSProperties = {
     minWidth: 0,
     overflow: "hidden",
@@ -385,6 +456,7 @@ export function StarterCard({
  *  instead of shoving them. Closed, a negative margin swallows the row gap the empty wrapper would
  *  still claim, and `visibility` drops it from the tab order, delayed on close so the slide is seen. */
 const SLIDE_MS = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : 200;
+
 /** Reveal a starter-row chip with a slide animation, collapsing its neighbour via a zero-width
  *  column and dropping it from the tab order when closed. */
 function Slide({ open, children }: { open: boolean; children: ReactNode }) {
@@ -408,6 +480,7 @@ function Slide({ open, children }: { open: boolean; children: ReactNode }) {
 /** One theme group's checkbox: checked means on; the flag is the group's off key. */
 function ThemeGroupBox({ flag, group, label }: { flag: string; group: string; label: string }) {
   const [off, setOff] = useHintFlag(flag);
+
   return (
     <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
       <input
@@ -428,6 +501,7 @@ export function LimitWarningsSwitch() {
   const [off, setOff] = useHintFlag("limitWarningsOff");
   const [ringOff, setRingOff] = useHintFlag("limitRingOff");
   const [noticeOff, setNoticeOff] = useHintFlag("limitNoticeOff");
+
   return (
     <>
       <div
@@ -494,7 +568,11 @@ export function LimitWarningsSwitch() {
  *  per-browser: someone who hid this line meant to hide it, not to hide it on one laptop. */
 export function StarLine() {
   const [off, setOff] = useHintFlag("starOff");
-  if (off) return null;
+
+  if (off) {
+    return null;
+  }
+
   return <StarNudge onDismiss={() => setOff(true)} />;
 }
 
@@ -506,8 +584,13 @@ export function ThemeSwitch() {
   const [off, setOff] = useHintFlag("themeOff");
   const [accent, setAccent] = useHintValue("themeAccent");
   const hints: Record<string, boolean | number> = {};
-  if (accent !== undefined) hints.themeAccent = accent;
+
+  if (accent !== undefined) {
+    hints.themeAccent = accent;
+  }
+
   const hex = themeOf(hints).accent;
+
   return (
     <>
       <div
@@ -578,7 +661,7 @@ export function ThemeSwitch() {
                 aria-label={t("main.settingsUi.accentColour")}
                 value={hex}
                 // `change`, not `input`: a drag through the picker must not post per frame.
-                onChange={(e) => setAccent(parseInt(e.target.value.slice(1), 16))}
+                onChange={(e) => setAccent(Number.parseInt(e.target.value.slice(1), 16))}
               />
               {accent !== undefined && (
                 <button
@@ -604,6 +687,7 @@ export function ThemeSwitch() {
 export function SelectionSwitch() {
   useLocale();
   const [off, setOff] = useHintFlag("selectionOff");
+
   return (
     <div
       data-omc-selection-switch=""
@@ -633,6 +717,7 @@ export function SelectionSwitch() {
 export function StarterSwitch() {
   useLocale();
   const [off, setOff] = useHintFlag("starterOff");
+
   return (
     <div
       data-omc-starter-switch=""
@@ -668,21 +753,31 @@ function useContextSizes(ctx: ClientCtx): Record<string, number> | null {
   const open = openSessionId(ctx);
   const cwd = (open ? snap?.byId[open]?.cwd : "") ?? "";
   useEffect(() => {
-    if (!cwd) return;
+    if (!cwd) {
+      return;
+    }
+
     let live = true;
+
     const run = async () => {
       const reply = await readJson<{ sizes?: Record<string, number> }>(
         await fetch(`${ROUTE}/context-sizes?cwd=${encodeURIComponent(cwd)}`),
       );
-      if (live) setSizes(reply.sizes ?? null);
+
+      if (live) {
+        setSizes(reply.sizes ?? null);
+      }
     };
+
     // A box whose server predates this route answers an error; the card is still usable without
     // the numbers, so it stays quiet rather than showing the owner a failure they cannot act on.
     void run().catch(() => {});
+
     return () => {
       live = false;
     };
   }, [cwd]);
+
   return sizes;
 }
 
@@ -701,25 +796,36 @@ function useClaudeMd(ctx: ClientCtx): ClaudeMdState | null {
   // `cwd` alone resolves a remote workspace but not which instance the session is bound to.
   const provider = id ? (claudeProviderOf(ctx, id) ?? "") : "";
   useEffect(() => {
-    if (!cwd) return;
+    if (!cwd) {
+      return;
+    }
+
     let live = true;
+
     const run = async () => {
       const onBox = provider ? `&provider=${encodeURIComponent(provider)}` : "";
+
       const reply = await readJson<ClaudeMdState>(
         await fetch(`${ROUTE}/claude-md?cwd=${encodeURIComponent(cwd)}${onBox}`),
       );
-      if (live) setState(reply);
+
+      if (live) {
+        setState(reply);
+      }
     };
+
     void run().catch(() => {});
     // The settings editor and the Claude updates card on the same page write the files this answer
     // is worked out from (`CLAUDE_CODE_DISABLE_CLAUDE_MDS` in `env`), so read again after either.
     const again = () => void run().catch(() => {});
     window.addEventListener(SETTINGS_EVENT, again);
+
     return () => {
       live = false;
       window.removeEventListener(SETTINGS_EVENT, again);
     };
   }, [cwd, provider]);
+
   return state;
 }
 
@@ -730,8 +836,13 @@ function useClaudeMd(ctx: ClientCtx): ClaudeMdState | null {
  *  have to guess which, and the name is greppable on a box this panel is not open on. */
 function claudeMdWhy(state: ClaudeMdState | null): string {
   const by = state?.disabledBy;
-  if (by === undefined) return t("main.settingsUi.claudeMdLoaded");
+
+  if (by === undefined) {
+    return t("main.settingsUi.claudeMdLoaded");
+  }
+
   const scope = SETTINGS_SCOPES.find((s) => s === by);
+
   return scope === undefined
     ? t("main.settingsUi.claudeMdOffEnv")
     : t("main.settingsUi.claudeMdOffScope", { scope: SCOPE_LABELS[scope] });
@@ -753,12 +864,18 @@ function ContextSize({
   files?: number;
 }) {
   useLocale();
-  if (chars === undefined) return null;
+
+  if (chars === undefined) {
+    return null;
+  }
+
   const shown = chars >= 1000 ? `${(chars / 1000).toFixed(1)}k` : String(chars);
+
   const howMany =
     files === undefined
       ? ""
       : t(files === 1 ? "main.settingsUi.filesOne" : "main.settingsUi.filesOther", { n: files });
+
   return (
     <span data-omc-context-size={source} style={{ color: T.faint, fontSize: 12 }}>
       {" "}
@@ -782,6 +899,7 @@ function ContextBox({
   chars: number | undefined;
 }) {
   const [off, setOff] = useHintFlag(flag);
+
   return (
     <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
       <input
@@ -847,6 +965,7 @@ export function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
   const off = !on;
   const sizes = useContextSizes(ctx);
   const claudeMd = useClaudeMd(ctx);
+
   // The two switchable blocks and nothing else. The runtime snapshot, the tools guidance and the
   // CLAUDE.md copy are all still sent (or already dropped) whatever this switch says, so counting
   // them here would promise a saving the switch cannot deliver.
@@ -854,6 +973,7 @@ export function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
     sizes && (sizes.instructions !== undefined || sizes.skills !== undefined)
       ? (sizes.instructions ?? 0) + (sizes.skills ?? 0)
       : undefined;
+
   return (
     <>
       <div
@@ -950,12 +1070,12 @@ export function ContextSwitch({ ctx }: { ctx: ClientCtx }) {
 /** The part of dsh's chat publication the row mask reads: the render order, and a keyed reader for
  *  the rows. dsh ships the full contract to its own packages only, so the shape is named here. */
 type ChatFlow = {
-  readonly order: readonly string[];
+  readonly order: ReadonlyArray<string>;
   readonly nodes: { get: (key: string) => ChatFlowNode | undefined };
 };
 
 /** Stable empty order, so a mount without the chat hook does not hand `useMemo` a new array. */
-const NO_ROWS: readonly string[] = [];
+const NO_ROWS: ReadonlyArray<string> = [];
 
 const ROW_MASK_STYLE_ID = "dsh-oh-my-claude-context-rows";
 
@@ -963,6 +1083,7 @@ const ROW_MASK_STYLE_ID = "dsh-oh-my-claude-context-rows";
  *  `systemPrompt: dsh`, or engine mode for the session's dsh mode. Dropped on `HINTS_EVENT`, since a
  *  mode ticked or cleared there moves its sessions in or out of engine mode. */
 const promptModes = new Map<string, Promise<boolean>>();
+
 /** Whether session `sessionId` on mount `provider` sends dsh's system prompt to Claude; false until
  *  the answer lands, and false on a failed read, which keeps the row folded as it always was.
  *  Asked only once the session has rows (`started`): a blank session has no mode on the server
@@ -983,13 +1104,19 @@ function useSystemPromptSent(
       promptModes.clear();
       setReads((n) => n + 1);
     };
+
     window.addEventListener(HINTS_EVENT, changed);
+
     return () => window.removeEventListener(HINTS_EVENT, changed);
   }, []);
   useEffect(() => {
-    if (provider === undefined || sessionId === undefined || !started) return;
+    if (provider === undefined || sessionId === undefined || !started) {
+      return;
+    }
+
     let live = true;
     let read = promptModes.get(key);
+
     if (read === undefined) {
       const q = `provider=${encodeURIComponent(provider)}&session=${encodeURIComponent(sessionId)}`;
       read = fetch(`${ROUTE}/system-prompt?${q}`)
@@ -997,15 +1124,19 @@ function useSystemPromptSent(
         .then((r) => r.mode === "dsh")
         .catch(() => {
           promptModes.delete(key);
+
           return false;
         });
       promptModes.set(key, read);
     }
+
     void read.then((value) => live && setSent({ key, value }));
+
     return () => {
       live = false;
     };
   }, [provider, sessionId, key, started, reads]);
+
   return sent?.key === key && sent.value;
 }
 
@@ -1045,35 +1176,51 @@ export function ContextRowMask({
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
   const haveNodes = nodes !== undefined;
+
   const masked = useMemo(() => {
     const current = nodesRef.current;
-    if (!mine || current === undefined) return [];
+
+    if (!mine || current === undefined) {
+      return [];
+    }
+
     const drops = contextDrops({
       [MASTER_KEY]: on,
       [OFF_KEY.instructions]: instructionsOff,
       [OFF_KEY.skills]: skillsOff,
     });
+
     return maskedRows(order, (key) => current.get(key), drops, promptSent);
   }, [mine, order, haveNodes, on, instructionsOff, skillsOff, promptSent]);
+
   useEffect(() => {
     const existing = document.getElementById(ROW_MASK_STYLE_ID);
     const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
     el.id = ROW_MASK_STYLE_ID;
+
     // A key is dsh's to shape, so it is escaped for the attribute string rather than trusted.
     const css =
       masked.length === 0
         ? ""
         : `${masked
-            .map((key) => `[data-chat-flow-key="${key.replace(/["\\]/g, "\\$&")}"]`)
+            .map((key) => `[data-chat-flow-key="${key.replaceAll(/["\\]/g, String.raw`\$&`)}"]`)
             .join(",")}{display:none}`;
-    if (el.textContent !== css) el.textContent = css;
-    if (!existing) document.head.appendChild(el);
+
+    if (el.textContent !== css) {
+      el.textContent = css;
+    }
+
+    if (!existing) {
+      document.head.append(el);
+    }
+
     // Cleared rather than removed on unmount: leaving the rules behind would hide rows in whatever
     // session the tab moves to next, which may be another provider's.
     return () => {
       el.textContent = "";
     };
   }, [masked]);
+
   return null;
 }
 
@@ -1082,6 +1229,7 @@ export function ContextRowMask({
 export function UpdateNoticeSwitch() {
   useLocale();
   const [off, setOff] = useHintFlag("updateCheckOff");
+
   return (
     <div
       data-omc-update-switch=""
@@ -1117,6 +1265,7 @@ const NESTED: CSSProperties = { ...nested, marginBottom: 12, fontSize: 13 };
 export function ClaudeUpdateSwitch() {
   useLocale();
   const [off, setOff] = useHintFlag("claudeUpdateOff");
+
   return (
     <>
       <div
@@ -1165,6 +1314,7 @@ export function ProxyFirstPartySwitch() {
   const [on] = useHintFlag("proxyFirstParty");
   const [off] = useHintFlag("proxyFirstPartyOff");
   const mode = on ? "on" : off ? "off" : "auto";
+
   return (
     <>
       <div
@@ -1226,6 +1376,7 @@ export function ProxyFirstPartySwitch() {
 export function WorkspaceModelSwitch() {
   useLocale();
   const [off, setOff] = useHintFlag("workspaceModelOff");
+
   return (
     <div
       data-omc-workspace-model-switch=""
@@ -1257,6 +1408,7 @@ export function WorkspaceModelSwitch() {
 export function DockStatusSwitch() {
   useLocale();
   const [off, setOff] = useHintFlag("dockStatusOff");
+
   return (
     <div
       data-omc-dock-status-switch=""
@@ -1292,6 +1444,7 @@ export function ToolRowsSwitch() {
   useLocale();
   const [info, setInfo] = useState<ToolModeInfo | null>(null);
   const [err, setErr] = useState("");
+
   // Nothing pushes the tool mode, so it is read again when the tab comes back into view: a flip
   // from another tab or device shows then.
   const wrote = useViewRead("tool-mode", (fresh) => {
@@ -1300,9 +1453,12 @@ export function ToolRowsSwitch() {
       .then((b) => fresh() && setInfo(b))
       .catch(() => fresh() && setErr(t("tune.errToolMode")));
   });
+
   const locked = info?.rows.ok === false;
+
   const pick = async (mode: ToolMode) => {
     setErr("");
+
     try {
       const answer = await readJson<ToolModeInfo>(
         await fetch(`${ROUTE}/tool-mode`, {
@@ -1311,12 +1467,14 @@ export function ToolRowsSwitch() {
           body: JSON.stringify({ mode }),
         }),
       );
+
       wrote();
       setInfo(answer);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
     }
   };
+
   return (
     <div
       data-omc-tool-rows-switch=""
@@ -1355,6 +1513,7 @@ export function ToolRowsSwitch() {
 export function CostSwitch() {
   useLocale();
   const [off, setOff] = useHintFlag("costOff");
+
   return (
     <div
       data-omc-cost-switch=""
@@ -1383,6 +1542,7 @@ export function CostSwitch() {
 export function SuggestionSwitch() {
   useLocale();
   const [off, setOff] = useHintFlag("promptSuggestionsOff");
+
   return (
     <div
       data-omc-suggestion-switch=""
@@ -1410,6 +1570,7 @@ export function SuggestionSwitch() {
 export function RecallSwitch() {
   useLocale();
   const [off, setOff] = useHintFlag("recallOff");
+
   return (
     <div
       data-omc-recall-switch=""
@@ -1443,6 +1604,7 @@ type PickerModel = {
   window?: number;
   routers?: string;
 };
+
 /** `custom` and `route` are absent from a server older than this client: the client hot-reloads,
  *  the server waits for a restart. */
 type PickerBox = {
@@ -1450,8 +1612,8 @@ type PickerBox = {
   host: string | null;
   /** An account's name; null for this box's default login and for an SSH box. */
   name?: string | null;
-  models: PickerModel[];
-  custom?: CustomModelEntry[];
+  models: Array<PickerModel>;
+  custom?: Array<CustomModelEntry>;
   route?: BoxRoute;
 };
 
@@ -1490,27 +1652,31 @@ function ModelRow({
   const [off, setOff] = useHintFlag(key);
   const hidden = model.locked || off;
   useEffect(() => onState(key, hidden), [key, hidden, onState]);
+
   // Read for every row, used only on a router's: hooks cannot be conditional, and a key no row
   // writes costs one shared read of the hints store.
   const [routerSize, setRouterSize] = useHintValue(
     `routerWindow:${box.provider}:${model.routers ?? ""}`,
   );
+
   const [error, setError] = useState("");
   const saved = box.custom ?? [];
   const entry = saved.find((m) => m.model === model.id);
+
   /** Store the box's added models as `next`, then re-read the block; a refusal shows on the row. */
-  const store = (next: CustomModelEntry[]) => {
+  const store = (next: Array<CustomModelEntry>) => {
     onSaving(true);
     setError("");
     // Released by the block once it has re-read (`ModelsBlock`), not here: until then every row
     // still holds the list from before this save.
     void putCustomModels(box.provider, next)
       .then(onSaved)
-      .catch((e: Error) => {
-        setError(e.message);
+      .catch((error_: Error) => {
+        setError(error_.message);
         onSaving(false);
       });
   };
+
   const size =
     model.routers !== undefined ? (
       <SizeSelect
@@ -1530,6 +1696,7 @@ function ModelRow({
         }}
       />
     ) : null;
+
   return (
     <div
       data-omc-model-row={model.id}
@@ -1586,7 +1753,7 @@ const modelsSummary = (all: number, hidden: number, out: number) =>
  *  model keeps running. */
 export function ModelsBlock() {
   useLocale();
-  const [boxes, setBoxes] = useState<PickerBox[] | undefined>();
+  const [boxes, setBoxes] = useState<Array<PickerBox> | undefined>();
   const [error, setError] = useState("");
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => new Set());
   const [reads, setReads] = useState(0);
@@ -1594,45 +1761,66 @@ export function ModelsBlock() {
   // The box whose added models are being saved, by provider. Each save sends the box's whole
   // list, so its rows and its form wait for one another: see `ModelRow`.
   const [saving, setSaving] = useState<string | undefined>();
+
   const onState = useCallback((key: string, hidden: boolean) => {
     setHiddenKeys((prev) => {
-      if (prev.has(key) === hidden) return prev;
+      if (prev.has(key) === hidden) {
+        return prev;
+      }
+
       const next = new Set(prev);
-      if (hidden) next.add(key);
-      else next.delete(key);
+
+      if (hidden) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
+
       return next;
     });
   }, []);
+
   useEffect(() => {
     let live = true;
+
     const load = () =>
       fetch(`${ROUTE}/models?all=1`)
-        .then((r) => readJson<{ models?: PickerBox[] }>(r))
+        .then((r) => readJson<{ models?: Array<PickerBox> }>(r))
         .then((b) => {
-          if (!live) return;
+          if (!live) {
+            return;
+          }
+
           const next = b.models ?? [];
+
           // Rows report their state as they mount, and a row that stays mounted does not report
           // again, so only the keys of rows that are gone (a removed box, a model that left the
           // lineup) are dropped from the count; the rest keep what they said.
           const alive = new Set(
             next.flatMap((box) => box.models.map((m) => `hideModel:${box.provider}:${m.id}`)),
           );
+
           setHiddenKeys((prev) => new Set([...prev].filter((k) => alive.has(k))));
           setBoxes(next);
           // The rows now hold the list a save left behind, so the next save may go.
           setSaving(undefined);
         })
-        .catch((e: Error) => {
-          if (!live) return;
-          setError(e.message);
+        .catch((error_: Error) => {
+          if (!live) {
+            return;
+          }
+
+          setError(error_.message);
           setSaving(undefined);
         });
+
     void load();
     // A box added or removed in the card above changes the groups here; the card announces it.
     window.addEventListener(BOXES_EVENT, load);
     // A model added or removed in another tab arrives as a hints event (the route publishes one);
     // a hide switch flipped anywhere does too, and costs this block one re-read.
     window.addEventListener(HINTS_EVENT, load);
+
     return () => {
       live = false;
       window.removeEventListener(BOXES_EVENT, load);
@@ -1641,10 +1829,12 @@ export function ModelsBlock() {
     // `reads` is the block's own save: the form below bumps it after the server took a change.
   }, [reads]);
   const total = boxes?.reduce((n, b) => n + b.models.length, 0) ?? 0;
+
   /** A box's rows the picker leaves out for the route alone: not counting one switched off as
    *  well, which the "hidden" figure already has. */
   const waitingIn = (box: PickerBox) =>
     box.models.filter((m) => m.off && !hiddenKeys.has(`hideModel:${box.provider}:${m.id}`)).length;
+
   const waiting = boxes?.reduce((n, b) => n + waitingIn(b), 0) ?? 0;
 
   return (
@@ -1669,6 +1859,7 @@ export function ModelsBlock() {
           (boxes ?? []).map((box) => {
             const prefix = `hideModel:${box.provider}:`;
             const hiddenHere = [...hiddenKeys].filter((k) => k.startsWith(prefix)).length;
+
             const rows = (
               <fieldset style={{ display: "grid", gap: 8, border: 0, margin: 0, padding: 0 }}>
                 <legend
@@ -1695,6 +1886,7 @@ export function ModelsBlock() {
                 ))}
               </fieldset>
             );
+
             // Counted from the server's rows, not the live switches: whether the route sets a row
             // aside is the server's call, and the line explains the rows the reader can see.
             const line = (
@@ -1704,6 +1896,7 @@ export function ModelsBlock() {
                 waiting={box.models.filter((m) => m.off).length}
               />
             );
+
             const added = (
               <CustomModelsEditor
                 provider={box.provider}
@@ -1713,6 +1906,7 @@ export function ModelsBlock() {
                 onSaving={(on) => setSaving(on ? box.provider : undefined)}
               />
             );
+
             // One box: its rows sit right under the description, the outer fold is enough. More
             // than one: each box is its own fold, shut by default, so opening one box's list keeps
             // the others at one line each.
@@ -1755,6 +1949,7 @@ export function ModelsBlock() {
 export function ClaudeSkillsSwitch() {
   useLocale();
   const [off, setOff] = useHintFlag("claudeSkillsAnywhereOff");
+
   return (
     <div
       data-omc-claude-skills-switch=""
@@ -1789,6 +1984,7 @@ export function CompactNudgeSwitch() {
   const [off, setOff] = useHintFlag("compactNudgeOff");
   const [stored, setStored] = useHintValue("compactNudgeAt");
   const at = compactThreshold(stored);
+
   return (
     <>
       <div
@@ -1860,6 +2056,7 @@ export function ReturnRecapSwitch() {
   const [on, setOn] = useHintFlag("recapOn");
   const [stored, setStored] = useHintValue("recapAwayMs");
   const away = recapAwayIn(stored);
+
   return (
     <>
       <div
@@ -1919,12 +2116,14 @@ export function ReturnRecapSwitch() {
 /** Minutes or hours, with the default named so picking it back is one choice rather than a button. */
 const awayLabel = (ms: number): string => {
   const minutes = ms / 60_000;
+
   const text =
     minutes >= 60
       ? t("main.settingsUi.hour", { n: minutes / 60 })
       : t(minutes === 1 ? "main.settingsUi.minuteOne" : "main.settingsUi.minuteOther", {
           n: minutes,
         });
+
   return ms === RECAP_AWAY_MS ? t("main.settingsUi.defaultSuffix", { text }) : text;
 };
 
@@ -1936,16 +2135,25 @@ export function SpendGuardField() {
   useEffect(() => {
     setDraft(numberOr(stored) === undefined ? "" : String(stored));
   }, [stored]);
+
   const save = () => {
     const v = draft.trim();
+
     if (v === "") {
       setStored(null);
+
       return;
     }
+
     const n = Number(v);
-    if (Number.isFinite(n) && n >= 0) setStored(n);
-    else setDraft(numberOr(stored) === undefined ? "" : String(stored));
+
+    if (Number.isFinite(n) && n >= 0) {
+      setStored(n);
+    } else {
+      setDraft(numberOr(stored) === undefined ? "" : String(stored));
+    }
   };
+
   return (
     <div
       data-omc-spend-field=""
@@ -1983,7 +2191,9 @@ export function SpendGuardField() {
           onChange={(e) => setDraft(e.target.value)}
           onBlur={save}
           onKeyDown={(e) => {
-            if (e.key === "Enter") save();
+            if (e.key === "Enter") {
+              save();
+            }
           }}
         />
       </label>
@@ -1997,6 +2207,7 @@ export function TerminalSyncSwitch() {
   useLocale();
   const [on, setOn] = useState<boolean | null>(null);
   const [err, setErr] = useState("");
+
   // Nothing pushes terminal sync, so it is read again when the tab comes back into view: a flip
   // from another tab or device shows then.
   const wrote = useViewRead("terminal-sync", (fresh) => {
@@ -2005,8 +2216,10 @@ export function TerminalSyncSwitch() {
       .then((b) => fresh() && setOn(b.enabled))
       .catch(() => fresh() && setErr(t("main.settingsUi.terminalReadErr")));
   });
+
   const toggle = async (next: boolean) => {
     setErr("");
+
     try {
       const b = await readJson<{ enabled: boolean }>(
         await fetch(`${ROUTE}/terminal-sync`, {
@@ -2015,12 +2228,14 @@ export function TerminalSyncSwitch() {
           body: JSON.stringify({ enabled: next }),
         }),
       );
+
       wrote();
       setOn(b.enabled);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
     }
   };
+
   return (
     <div
       data-omc-terminal-sync=""

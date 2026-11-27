@@ -10,7 +10,9 @@ const [token, out = "/tmp/pw/spend-line"] = process.argv.slice(2);
 const b = await launch();
 const ctx = await b.newContext({ viewport: { width: 1400, height: 900 }, colorScheme: "dark" });
 const p = await ctx.newPage();
+
 await p.goto(dshUrl(token), { waitUntil: "load" });
+
 await p.waitForTimeout(3000);
 
 /** Read or write the plugin's hints from inside the page, which carries dsh's login. */
@@ -26,6 +28,7 @@ const hints = (body?: Record<string, number | boolean | null>): Promise<Record<s
           }
         : undefined,
     );
+
     return r.json();
   }, body);
 
@@ -33,34 +36,55 @@ const hints = (body?: Record<string, number | boolean | null>): Promise<Record<s
 const pill = (): Promise<{ text: string; over: boolean; colour: string } | undefined> =>
   p.evaluate(() => {
     const el = document.querySelector<HTMLElement>("[data-omc-cost-pill]");
-    if (!el) return undefined;
+
+    if (!el) {
+      return undefined;
+    }
+
     return {
-      text: el.innerText.replace(/\s+/g, " ").trim(),
+      text: el.innerText.replaceAll(/\s+/g, " ").trim(),
       over: el.hasAttribute("data-omc-cost-over"),
       colour: getComputedStyle(el).color,
     };
   });
 
 const was = (await hints()).spendWarnUsd;
+
 console.log("line before the check:", was ?? "off");
+
 let failed = 0;
+
 try {
   const wsName = process.env.PW_WORKSPACE ?? "oh-my-claude";
+
   const ws = p
     .locator('[role="treeitem"]')
     .filter({ hasText: new RegExp(`^${wsName}$`) })
     .first();
-  if (await ws.count()) await ws.click({ force: true });
+
+  if (await ws.count()) {
+    await ws.click({ force: true });
+  }
+
   await p.waitForTimeout(1200);
   let found = false;
+
   for (let i = 1; i < 10 && !found; i++) {
     const row = p.locator('[role="treeitem"]').nth(i);
-    if (!(await row.count())) break;
+
+    if (!(await row.count())) {
+      break;
+    }
+
     await row.click({ force: true });
     await p.waitForTimeout(3000);
     found = (await pill()) !== undefined;
   }
-  if (!found) throw new Error("no session with a cost pill among the first rows");
+
+  if (!found) {
+    throw new Error("no session with a cost pill among the first rows");
+  }
+
   await hints({ spendWarnUsd: false });
   await p.waitForTimeout(1500);
   const off = await pill();
@@ -69,7 +93,11 @@ try {
   const on = await pill();
   await p.screenshot({ path: `${out}.png` });
   const ok = off?.over === false && on?.over === true && on.colour !== off.colour;
-  if (!ok) failed++;
+
+  if (!ok) {
+    failed++;
+  }
+
   console.log(`${ok ? "PASS" : "FAIL"}  line off: ${JSON.stringify(off)}`);
   console.log(`${ok ? "PASS" : "FAIL"}  line at $0.01: ${JSON.stringify(on)}`);
 } finally {
@@ -77,4 +105,5 @@ try {
   console.log("line after the check:", (await hints()).spendWarnUsd ?? "off");
   await b.close();
 }
+
 process.exit(failed);

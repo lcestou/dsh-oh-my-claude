@@ -26,7 +26,7 @@ import { tempDir } from "./test-tmp.js";
 
 // The managed directory follows this PC's OS, and an SSH box is read as Linux whatever this PC is.
 {
-  assert.equal(managedDir({}, "win32"), "C:\\Program Files\\ClaudeCode");
+  assert.equal(managedDir({}, "win32"), String.raw`C:\Program Files\ClaudeCode`);
   assert.equal(managedDir({}, "darwin"), "/Library/Application Support/ClaudeCode");
   assert.equal(managedDir({}, "linux"), "/etc/claude-code");
   assert.equal(managedDir({ sshHost: "box" }, "win32"), "/etc/claude-code");
@@ -37,7 +37,11 @@ import { tempDir } from "./test-tmp.js";
   assert.deepEqual(importsIn("see @./notes.md and @~/global.md"), ["./notes.md", "~/global.md"]);
   assert.deepEqual(importsIn("@/etc/claude-code/CLAUDE.md"), ["/etc/claude-code/CLAUDE.md"]);
   assert.deepEqual(importsIn("@docs/queue.md"), ["docs/queue.md"], "a bare relative path counts");
-  assert.deepEqual(importsIn("@a\\ b.md"), ["a b.md"], "an escaped space stays in the path");
+  assert.deepEqual(
+    importsIn(String.raw`@a\ b.md`),
+    ["a b.md"],
+    "an escaped space stays in the path",
+  );
   assert.deepEqual(importsIn("@notes.md#section"), ["notes.md"], "a fragment is not part of it");
 
   assert.deepEqual(importsIn("mail me@example.com"), [], "an address is not an import");
@@ -97,19 +101,16 @@ import { tempDir } from "./test-tmp.js";
   // - join(dir, "user-ref.md") with kind Project, importedBy = join(projectDir, "CLAUDE.md")
 
   // Filter to just our test files (no /etc/claude-code, which won't exist).
-  const paths = sorted.map((f) => f.path);
-  assert(paths.includes(join(userDot, "CLAUDE.md")), "User CLAUDE.md should be present");
-  assert(paths.includes(join(projectDir, "CLAUDE.md")), "Project root CLAUDE.md should be present");
+  const paths = new Set(sorted.map((f) => f.path));
+  assert(paths.has(join(userDot, "CLAUDE.md")), "User CLAUDE.md should be present");
+  assert(paths.has(join(projectDir, "CLAUDE.md")), "Project root CLAUDE.md should be present");
+  assert(paths.has(join(projectDot, "CLAUDE.md")), "Project .claude/CLAUDE.md should be present");
+  assert(paths.has(join(projectRules, "rule1.md")), "Project rule1.md should be present");
   assert(
-    paths.includes(join(projectDot, "CLAUDE.md")),
-    "Project .claude/CLAUDE.md should be present",
-  );
-  assert(paths.includes(join(projectRules, "rule1.md")), "Project rule1.md should be present");
-  assert(
-    paths.includes(join(projectDir, "CLAUDE.local.md")),
+    paths.has(join(projectDir, "CLAUDE.local.md")),
     "Project CLAUDE.local.md should be present",
   );
-  assert(paths.includes(join(dir, "user-ref.md")), "Imported user-ref.md should be present");
+  assert(paths.has(join(dir, "user-ref.md")), "Imported user-ref.md should be present");
 
   // Check kinds.
   const byPath = new Map(sorted.map((f) => [f.path, f]));
@@ -197,16 +198,16 @@ import { tempDir } from "./test-tmp.js";
   await writeFile(join(projectDir, "CLAUDE.md"), `# Project\n@../f0.md`);
 
   const instructions = await listInstructions(projectDir, userDot);
-  const paths = instructions.map((f) => f.path);
+  const paths = new Set(instructions.map((f) => f.path));
 
   // f0 through f4, depths 1 through 5.
   for (let i = 0; i <= 4; i++) {
-    assert(paths.includes(join(dir, `f${i}.md`)), `f${i}.md should be present (depth ${i + 1})`);
+    assert(paths.has(join(dir, `f${i}.md`)), `f${i}.md should be present (depth ${i + 1})`);
   }
 
   // f5 and f6 should NOT be present (f5 is depth 6, f6 is unreachable).
-  assert(!paths.includes(join(dir, "f5.md")), "f5.md is past the depth limit");
-  assert(!paths.includes(join(dir, "f6.md")), "f6.md is behind f5.md and unreachable");
+  assert(!paths.has(join(dir, "f5.md")), "f5.md is past the depth limit");
+  assert(!paths.has(join(dir, "f6.md")), "f6.md is behind f5.md and unreachable");
 }
 
 {

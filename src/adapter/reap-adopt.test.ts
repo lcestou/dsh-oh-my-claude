@@ -26,6 +26,7 @@ const WEB = "/home/u/.dsh/profiles/web";
 
 {
   const adapter = new ClaudeCodeAdapter(ctx, Config({ maxProcesses: 2, processIdleMs: 10_000 }));
+
   const fake = (lastUsed: number, busy = false) => {
     const p = {
       alive: true,
@@ -37,15 +38,19 @@ const WEB = "/home/u/.dsh/profiles/web";
         p.killed++;
       },
     };
+
     return p;
   };
+
   const stale = fake(Date.now() - 20_000);
   const busy = fake(Date.now() - 20_000, true);
   const tasked = fake(Date.now() - 20_000);
   const fresh = [fake(Date.now()), fake(Date.now()), fake(Date.now())];
+
   const put = (id: string, p: ReturnType<typeof fake>) =>
     // SAFETY: partial fake; reapIdle reads alive, busy, relays, parked and lastUsed, and calls kill
     adapter.processes.set(registryKey("claude-code", id), p as unknown as ClaudeProcess);
+
   put("stale", stale);
   put("busy", busy);
   put("tasked", tasked);
@@ -68,6 +73,7 @@ const WEB = "/home/u/.dsh/profiles/web";
 {
   const adapter = new ClaudeCodeAdapter(ctx, Config({}));
   adapter.keeperOwner = WEB;
+
   // A live keeper record (this test's own pid stands in for the keeper and for its Claude, so both
   // read as alive) in a directory of its own.
   const keeper = (name: string, sessionId: string, owner?: string) => {
@@ -96,8 +102,10 @@ const WEB = "/home/u/.dsh/profiles/web";
         procSpec: { cwd: "/tmp", effort: null, mode: "default", sessionId, temporary: false },
       }),
     );
+
     return dir;
   };
+
   const foreign = keeper("0123456789abcdef-a", "s-foreign", "/home/u/.dsh/profiles/desktop");
   const old = keeper("fedcba9876543210-b", "s-old");
   // s-running had a turn going when the last dsh went down; its keeper only turns up for a later pass.
@@ -132,8 +140,10 @@ const WEB = "/home/u/.dsh/profiles/web";
   const drained: Array<[string, string | undefined, boolean | undefined]> = [];
   adapter.drainAdopted = async (_proc, id, _every, _tries, text, ready) => {
     drained.push([id, text, ready?.()]);
+
     return false;
   };
+
   await adapter.adoptKeepers();
   assert.ok(adapter.processes.has(registryKey("claude-code", "s-stopped")), "still attached");
   assert.deepEqual(
@@ -158,8 +168,10 @@ const WEB = "/home/u/.dsh/profiles/web";
   let woken = 0;
   adapter.wake = async () => {
     woken++;
+
     return true;
   };
+
   await adapter.resumeInterrupted(busyPath);
   assert.equal(woken, 0, "the other dsh's session is not nudged from here");
   assert.deepEqual(await takeInterrupted(busyPath), ["s-foreign"], "and stays listed for it");
@@ -179,14 +191,17 @@ const WEB = "/home/u/.dsh/profiles/web";
   // A process outlives a server hot reload; the new instance's control() must take its replies.
   const adapter = new ClaudeCodeAdapter(ctx, Config({}));
   const stale = () => false;
-  const written: string[] = [];
+  const written: Array<string> = [];
+
   const fake = {
     controlListener: stale,
     write: (line: string) => {
       written.push(line);
+
       return true;
     },
   };
+
   // SAFETY: partial fake; control() sets controlListener and calls write
   void adapter.control(fake as unknown as ClaudeProcess, { subtype: "get_settings" }, 10);
   assert.notEqual(
@@ -196,5 +211,7 @@ const WEB = "/home/u/.dsh/profiles/web";
   );
   assert.equal(written.length, 1);
 }
+
 console.log("reap-adopt ok");
+
 process.exit(0);

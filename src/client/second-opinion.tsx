@@ -16,10 +16,12 @@ import {
   rowBtn,
   select,
 } from "./shared.js";
-import { subscribe, type OpinionCardData, type OpinionSettingData } from "./events.js";
+import { subscribe } from "./events.js";
+import type { OpinionCardData, OpinionSettingData } from "./events.js";
 import { HEADER_TOGGLE, iconBtn } from "./cards.js";
 import { Chevron } from "./boxes.js";
-import { secondOpinionSteer, type OpinionFinding } from "../prompts.js";
+import { secondOpinionSteer } from "../prompts.js";
+import type { OpinionFinding } from "../prompts.js";
 
 /** The composer actions dsh hands a `conversation.input.dock` entry; only these two are used. */
 type Composer = {
@@ -70,10 +72,14 @@ export function SecondOpinionCard({
     setFailed(false);
   }, [cardAt]);
   useEffect(() => {
-    if (!running) return;
+    if (!running) {
+      return;
+    }
+
     // A local review takes minutes; the elapsed time redraws every second so the card is not
     // mistaken for hung. Outside the live region, so the ticks are not announced.
     const timer = setInterval(() => setTick((n) => n + 1), 1000);
+
     return () => clearInterval(timer);
   }, [running]);
   // dsh hands every composer slot `useInput`; without it the draft reads empty and a send fills
@@ -88,48 +94,73 @@ export function SecondOpinionCard({
       .then((r) => readJson<OpinionCardData>(r))
       .then((d) => live && setCard(d.card))
       .catch(() => {});
+
     const off = subscribe("second-opinion", (session, d) => {
-      if (live && session === sessionId) setCard(d.card);
+      if (live && session === sessionId) {
+        setCard(d.card);
+      }
     });
+
     return () => {
       live = false;
       off();
     };
   }, [sessionId]);
-  if (card === null) return null;
+
+  if (card === null) {
+    return null;
+  }
+
   const files = card.files.length;
+
   /** Adds the findings at `indexes` below the composer's draft (never over it) and marks them sent;
    *  ones already sent are skipped, and nothing is sent to Claude. */
-  const send = (indexes: readonly number[]) => {
-    if (!inputActions || card.state !== "done") return;
+  const send = (indexes: ReadonlyArray<number>) => {
+    if (!inputActions || card.state !== "done") {
+      return;
+    }
+
     const fresh = indexes.filter((i) => !sent.has(`${card.at}:${i}`));
     const findings = fresh.flatMap((i) => card.findings[i] ?? []);
-    if (findings.length === 0) return;
+
+    if (findings.length === 0) {
+      return;
+    }
+
     const text = secondOpinionSteer(card.model, findings);
     inputActions.setDraft(draft.trim() === "" ? text : `${draft.trimEnd()}\n\n${text}`);
     setSent(new Set([...sent, ...fresh.map((i) => `${card.at}:${i}`)]));
   };
+
   /** Posts Run, Cancel or Close; a refused post shows the alert line, the new card comes by event. */
   const act = (path: "run" | "cancel" | "dismiss") => {
     setFailed(false);
     void post(path, sessionId).then((ok) => setFailed(!ok));
   };
+
   let summary: string;
-  if (card.state === "ready") summary = t("secondOpinion.ready", { count: files });
-  else if (card.state === "running") summary = t("secondOpinion.running", { model: card.model });
-  else if (card.state === "failed")
+
+  if (card.state === "ready") {
+    summary = t("secondOpinion.ready", { count: files });
+  } else if (card.state === "running") {
+    summary = t("secondOpinion.running", { model: card.model });
+  } else if (card.state === "failed") {
     summary = t(`secondOpinion.fail.${card.reason}`, {
       model: card.model,
       detail: card.detail ?? "",
     });
-  else if (card.findings.length === 0) summary = t("secondOpinion.clean", { model: card.model });
-  else
+  } else if (card.findings.length === 0) {
+    summary = t("secondOpinion.clean", { model: card.model });
+  } else {
     summary = t("secondOpinion.found", {
       model: card.model,
       count: card.findings.length,
       took: fmtDuration(card.ms),
     });
+  }
+
   const foldable = card.state === "done" && card.findings.length > 0;
+
   return (
     <div {...{ [DOCK_ATTR]: "1" }} style={DOCK_CARD}>
       <section
@@ -305,33 +336,40 @@ type Choice = { provider: string; name: string; models: Array<{ id: string; name
  *  Writes on each change; a refused write shows under the row and keeps the old value. */
 export function SecondOpinionRow() {
   useLocale();
-  const [choices, setChoices] = useState<Choice[] | null>(null);
+  const [choices, setChoices] = useState<Array<Choice> | null>(null);
   const [setting, setSetting] = useState<OpinionSettingData["setting"]>(null);
   const [error, setError] = useState(false);
+
   /** Reads the saved value and dsh's model list. Runs on mount and again each time the list gets
    *  focus: a provider added in dsh's own settings has no event this row can hear, so opening the
    *  list is when it catches up. The server re-checks a pick on save, so a stale list cannot save
    *  a model dsh dropped. */
   const load = () =>
     fetch(`${ROUTE}/second-opinion/setting`)
-      .then((r) => readJson<OpinionSettingData & { choices: Choice[] }>(r))
+      .then((r) => readJson<OpinionSettingData & { choices: Array<Choice> }>(r))
       .then((d) => {
         setChoices(d.choices);
         setSetting(d.setting);
       })
       .catch(() => setChoices((c) => c ?? []));
+
   useEffect(() => {
     let live = true;
     void load();
+
     // The saved value follows a save made in any tab.
     const off = subscribe("second-opinion-setting", (_s, d) => {
-      if (live) setSetting(d.setting);
+      if (live) {
+        setSetting(d.setting);
+      }
     });
+
     return () => {
       live = false;
       off();
     };
   }, []);
+
   /** Writes the setting; a refused or failed write shows the alert and keeps the old value. */
   const save = (next: OpinionSettingData["setting"]) => {
     setError(false);
@@ -341,13 +379,18 @@ export function SecondOpinionRow() {
       body: JSON.stringify(next ?? {}),
     })
       .then((r) => {
-        if (!r.ok) throw new Error(String(r.status));
+        if (!r.ok) {
+          throw new Error(String(r.status));
+        }
+
         setSetting(next);
       })
       .catch(() => setError(true));
   };
+
   const key = setting ? `${setting.provider}\n${setting.model}` : "";
   const listed = choices?.some((c) => c.models.some((m) => `${c.provider}\n${m.id}` === key));
+
   return (
     <div data-omc-second-opinion-row="" style={{ fontSize: 13, marginBottom: 12 }}>
       <div>{t("secondOpinion.title")}</div>

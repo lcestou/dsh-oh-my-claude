@@ -16,7 +16,9 @@ const image: WaitingSteerRow = {
   at: 1,
   attachments: [{ kind: "image", name: "a.png", bytes: 9 }],
 };
+
 const words: WaitingSteerRow = { id: "m2", text: "plain", at: 2 };
+
 /** Taken back from this tab. */
 const withdrawn = new Set(["m1", "m2"]);
 const none = new Set<string>();
@@ -33,6 +35,7 @@ const none = new Set<string>();
   r = stepRestore(r.next, { ids: ["x"], rows: [words], draft: "look\n", at: 300, withdrawn });
   assert.equal(r.clearDraft, true, "the restored words go once they are the row's own");
 }
+
 // The restore lands before the list update: it pairs the other way round, in one step.
 {
   const w = startWatch([], [image]);
@@ -42,6 +45,7 @@ const none = new Set<string>();
   assert.deepEqual(r.remove, ["r1"]);
   assert.equal(r.clearDraft, true, "and the words in the same step");
 }
+
 // What is not a restore is left alone.
 {
   const w = startWatch(["x"], [image]);
@@ -68,6 +72,7 @@ const none = new Set<string>();
   assert.deepEqual(r.remove, [], "a restore past the window pairs with nothing");
   assert.equal(r.clearDraft, false);
 }
+
 // A steer Claude took is not a withdrawal: a file picked into the empty composer right after stays.
 {
   let r = stepRestore(startWatch([], [image]), {
@@ -77,15 +82,18 @@ const none = new Set<string>();
     at: 100,
     withdrawn: none,
   });
+
   r = stepRestore(r.next, { ids: ["picked"], rows: [], draft: "", at: 200, withdrawn: none });
   assert.deepEqual(r.remove, [], "Claude taking a steer pairs with nothing");
 }
+
 // The tab's own record of what it took back, aged out after the window.
 {
   noteWithdrawn(["h1"], 1000);
   assert.ok(withdrawnSince(1000 + RESTORE_WINDOW_MS - 1).has("h1"));
   assert.equal(withdrawnSince(1000 + RESTORE_WINDOW_MS).has("h1"), false, "gone after the window");
 }
+
 // Words typed by hand, even the same words, build up and are never a restore.
 {
   let r = stepRestore(startWatch([], [image]), {
@@ -95,9 +103,11 @@ const none = new Set<string>();
     at: 100,
     withdrawn,
   });
+
   assert.deepEqual(r.remove, ["r1"]);
   r = stepRestore(r.next, { ids: [], rows: [], draft: "lo", at: 200, withdrawn });
   r = stepRestore(r.next, { ids: [], rows: [], draft: "look", at: 300, withdrawn });
   assert.equal(r.clearDraft, false, "typed text is left alone");
 }
+
 console.log("steer-restore ok");

@@ -29,11 +29,13 @@ export const VAPID_SUBJECT = "https://github.com/lcestou/dsh-oh-my-claude";
 export function newVapidKeys(): VapidKeys {
   const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const pub = publicKey.export({ format: "jwk" });
+
   const point = Buffer.concat([
     Buffer.from([4]),
     Buffer.from(String(pub.x), "base64url"),
     Buffer.from(String(pub.y), "base64url"),
   ]);
+
   return {
     publicKey: point.toString("base64url"),
     privateJwk: privateKey.export({ format: "jwk" }),
@@ -53,13 +55,16 @@ const jwtPart = (v: JwtPart): string => Buffer.from(JSON.stringify(v)).toString(
  */
 export function vapidAuthorization(endpoint: string, keys: VapidKeys, now = Date.now()): string {
   const head = jwtPart({ typ: "JWT", alg: "ES256" });
+
   const claims = jwtPart({
     aud: new URL(endpoint).origin,
     exp: Math.floor(now / 1000) + 12 * 3600,
     sub: VAPID_SUBJECT,
   });
+
   const key = createPrivateKey({ key: keys.privateJwk, format: "jwk" });
   const sig = sign("sha256", Buffer.from(`${head}.${claims}`), { key, dsaEncoding: "ieee-p1363" });
+
   return `vapid t=${head}.${claims}.${sig.toString("base64url")}, k=${keys.publicKey}`;
 }
 
@@ -79,22 +84,32 @@ export function encryptPayload(
 ): Buffer {
   const uaPublic = Buffer.from(p256dh, "base64url");
   const ecdh = createECDH("prime256v1");
-  if (sender) ecdh.setPrivateKey(sender);
-  else ecdh.generateKeys();
+
+  if (sender) {
+    ecdh.setPrivateKey(sender);
+  } else {
+    ecdh.generateKeys();
+  }
+
   const asPublic = ecdh.getPublicKey();
   const secret = ecdh.computeSecret(uaPublic);
   const keyInfo = Buffer.concat([Buffer.from("WebPush: info\0"), uaPublic, asPublic]);
   const ikm = Buffer.from(hkdfSync("sha256", secret, Buffer.from(auth, "base64url"), keyInfo, 32));
+
   const derive = (info: string, len: number) =>
     Buffer.from(hkdfSync("sha256", ikm, salt, Buffer.from(`Content-Encoding: ${info}\0`), len));
+
   const cipher = createCipheriv("aes-128-gcm", derive("aes128gcm", 16), derive("nonce", 12));
+
   // 0x02 marks the last (and only) record; no padding beyond it.
   const body = Buffer.concat([
     cipher.update(Buffer.concat([plain, Buffer.from([2])])),
     cipher.final(),
     cipher.getAuthTag(),
   ]);
+
   const rs = Buffer.alloc(4);
   rs.writeUInt32BE(4096);
+
   return Buffer.concat([salt, rs, Buffer.from([asPublic.length]), asPublic, body]);
 }

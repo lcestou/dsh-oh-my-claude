@@ -39,7 +39,10 @@ import { tempDir } from "./test-tmp.js";
 {
   const path = "/home/a b/it's/settings.json";
   const read = readScript(path);
-  assert.ok(read.includes("'/home/a b/it'\\''s/settings.json'"), "path is quoted in the read");
+  assert.ok(
+    read.includes(String.raw`'/home/a b/it'\''s/settings.json'`),
+    "path is quoted in the read",
+  );
   assert.ok(read.endsWith(`else exit ${ABSENT}; fi`), "a missing file exits with the absent code");
   assert.ok(read.includes("stat -c %Y") && read.includes("stat -f %m"), "GNU and BSD stat");
 
@@ -66,6 +69,7 @@ import { tempDir } from "./test-tmp.js";
       encoding: "utf8",
       env: { ...process.env, HOME: dir },
     });
+
   const empty = tempDir("omc-dirs-empty-");
   const mixed = tempDir("omc-dirs-mixed-");
   mkdirSync(join(mixed, "sub dir"));
@@ -73,6 +77,7 @@ import { tempDir } from "./test-tmp.js";
   writeFileSync(join(mixed, "file.txt"), "");
   const plain = tempDir("omc-dirs-plain-");
   mkdirSync(join(plain, "src"));
+
   for (const shell of ["sh", "bash", "zsh"].filter(
     (s) => spawnSync(s, ["-c", "exit 0"]).status === 0,
   )) {
@@ -224,20 +229,24 @@ import { tempDir } from "./test-tmp.js";
   const FAR = "/home/far/.local/state/dsh-oh-my-claude/attachments/x.bin";
 
   type Play = { stdout: string; stderr?: string; exitCode: number | null; hang?: boolean };
-  const calls: { host: string; script: string; received: Buffer; terminated: boolean }[] = [];
+
+  const calls: Array<{ host: string; script: string; received: Buffer; terminated: boolean }> = [];
+
   /** A far shell that answers `play` once its stdin has ended. */
   const runner =
     (play: Play) =>
     (host: string, script: string): SubprocessHandle => {
-      const chunks: Buffer[] = [];
+      const chunks: Array<Buffer> = [];
       const call = { host, script, received: Buffer.alloc(0), terminated: false };
       calls.push(call);
       const stdout = new PassThrough();
       const stderr = new PassThrough();
       let settle: (v: { exitCode: number | null; signal: string | null }) => void = () => {};
+
       const done = new Promise<{ exitCode: number | null; signal: string | null }>((r) => {
         settle = r;
       });
+
       const stdin = new Writable({
         write(chunk: Buffer, _enc, cb) {
           chunks.push(chunk);
@@ -246,13 +255,21 @@ import { tempDir } from "./test-tmp.js";
         final(cb) {
           call.received = Buffer.concat(chunks);
           cb();
-          if (play.hang) return;
-          if (play.stderr) stderr.write(play.stderr);
+
+          if (play.hang) {
+            return;
+          }
+
+          if (play.stderr) {
+            stderr.write(play.stderr);
+          }
+
           stdout.end(play.stdout);
           stderr.end();
           settle({ exitCode: play.exitCode, signal: null });
         },
       });
+
       return {
         stdin,
         stdout,
@@ -269,7 +286,7 @@ import { tempDir } from "./test-tmp.js";
 
   // The far shell's banner comes before the marker and must not end up in the path.
   const ok = runner({ stdout: `Welcome to far!\n\u0001omc\u0001${FAR}`, exitCode: 0 });
-  assert.equal(await copyToAt({ sshHost: "far" }, local, "x.bin", 5_000, ok), FAR);
+  assert.equal(await copyToAt({ sshHost: "far" }, local, "x.bin", 5000, ok), FAR);
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.host, "far");
   assert.ok(
@@ -292,24 +309,28 @@ import { tempDir } from "./test-tmp.js";
     stderr: "mkdir: Permission denied\n",
     exitCode: 1,
   });
+
   await assert.rejects(
-    copyToAt({ sshHost: "far" }, local, "x.bin", 5_000, denied),
+    copyToAt({ sshHost: "far" }, local, "x.bin", 5000, denied),
     /far: mkdir: Permission denied$/,
   );
   // Exit 0 with no marker is a shell that never reached the script.
   const mute = runner({ stdout: "Welcome to far!\n", exitCode: 0 });
   await assert.rejects(
-    copyToAt({ sshHost: "far" }, local, "x.bin", 5_000, mute),
+    copyToAt({ sshHost: "far" }, local, "x.bin", 5000, mute),
     /printed no answer/,
   );
 
   // Refused before any connection: a name that is not one segment, no box, no local file.
   const before = calls.length;
-  for (const bad of ["", ".", "..", "a/b", "../x", "a\nb"])
-    await assert.rejects(copyToAt({ sshHost: "far" }, local, bad, 5_000, ok), /is not a file name/);
-  await assert.rejects(copyToAt({}, local, "x.bin", 5_000, ok), /no box to copy to/);
+
+  for (const bad of ["", ".", "..", "a/b", "../x", "a\nb"]) {
+    await assert.rejects(copyToAt({ sshHost: "far" }, local, bad, 5000, ok), /is not a file name/);
+  }
+
+  await assert.rejects(copyToAt({}, local, "x.bin", 5000, ok), /no box to copy to/);
   await assert.rejects(
-    copyToAt({ sshHost: "far" }, join(tmp, "gone.bin"), "x.bin", 5_000, ok),
+    copyToAt({ sshHost: "far" }, join(tmp, "gone.bin"), "x.bin", 5000, ok),
     /ENOENT/,
   );
   assert.equal(calls.length, before, "none of the refused calls opened a connection");

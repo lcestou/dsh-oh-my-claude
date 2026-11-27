@@ -29,6 +29,7 @@ const scopes = (files: Record<string, unknown>) =>
       user: { enabledPlugins: { "linter@tools": false } },
     }),
   );
+
   assert.deepEqual(out.plugins, [
     { key: "formatter@tools", enabled: false, scope: "local" },
     { key: "linter@tools", enabled: true, scope: "project" },
@@ -49,6 +50,7 @@ const scopes = (files: Record<string, unknown>) =>
       },
     }),
   );
+
   assert.deepEqual(out.plugins, [
     { key: "a@m", enabled: true, detail: ">=1.2.0", scope: "user" },
     { key: "b@m", enabled: true, detail: "2.0.0", scope: "user" },
@@ -73,6 +75,7 @@ const scopes = (files: Record<string, unknown>) =>
       },
     }),
   );
+
   assert.deepEqual(out.marketplaces, [
     { name: "dir", source: "directory:/home/me/.claude/mkt", scope: "user" },
     { name: "plain", source: "github:acme/other", scope: "user" },
@@ -87,9 +90,11 @@ const scopes = (files: Record<string, unknown>) =>
   const alias = pluginRoster(
     scopes({ project: { additionalMarketplaces: { team: { source: "skills-dir" } } } }),
   );
+
   assert.deepEqual(alias.marketplaces, [
     { name: "team", source: "skills-dir", scope: "project", alias: true },
   ]);
+
   const both = pluginRoster(
     scopes({
       project: {
@@ -98,6 +103,7 @@ const scopes = (files: Record<string, unknown>) =>
       },
     }),
   );
+
   assert.deepEqual(
     both.marketplaces.map((m) => m.name),
     ["kept"],
@@ -112,6 +118,7 @@ const scopes = (files: Record<string, unknown>) =>
       user: { extraKnownMarketplaces: { team: { source: "github", repo: "acme/plugins" } } },
     }),
   );
+
   assert.deepEqual(out.marketplaces, [{ name: "team", source: "skills-dir", scope: "managed" }]);
 }
 

@@ -201,7 +201,7 @@ const DEFAULT_FRAMES = ["·", "✢", "✳", "✶", "✻", "✻"] as const;
   assert.ok(typeof verb === "string" && verb.length > 0, "pickVerb returns a non-empty string");
   // SAFETY: pickVerb guarantees the result comes from the input list.
   assert.ok(
-    (DEFAULT_VERBS as readonly string[]).includes(verb),
+    (DEFAULT_VERBS as ReadonlyArray<string>).includes(verb),
     "pickVerb returns a verb from the list",
   );
 }

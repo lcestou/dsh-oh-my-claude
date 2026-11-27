@@ -10,14 +10,18 @@ import {
 } from "./plugins-page.js";
 import type { ClientCtx } from "./shared.js";
 
-const opened: string[] = [];
+const opened: Array<string> = [];
 let dispose: (() => void) | undefined;
 let present = false;
+
 // SAFETY: a stand-in carrying only the two cordis calls watchPluginsPage makes; its `inject` runs
 // the callback at once, as cordis does while the service is present, and keeps the effect's cleanup
 // so the test can take the service away again.
 const ctx = {
-  inject: (names: string[], fn: (scope: { effect: (f: () => () => void) => void }) => void) => {
+  inject: (
+    names: Array<string>,
+    fn: (scope: { effect: (f: () => () => void) => void }) => void,
+  ) => {
     assert.deepEqual(names, ["pluginNavigation"]);
     fn({ effect: (f) => void (dispose = f()) });
   },
@@ -29,16 +33,29 @@ const ctx = {
 
 let changes = 0;
 const off = onPluginsPageChange(() => changes++);
+
 assert.equal(pluginsPageOpener(), undefined, "no opener before dsh offers navigation");
+
 present = true;
+
 watchPluginsPage(ctx);
+
 assert.equal(changes, 1, "a mounted pill hears the service arrive");
+
 pluginsPageOpener()?.();
+
 assert.deepEqual(opened, [PACKAGE_NAME], "opens this plugin's own page");
+
 assert.equal(PACKAGE_NAME, "dsh-oh-my-claude");
+
 dispose?.();
+
 present = false;
+
 assert.equal(pluginsPageOpener(), undefined, "the opener goes with the service");
+
 assert.equal(changes, 2, "and the pill hears that too");
+
 off();
+
 console.log("plugins-page ok");

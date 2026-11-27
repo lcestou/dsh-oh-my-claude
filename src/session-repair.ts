@@ -29,25 +29,29 @@ import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 
 /** A span of seqs a row shadows or replaces; dsh carries more fields on it than the repair reads. */
 type Range = { start: number; end: number; [key: string]: unknown };
+
 /** One seq, or an inclusive pair standing for a run of them. */
 type Ref = number | [number, number];
+
 /** A block of an assistant message; only `tool-call` blocks matter here. */
 export type Block = { type: string; id?: string; [key: string]: unknown };
+
 /** The payload fields the repair reads. dsh's events carry plenty more, which pass through as-is. */
 export type Data = {
   callId?: string;
   message?: {
-    content?: Block[];
+    content?: Array<Block>;
     source?: { callId?: string; [key: string]: unknown };
     [key: string]: unknown;
   };
-  shadowedSeqs?: number[];
+  shadowedSeqs?: Array<number>;
   shadowedRange?: Range;
-  messageSeqs?: number[];
-  texts?: string[];
-  dt?: number[];
+  messageSeqs?: Array<number>;
+  texts?: Array<string>;
+  dt?: Array<number>;
   [key: string]: unknown;
 };
+
 /** A log row. Ordinary rows own one `seq`; a packed chunk run owns `seq0` plus one slot per chunk. */
 export type Row = {
   type: string;
@@ -55,10 +59,12 @@ export type Row = {
   seq0?: number;
   data?: Data;
   surfaceOp?: string | Record<string, unknown>;
-  sourceEventSeqs?: Ref[];
+  sourceEventSeqs?: Array<Ref>;
   [key: string]: unknown;
 };
+
 export type Header = { version?: number; [key: string]: unknown };
+
 /** As much of dsh's session-format catalog as the repair calls. The header and row parameters
  *  are `object` so the probe's own catalog type (`src/rows-probe.ts`, typed on its fixture's
  *  shapes) is assignable here without a cast; the repair passes its own Header and Row. */
@@ -78,16 +84,20 @@ export type Catalog = {
  *  without an `as` assertion.
  */
 const defined = <T>(x: T | undefined): x is T => x !== undefined;
+
 /** The call id a `tool/result` row answers: v4 puts it at `message.toolCallId`, older formats only
  *  at `message.source.callId`. Undefined for any other row. */
 const resultOf = (e: Row): string | undefined => {
   const onMessage = e.data?.message?.toolCallId;
+
   return typeof onMessage === "string" ? onMessage : e.data?.message?.source?.callId;
 };
+
 /** The text the adapter's own placeholder result carries; kept the same so a repaired log reads
  *  like one the fixed adapter wrote. */
 const PENDING_TEXT =
   "(still running when dsh took over this step; the output shows in the next step)";
+
 /** The event types dsh folds onto the conversation surface; the first of them is the system head. */
 export const SURFACE = new Set([
   "system/message",
@@ -101,11 +111,16 @@ export const SURFACE = new Set([
  *  `start`/`end`. Reading only the second is how a v4 system/message replacement kept pointing at
  *  its pre-renumber seq ("replacement range is not on the current surface"). */
 const spanOf = (op: Row["surfaceOp"]): Range | undefined => {
-  if (!op || typeof op !== "object") return undefined;
+  if (!op || typeof op !== "object") {
+    return undefined;
+  }
+
   const start = op["startSeq"] ?? op["start"];
   const end = op["endSeq"] ?? op["end"];
+
   return typeof start === "number" && typeof end === "number" ? { start, end } : undefined;
 };
+
 /** `op` with its span rewritten in whichever field pair it already uses. */
 const withSpan = (op: Record<string, unknown>, span: Range): Record<string, unknown> =>
   "startSeq" in op
@@ -124,42 +139,59 @@ const withSpan = (op: Record<string, unknown>, span: Range): Record<string, unkn
  * (plugin source up to v3, system-prompt from v4). A log with no surface row at all is left as is.
  */
 export function repair(
-  rows: Row[],
+  rows: Array<Row>,
   version = 4,
-): { rows: Row[]; droppedCalls: number; addedHead: boolean; closedCalls: number } {
+): { rows: Array<Row>; droppedCalls: number; addedHead: boolean; closedCalls: number } {
   const advertised = new Set<string>();
   const dropIds = new Set<string>();
   const dropped = new Set<number>();
+
   const drop = (e: Row) => {
-    if (e.seq !== undefined) dropped.add(e.seq);
+    if (e.seq !== undefined) {
+      dropped.add(e.seq);
+    }
   };
-  const kept: Row[] = [];
+
+  const kept: Array<Row> = [];
+
   for (const e of rows) {
-    if (e.type === "assistant/message")
-      for (const b of e.data?.message?.content ?? [])
-        if (b.type === "tool-call" && b.id !== undefined) advertised.add(b.id);
+    if (e.type === "assistant/message") {
+      for (const b of e.data?.message?.content ?? []) {
+        if (b.type === "tool-call" && b.id !== undefined) {
+          advertised.add(b.id);
+        }
+      }
+    }
+
     if (e.type === "tool/call" && e.data?.callId !== undefined && !advertised.has(e.data.callId)) {
       dropIds.add(e.data.callId);
       drop(e);
       continue;
     }
+
     const answers = resultOf(e);
+
     if (e.type === "tool/result" && answers !== undefined && dropIds.has(answers)) {
       drop(e);
       continue;
     }
+
     kept.push(e);
   }
+
   // Rows that only pointed at dropped rows go too: compaction/prune and range-replacing results.
   const alive = (n: number) => !dropped.has(n);
-  const out: Row[] = [];
+  const out: Array<Row> = [];
+
   for (const e of kept) {
     if (e.type === "compaction/prune" && Array.isArray(e.data?.shadowedSeqs)) {
       const keep = e.data.shadowedSeqs.filter(alive);
+
       if (keep.length === 0) {
         drop(e);
         continue;
       }
+
       e.data.shadowedSeqs = keep;
       e.data.shadowedRange = {
         ...e.data.shadowedRange,
@@ -167,36 +199,56 @@ export function repair(
         end: Math.max(...keep),
       };
     }
+
     const replaced = e.type === "tool/result" ? spanOf(e.surfaceOp) : undefined;
+
     if (replaced && typeof e.surfaceOp === "object") {
-      const span: number[] = [];
-      for (let x = replaced.start; x <= replaced.end; x++) if (alive(x)) span.push(x);
+      const span: Array<number> = [];
+
+      for (let x = replaced.start; x <= replaced.end; x++) {
+        if (alive(x)) {
+          span.push(x);
+        }
+      }
+
       const first = span[0];
-      const last = span[span.length - 1];
+      const last = span.at(-1);
+
       if (first === undefined || last === undefined) {
         drop(e);
         continue;
       }
+
       e.surfaceOp = withSpan(e.surfaceOp, { start: first, end: last });
     }
+
     out.push(e);
   }
+
   // Close every call still open when its step ends, v4 only: the placeholder is dsh 0.1.7's
   // `role: "tool"` result message, and a v0 log never reaches here with an advertised call open
   // (rows mode wrote its calls unadvertised, and the pass above dropped them). A seq of -1 takes a
   // fresh slot in the renumbering below; `sourceEventSeqs` cites the call's seq, which the same
   // renumbering remaps.
   let closedCalls = 0;
+
   if (version >= 4) {
     const open = new Map<string, number>();
-    const closed: Row[] = [];
+    const closed: Array<Row> = [];
+
     for (const e of out) {
-      if (e.type === "tool/call" && e.data?.callId !== undefined && e.seq !== undefined)
+      if (e.type === "tool/call" && e.data?.callId !== undefined && e.seq !== undefined) {
         open.set(e.data.callId, e.seq);
+      }
+
       const answers = resultOf(e);
-      if (e.type === "tool/result" && answers !== undefined) open.delete(answers);
+
+      if (e.type === "tool/result" && answers !== undefined) {
+        open.delete(answers);
+      }
+
       if (e.type === "step/end") {
-        for (const [callId, callSeq] of open)
+        for (const [callId, callSeq] of open) {
           closed.push({
             type: "tool/result",
             seq: -1,
@@ -215,22 +267,33 @@ export function repair(
             surfaceOp: "append",
             sourceEventSeqs: [callSeq],
           });
+        }
+
         closedCalls += open.size;
         open.clear();
       }
+
       closed.push(e);
     }
+
     out.splice(0, out.length, ...closed);
   }
+
   // The system head: a placeholder seq of -1 takes a fresh slot in the renumbering below, and
   // nothing in the log can reference it. The row goes where dsh's loop and the seed both put it,
   // right after the `step/start` that opens the first surface row's step.
   const first = out.findIndex((e) => SURFACE.has(e.type));
   const addedHead = first !== -1 && out[first]?.type !== "system/message";
+
   if (addedHead) {
     let step: { turn: unknown; step: unknown } | undefined;
-    for (const e of out.slice(0, first))
-      if (e.type === "step/start") step = { turn: e.data?.turn, step: e.data?.step };
+
+    for (const e of out.slice(0, first)) {
+      if (e.type === "step/start") {
+        step = { turn: e.data?.turn, step: e.data?.step };
+      }
+    }
+
     // SAFETY: dsh opens a step before any surface row; a log without one fails the migration check
     // that follows this repair, which is the report this tool exists to give.
     out.splice(first, 0, {
@@ -255,14 +318,20 @@ export function repair(
       surfaceOp: "append",
     });
   }
+
   // Every row owns one seq slot; a packed chunk run owns one per chunk. Renumber, then remap
   // every reference (ranges, lists, prune targets) onto the surviving seqs.
   const map = new Map<number, number>();
   let k = 0;
+
   for (const e of out) {
     if (e.seq0 !== undefined) {
       const n = e.data?.texts?.length ?? e.data?.dt?.length ?? 1;
-      for (let j = 0; j < n; j++) map.set(e.seq0 + j, k + j);
+
+      for (let j = 0; j < n; j++) {
+        map.set(e.seq0 + j, k + j);
+      }
+
       e.seq0 = k;
       k += n;
     } else if (e.seq !== undefined) {
@@ -270,50 +339,85 @@ export function repair(
       e.seq = k++;
     }
   }
+
   const keys = [...map.keys()].toSorted((a, b) => a - b);
+
   const lo = (x: number) => {
     const key = keys.find((v) => v >= x);
+
     return key === undefined ? undefined : map.get(key);
   };
+
   const hi = (x: number) => {
     let r;
+
     for (const v of keys) {
-      if (v > x) break;
+      if (v > x) {
+        break;
+      }
+
       r = map.get(v);
     }
+
     return r;
   };
+
   const one = (x: number) => map.get(x);
-  const list = (arr: number[]) => arr.map(one).filter(defined);
-  const refs = (arr: Ref[]): Ref[] =>
+  const list = (arr: Array<number>) => arr.map(one).filter(defined);
+
+  const refs = (arr: Array<Ref>): Array<Ref> =>
     arr
       .map((x): Ref | undefined => {
-        if (!Array.isArray(x)) return one(x);
+        if (!Array.isArray(x)) {
+          return one(x);
+        }
+
         const s = lo(x[0]),
           e = hi(x[1]);
+
         return s !== undefined && e !== undefined && s <= e ? [s, e] : undefined;
       })
       .filter(defined);
+
   const range = (r: Range): Range => {
     const s = lo(r.start),
       e = hi(r.end);
+
     return s !== undefined && e !== undefined && s <= e ? { ...r, start: s, end: e } : r;
   };
+
   for (const e of out) {
-    if (Array.isArray(e.sourceEventSeqs)) e.sourceEventSeqs = refs(e.sourceEventSeqs);
+    if (Array.isArray(e.sourceEventSeqs)) {
+      e.sourceEventSeqs = refs(e.sourceEventSeqs);
+    }
+
     const span = spanOf(e.surfaceOp);
-    if (span && typeof e.surfaceOp === "object") e.surfaceOp = withSpan(e.surfaceOp, range(span));
-    if (Array.isArray(e.data?.messageSeqs)) e.data.messageSeqs = list(e.data.messageSeqs);
-    if (Array.isArray(e.data?.shadowedSeqs)) e.data.shadowedSeqs = list(e.data.shadowedSeqs);
-    if (e.data?.shadowedRange) e.data.shadowedRange = range(e.data.shadowedRange);
+
+    if (span && typeof e.surfaceOp === "object") {
+      e.surfaceOp = withSpan(e.surfaceOp, range(span));
+    }
+
+    if (Array.isArray(e.data?.messageSeqs)) {
+      e.data.messageSeqs = list(e.data.messageSeqs);
+    }
+
+    if (Array.isArray(e.data?.shadowedSeqs)) {
+      e.data.shadowedSeqs = list(e.data.shadowedSeqs);
+    }
+
+    if (e.data?.shadowedRange) {
+      e.data.shadowedRange = range(e.data.shadowedRange);
+    }
   }
+
   return { rows: out, droppedCalls: dropIds.size, addedHead, closedCalls };
 }
 
 /** Whether the log's first surface row is something other than a `system/message`: the shape the
  *  Restore tab seeded before 2026-09-23. A log with no surface row at all is not headless. */
-export const headless = (rows: Row[]): boolean => {
+export const headless = (rows: Array<Row>): boolean => {
   const first = rows.find((e) => SURFACE.has(e.type));
+
   return first !== undefined && first.type !== "system/message";
 };
 
@@ -344,26 +448,33 @@ const ZSTD_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
  *  Node 22's `zstdDecompressSync` stops at the first frame (measured 2026-09-23 on the node that
  *  runs dsh-web; bun decodes the whole stream), and a real log is many frames, one per flush, so
  *  the frames are cut at their magic bytes and decoded one by one, the way dsh reads the log. */
-export function readLog(file: string): { header: Header; rows: Row[] } {
+export function readLog(file: string): { header: Header; rows: Array<Row> } {
   const buf = readFileSync(file);
   let off = 0;
   let text = "";
+
   while (off < buf.length) {
     const found = buf.indexOf(ZSTD_MAGIC, off + 4);
     const next = found === -1 ? buf.length : found;
     text += zstdDecompressSync(buf.subarray(off, next)).toString("utf8");
     off = next;
   }
+
   // SAFETY: every line of a dsh session log is one JSON object with a `type`; a row that is not one
   // fails the migration chain this is fed to, which is the failure the caller records as unknown.
   const rows = text
     .split("\n")
     .filter(Boolean)
     .map((l) => JSON.parse(l) as Row);
+
   // SAFETY: dsh writes the header as the first line of the log; `undefined` covers an empty file,
   // which the next line rejects.
   const header = rows[0] as Header | undefined;
-  if (!header) throw new Error(`${file} is empty: no header line`);
+
+  if (!header) {
+    throw new Error(`${file} is empty: no header line`);
+  }
+
   return { header, rows: rows.slice(1) };
 }
 
@@ -375,13 +486,14 @@ export const frame = (text: string): Buffer => zstdCompressSync(Buffer.from(text
  *  `<file>.bak-<ms>`, rename the new file into place, and return the backup path. The path is
  *  never absent: the rename is atomic on one filesystem, and a crash between the copy and the
  *  rename leaves the original in place and a `.bak` beside it. */
-export function writeLog(file: string, header: Header, rows: Row[]): string {
+export function writeLog(file: string, header: Header, rows: Array<Row>): string {
   const body = rows.map((r) => JSON.stringify(r)).join("\n") + "\n";
   const tmp = file + ".repair-tmp";
   const bak = `${file}.bak-${Date.now()}`;
   writeFileSync(tmp, Buffer.concat([frame(JSON.stringify(header) + "\n"), frame(body)]));
   copyFileSync(file, bak);
   renameSync(tmp, file);
+
   return bak;
 }
 
@@ -392,6 +504,7 @@ export function moveAside(file: string): string {
   const bak = `${file}.bak-${Date.now()}`;
   copyFileSync(file, bak);
   unlinkSync(file);
+
   return bak;
 }
 
@@ -408,7 +521,7 @@ export function restoreBak(file: string, bak: string): void {
 /** Feed rows through dsh's restore with the options its own load uses; undefined on success,
  *  the refusal message otherwise. Mirrors what dsh does at load, so a log this answers undefined
  *  for is one dsh loads. */
-export function migrate(catalog: Catalog, header: Header, rows: Row[]): string | undefined {
+export function migrate(catalog: Catalog, header: Header, rows: Array<Row>): string | undefined {
   try {
     // The pair dsh's own load passes: "transformed" up to v3, "current" from v4, whose relationship
     // check is what refuses a raw tool/call (see rows-probe.ts).
@@ -416,10 +529,15 @@ export function migrate(catalog: Catalog, header: Header, rows: Row[]): string |
       recovery: "strict",
       validation: (header.version ?? 0) >= 4 ? "current" : "transformed",
     });
-    for (const e of rows) restore.decodeRow(e);
+
+    for (const e of rows) {
+      restore.decodeRow(e);
+    }
+
     restore.finish();
+
     return undefined;
-  } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
 }

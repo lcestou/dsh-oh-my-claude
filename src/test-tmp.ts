@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const made: string[] = [];
+const made: Array<string> = [];
 
 /** Best-effort removal of everything registered so far. Runs inside the exit handler, where a
  *  throw would replace the test's own exit code, so a path that will not go (already gone, a
@@ -28,8 +28,12 @@ const removeAll = (): void => {
  * its directories stay. The path need not exist yet; one that never appears is simply skipped.
  */
 export function removeOnExit(path: string): string {
-  if (made.length === 0) process.once("exit", removeAll);
+  if (made.length === 0) {
+    process.once("exit", removeAll);
+  }
+
   made.push(path);
+
   return path;
 }
 

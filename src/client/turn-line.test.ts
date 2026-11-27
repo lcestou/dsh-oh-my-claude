@@ -13,11 +13,13 @@ function fixture() {
   const marks: Record<string, string> = {};
   const group = { setAttribute: (name: string, value: string) => void (marks[name] = value) };
   let removed = 0;
+
   const line = {
     hasAttribute: (name: string) => name === "data-omc-turn-line",
     closest: () => group,
     remove: () => void removed++,
   };
+
   // SAFETY: the fake carries the four members the function touches.
   return { line: line as unknown as HTMLElement, marks, removedCount: () => removed };
 }
@@ -42,11 +44,13 @@ function fixture() {
 // button above it. It goes either way, and there is nothing to mark.
 {
   let removed = 0;
+
   const line = {
     hasAttribute: (name: string) => name === "data-omc-turn-line",
     closest: () => null,
     remove: () => void removed++,
   };
+
   // SAFETY: the fake carries the members the function touches.
   stopTurnLine(line as unknown as HTMLElement, true);
   stopTurnLine(line as unknown as HTMLElement, false);
@@ -56,11 +60,13 @@ function fixture() {
 // Not a line at all (the 0.1.6 status row, the dock span's parent): nothing happens either way.
 {
   let touched = 0;
+
   const row = {
     hasAttribute: () => false,
     closest: () => void touched++,
     remove: () => void touched++,
   };
+
   // SAFETY: the fake carries the members the function touches.
   stopTurnLine(row as unknown as HTMLElement, false);
   assert.equal(touched, 0);

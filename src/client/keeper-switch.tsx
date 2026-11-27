@@ -30,6 +30,7 @@ export function KeeperSwitch() {
       .then((r) => readJson<SpawnModeInfo>(r))
       .then((b) => live && setInfo(b))
       .catch(() => live && setInfo(null));
+
     return () => {
       live = false;
     };
@@ -38,6 +39,7 @@ export function KeeperSwitch() {
   const noKeeper = info !== undefined && info !== null && !info.keeper;
   // A configured mode is never the keeper, so a lock always shows off.
   const on = configured === null && !off;
+
   return (
     <div
       data-omc-keeper-switch=""

@@ -17,11 +17,11 @@ import {
   hasRunTurn,
   boxQuery,
   boxParam,
-  type ClientCtx,
   select,
   inputStyle,
   pill,
 } from "../shared.js";
+import type { ClientCtx } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
 import { ConfirmButton } from "../tune.js";
 import { easeMs } from "./shared.js";
@@ -41,16 +41,18 @@ interface McpServer {
   version?: string;
   error?: string;
   /** Bare tool names the server contributes; absent when the session has seen no init frame. */
-  tools?: string[];
+  tools?: Array<string>;
   /** Pinned back to asking on the live process. Comes from the plugin's record of what it sent,
    *  since the CLI reports connection only, and it is the live process that is asked either way. */
   asking?: boolean;
 }
+
 /** What the process-only routes answer for a session with no CLI behind it. The tabs match on this
  *  text to draw their not running line, so a reply made here has to read the same as the server's. */
 export const NOT_RUNNING = { ok: false, error: "no live Claude process for this session" } as const;
 
-export type McpReply = { ok: true; servers: McpServer[] } | { ok: false; error: string };
+export type McpReply = { ok: true; servers: Array<McpServer> } | { ok: false; error: string };
+
 /** A server the CLI is configured with, as `GET /mcp-servers/configured` lists it, with its scope. */
 interface ConfiguredMcpRow {
   name: string;
@@ -84,33 +86,42 @@ export function McpBody({
   // The configured list beside the live one: a server added a moment ago has no process yet, so
   // it shows here as "starts with the next session" instead of vanishing until Claude restarts,
   // and a live row learns its scope from it. Two file reads on the box, on open and after a change.
-  const [configured, setConfigured] = useState<ConfiguredMcpRow[]>([]);
+  const [configured, setConfigured] = useState<Array<ConfiguredMcpRow>>([]);
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
+
   const loadConfigured = () => {
-    if (!cwd) return Promise.resolve();
+    if (!cwd) {
+      return Promise.resolve();
+    }
+
     return fetch(
       `${ROUTE}/mcp-servers/configured?cwd=${encodeURIComponent(cwd)}${boxParam(ctx, sessionId)}`,
     )
-      .then((r) => readJson<{ servers?: ConfiguredMcpRow[] }>(r))
+      .then((r) => readJson<{ servers?: Array<ConfiguredMcpRow> }>(r))
       .then((b) => setConfigured(b.servers ?? []))
       .catch(() => setConfigured([]));
   };
+
   const load = () =>
     Promise.all([
       fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
         .then((r) => readJson<McpReply>(r))
         .then(setReply)
-        .catch((e: Error) => setReply({ ok: false, error: e.message })),
+        .catch((error: Error) => setReply({ ok: false, error: error.message })),
       loadConfigured(),
     ]);
+
   useEffect(() => {
     setReply(null);
     setNote("");
+
     if (!hasRunTurn(ctx, sessionId)) {
       setReply(NOT_RUNNING);
       void loadConfigured();
+
       return;
     }
+
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- load closes over sessionId only
   }, [sessionId]);
@@ -123,16 +134,21 @@ export function McpBody({
       .then((r) => readJson<PermissionModeState>(r))
       .then((snap) => live && setPermMode(snap))
       .catch(() => live && setPermMode(null));
+
     return () => {
       live = false;
     };
   }, [sessionId]);
   const scopeOf = (name: string) => configured.find((c) => c.name === name)?.scope;
 
-  if (!isClaude) return null;
+  if (!isClaude) {
+    return null;
+  }
+
   const reconnect = async (serverName: string) => {
     setBusy(serverName);
     setNote("");
+
     try {
       const r = await readJson<{ ok: boolean; error?: string }>(
         await fetch(`${ROUTE}/mcp-servers/reconnect`, {
@@ -141,6 +157,7 @@ export function McpBody({
           body: JSON.stringify({ session: sessionId, name: serverName }),
         }),
       );
+
       setNote(
         t("panel.mcp.nameMsg", {
           name: serverName,
@@ -148,34 +165,42 @@ export function McpBody({
         }),
       );
       await load();
-    } catch (e) {
-      setNote(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(null);
     }
   };
+
   /** After the sign-in page opens, the CLI reconnects the server itself when the browser comes
    *  back, and says nothing about it. Re-read the status until the row stops needing auth, or give
    *  up after ninety seconds so a login someone abandoned does not poll forever. */
   const watchUntilSignedIn = () => {
     let left = 30;
+
     const tick = () => {
       left -= 1;
       void load().then(() => {
-        if (left > 0) window.setTimeout(tick, 3000);
+        if (left > 0) {
+          window.setTimeout(tick, 3000);
+        }
       });
     };
+
     window.setTimeout(tick, 3000);
   };
+
   const login = async (serverName: string) => {
     setBusy(serverName);
     setNote("");
+
     try {
       const r = await fetch(`${ROUTE}/mcp-servers/authenticate`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ session: sessionId, name: serverName }),
       }).then((x) => readJson<{ ok?: boolean; authUrl?: string; error?: string }>(x));
+
       // The server already refuses a non-http(s) link; checked again here because the browser is
       // where a `javascript:` URL would run.
       if (r.ok === true && r.authUrl !== undefined && !isWebUrl(r.authUrl)) {
@@ -192,11 +217,11 @@ export function McpBody({
           t("panel.mcp.nameMsg", { name: serverName, msg: r.error ?? t("panel.mcp.loginFailed") }),
         );
       }
-    } catch (e) {
+    } catch (error) {
       setNote(
         t("panel.mcp.nameMsg", {
           name: serverName,
-          msg: e instanceof Error ? e.message : t("panel.mcp.loginFailed"),
+          msg: error instanceof Error ? error.message : t("panel.mcp.loginFailed"),
         }),
       );
     } finally {
@@ -207,6 +232,7 @@ export function McpBody({
   const remove = async (serverName: string) => {
     setBusy(serverName);
     setNote("");
+
     try {
       const r = await readJson<{ ok: boolean; error?: string }>(
         await fetch(`${ROUTE}/mcp-servers/remove${boxQuery(ctx, sessionId)}`, {
@@ -215,6 +241,7 @@ export function McpBody({
           body: JSON.stringify({ session: sessionId, name: serverName }),
         }),
       );
+
       setNote(
         r.ok
           ? t("panel.mcp.removed", { name: serverName, spawn: spawnNote() })
@@ -224,17 +251,19 @@ export function McpBody({
             }),
       );
       await load();
-    } catch (e) {
-      setNote(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(null);
     }
   };
+
   // Toggle one server's Always ask override, in the shape reconnect and remove use: the tab's note
   // line carries the outcome, and the local record moves only when the process took the change.
   const setAsk = async (serverName: string, ask: boolean) => {
     setBusy(serverName);
     setNote("");
+
     try {
       const r = await readJson<{ ok: boolean; error?: string }>(
         await fetch(`${ROUTE}/mcp-servers/ask`, {
@@ -243,20 +272,24 @@ export function McpBody({
           body: JSON.stringify({ session: sessionId, name: serverName, ask }),
         }),
       );
-      if (r.ok) await load();
-      else
+
+      if (r.ok) {
+        await load();
+      } else {
         setNote(
           t("panel.mcp.nameMsg", {
             name: serverName,
             msg: r.error ?? t("panel.plugins.actionFailed"),
           }),
         );
-    } catch (e) {
-      setNote(e instanceof Error ? e.message : String(e));
+      }
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(null);
     }
   };
+
   const servers = reply?.ok ? reply.servers : [];
   // A mode that would not have auto-allowed the tool reads no override, so the toggles change
   // nothing today. They still draw: the mode can change while this tab is open. One line says it
@@ -265,6 +298,7 @@ export function McpBody({
   // Configured but not in the process: the plugin-served `plugin:` names never appear in a config
   // file, so the match is by plain name.
   const pendingRows = configured.filter((c) => !servers.some((s) => s.name === c.name));
+
   return (
     <div style={bodyFlow}>
       {/* The form is what this tab is opened to reach, so it sits above the list rather than
@@ -484,7 +518,7 @@ export const mcpStatusLabel = (status: string): string =>
  * feeding the path that already works; the user finishes OAuth in a terminal, which the needs-auth
  * row already instructs. URLs verified against code.claude.com/docs/en/mcp (2026-09-07).
  */
-const CONNECTORS: readonly { label: string; name: string; transport: string; url: string }[] = [
+const CONNECTORS: ReadonlyArray<{ label: string; name: string; transport: string; url: string }> = [
   { label: "GitHub", name: "github", transport: "http", url: "https://api.githubcopilot.com/mcp/" },
   { label: "Notion", name: "notion", transport: "http", url: "https://mcp.notion.com/mcp" },
   { label: "Sentry", name: "sentry", transport: "http", url: "https://mcp.sentry.dev/mcp" },
@@ -501,6 +535,7 @@ const CONNECTORS: readonly { label: string; name: string; transport: string; url
 
 /** A full-width field of the add form, in the settings field look the rest of the panel uses. */
 const MCP_FIELD: CSSProperties = { ...inputStyle, flex: "none", width: "100%", marginBottom: 4 };
+
 /** The form's multi-line fields: the same box, two lines tall, padded on every side. */
 const MCP_AREA: CSSProperties = {
   ...MCP_FIELD,
@@ -535,6 +570,7 @@ function McpAddForm({
   const submit = async () => {
     setBusy(true);
     setError("");
+
     try {
       const r = await readJson<{ ok: boolean; error?: string }>(
         await fetch(`${ROUTE}/mcp-servers/add${boxQuery(ctx, sessionId)}`, {
@@ -555,7 +591,11 @@ function McpAddForm({
           }),
         }),
       );
-      if (!r.ok) return setError(r.error ?? t("panel.mcp.addFailed"));
+
+      if (!r.ok) {
+        return setError(r.error ?? t("panel.mcp.addFailed"));
+      }
+
       setName("");
       setCommand("");
       setArgs("");
@@ -564,8 +604,8 @@ function McpAddForm({
       setHeaders("");
       setConnector("");
       onAdded();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     } finally {
       setBusy(false);
     }
@@ -574,7 +614,11 @@ function McpAddForm({
   const fillFromConnector = (picked: string) => {
     setConnector(picked);
     const c = CONNECTORS.find((x) => x.name === picked);
-    if (!c) return;
+
+    if (!c) {
+      return;
+    }
+
     setName(c.name);
     setTransport(c.transport);
     setUrl(c.url);

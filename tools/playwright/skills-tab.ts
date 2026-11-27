@@ -4,7 +4,8 @@
 // and the Skill costs fold shows the report in [data-omc-skill-doctor] (or wraps a failure).
 //
 // Point PLAYWRIGHT_ROOT at any project with Playwright installed; arg 1 is the dsh launch token.
-import { dshUrl, launch, type JsonDoc } from "./pw.js";
+import { dshUrl, launch } from "./pw.js";
+import type { JsonDoc } from "./pw.js";
 
 const token = process.argv[2];
 
@@ -92,7 +93,7 @@ const skillsBody: JsonDoc = {
   ],
 };
 
-const cases: { name: string; body: JsonDoc; pre: boolean; text: string }[] = [
+const cases: Array<{ name: string; body: JsonDoc; pre: boolean; text: string }> = [
   {
     name: "report",
     body: { ok: true, report: "Skills loaded this session\n  unslop  userSettings  3×" },
@@ -125,6 +126,7 @@ const cases: { name: string; body: JsonDoc; pre: boolean; text: string }[] = [
 
 const b = await launch();
 let failed = false;
+
 for (const c of cases) {
   const ctx = await b.newContext({ viewport: { width: 420, height: 900 }, colorScheme: "dark" });
   const p = await ctx.newPage();
@@ -161,26 +163,33 @@ for (const c of cases) {
   // Open a session so the panel has one to read.
   const want = /Running|\bnow\b|\d+min/;
   const wsItem = p.locator('[role="treeitem"]').first();
+
   if (await wsItem.count()) {
     await wsItem.click({ force: true });
     await p.waitForTimeout(1000);
   }
+
   const sessionRow = p.locator('[role="treeitem"]').filter({ hasText: want }).first();
+
   if (await sessionRow.count()) {
     await sessionRow.click({ force: true });
     await p.waitForTimeout(1500);
   }
+
   // Open the panel from the composer spark, then the Skills tab.
   await p.locator('button[aria-label="Oh My Claude"]').first().click();
   await p.waitForTimeout(600);
   await p.locator("#omc-tab-Skills").click();
   await p.waitForTimeout(1000);
+
   const scopeCounts = await Promise.all(
     ["user", "project", "plugin"].map((s) => p.locator(`[data-omc-skills-scope="${s}"]`).count()),
   );
+
   const scopesOk = scopeCounts.every((n) => n === 1);
   // Search narrows to the matching section only (report case, so it runs once).
   let searchOk = true;
+
   if (c.name === "report") {
     await p
       .locator('[data-omc-skills=""] input[type="search"]')
@@ -196,12 +205,15 @@ for (const c of cases) {
       .catch(() => {});
     await p.waitForTimeout(300);
   }
+
   // The add/edit/remove affordances (report case only, so it runs once).
   let editOk = true;
+
   if (c.name === "report") {
     const newVisible =
       (await p.locator("[data-omc-skill-new]").count()) === 1 &&
       (await p.locator("[data-omc-skill-reload]").count()) === 1;
+
     await p
       .locator("[data-omc-skill-new]")
       .click()
@@ -223,36 +235,49 @@ for (const c of cases) {
       .click()
       .catch(() => {});
     await p.waitForTimeout(300);
+
     const userEdit = await p
       .locator('[data-omc-skills-scope="user"] [data-omc-skill-edit]')
       .count();
+
     const pluginEdit = await p
       .locator('[data-omc-skills-scope="plugin"] [data-omc-skill-edit]')
       .count();
+
     const noteOk = (
       await p
         .locator("[data-omc-skill-note]")
         .innerText()
         .catch(() => "")
     ).includes("Its /command stays until Claude restarts");
+
     editOk = newVisible && editorVisible && userEdit > 0 && pluginEdit === 0 && noteOk;
   }
+
   // The Skill costs fold: open it, then read its report.
   await p.locator("[data-omc-skill-doctor-fold] > summary").click();
   await p.waitForTimeout(1500);
   const pre = p.locator("[data-omc-skill-doctor]");
+
   const foldText = await p
     .locator("[data-omc-skill-doctor-fold]")
     .innerText()
     .catch(() => "");
+
   const preCount = await pre.count();
   const hasText = foldText.includes(c.text);
   const ok = scopesOk && searchOk && editOk && hasText && (c.pre ? preCount === 1 : preCount === 0);
   console.log(
     `${c.name}: scopes=${scopeCounts.join(",")} search=${searchOk} edit=${editOk} pre=${preCount} hasText=${hasText} -> ${ok ? "PASS" : "FAIL"}`,
   );
-  if (!ok) failed = true;
+
+  if (!ok) {
+    failed = true;
+  }
+
   await ctx.close();
 }
+
 await b.close();
+
 process.exit(failed ? 1 : 0);

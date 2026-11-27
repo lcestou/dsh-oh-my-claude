@@ -19,11 +19,15 @@ import {
 } from "./shared.js";
 
 assert.equal(maskEmail("someone@example.com"), "s******@example.com");
+
 // Never fewer than three stars, so a short local part does not leak its length.
 assert.equal(maskEmail("ab@x.io"), "a***@x.io");
+
 // Not an address: the placeholders these callers pass through are left alone.
 assert.equal(maskEmail("logged in"), "logged in");
+
 assert.equal(maskEmail("@host"), "@host");
+
 assert.equal(maskEmail(""), "");
 
 // A session the tab has never opened has no model directory — dsh's `directoryFor` throws for it —
@@ -49,17 +53,21 @@ assert.equal(
   claudeProviderOf(coldCtx({ lastUsed: null, next: { provider: "claude-code-nova" } }), "s1"),
   "claude-code-nova",
 );
+
 // No pick pending: the last request's header still names the mount.
 assert.equal(
   claudeProviderOf(coldCtx({ lastUsed: { provider: "claude-code" }, next: null }), "s1"),
   "claude-code",
 );
+
 // A session on another provider is not ours, and neither is a row with no selection at all.
 assert.equal(
   claudeProviderOf(coldCtx({ lastUsed: { provider: "deepseek" }, next: null }), "s1"),
   undefined,
 );
+
 assert.equal(claudeProviderOf(coldCtx(undefined), "s1"), undefined);
+
 // A pending pick of another provider wins over a Claude turn that already ran: the switch is the
 // newer truth, and reading `lastUsed` past it kept the Claude control on a session moved to dsh.
 assert.equal(
@@ -83,6 +91,7 @@ const liveCtx = (provider: string, modelSelection: unknown): ClientCtx =>
       },
     },
   }) as unknown as ClientCtx;
+
 assert.equal(
   claudeProviderOf(
     liveCtx("deepseek", { lastUsed: { provider: "claude-code" }, next: null }),
@@ -90,10 +99,12 @@ assert.equal(
   ),
   undefined,
 );
+
 assert.equal(
   claudeProviderOf(liveCtx("claude-code-nova", { lastUsed: { provider: "deepseek" } }), "s1"),
   "claude-code-nova",
 );
+
 /** A tab with session `id` open on `provider` and nothing on its list row. */
 const liveCtxFor = (id: string, provider: string): ClientCtx =>
   ({
@@ -115,14 +126,19 @@ const resyncing = (row: object | undefined): ClientCtx =>
     },
     sessions: { list: { getSnapshot: () => ({ byId: row ? { r1: row } : {} }) } },
   }) as unknown as ClientCtx;
+
 assert.equal(claudeProviderOf(resyncing(undefined), "r1"), undefined, "never seen: no answer");
+
 assert.equal(claudeProviderOf(liveCtxFor("r1", "claude-code"), "r1"), "claude-code");
+
 assert.equal(
   claudeProviderOf(resyncing({ id: "r1" }), "r1"),
   "claude-code",
   "row without projections",
 );
+
 assert.equal(claudeProviderOf(resyncing(undefined), "r1"), "claude-code", "row not resent yet");
+
 assert.equal(
   claudeProviderOf(
     resyncing({ id: "r1", projectionValues: { modelSelection: { lastUsed: null, next: null } } }),
@@ -131,13 +147,16 @@ assert.equal(
   "claude-code",
   "the projection's empty initial state is not a switch",
 );
+
 // A real answer still moves it, both ways.
 assert.equal(claudeProviderOf(liveCtxFor("r1", "deepseek"), "r1"), undefined);
+
 assert.equal(
   claudeProviderOf(resyncing({ id: "r1" }), "r1"),
   undefined,
   "a known switch away holds",
 );
+
 assert.equal(
   claudeProviderOf(
     resyncing({
@@ -153,12 +172,17 @@ assert.equal(
 );
 
 assert.equal(numberOr(5), 5);
+
 assert.equal(numberOr(true), undefined);
+
 assert.equal(numberOr(undefined), undefined);
 
 assert.equal(resumeCommand("abc", undefined), "claude --resume abc");
+
 assert.equal(resumeCommand("abc", "/w/a"), "cd '/w/a' && claude --resume abc");
-assert.equal(resumeCommand("abc", "/w/it's"), "cd '/w/it'\\''s' && claude --resume abc");
+
+assert.equal(resumeCommand("abc", "/w/it's"), String.raw`cd '/w/it'\''s' && claude --resume abc`);
+
 assert.equal(resumeCommand("abc", "/w/a", "nova"), "ssh nova \"cd '/w/a' && claude --resume abc\"");
 
 // Which session is on screen: the row the main view retains.
@@ -171,25 +195,32 @@ assert.equal(
   ),
   "s2",
 );
+
 // A retention the main view has let go of is not a selection.
 assert.equal(openSessionId(listCtx({ byId: { s1: { retainedBy: {} } } })), undefined);
+
 assert.equal(openSessionId(listCtx(undefined)), undefined);
+
 // The same snapshot object is scanned once; a new one (the list changed) is scanned again.
 {
   let reads = 0;
   const rows = { a: { retainedBy: { mainView: 1 } } };
+
   const snap = {
     get byId() {
       reads++;
+
       return rows;
     },
   };
+
   const ctx = listCtx(snap);
   assert.equal(openSessionId(ctx), "a");
   assert.equal(openSessionId(ctx), "a");
   assert.equal(reads, 1, "one scan per snapshot");
   assert.equal(openSessionId(listCtx({ byId: { b: { retainedBy: { mainView: 1 } } } })), "b");
 }
+
 // A throw that is not a disposed context answers undefined and leaves the bundle live: the next
 // read still works. It used to retire everything until a refresh (owner, 2026-09-22: new sessions
 // lost the Claude look after switching languages back and forth).
@@ -203,6 +234,7 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
       },
     },
   } as unknown as ClientCtx;
+
   assert.equal(openSessionId(flaky), undefined);
   assert.equal(
     openSessionId(listCtx({ byId: { s1: { retainedBy: { mainView: 1 } } } })),
@@ -210,6 +242,7 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
     "still live after it",
   );
 }
+
 // A disposed context retires; `revive` (what apply runs first) brings the module back.
 {
   const dead = {
@@ -221,6 +254,7 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
       },
     },
   } as unknown as ClientCtx;
+
   assert.equal(openSessionId(dead), undefined);
   assert.equal(
     openSessionId(listCtx({ byId: { s1: { retainedBy: { mainView: 1 } } } })),
@@ -234,9 +268,11 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
     "live again",
   );
 }
+
 // Navigation goes through `uiWorkspace`, reached through `ctx.get` so a host without it mounts.
 {
-  const opened: string[] = [];
+  const opened: Array<string> = [];
+
   const ctx = {
     sessions: {},
     get: (name: string) =>
@@ -244,13 +280,15 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
         ? { openSession: (id: string) => opened.push(`uiWorkspace:${id}`) }
         : undefined,
   } as unknown as ClientCtx;
+
   openSession(ctx, "s1");
   assert.deepEqual(opened, ["uiWorkspace:s1"]);
 }
+
 // Restoring an archived session waits for the workspace list to unarchive it before opening:
 // dsh clears a main view whose session that list still calls archived.
 {
-  const events: string[] = [];
+  const events: Array<string> = [];
   let archivedIds = ["s1"];
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async () => new Response("{}")) as unknown as typeof fetch;
@@ -258,6 +296,7 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
     archivedIds = [];
     events.push("unarchived");
   }, 120);
+
   const ctx = {
     sessions: { list: { getSnapshot: () => ({ byId: { s1: {} } }) } },
     workspaces: {
@@ -266,17 +305,20 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
     get: (name: string) =>
       name === "uiWorkspace" ? { openSession: () => events.push("opened") } : undefined,
   } as unknown as ClientCtx;
+
   await openHere(ctx, { id: "t1", dsh: { id: "s1", archived: true } }, "/w");
   globalThis.fetch = realFetch;
   assert.deepEqual(events, ["unarchived", "opened"]);
 }
+
 // Importing a transcript the route just seeded refreshes dsh's list instead of calling create:
 // dsh 0.2.1's create mints a new session for a named one whose log has turns.
 {
-  const events: string[] = [];
+  const events: Array<string> = [];
   let byId: Record<string, object> = {};
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async () => new Response("{}")) as unknown as typeof fetch;
+
   const ctx = {
     sessions: {
       list: { getSnapshot: () => ({ byId }) },
@@ -294,6 +336,7 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
         ? { openSession: (id: string) => events.push(`opened:${id}`) }
         : undefined,
   } as unknown as ClientCtx;
+
   await openHere(ctx, { id: "t2" }, "/w");
   globalThis.fetch = realFetch;
   assert.deepEqual(events, ["refresh", "opened:t2"]);
@@ -302,15 +345,17 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
 // A session dsh never lists after the route answered: the open throws for the row's error line
 // instead of returning as if it had opened something (#246 review).
 {
-  const opened: string[] = [];
+  const opened: Array<string> = [];
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async () => new Response("{}")) as unknown as typeof fetch;
+
   const ctx = {
     sessions: { list: { getSnapshot: () => ({ byId: {} }) }, refresh: async () => {} },
     workspaces: { list: { getSnapshot: () => ({ items: [], archivedSessionIds: [] }) } },
     get: (name: string) =>
       name === "uiWorkspace" ? { openSession: (id: string) => opened.push(id) } : undefined,
   } as unknown as ClientCtx;
+
   await assert.rejects(openHere(ctx, { id: "t3" }, "/w"), /did not list it/);
   globalThis.fetch = realFetch;
   assert.deepEqual(opened, [], "nothing opened");
@@ -324,6 +369,7 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
     { scope: "plugin:foo", name: "c" },
     { scope: "something-else", name: "d" },
   ]);
+
   assert.deepEqual(
     g.user.map((r) => r.name),
     ["a"],
@@ -344,15 +390,18 @@ assert.deepEqual(skillStateFromReply({ ok: true, report: "Skills loaded" }), {
   text: "Skills loaded",
   partial: false,
 });
+
 assert.deepEqual(skillStateFromReply({ ok: true, report: "u only", partial: true }), {
   kind: "report",
   text: "u only",
   partial: true,
 });
+
 assert.deepEqual(skillStateFromReply({ ok: false, declined: true, error: "no_user_skills" }), {
   kind: "declined",
   text: "no_user_skills",
 });
+
 assert.deepEqual(skillStateFromReply({ ok: false, error: "boom" }), {
   kind: "error",
   text: "boom",
@@ -387,13 +436,17 @@ const WIDE = [
 // 1. The report parses and holds exactly the seven skills under the header; the blank line stops the
 //    table before the indented legend.
 const parsed = parseSkillCosts(REPORT);
+
 assert.notEqual(parsed, null);
+
 const rows = parsed ?? [];
+
 assert.equal(rows.length, 7);
 
 // 2. The last row is the last skill, and no row's name ran past the blank line into the legend prose,
 //    whose definition lines carry " = ".
-assert.equal(rows[rows.length - 1]?.skill, "writing-for-agents");
+assert.equal(rows.at(-1)?.skill, "writing-for-agents");
+
 assert.ok(rows.every((r) => !r.skill.includes(" = ")));
 
 // 3. The first row's cells, including the dash and never placeholders.
@@ -408,6 +461,7 @@ assert.deepEqual(rows[0], {
 
 // 4. A cell that contains a space survives the fixed-column slice: "< 20" and "3 days".
 assert.equal(rows[1]?.context, "< 20");
+
 assert.equal(rows[2]?.lastUsed, "3 days");
 
 // 5. A header whose columns no longer line up with the six names is not a table.
@@ -415,7 +469,9 @@ assert.equal(parseSkillCosts(REPORT.replace("7d tokens", "7d toks  ")), null);
 
 // 6. A wide header shifts with its widest row and still parses to one row.
 const wideRows = parseSkillCosts(WIDE) ?? [];
+
 assert.equal(wideRows.length, 1);
+
 assert.equal(wideRows[0]?.source, "projectSettings");
 
 // 7. Uses sort by magnitude, so 35× beats 11×.
@@ -428,9 +484,11 @@ assert.equal(sortSkillCosts(rows, "tokens", "desc")[0]?.skill, "local-subagent")
 //    are both `never`; a stable sort keeps input order, so n8n lands last. Assert the invariant the
 //    order depends on (a never row is last) rather than one specific never row.
 assert.equal(sortSkillCosts(rows, "lastUsed", "asc").at(-1)?.lastUsed, "never");
+
 // Both `never` rows tie, and a tie must not be NaN: Infinity minus Infinity is, and no sort owes a
 // NaN comparator an answer. Their order is the report's order, and a today row sorts to the front.
 assert.equal(sortSkillCosts(rows, "lastUsed", "asc")[0]?.lastUsed, "today");
+
 assert.deepEqual(
   sortSkillCosts(rows, "lastUsed", "asc")
     .filter((r) => r.lastUsed === "never")

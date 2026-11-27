@@ -15,9 +15,10 @@ import {
   ROUTE,
   ago,
   boxParam,
-  type ClientCtx,
 } from "../shared.js";
-import { t, useLocale, type OmcKey, activeLocale } from "../i18n.js";
+import type { ClientCtx } from "../shared.js";
+import { t, useLocale, activeLocale } from "../i18n.js";
+import type { OmcKey } from "../i18n.js";
 
 /** One task from the durable file or the session transcript. */
 interface Task {
@@ -31,10 +32,10 @@ interface Task {
 /** Reply from GET /scheduled-tasks. */
 interface ScheduledTasksReply {
   ok: true;
-  durable: Task[];
-  session: Task[];
+  durable: Array<Task>;
+  session: Array<Task>;
   goal: { text: string; at: number } | null;
-  dshGoals: DshGoal[];
+  dshGoals: Array<DshGoal>;
   path: string;
 }
 
@@ -64,16 +65,19 @@ const PHASE = new Map<string, { glyph: string; key: OmcKey }>([
  *  value dsh added that this map has not caught up with. */
 const phaseLabel = (phase: string): string => {
   const p = PHASE.get(phase);
+
   return p ? `${p.glyph} ${t(p.key)}` : phase;
 };
 
 /** One dsh goal: its phase and objective, then rounds and age, and why it stopped when blocked. */
 function DshGoalRow({ goal }: { goal: DshGoal }) {
   useLocale();
+
   const rounds =
     goal.maxGoalRounds === undefined
       ? t("panel.tasks.rounds", { n: goal.roundsStarted })
       : t("panel.tasks.roundsOf", { n: goal.roundsStarted, max: goal.maxGoalRounds });
+
   return (
     <div
       data-omc-dsh-goal={goal.phase}
@@ -104,6 +108,7 @@ interface ScheduledTasksError {
 /** One scheduled task, the same row whether it survives a restart or not. */
 function TaskRow({ task }: { task: Task }) {
   useLocale();
+
   return (
     <div style={{ ...nested, padding: "4px 0 4px 12px", fontSize: 12, lineHeight: "1.5" }}>
       <div style={{ fontWeight: 600 }}>{task.name}</div>
@@ -129,6 +134,7 @@ function TaskRow({ task }: { task: Task }) {
 function PastGoalRow({ goal }: { goal: DshGoal }) {
   useLocale();
   const [open, setOpen] = useState(false);
+
   return (
     <div data-omc-dsh-goal-past={goal.phase}>
       <button
@@ -210,7 +216,7 @@ const statusWord = (status: string) =>
  */
 function LiveTasksSection({ sessionId }: { sessionId: string }) {
   useLocale();
-  const [tasks, setTasks] = useState<LiveTask[]>([]);
+  const [tasks, setTasks] = useState<Array<LiveTask>>([]);
   const [output, setOutput] = useState<Record<string, string>>({});
   const [note, setNote] = useState<Record<string, string>>({});
   // A Stop or Output click outlives the tab when the panel closes before the route answers; the
@@ -218,27 +224,35 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
+
     return () => {
       mounted.current = false;
     };
   }, []);
   useEffect(() => {
     let live = true;
+
     const load = () =>
       fetch(`${ROUTE}/live-tasks?session=${encodeURIComponent(sessionId)}`)
-        .then((r) => readJson<{ ok: true; tasks: LiveTask[] } | { ok: false }>(r))
+        .then((r) => readJson<{ ok: true; tasks: Array<LiveTask> } | { ok: false }>(r))
         .then((b) => live && b.ok && setTasks(b.tasks))
         .catch(() => {});
+
     void load();
+
     // A hidden tab keeps the timer and skips the read, the way the aside card's poll does.
     const timer = setInterval(() => {
-      if (document.visibilityState === "visible") void load();
+      if (document.visibilityState === "visible") {
+        void load();
+      }
     }, 3000);
+
     return () => {
       live = false;
       clearInterval(timer);
     };
   }, [sessionId]);
+
   const act = (task: LiveTask, kind: "stop" | "output") =>
     fetch(`${ROUTE}/live-tasks/${kind}`, {
       method: "POST",
@@ -247,31 +261,45 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
     })
       .then((r) => readJson<{ ok: boolean; output?: string; error?: string }>(r))
       .then((b) => {
-        if (!mounted.current) return;
-        if (kind === "output" && b.ok) setOutput((cur) => ({ ...cur, [task.id]: b.output ?? "" }));
-        else if (kind === "stop" && b.ok)
-          // The server marked the row stopped on the CLI's ok and keeps it, so its output can
-          // still be read; the next poll would show the same, up to 3 s later.
+        if (!mounted.current) {
+          return;
+        }
+
+        if (kind === "output" && b.ok) {
+          setOutput((cur) => ({ ...cur, [task.id]: b.output ?? "" }));
+        } else if (kind === "stop" && b.ok)
+        // The server marked the row stopped on the CLI's ok and keeps it, so its output can
+        // still be read; the next poll would show the same, up to 3 s later.
+        {
           setTasks((cur) =>
             cur.map((row) =>
               row.id === task.id ? { ...row, status: "stopped", endedAt: Date.now() } : row,
             ),
           );
-        else
+        } else {
           setNote((cur) => ({
             ...cur,
             [task.id]: b.error ?? t("panel.tasks.refused"),
           }));
+        }
       })
-      .catch((e: Error) => {
-        if (mounted.current) setNote((cur) => ({ ...cur, [task.id]: e.message }));
+      .catch((error: Error) => {
+        if (mounted.current) {
+          setNote((cur) => ({ ...cur, [task.id]: error.message }));
+        }
       });
+
   // An ended subagent has nothing left to offer here (no Stop, no Output); the Earlier subagents
   // section lists it with Open. Ended shell tasks stay for their Output.
   const shown = tasks.filter((task) => task.endedAt === undefined || !task.subagentType);
-  if (shown.length === 0) return null;
+
+  if (shown.length === 0) {
+    return null;
+  }
+
   // Stop all, the terminal's Ctrl+X Ctrl+K, only once there are two to stop: one row has its own.
   const live = shown.filter((task) => task.endedAt === undefined);
+
   return (
     <div data-omc-live-tasks="">
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -282,7 +310,9 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
             style={btn}
             data-omc-live-tasks-stop-all=""
             onClick={() => {
-              for (const task of live) void act(task, "stop");
+              for (const task of live) {
+                void act(task, "stop");
+              }
             }}
           >
             {t("panel.tasks.stopAll")}
@@ -369,33 +399,41 @@ interface SubagentRun {
  *  back as Markdown. Read once per tab open: a run that ends while the tab is open shows next time. */
 function EarlierSubagentsSection({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useLocale();
-  const [runs, setRuns] = useState<SubagentRun[]>([]);
+  const [runs, setRuns] = useState<Array<SubagentRun>>([]);
   const [open, setOpen] = useState<Record<string, string>>({});
   useEffect(() => {
     let live = true;
     fetch(
       `${ROUTE}/subagent-runs?session=${encodeURIComponent(sessionId)}${boxParam(ctx, sessionId)}`,
     )
-      .then((r) => readJson<{ ok: true; runs: SubagentRun[] }>(r))
+      .then((r) => readJson<{ ok: true; runs: Array<SubagentRun> }>(r))
       .then((b) => live && setRuns(b.runs))
       .catch(() => {});
+
     return () => {
       live = false;
     };
   }, [ctx, sessionId]);
+
   const toggle = (run: SubagentRun) => {
     if (open[run.agentId] !== undefined) {
       setOpen((cur) => Object.fromEntries(Object.entries(cur).filter(([k]) => k !== run.agentId)));
+
       return;
     }
+
     fetch(
       `${ROUTE}/subagent-run?session=${encodeURIComponent(sessionId)}&agent=${encodeURIComponent(run.agentId)}${boxParam(ctx, sessionId)}`,
     )
       .then((r) => readJson<{ ok: true; markdown: string } | { ok: false; error: string }>(r))
       .then((b) => setOpen((cur) => ({ ...cur, [run.agentId]: b.ok ? b.markdown : b.error })))
-      .catch((e: Error) => setOpen((cur) => ({ ...cur, [run.agentId]: e.message })));
+      .catch((error: Error) => setOpen((cur) => ({ ...cur, [run.agentId]: error.message })));
   };
-  if (runs.length === 0) return null;
+
+  if (runs.length === 0) {
+    return null;
+  }
+
   return (
     <div data-omc-earlier-subagents="">
       <span style={sectionHead}>{t("panel.tasks.earlier")}</span>
@@ -462,17 +500,20 @@ export function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
     )
       .then((r) => readJson<ScheduledTasksReply | ScheduledTasksError>(r))
       .then((b) => live && setData(b))
-      .catch((e: Error) => live && setData({ ok: false, error: e.message }));
+      .catch((error: Error) => live && setData({ ok: false, error: error.message }));
+
     return () => {
       live = false;
     };
   }, [sessionId]);
 
   const dshGoals = data?.ok ? data.dshGoals : [];
+
   const current =
     dshGoals[0] && ["active", "paused", "blocked"].includes(dshGoals[0].phase)
       ? dshGoals[0]
       : undefined;
+
   const past = current ? dshGoals.slice(1) : dshGoals;
 
   return (

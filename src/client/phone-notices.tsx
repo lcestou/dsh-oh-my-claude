@@ -13,8 +13,8 @@ import {
   select,
   openSession,
   whenContextGone,
-  type ClientCtx,
 } from "./shared.js";
+import type { ClientCtx } from "./shared.js";
 import { subscribe } from "./events.js";
 import { useHintFlag, useHintValue } from "./hints.js";
 import { Switch } from "./switch.js";
@@ -23,11 +23,14 @@ import { Switch } from "./switch.js";
  *  and a worker over dsh's own pages would sit in front of every request dsh makes. */
 const SW_URL = `${ROUTE}/push/sw.js`;
 const SW_SCOPE = `${ROUTE}/push/`;
+
 /** The query the worker opens a new tab with; read and dropped on load. */
 const OPEN_PARAM = "omc-open";
+
 /** The delays the select offers, the server's NOTIFY_DELAY_CHOICES; 60 s is the default. */
 const DELAYS = [0, 30_000, 60_000, 300_000] as const;
 const DELAY_DEFAULT = 60_000;
+
 /** ntfy's own inline-template form, a URL and not prose, so it is shown as written in both languages. */
 const NTFY_EXAMPLE = "https://ntfy.sh/<your-topic>?tpl=1&t={{.title}}&m={{.message}}";
 
@@ -37,12 +40,14 @@ interface DeviceRow {
   service: string;
   added: number;
 }
+
 /** What `GET /notify` and every write answer. */
 interface NotifyState {
   webhookUrl: string | null;
   openUrl: string | null;
-  devices: DeviceRow[];
+  devices: Array<DeviceRow>;
 }
+
 /** What the test button gets back. */
 export interface TestReport {
   webhook: string;
@@ -61,32 +66,47 @@ const pushSupported = (): boolean =>
 
 /** A base64url string as bytes, the form `applicationServerKey` takes. */
 const fromB64u = (s: string): Uint8Array<ArrayBuffer> =>
-  Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+  Uint8Array.from(atob(s.replaceAll("-", "+").replaceAll("_", "/")), (c) => c.charCodeAt(0));
 
 /** Resolve once `reg` has an active worker. `serviceWorker.ready` cannot be used: it waits for a
  *  worker controlling this page, and this scope controls none, so it would never resolve. */
 function activeWorker(reg: ServiceWorkerRegistration): Promise<void> {
-  if (reg.active) return Promise.resolve();
+  if (reg.active) {
+    return Promise.resolve();
+  }
+
   const sw = reg.installing ?? reg.waiting;
-  if (!sw) return Promise.reject(new Error(t("main.phone.noWorker")));
+
+  if (!sw) {
+    return Promise.reject(new Error(t("main.phone.noWorker")));
+  }
+
   return new Promise((resolve, reject) => {
     sw.addEventListener("statechange", () => {
-      if (sw.state === "activated") resolve();
-      else if (sw.state === "redundant") reject(new Error(t("main.phone.noWorker")));
+      if (sw.state === "activated") {
+        resolve();
+      } else if (sw.state === "redundant") {
+        reject(new Error(t("main.phone.noWorker")));
+      }
     });
   });
 }
 
 /** This browser's current subscription under the worker's scope, or null. */
 async function currentSubscription(): Promise<PushSubscription | null> {
-  if (!pushSupported()) return null;
+  if (!pushSupported()) {
+    return null;
+  }
+
   const reg = await navigator.serviceWorker.getRegistration(SW_SCOPE);
+
   return (await reg?.pushManager.getSubscription()) ?? null;
 }
 
 /** The id the box gives an endpoint (first 16 hex of its SHA-256), to mark this device's row. */
 async function idOf(endpoint: string): Promise<string> {
   const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(endpoint));
+
   return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0"))
     .join("")
     .slice(0, 16);
@@ -116,18 +136,30 @@ export function delayLabel(ms: number): string {
         : t(ms === 60_000 ? "main.settingsUi.minuteOne" : "main.settingsUi.minuteOther", {
             n: ms / 60_000,
           });
+
   return ms === DELAY_DEFAULT ? t("main.settingsUi.defaultSuffix", { text }) : text;
 }
 
 /** The test report as one sentence per channel that was tried. */
 export function testSentence(r: TestReport): string {
   const total = r.sent + r.failed + r.removed;
-  if (total === 0 && r.webhook === "none") return t("main.phone.testNothing");
-  const parts: string[] = [];
-  if (total > 0) parts.push(t("main.phone.testDevices", { n: r.sent, total }));
-  if (r.webhook === "ok") parts.push(t("main.phone.testWebhookOk"));
-  else if (r.webhook !== "none")
+
+  if (total === 0 && r.webhook === "none") {
+    return t("main.phone.testNothing");
+  }
+
+  const parts: Array<string> = [];
+
+  if (total > 0) {
+    parts.push(t("main.phone.testDevices", { n: r.sent, total }));
+  }
+
+  if (r.webhook === "ok") {
+    parts.push(t("main.phone.testWebhookOk"));
+  } else if (r.webhook !== "none") {
     parts.push(t("main.phone.testWebhookFailed", { error: r.webhook }));
+  }
+
   return parts.join(" ");
 }
 
@@ -156,13 +188,22 @@ export function PhoneNoticesBlock() {
   const load = useCallback(async (reseed: boolean) => {
     const next = await call<NotifyState>("/notify");
     setState(next);
-    if (reseed) setHook(next.webhookUrl ?? "");
+
+    if (reseed) {
+      setHook(next.webhookUrl ?? "");
+    }
+
     const sub = await currentSubscription();
     setMine(sub ? await idOf(sub.endpoint) : null);
   }, []);
+
   useEffect(() => {
-    if (!on) return;
-    void load(true).catch((e: Error) => setStatus(e.message));
+    if (!on) {
+      return;
+    }
+
+    void load(true).catch((error: Error) => setStatus(error.message));
+
     return subscribe("notify", () => void load(false).catch(() => {}));
   }, [on, load]);
 
@@ -173,14 +214,17 @@ export function PhoneNoticesBlock() {
     setStatus("");
     void job()
       .then((msg) => msg && setStatus(msg))
-      .catch((e: Error) => setStatus(e.message))
+      .catch((error: Error) => setStatus(error.message))
       .finally(() => setBusy(false));
   };
+
   /** Subscribe this browser and send the subscription to the box. */
   const addThis = () =>
     run(async () => {
-      if ((await Notification.requestPermission()) !== "granted")
+      if ((await Notification.requestPermission()) !== "granted") {
         return t("main.phone.deviceBlocked");
+      }
+
       try {
         const reg = await navigator.serviceWorker.register(SW_URL, { scope: SW_SCOPE });
         await activeWorker(reg);
@@ -188,41 +232,55 @@ export function PhoneNoticesBlock() {
         // subscribe() throw InvalidStateError; this browser is not on the list, so it is stale.
         await (await reg.pushManager.getSubscription())?.unsubscribe();
         const { publicKey } = await call<{ publicKey: string }>("/notify/push-key");
+
         const sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
           applicationServerKey: fromB64u(publicKey),
         });
+
         const j = sub.toJSON();
         await call<NotifyState>(
           "/notify/devices",
           jsonInit("POST", { endpoint: j.endpoint, keys: j.keys }),
         );
-      } catch (e) {
-        return t("main.phone.deviceFailed", { error: e instanceof Error ? e.message : String(e) });
+      } catch (error) {
+        return t("main.phone.deviceFailed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
+
       await load(false);
     });
+
   /** Take this browser off the box's list and end its subscription. */
   const dropThis = () =>
     run(async () => {
       const sub = await currentSubscription();
+
       if (sub) {
         await call<NotifyState>(`/notify/devices?id=${await idOf(sub.endpoint)}`, {
           method: "DELETE",
         });
         await sub.unsubscribe();
       }
+
       await load(false);
     });
+
   /** Delete one row; this browser's own row also ends its subscription. */
   const remove = (id: string) =>
     run(async () => {
       await call<NotifyState>(`/notify/devices?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+
       // Removing this browser's row from the list also ends its subscription, or the browser would
       // keep a subscription the box no longer sends to and the button would say Stop.
-      if (id === mine) await (await currentSubscription())?.unsubscribe();
+      if (id === mine) {
+        await (await currentSubscription())?.unsubscribe();
+      }
+
       await load(false);
     });
+
   /** Save the webhook with this browser's origin as the address its links open at. */
   const save = () =>
     run(async () => {
@@ -231,22 +289,27 @@ export function PhoneNoticesBlock() {
         jsonInit("PUT", { webhookUrl: hook.trim(), openUrl: location.origin }),
       );
       await load(true);
+
       return t("main.phone.webhookSaved");
     });
+
   /** Send one notice everywhere now and say what took it. */
   const test = () =>
     run(async () => {
       // A test sent before any save still links to this browser's address.
-      if (state?.openUrl == null)
+      if (state?.openUrl == null) {
         await call<NotifyState>(
           "/notify",
           jsonInit("PUT", { webhookUrl: state?.webhookUrl ?? "", openUrl: location.origin }),
         );
+      }
+
       return testSentence(await call<TestReport>("/notify/test", { method: "POST" }));
     });
 
   const row = { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } as const;
   const head = { color: T.muted, fontSize: 12, marginTop: 10, marginBottom: 4 } as const;
+
   return (
     <>
       <div
@@ -325,6 +388,7 @@ export function PhoneNoticesBlock() {
             <ul data-omc-phone-devices="" style={{ listStyle: "none", margin: 0, padding: 0 }}>
               {state.devices.map((d) => {
                 const date = new Date(d.added).toLocaleDateString(activeLocale());
+
                 return (
                   <li
                     key={d.id}
@@ -397,27 +461,44 @@ export function watchPhoneOpen(ctx: ClientCtx): void {
   /** Open `id` once dsh's session list exists, checking every 100 ms for up to 10 s. */
   const open = (id: string) => {
     let tries = 0;
+
     /** One check; schedules the next until the list is there or the tries run out. */
     const tick = () => {
-      if (ctx.sessions.list.getSnapshot()) return openSession(ctx, id);
-      if (++tries < 100) setTimeout(tick, 100);
+      if (ctx.sessions.list.getSnapshot()) {
+        return openSession(ctx, id);
+      }
+
+      if (++tries < 100) {
+        setTimeout(tick, 100);
+      }
     };
+
     tick();
   };
+
   const url = new URL(location.href);
   const id = url.searchParams.get(OPEN_PARAM);
+
   if (id) {
     url.searchParams.delete(OPEN_PARAM);
     history.replaceState(history.state, "", url.href);
     open(id);
   }
-  if (!("serviceWorker" in navigator)) return;
+
+  if (!("serviceWorker" in navigator)) {
+    return;
+  }
+
   // The only sender on this scope is the plugin's own worker, which posts `{ omcOpen: id }`.
   /** A tapped notice's session, posted by the worker to this open tab. */
   const onMessage = (e: MessageEvent<{ omcOpen?: string } | null>) => {
     const target = e.data?.omcOpen;
-    if (target) open(String(target));
+
+    if (target) {
+      open(String(target));
+    }
   };
+
   navigator.serviceWorker.addEventListener("message", onMessage);
   whenContextGone(() => navigator.serviceWorker.removeEventListener("message", onMessage));
 }

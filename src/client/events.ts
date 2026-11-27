@@ -4,7 +4,9 @@
 // stream is alive, and `pollEvery()` is the period they ask for.
 import type { FallbackRecord, LiveMode, LiveTask, SuggestionRow } from "../translator.js";
 import type { TestGateRun } from "../test-gate.js";
+
 export type { LiveTask, SuggestionRow };
+
 import type { AwaitingRow } from "./notices.js";
 import { ROUTE, whenContextGone } from "./shared.js";
 import type { OpinionFinding } from "../prompts.js";
@@ -29,6 +31,7 @@ export interface LiveTurnBody {
    *  no-hub route fallback, which the row reads as no change. */
   mode?: LiveMode;
 }
+
 /** One `/btw` side question and, once the CLI answers, its answer or error. */
 export interface AsideItem {
   id: string;
@@ -41,6 +44,7 @@ export interface AsideItem {
   /** The passage the selection popover's Ask sent; a blank `question` beside it means "explain". */
   quote?: string;
 }
+
 /** A box whose Claude needs a login, as the card names it. */
 export interface LoginNeed {
   host: string;
@@ -48,12 +52,14 @@ export interface LoginNeed {
   /** Set for an account: the provider id its login routes take (src/adapter/types.ts). */
   provider?: string;
 }
+
 /** A file or image on a steer: its name and size for the chip, never its bytes. */
 export interface SteerAttachmentRow {
   kind: "file" | "image";
   name?: string;
   bytes: number;
 }
+
 /** A typed steer Claude has not read yet. `relayed` while the CLI is inside a dsh tool and dsh
  *  holds the message: Edit and Remove work, Send now does not. `attachments` when it carries a
  *  file or image; they stay on it through an edit, and `text` may be empty. */
@@ -62,22 +68,25 @@ export interface WaitingSteerRow {
   text: string;
   at: number;
   relayed?: true;
-  attachments?: SteerAttachmentRow[];
+  attachments?: Array<SteerAttachmentRow>;
 }
+
 /** Steers taken back from Claude for an edit: one hold, possibly several messages joined, with
  *  every file and image those messages carried. */
 export interface HeldSteerRow {
   id: string;
   text: string;
-  attachments?: SteerAttachmentRow[];
+  attachments?: Array<SteerAttachmentRow>;
 }
+
 /** The steer card's half of the side-questions body. */
 export interface SteerCardData {
   /** The CLI is inside a dsh tool: no Send now on any row. Present only when true. */
   inTool?: true;
-  waiting: WaitingSteerRow[];
-  held: HeldSteerRow[];
+  waiting: Array<WaitingSteerRow>;
+  held: Array<HeldSteerRow>;
 }
+
 /** One finished turn's accounting, as the cost line sums them. */
 export interface TurnRecord {
   at: number;
@@ -94,9 +103,10 @@ export interface TurnRecord {
    *  `costUsd` is not money anyone is charged, and nothing here adds it up. */
   via?: string;
 }
+
 /** `GET /turns`: the records and their sums. */
 export interface TurnsReply {
-  turns: TurnRecord[];
+  turns: Array<TurnRecord>;
   total: {
     costUsd: number;
     durationMs: number;
@@ -107,16 +117,18 @@ export interface TurnsReply {
     count: number;
   };
 }
+
 /** `GET /idle`: when the watchdog would end the process, or null when it is not armed. */
 export interface IdleReply {
   deadline: number | null;
   timeoutMs: number;
 }
+
 /** What `GET /permission-mode` reports. */
 export interface PermissionModeState {
   mode: string;
   override: string | null;
-  modes: string[];
+  modes: Array<string>;
   accessMode: string | null;
   ceiling: string;
   /** The mode a session with no override runs in on each dsh access mode: dsh's mapping by
@@ -134,27 +146,28 @@ export interface PermissionModeState {
  *  `OpinionReply` in src/adapter/second-opinion.ts, mirrored here as every other event body is). */
 export interface OpinionCardData {
   card:
-    | { state: "ready"; at: number; files: string[] }
-    | { state: "running"; at: number; files: string[]; model: string; startedAt: number }
+    | { state: "ready"; at: number; files: Array<string> }
+    | { state: "running"; at: number; files: Array<string>; model: string; startedAt: number }
     | {
         state: "done";
         at: number;
-        files: string[];
+        files: Array<string>;
         model: string;
-        findings: OpinionFinding[];
+        findings: Array<OpinionFinding>;
         reviewed: number;
         ms: number;
       }
     | {
         state: "failed";
         at: number;
-        files: string[];
+        files: Array<string>;
         model: string;
         reason: "gone" | "timeout" | "error" | "empty";
         detail?: string;
       }
     | null;
 }
+
 /** The saved second-opinion model, or null for off. */
 export interface OpinionSettingData {
   setting: { provider: string; model: string; auto?: boolean } | null;
@@ -167,7 +180,7 @@ export interface EventData {
   "live-turn": LiveTurnBody;
   awaiting: Record<string, AwaitingRow>;
   asides: {
-    items: AsideItem[];
+    items: Array<AsideItem>;
     loginNeeded: LoginNeed | null;
     fallback: FallbackRecord | null;
     steers: SteerCardData;
@@ -214,6 +227,7 @@ export const KINDS = [
 ] as const;
 
 type Listener<K extends keyof EventData> = (session: string | null, data: EventData[K]) => void;
+
 const subscribers = new Map<keyof EventData, Set<Listener<keyof EventData>>>();
 let source: EventSource | undefined;
 let openSession: string | null = null;
@@ -222,6 +236,7 @@ let lastMessageAt = 0;
 /** Without a message or a heartbeat for this long the stream counts as down and the timers run at
  *  their old rates; the server pings every 25 s (HEARTBEAT_MS in src/events.ts). */
 export const STALE_MS = 60_000;
+
 /** Fallback period while the stream is up: a safety net for an event the stream lost, not a rate.
  *  Must stay under HOLD_IDLE_MS (60 s, src/adapter.ts): the asides fallback read is what re-arms an
  *  open steer edit's hold, and a pushed event does not. */
@@ -247,12 +262,14 @@ export function pollEvery(running: boolean, fast: number, slow: number): number 
  */
 export function newestWins() {
   let seq = 0;
+
   return {
     pushed: () => {
       seq++;
     },
     ask: () => {
       const at = seq;
+
       return () => at === seq;
     },
   };
@@ -265,17 +282,28 @@ export function dispatch<K extends keyof EventData>(
   data: EventData[K],
 ): void {
   const set = subscribers.get(kind);
-  if (!set) return;
-  for (const fn of set) fn(session, data);
+
+  if (!set) {
+    return;
+  }
+
+  for (const fn of set) {
+    fn(session, data);
+  }
 }
 
 /** Listen for one kind; returns the unsubscribe. */
 export function subscribe<K extends keyof EventData>(kind: K, fn: Listener<K>): () => void {
   let set = subscribers.get(kind);
-  if (!set) subscribers.set(kind, (set = new Set()));
+
+  if (!set) {
+    subscribers.set(kind, (set = new Set()));
+  }
+
   // SAFETY: the set is keyed by K, so every listener in it takes EventData[K]
   const wide = fn as Listener<keyof EventData>;
   set.add(wide);
+
   return () => {
     set.delete(wide);
   };
@@ -303,22 +331,30 @@ export function openStream(session: string | null): void {
     source !== undefined &&
     source.readyState === EventSource.OPEN &&
     Date.now() - lastMessageAt >= STALE_MS;
+
   if (
     source !== undefined &&
     openSession === session &&
     source.readyState !== EventSource.CLOSED &&
     !stale
-  )
+  ) {
     return;
+  }
+
   source?.close();
   openSession = session;
   const q = session ? `?session=${encodeURIComponent(session)}` : "";
   const s = new EventSource(`${ROUTE}/events${q}`);
   source = s;
+
   const onAny = (ev: MessageEvent) => {
     lastMessageAt = Date.now();
     const kind = kindOf(ev.type);
-    if (kind === undefined) return;
+
+    if (kind === undefined) {
+      return;
+    }
+
     try {
       // SAFETY: our own server wrote this frame (src/events.ts `frame`): `{ session, data }` with
       // `data` the matching route's body for `kind`
@@ -326,18 +362,25 @@ export function openStream(session: string | null): void {
         session: string | null;
         data: EventData[typeof kind];
       };
+
       dispatch(kind, body.session, body.data);
     } catch {
       // a malformed frame is dropped; the next snapshot or event replaces it
     }
   };
-  for (const kind of KINDS) s.addEventListener(kind, onAny);
+
+  for (const kind of KINDS) {
+    s.addEventListener(kind, onAny);
+  }
+
   s.addEventListener("open", () => {
     lastMessageAt = Date.now();
   });
   s.addEventListener("error", () => {
     // CLOSED and not retrying: forget it so the next `openStream` opens a new one.
-    if (s.readyState === EventSource.CLOSED && source === s) source = undefined;
+    if (s.readyState === EventSource.CLOSED && source === s) {
+      source = undefined;
+    }
   });
   // `onopen`, every event and the ping refresh the clock; a stream with none of them for STALE_MS
   // falls back to the timers, which is the intent.

@@ -15,7 +15,6 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ACCENT,
-  type ClientCtx,
   ROUTE,
   T,
   btn,
@@ -30,8 +29,9 @@ import {
   row,
   select,
 } from "./shared.js";
+import type { ClientCtx } from "./shared.js";
 
-type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+type Json = string | number | boolean | null | Array<Json> | { [key: string]: Json };
 
 type JsonObject = { [key: string]: Json };
 
@@ -80,6 +80,7 @@ export function Chevron({ open }: { open: boolean }) {
 /** Collapsible card: title, a one-line summary that stays visible when closed, optional actions. */
 export function Card({ id, title, summary, actions, open, onToggle, children }: CardProps) {
   useLocale();
+
   // dsh's own plugin-settings card (ui-settings-plugins, 2026-09-13): name over description on the
   // left, chevron on the right that turns when open, the body under a hairline. Measurements and
   // tokens copied rather than the class borrowed, since dsh's class names change per build.
@@ -159,14 +160,24 @@ export function Card({ id, title, summary, actions, open, onToggle, children }: 
 
 /** Facts worth a glance before opening the editor. */
 export function summarize(settings: JsonObject | undefined): Array<[string, string]> {
-  if (!settings) return [];
+  if (!settings) {
+    return [];
+  }
+
   const out: Array<[string, string]> = [];
-  if (settings.model) out.push(["model", String(settings.model)]);
+
+  if (settings.model) {
+    out.push(["model", String(settings.model)]);
+  }
+
   const hooksObj = settings.hooks;
+
   if (isObj(hooksObj)) {
     const events = Object.keys(hooksObj);
+
     const hooks = events.reduce<number>((n, e) => {
       const groups = hooksObj[e];
+
       return (
         n +
         (Array.isArray(groups)
@@ -177,6 +188,7 @@ export function summarize(settings: JsonObject | undefined): Array<[string, stri
           : 0)
       );
     }, 0);
+
     out.push([
       "hooks",
       t(events.length === 1 ? "main.summary.hooksOnOne" : "main.summary.hooksOnOther", {
@@ -185,24 +197,40 @@ export function summarize(settings: JsonObject | undefined): Array<[string, stri
       }),
     ]);
   }
+
   const p = settings.permissions;
+
   if (isObj(p)) {
     const parts = ["allow", "ask", "deny"]
       .filter((k) => count(p[k]) > 0)
       .map((k) => `${count(p[k])} ${k}`);
-    if (p.defaultMode) parts.unshift(String(p.defaultMode));
-    if (parts.length) out.push(["permissions", parts.join(" · ")]);
+
+    if (p.defaultMode) {
+      parts.unshift(String(p.defaultMode));
+    }
+
+    if (parts.length) {
+      out.push(["permissions", parts.join(" · ")]);
+    }
   }
-  if (count(settings.env) > 0)
+
+  if (count(settings.env) > 0) {
     out.push([
       "env",
       t(count(settings.env) === 1 ? "main.summary.varsOne" : "main.summary.varsOther", {
         n: count(settings.env),
       }),
     ]);
-  if (count(settings.enabledPlugins) > 0)
+  }
+
+  if (count(settings.enabledPlugins) > 0) {
     out.push(["plugins", t("main.summary.enabled", { n: count(settings.enabledPlugins) })]);
-  if (settings.statusLine) out.push(["statusLine", t("main.summary.set")]);
+  }
+
+  if (settings.statusLine) {
+    out.push(["statusLine", t("main.summary.set")]);
+  }
+
   return out;
 }
 
@@ -270,7 +298,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
   useLocale();
   const [scope, setScope] = useState<SettingsScope>("user");
   const [cwd, setCwd] = useState<string | null>(null);
-  const [scopes, setScopes] = useState<SettingsScopeInfo[]>([]);
+  const [scopes, setScopes] = useState<Array<SettingsScopeInfo>>([]);
   const [file, setFile] = useState<SettingsFile | null>(null);
   const [text, setText] = useState("");
   const [editing, setEditing] = useState(false);
@@ -282,14 +310,17 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
   // only produce a rejected save. Read every render: the snapshot fills in as sessions load, and
   // this store has no subscribe to wait on.
   const byId = ctx?.sessions.list.getSnapshot()?.byId ?? {};
+
   const cwdOptions = [
     ...new Set(Object.values(byId).flatMap((s) => (s.cwd ? [s.cwd] : []))),
   ].toSorted();
+
   const projectCwd = cwd ?? cwdOptions[0] ?? null;
 
   const settingsUrl = box
     ? `${ROUTE}/boxes/settings?url=${encodeURIComponent(box.url)}`
     : `${ROUTE}/settings`;
+
   const scopesUrl = projectCwd
     ? `${ROUTE}/settings/scopes?cwd=${encodeURIComponent(projectCwd)}`
     : `${ROUTE}/settings/scopes`;
@@ -304,11 +335,13 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
   // Newest read wins: two quick scope changes can answer out of order, and the older answer
   // showed the previous scope's file under the new scope's tab.
   const loadSeq = useRef(0);
+
   const load = () => {
     const seq = ++loadSeq.current;
     const current = () => seq === loadSeq.current;
     setBusy(true);
     setError("");
+
     // A box answers one file and knows nothing of scopes; everything else reads every scope at
     // once, so the editor can show one and say which keys another file overrides.
     const done = box
@@ -316,54 +349,85 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
           .then((r) => readJson<SettingsFile>(r))
           .then((f) => current() && show(f))
       : fetch(scopesUrl)
-          .then((r) => readJson<{ scopes?: SettingsScopeInfo[] }>(r))
+          .then((r) => readJson<{ scopes?: Array<SettingsScopeInfo> }>(r))
           .then((b) => {
-            if (!current()) return;
+            if (!current()) {
+              return;
+            }
+
             const all = b.scopes ?? [];
             setScopes(all);
+
             const wanted =
               all.find((s) => s.scope === scope) ?? all.find((s) => s.scope === "user");
-            if (wanted) show(wanted);
+
+            if (wanted) {
+              show(wanted);
+            }
           });
+
     done
-      .catch((e: Error) => current() && setError(e.message))
+      .catch((error_: Error) => current() && setError(error_.message))
       .finally(() => current() && setBusy(false));
   };
+
   useEffect(load, [settingsUrl, scopesUrl, scope]);
   // Another control on the page wrote a settings file (the Claude updates channel, the Tune tab):
   // show the new text, unless an edit is open, which would lose what was typed. The editor's own
   // save skips this, so its "Saved at" line stays up.
   const ownSave = useRef(false);
   useEffect(() => {
-    if (editing) return;
+    if (editing) {
+      return;
+    }
+
     const again = () => {
-      if (!ownSave.current) load();
+      if (!ownSave.current) {
+        load();
+      }
     };
+
     window.addEventListener(SETTINGS_EVENT, again);
+
     return () => window.removeEventListener(SETTINGS_EVENT, again);
   });
 
   const parsed = useMemo<{ value?: JsonObject; error?: string }>(() => {
     try {
       const value: Json = JSON.parse(text);
-      if (!isObj(value)) return { error: t("main.settings.mustBeObject") };
+
+      if (!isObj(value)) {
+        return { error: t("main.settings.mustBeObject") };
+      }
+
       return { value };
-    } catch (e) {
-      return { error: e instanceof Error ? e.message : String(e) };
+    } catch (error_) {
+      return { error: error_ instanceof Error ? error_.message : String(error_) };
     }
   }, [text]);
+
   const dirty = file !== null && text !== file.text;
   const canSave = dirty && !parsed.error && !busy;
 
   const save = () => {
-    if (!canSave) return;
+    if (!canSave) {
+      return;
+    }
+
     setBusy(true);
     setError("");
     const body: SettingsWrite = box ? { text } : { text, scope };
-    if (!box && projectCwd !== null) body.cwd = projectCwd;
+
+    if (!box && projectCwd !== null) {
+      body.cwd = projectCwd;
+    }
+
     // The file as this tab last read it. The CLI writes settings.json itself on a plugin
     // install or a /model pick. A save that ignored that would put the whole file back without it.
-    if (file?.mtime !== undefined) body.mtime = file.mtime;
+    if (file?.mtime !== undefined) {
+      body.mtime = file.mtime;
+    }
+
     fetch(settingsUrl, {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -386,9 +450,10 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
         window.dispatchEvent(new Event(SETTINGS_EVENT));
         ownSave.current = false;
       })
-      .catch((e: Error) => setError(e.message))
+      .catch((error_: Error) => setError(error_.message))
       .finally(() => setBusy(false));
   };
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
       e.preventDefault();
@@ -400,6 +465,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
   const readOnly = !box && scope === "managed";
 
   const facts = summarize(parsed.value);
+
   const summary = file
     ? facts.length
       ? facts.map(([k, v]) => `${k} ${v}`).join(" · ")
@@ -407,6 +473,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
         ? t("main.settings.empty")
         : t("main.settings.notCreated")
     : "";
+
   const actions = editing ? (
     <>
       <button
@@ -450,6 +517,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
       </button>
     </>
   ) : null;
+
   return (
     <Card
       id="dsh-oh-my-claude-settings"
@@ -583,37 +651,45 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
  * reason: it answers with the list before that save.
  */
 export function useBoxList() {
-  const [boxes, setShown] = useState<BoxData[]>([]);
+  const [boxes, setShown] = useState<Array<BoxData>>([]);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
+
   const wrote = useViewRead("boxes", (fresh) => {
     fetch(`${ROUTE}/boxes`)
-      .then((r) => readJson<{ boxes?: BoxData[] }>(r))
+      .then((r) => readJson<{ boxes?: Array<BoxData> }>(r))
       .then((b) => {
-        if (!fresh()) return;
+        if (!fresh()) {
+          return;
+        }
+
         setError("");
         setLoaded(true);
         setShown(b.boxes ?? []);
       })
-      .catch((e: Error) => {
-        if (fresh()) setError(e.message);
+      .catch((error_: Error) => {
+        if (fresh()) {
+          setError(error_.message);
+        }
       });
   });
+
   /** The card's setter: a saved list counts as newer than any read already in flight. */
   const setBoxes = useCallback(
-    (next: React.SetStateAction<BoxData[]>) => {
+    (next: React.SetStateAction<Array<BoxData>>) => {
       wrote();
       setShown(next);
     },
     [wrote],
   );
+
   return { boxes, setBoxes, error, loaded };
 }
 
 interface BoxesProps {
   ctx: ClientCtx;
-  boxes: BoxData[];
-  setBoxes: React.Dispatch<React.SetStateAction<BoxData[]>>;
+  boxes: Array<BoxData>;
+  setBoxes: React.Dispatch<React.SetStateAction<Array<BoxData>>>;
   /** False until the saved list has been read once. A save before that would be built on an empty
    *  list and replace every saved box, so the card refuses it. */
   loaded: boolean;
@@ -687,7 +763,7 @@ export function BoxRow({
    *  none for a row that has no state of its own. */
   tone: "ok" | "err" | "faint" | "none";
   /** The status line's items, left to right; a string item joins with a middle dot. */
-  facts: ReactNode[];
+  facts: Array<ReactNode>;
   /** A line under the facts: a reach hint, an install hint. */
   note?: ReactNode;
   actions?: ReactNode;
@@ -697,6 +773,7 @@ export function BoxRow({
   // The actions sit centred on the two-line block (title, status), not hung from its top line; a
   // row with a note or an open login form below keeps them at the top, beside the part they act on.
   const tall = Boolean(note || children);
+
   return (
     <div
       data-testid={testId}
@@ -855,56 +932,78 @@ const DSH_LOGIN: LoginRoutes = { base: "boxes/login", field: "url" };
 /** Login state for one box plus the start and submit handlers; each step POSTs to a login route. */
 export function useLoginFlow(onDone: (host: string) => void, routes: LoginRoutes = SSH_LOGIN) {
   const [login, setLogin] = useState<LoginFlow | null>(null);
+
   const post = (route: string, host: string, extra: Record<string, string> = {}) =>
     fetch(`${ROUTE}/${routes.base}/${route}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ [routes.field]: host, ...extra }),
     });
+
   const startLogin = (host: string) => {
     setLogin({ host, code: "", busy: true });
     post("start", host)
       .then((r) => readJson<{ url?: string; error?: string }>(r))
       .then((b) => setLogin({ host, code: "", url: b.url, error: b.error }))
-      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
+      .catch((error: Error) => setLogin({ host, code: "", error: error.message }));
   };
+
   // While the link is up, ask every 2s whether setup-token finished by itself (it does when the
   // box already has a login: no browser, no code). Paused during a submit, stopped on an error.
   const pollKey = login && login.url && !login.busy && !login.error ? login.host : null;
   useEffect(() => {
-    if (pollKey === null) return;
+    if (pollKey === null) {
+      return;
+    }
+
     const host = pollKey;
     let live = true;
+
     const tick = () =>
       post("poll", host)
         .then((r) => readJson<{ pending?: boolean; done?: boolean; error?: string }>(r))
         .then((b) => {
-          if (!live || b.pending) return;
+          if (!live || b.pending) {
+            return;
+          }
+
           if (b.done) {
             setLogin(null);
             onDone(host);
-          } else setLogin((cur) => (cur && cur.host === host ? { ...cur, error: b.error } : cur));
+          } else {
+            setLogin((cur) => (cur && cur.host === host ? { ...cur, error: b.error } : cur));
+          }
         })
         .catch(() => {});
+
     const timer = setInterval(tick, 2000);
+
     return () => {
       live = false;
       clearInterval(timer);
     };
   }, [pollKey]);
+
   const submitLogin = () => {
-    if (!login) return;
+    if (!login) {
+      return;
+    }
+
     const host = login.host;
     setLogin({ ...login, busy: true, error: undefined });
     post("code", host, { code: login.code })
       .then((r) => readJson<{ done?: boolean; loggedIn?: boolean; error?: string }>(r))
       .then((b) => {
-        if (b.error) return setLogin({ host, code: "", error: b.error });
+        if (b.error) {
+          return setLogin({ host, code: "", error: b.error });
+        }
+
         setLogin(null);
         onDone(host);
       })
-      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
+      .catch((error: Error) => setLogin({ host, code: "", error: error.message }));
   };
+
   return { login, setLogin, startLogin, submitLogin };
 }
 
@@ -919,6 +1018,7 @@ export function LoginSteps({
   submit: () => void;
 }) {
   useLocale();
+
   return (
     <div style={{ ...meta, marginTop: 6, whiteSpace: "normal", overflowWrap: "anywhere" }}>
       {login.busy && !login.url && <span>{t("main.login.starting")}</span>}
@@ -966,7 +1066,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
   const [tick, setTick] = useState(0);
   const [probe, setProbe] = useState<Record<string, ProbeEntry>>({});
   const [self, setSelf] = useState<{ plugin?: string } | null>(null);
-  const [ssh, setSsh] = useState<SshBoxData[]>([]);
+  const [ssh, setSsh] = useState<Array<SshBoxData>>([]);
   const [sshProbe, setSshProbe] = useState<Record<string, SshProbeEntry>>({});
   const [kind, setKind] = useState<BoxKind>("ssh");
   /** The add form is folded behind one button once a box exists; a first visit sees it open. */
@@ -978,34 +1078,47 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
   // The two tunnels a box can sit behind, read from this node: a tailnet peer or a WireGuard peer
   // is a pick, not a hostname typed, and the tailnet is joined from here when it is not yet.
   const [ts, setTs] = useState<TailscaleStatusRow | null>(null);
+
   const [wg, setWg] = useState<{
     installed: boolean;
-    peers: WireguardPeerRow[];
+    peers: Array<WireguardPeerRow>;
     error?: string;
   } | null>(null);
+
   const [pickedPeer, setPickedPeer] = useState<TailscalePeerRow | null>(null);
+
   const [tsLogin, setTsLogin] = useState<{ url?: string; error?: string; busy?: boolean } | null>(
     null,
   );
+
   // Headscale users point the client at their own server, and a pre-auth key skips the browser.
   const [tsServer, setTsServer] = useState({ loginServer: "", authKey: "" });
+
   const loadNets = useCallback(() => {
     fetch(`${ROUTE}/tailscale/status`)
       .then((r) => readJson<TailscaleStatusRow>(r))
       .then(setTs)
       .catch(() => {});
     fetch(`${ROUTE}/wireguard/status`)
-      .then((r) => readJson<{ installed: boolean; peers: WireguardPeerRow[]; error?: string }>(r))
+      .then((r) =>
+        readJson<{ installed: boolean; peers: Array<WireguardPeerRow>; error?: string }>(r),
+      )
       .then(setWg)
       .catch(() => {});
   }, []);
+
   useEffect(loadNets, [loadNets]);
   // While an approval link is out, look every 3 s for the tailnet to come up; stop once it has.
   useEffect(() => {
-    if (!tsLogin?.url || ts?.loggedIn) return;
+    if (!tsLogin?.url || ts?.loggedIn) {
+      return;
+    }
+
     const timer = setInterval(loadNets, 3000);
+
     return () => clearInterval(timer);
   }, [tsLogin?.url, ts?.loggedIn, loadNets]);
+
   const joinTailnet = () => {
     setTsLogin({ busy: true });
     fetch(`${ROUTE}/tailscale/login`, {
@@ -1016,10 +1129,14 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
       .then((r) => readJson<{ url?: string; joined?: boolean; error?: string }>(r))
       .then((b) => {
         setTsLogin({ url: b.url, error: b.error });
-        if (b.joined) loadNets();
+
+        if (b.joined) {
+          loadNets();
+        }
       })
-      .catch((e: Error) => setTsLogin({ error: e.message }));
+      .catch((error_: Error) => setTsLogin({ error: error_.message }));
   };
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [openSettingsUrl, setOpenSettingsUrl] = useState<string | null>(null);
@@ -1027,14 +1144,17 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
   // Each box's colour, picked or automatic; the swatches show only once there are two boxes to
   // tell apart.
   const { colours } = useBoxColours();
+
   /** The swatch for one box, or nothing while This box is the only one. */
   const swatchFor = (provider: string, name: string) =>
     colours.size > 1 ? (
       <BoxColourSwatch provider={provider} name={name} colour={colours.get(provider)} />
     ) : undefined;
-  const [rws, setRws] = useState<RemoteWs[]>([]);
+
+  const [rws, setRws] = useState<Array<RemoteWs>>([]);
   const { login, setLogin, startLogin, submitLogin } = useLoginFlow(() => refresh());
   const dsh = useLoginFlow(() => refresh(), DSH_LOGIN);
+
   const logoutDsh = (target: string) => {
     setBusy(true);
     fetch(`${ROUTE}/boxes/login/logout`, {
@@ -1043,7 +1163,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
       body: JSON.stringify({ url: target }),
     })
       .then(() => refresh())
-      .catch((e: Error) => setError(e.message))
+      .catch((error_: Error) => setError(error_.message))
       .finally(() => setBusy(false));
   };
 
@@ -1055,27 +1175,31 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
       .then((r) => readJson<RuntimeStatus | null>(r))
       .then(setMe)
       .catch(() => {});
+
   /** The remote-workspace rows. Only state setters inside, so an effect may keep the first one. */
   const loadRws = () => {
     fetch(`${ROUTE}/remote-workspaces`)
-      .then((r) => readJson<{ workspaces?: RemoteWs[] }>(r))
+      .then((r) => readJson<{ workspaces?: Array<RemoteWs> }>(r))
       .then((b) => setRws(b.workspaces ?? []))
       .catch(() => {});
   };
+
   /** The saved SSH boxes. Read on mount and again on BOXES_EVENT, which a save here, in another
    *  tab or in another browser raises: a tab that kept an old list would PUT it back on its next add
    *  and drop the box the other tab saved. */
   const loadSsh = () =>
     fetch(`${ROUTE}/ssh-boxes`)
-      .then((r) => readJson<{ boxes?: SshBoxData[] }>(r))
+      .then((r) => readJson<{ boxes?: Array<SshBoxData> }>(r))
       .then((b) => setSsh(b.boxes ?? []))
-      .catch((e: Error) => setError(e.message));
+      .catch((error_: Error) => setError(error_.message));
+
   useEffect(() => {
     void loadSsh();
     void loadMe();
     loadRws();
     const onBoxes = () => void loadSsh();
     window.addEventListener(BOXES_EVENT, onBoxes);
+
     return () => window.removeEventListener(BOXES_EVENT, onBoxes);
   }, []);
   // The rows follow dsh's own workspace list, which changes on an add from the picker, a trash in
@@ -1086,17 +1210,24 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
   // its POST has answered.
   useEffect(() => {
     let ids = "";
+
     const onStore = () => {
       const next = (ctx.workspaces.list.getSnapshot()?.items ?? [])
         .map((w) => w.workspaceId)
         .toSorted()
         .join("|");
-      if (next === ids) return;
+
+      if (next === ids) {
+        return;
+      }
+
       ids = next;
       loadRws();
     };
+
     const off = ctx.workspaces.list.subscribe(onStore);
     window.addEventListener(RW_EVENT, loadRws);
+
     return () => {
       off();
       window.removeEventListener(RW_EVENT, loadRws);
@@ -1107,79 +1238,107 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
     setBusy(true);
     setError("");
     setTick((n) => n + 1);
-    const jobs: Promise<unknown>[] = [loadMe()];
-    if (boxes.length)
+    const jobs: Array<Promise<unknown>> = [loadMe()];
+
+    if (boxes.length) {
       jobs.push(
         fetch(`${ROUTE}/boxes/status`)
-          .then((r) => readJson<{ self?: { plugin?: string }; boxes?: ProbeEntry[] }>(r))
+          .then((r) => readJson<{ self?: { plugin?: string }; boxes?: Array<ProbeEntry> }>(r))
           .then((b) => {
             setSelf(b.self ?? null);
             setProbe(Object.fromEntries((b.boxes ?? []).map((entry) => [entry.url, entry])));
           }),
       );
-    if (ssh.length)
+    }
+
+    if (ssh.length) {
       jobs.push(
         fetch(`${ROUTE}/ssh-boxes/status`)
-          .then((r) => readJson<{ boxes?: SshProbeEntry[] }>(r))
+          .then((r) => readJson<{ boxes?: Array<SshProbeEntry> }>(r))
           .then((b) => setSshProbe(Object.fromEntries((b.boxes ?? []).map((e) => [e.host, e])))),
       );
+    }
+
     loadNets();
     Promise.all(jobs)
-      .catch((e: Error) => setError(e.message))
+      .catch((error_: Error) => setError(error_.message))
       .finally(() => setBusy(false));
   };
+
   useEffect(refresh, [boxes.map((b) => b.url).join("|"), ssh.map((b) => b.host).join("|")]);
 
-  const saveDsh = (next: BoxData[]) => {
+  const saveDsh = (next: Array<BoxData>) => {
     if (!loaded) {
       setError(t("main.boxes.notRead"));
+
       return Promise.resolve();
     }
+
     setBusy(true);
     setError("");
+
     return fetch(`${ROUTE}/boxes`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ boxes: next }),
     })
-      .then((r) => readJson<{ boxes?: BoxData[] }>(r))
+      .then((r) => readJson<{ boxes?: Array<BoxData> }>(r))
       .then((b) => setBoxes(b.boxes ?? []))
-      .catch((e: Error) => setError(e.message))
+      .catch((error_: Error) => setError(error_.message))
       .finally(() => setBusy(false));
   };
-  const saveSsh = (next: SshBoxData[]) => {
+
+  const saveSsh = (next: Array<SshBoxData>) => {
     setBusy(true);
     setError("");
+
     return fetch(`${ROUTE}/ssh-boxes`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ boxes: next }),
     })
-      .then((r) => readJson<{ boxes?: SshBoxData[] }>(r))
+      .then((r) => readJson<{ boxes?: Array<SshBoxData> }>(r))
       .then((b) => {
         setSsh(b.boxes ?? []);
         window.dispatchEvent(new Event(BOXES_EVENT));
       })
-      .catch((e: Error) => setError(e.message))
+      .catch((error_: Error) => setError(error_.message))
       .finally(() => setBusy(false));
   };
+
   const clear = () => setDraft({ name: "", url: "", token: "", host: "" });
+
   const add = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!draft.name.trim()) return;
+
+    if (!draft.name.trim()) {
+      return;
+    }
+
     if (kind !== "dsh") {
-      if (!draft.host.trim()) return;
+      if (!draft.host.trim()) {
+        return;
+      }
+
       const box: SshBoxData = { name: draft.name.trim(), host: draft.host.trim() };
-      if (kind !== "ssh") box.via = kind;
+
+      if (kind !== "ssh") {
+        box.via = kind;
+      }
+
       saveSsh([...ssh, box]).then(clear);
     } else {
-      if (!draft.url.trim()) return;
+      if (!draft.url.trim()) {
+        return;
+      }
+
       saveDsh([
         ...boxes,
         { name: draft.name.trim(), url: draft.url.trim(), token: draft.token },
       ]).then(clear);
     }
   };
+
   const removeDsh = (url: string) => saveDsh(boxes.filter((b) => b.url !== url));
   const removeSsh = (host: string) => saveSsh(ssh.filter((b) => b.host !== host));
 
@@ -1191,9 +1350,10 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
       body: JSON.stringify({ host }),
     })
       .then(() => refresh())
-      .catch((e: Error) => setError(e.message))
+      .catch((error_: Error) => setError(error_.message))
       .finally(() => setBusy(false));
   };
+
   const removeRw = (path: string) => {
     setBusy(true);
     setError("");
@@ -1202,16 +1362,18 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ path }),
     })
-      .then((r) => readJson<{ workspaces?: RemoteWs[] }>(r))
+      .then((r) => readJson<{ workspaces?: Array<RemoteWs> }>(r))
       .then((b) => setRws(b.workspaces ?? []))
-      .catch((e: Error) => setError(e.message))
+      .catch((error_: Error) => setError(error_.message))
       .finally(() => setBusy(false));
   };
 
   const total = boxes.length + ssh.length;
+
   const reachable =
     boxes.filter((b) => probe[b.url]?.ok).length +
     ssh.filter((b) => sshProbe[b.host]?.status?.binary).length;
+
   const summary =
     total === 0
       ? t("main.boxes.noneSaved")
@@ -1219,6 +1381,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
           total,
           status: busy ? t("main.sessions.checking") : t("main.boxes.reachable", { n: reachable }),
         });
+
   const seg = (k: BoxKind, label: string) => (
     <button
       type="button"
@@ -1239,6 +1402,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
       {label}
     </button>
   );
+
   return (
     <Card
       id="dsh-oh-my-claude-boxes"
@@ -1343,7 +1507,8 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
         const st = sshProbe[b.host]?.status;
         const down = st?.reach && st.reach.stage !== "ok";
         const up = st && !st.error && st.binary;
-        const facts: ReactNode[] = !st
+
+        const facts: Array<ReactNode> = !st
           ? [busy ? t("main.sessions.checking") : t("main.sessions.unchecked")]
           : down
             ? [
@@ -1359,19 +1524,25 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
                     ? maskEmail(st.email ?? t("main.boxes.loggedIn"))
                     : bad(t("main.boxes.notLoggedIn")),
                 ];
-        if (st && up && !st.loggedIn && (st.running ?? 0) > 0)
+
+        if (st && up && !st.loggedIn && (st.running ?? 0) > 0) {
           facts.push(
             t(
               st.running === 1 ? "main.boxes.stillAnsweringOne" : "main.boxes.stillAnsweringOther",
               { n: st.running ?? 0 },
             ),
           );
+        }
+
         // Said before the click: Remove on a box takes the workspaces pinned to it as well.
         const onIt = rws.filter((w) => w.host === b.host).length;
-        if (onIt > 0)
+
+        if (onIt > 0) {
           facts.push(
             t(onIt === 1 ? "main.boxes.wsOnItOne" : "main.boxes.wsOnItOther", { n: onIt }),
           );
+        }
+
         return (
           <BoxRow
             key={`ssh:${b.host}`}
@@ -1438,7 +1609,8 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
         const ok = st?.ok;
         const r = ok ? st.status : undefined;
         const skew = r?.plugin && self && r.plugin !== self.plugin;
-        const facts: ReactNode[] = !st
+
+        const facts: Array<ReactNode> = !st
           ? [busy ? t("main.sessions.checking") : t("main.sessions.unchecked")]
           : !ok
             ? [bad(st.error ?? t("main.sessions.unreachable"))]
@@ -1455,6 +1627,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
                   </span>,
                 ]
               : [];
+
         return (
           <BoxRow
             key={`dsh:${b.url}`}
@@ -1518,7 +1691,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
           <SettingsEditor
             open
             onToggle={() => setOpenSettingsUrl(null)}
-            box={boxes.find((b) => b.url === openSettingsUrl)!}
+            box={boxes.find((b) => b.url === openSettingsUrl)}
           />
         </div>
       )}
@@ -1566,8 +1739,10 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
                     onChange={(e) => {
                       const peer = ts.peers.find((p) => p.host === e.target.value) ?? null;
                       setPickedPeer(peer);
-                      if (peer)
+
+                      if (peer) {
                         setDraft({ ...draft, name: draft.name || peer.name, host: peer.host });
+                      }
                     }}
                   >
                     <option value="">{t("main.boxes.pickPeer")}</option>
@@ -1606,7 +1781,10 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
                     }
                     onChange={(e) => {
                       const peer = wg.peers.find((p) => p.host === e.target.value);
-                      if (peer) setDraft({ ...draft, host: peer.host });
+
+                      if (peer) {
+                        setDraft({ ...draft, host: peer.host });
+                      }
                     }}
                   >
                     <option value="">{t("main.boxes.pickPeer")}</option>
@@ -1873,7 +2051,7 @@ interface TailscaleStatusRow {
   state: string;
   loggedIn: boolean;
   self?: { name: string; host: string; ip: string };
-  peers: TailscalePeerRow[];
+  peers: Array<TailscalePeerRow>;
   error?: string;
 }
 
@@ -1881,7 +2059,7 @@ interface TailscaleStatusRow {
 interface WireguardPeerRow {
   iface: string;
   host: string;
-  allowedIps: string[];
+  allowedIps: Array<string>;
   endpoint: string;
   handshakeAge: number | null;
 }
@@ -1989,53 +2167,73 @@ function BoxUpdateButton({
       .then((r) => readJson<BoxUpdateState>(r))
       .then((s) => live && setState(s))
       .catch(() => {});
+
     return () => {
       live = false;
     };
   }, [url]);
   useEffect(() => {
-    if (phase !== "busy") return;
+    if (phase !== "busy") {
+      return;
+    }
+
     let live = true;
     const startedAt = Date.now();
+
     const tick = async () => {
       try {
         const s = await readJson<BoxUpdateState>(await fetch(url));
-        if (!live) return;
+
+        if (!live) {
+          return;
+        }
+
         if (s.busy) {
           if (Date.now() - startedAt > 200_000) {
             setNote(t("main.update.noAnswer200"));
             setPhase("failed");
           }
+
           return;
         }
-        const last = s.log[s.log.length - 1];
+
+        const last = s.log.at(-1);
         setState(s);
         setNote(last?.note ?? "");
         setPhase(!last ? "failed" : last.ok ? "done" : last.to !== null ? "declined" : "failed");
-        if (last?.ok) onDone();
+
+        if (last?.ok) {
+          onDone();
+        }
       } catch {
         // a missed poll is retried on the next tick
       }
     };
+
     const id = setInterval(() => void tick(), 3000);
+
     return () => {
       live = false;
       clearInterval(id);
     };
   }, [phase, url, onDone]);
-  if (!state || !state.latest || !state.installed || !isNewer(state.installed, state.latest))
+
+  if (!state || !state.latest || !state.installed || !isNewer(state.installed, state.latest)) {
     return null;
+  }
+
   const run = () => {
     setPhase("busy");
     void fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ run: true }),
-    }).catch((e: Error) => {
-      setNote(e.message);
+    }).catch((error: Error) => {
+      setNote(error.message);
       setPhase("failed");
     });
   };
+
   const text =
     phase === "busy"
       ? t("main.update.updating")
@@ -2046,6 +2244,7 @@ function BoxUpdateButton({
           : phase === "failed"
             ? t("main.update.retry")
             : t("main.update.updateTo", { v: state.latest });
+
   return (
     <button
       type="button"

@@ -41,5 +41,8 @@ export function ensurePhoneStyle(): void {
   const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
   el.id = STYLE_ID;
   el.textContent = PHONE_CSS;
-  if (el !== existing) document.head.append(el);
+
+  if (el !== existing) {
+    document.head.append(el);
+  }
 }

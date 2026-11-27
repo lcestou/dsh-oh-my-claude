@@ -52,6 +52,7 @@ await Promise.all([
   savePermissionMode(dir, "s1", "plan"),
   savePermissionMode(dir, "s2", "acceptEdits"),
 ]);
+
 assert.deepEqual(
   await loadPermissionModes(dir),
   new Map([
@@ -59,17 +60,24 @@ assert.deepEqual(
     ["s2", "acceptEdits"],
   ]),
 );
+
 await savePermissionMode(dir, "s1", "bypassPermissions");
+
 await savePermissionMode(dir, "s2", null);
+
 assert.deepEqual(await loadPermissionModes(dir), new Map([["s1", "bypassPermissions"]]));
+
 assert.equal(await readFile(PERMISSION_MODES_FILE(dir), "utf8"), '{"s1":"bypassPermissions"}');
 
 // Turn records: write two sessions, read back, assert deep equality.
 // Under the repo's own .cache so the records land on the same filesystem the plugin uses;
 // a fresh checkout has no .cache yet, so make it rather than fail on the first run.
 const cacheDir = join(process.cwd(), ".cache");
+
 await mkdir(cacheDir, { recursive: true });
+
 const turnsDir = await mkdtemp(join(cacheDir, "omc-turns-"));
+
 await saveTurnRecords(turnsDir, "ts1", [
   {
     at: 1000,
@@ -94,6 +102,7 @@ await saveTurnRecords(turnsDir, "ts1", [
     turns: 2,
   },
 ]);
+
 await saveTurnRecords(turnsDir, "ts2", [
   {
     at: 3000,
@@ -107,6 +116,7 @@ await saveTurnRecords(turnsDir, "ts2", [
     turns: 3,
   },
 ]);
+
 // A turn a router answered keeps its tag across a restart. Dropped on the way back in, the turn
 // read as one of Claude's and its figure went back into the session's money.
 await saveTurnRecords(turnsDir, "ts-routed", [
@@ -123,13 +133,17 @@ await saveTurnRecords(turnsDir, "ts-routed", [
     via: "127.0.0.1:15721",
   },
 ]);
+
 assert.equal((await loadTurnRecords(turnsDir)).get("ts-routed")?.[0]?.via, "127.0.0.1:15721");
+
 assert.equal(
   (await loadTurnRecords(turnsDir)).get("ts2")?.[0]?.via,
   undefined,
   "a turn with no tag gets none",
 );
+
 const loadedTurns = await loadTurnRecords(turnsDir);
+
 assert.deepEqual(loadedTurns.get("ts1"), [
   {
     at: 1000,
@@ -154,6 +168,7 @@ assert.deepEqual(loadedTurns.get("ts1"), [
     turns: 2,
   },
 ]);
+
 assert.deepEqual(loadedTurns.get("ts2"), [
   {
     at: 3000,
@@ -170,6 +185,7 @@ assert.deepEqual(loadedTurns.get("ts2"), [
 
 // Malformed entry: write a bad record into ts1's array and assert the loader drops it but keeps ts2.
 const raw = JSON.parse(await readFile(TURNS_FILE(turnsDir), "utf8"));
+
 raw.ts1.push({
   at: "not-a-number",
   costUsd: 0.01,
@@ -179,9 +195,13 @@ raw.ts1.push({
   cacheRead: 20,
   cacheWrite: 10,
 });
+
 await writeFile(TURNS_FILE(turnsDir), JSON.stringify(raw));
+
 const dropped = await loadTurnRecords(turnsDir);
+
 assert.equal(dropped.get("ts1")?.length, 2);
+
 assert.deepEqual(dropped.get("ts2"), [
   {
     at: 3000,
@@ -197,23 +217,32 @@ assert.deepEqual(dropped.get("ts2"), [
 ]);
 
 assert.deepEqual(modesUpTo("plan"), ["plan"]);
+
 assert.deepEqual(modesUpTo("acceptEdits"), ["default", "acceptEdits", "plan"]);
+
 assert.equal(modesUpTo("bypassPermissions").length, 6);
 
 console.log("turns-state ok");
+
 // The dir is test litter: 2,354 of them (62 MB) had piled up in .cache by 2026-10-22.
 await rm(turnsDir, { recursive: true, force: true });
 
 // Limit waits: set two, forget one, reload; concurrent saves serialize.
 assert.deepEqual(await loadLimitWaits(dir), new Map());
-await Promise.all([saveLimitWait(dir, "s1", 1_000), saveLimitWait(dir, "s2", 2_000)]);
+
+await Promise.all([saveLimitWait(dir, "s1", 1000), saveLimitWait(dir, "s2", 2000)]);
+
 await saveLimitWait(dir, "s1", undefined);
-assert.deepEqual(await loadLimitWaits(dir), new Map([["s2", 2_000]]));
+
+assert.deepEqual(await loadLimitWaits(dir), new Map([["s2", 2000]]));
+
 console.log("limit-waits ok");
 
 // Asides: save a ring, reload; pending and malformed entries drop on load; concurrent saves serialize.
 const asidesDir = tempDir("omc-asides-");
+
 assert.deepEqual(await loadAsides(asidesDir), new Map());
+
 await Promise.all([
   saveAsides(asidesDir, "a1", [
     { id: "q1", question: "why?", answer: "because", pending: false, at: 100 },
@@ -227,11 +256,17 @@ await Promise.all([
     { id: "q4", question: "where?", answer: "here", pending: false, at: 400, dismissed: true },
   ]),
 ]);
+
 const asides = await loadAsides(asidesDir);
+
 assert.equal(asides.get("a1")?.length, 2);
+
 assert.equal(asides.get("a1")?.[0]?.answer, "because");
+
 assert.equal(asides.get("a1")?.[1]?.error, "no live process");
+
 assert.equal(asides.get("a2"), undefined); // the lone pending entry dropped, so no key survives
+
 assert.equal(asides.get("a4")?.[0]?.dismissed, true); // the dismissed flag survives a reload
 
 // A file with junk entries keeps only the well-formed, resolved ones.
@@ -246,26 +281,45 @@ await writeFile(
     ],
   }),
 );
+
 const cleaned = await loadAsides(asidesDir);
+
 assert.deepEqual(cleaned.get("a3"), [{ id: "ok", question: "q", pending: false, at: 1 }]);
+
 console.log("asides ok");
+
 // Starters: save per-session and default openers, reload, and clear one with a blank text.
 const startersDir = tempDir("omc-starters-");
+
 assert.deepEqual(await loadStarters(startersDir), new Map());
+
 await saveStarter(startersDir, "s1", "review the diff");
+
 await saveStarter(startersDir, "default", "what changed?");
+
 await saveStarter(startersDir, "s2", "   "); // blank never becomes an opener
+
 let starters = await loadStarters(startersDir);
+
 assert.equal(starters.get("s1"), "review the diff");
+
 assert.equal(starters.get("default"), "what changed?");
+
 assert.equal(starters.get("s2"), undefined);
+
 await saveStarter(startersDir, "s1", ""); // clearing drops the key
+
 starters = await loadStarters(startersDir);
+
 assert.equal(starters.get("s1"), undefined);
+
 assert.equal(starters.get("default"), "what changed?");
+
 console.log("starters ok");
+
 // Workspace models: remember which Claude model a workspace last ran; cleared when blank or absent.
 const wsDir = tempDir("omc-ws-");
+
 // A remembered id the CLI has since renamed lands on the form the lineup still has.
 {
   const offered = [
@@ -275,6 +329,7 @@ const wsDir = tempDir("omc-ws-");
     "claude-sonnet-5",
     "claude-haiku-4-5",
   ];
+
   assert.equal(livingModelId("claude-fable-5-1", offered), "claude-fable-5-1", "offered as it is");
   assert.equal(livingModelId("opus[1m]", offered), "opus[1m]", "a 1M alias still offered stays");
   assert.equal(
@@ -310,54 +365,84 @@ const wsDir = tempDir("omc-ws-");
   assert.equal(livingModelId("claude-gone-9", offered), undefined, "unknown family: nothing");
   assert.equal(livingModelId("default", ["sonnet"]), undefined, "`default` is no family");
 }
+
 let wsModels = await loadWorkspaceModels(wsDir);
+
 assert.equal(wsModels.size, 0, "empty dir loads empty map");
+
 await saveWorkspaceModel(wsDir, "/w/a", "claude-opus-5", 10);
+
 await saveWorkspaceModel(wsDir, "/w/b", "haiku", 20);
+
 wsModels = await loadWorkspaceModels(wsDir);
+
 assert.deepEqual(wsModels.get("/w/a"), { model: "claude-opus-5", at: 10 });
+
 // The mount rides with the model when given, and a row without one still loads as before.
 await saveWorkspaceModel(wsDir, "/w/c", "claude-opus-5", 30, "claude-code-lilly");
+
 wsModels = await loadWorkspaceModels(wsDir);
+
 assert.deepEqual(wsModels.get("/w/c"), {
   model: "claude-opus-5",
   provider: "claude-code-lilly",
   at: 30,
 });
+
 assert.equal(wsModels.get("/w/a")?.provider, undefined, "older rows carry no provider");
+
 // The effort rides along too, and a later turn on the model's own default clears it.
 await saveWorkspaceModel(wsDir, "/w/c", "claude-opus-5-5", 31, "claude-code", "high");
+
 wsModels = await loadWorkspaceModels(wsDir);
+
 assert.equal(wsModels.get("/w/c")?.effort, "high", "the effort is remembered");
+
 await saveWorkspaceModel(wsDir, "/w/c", "claude-opus-5-5", 32, "claude-code");
+
 wsModels = await loadWorkspaceModels(wsDir);
+
 assert.equal(wsModels.get("/w/c")?.effort, undefined, "a turn on the default clears it");
+
 assert.equal(wsModels.get("/w/a")?.effort, undefined, "older rows carry no effort");
+
 await saveWorkspaceModel(wsDir, "/w/c", undefined); // back to the two rows the rest expects
+
 assert.deepEqual(wsModels.get("/w/b"), { model: "haiku", at: 20 });
+
 await saveWorkspaceModel(wsDir, "/w/b", undefined);
+
 wsModels = await loadWorkspaceModels(wsDir);
+
 assert.equal(wsModels.size, 1, "undefined model forgets it");
+
 await saveWorkspaceModel(wsDir, "/w/a", "");
+
 wsModels = await loadWorkspaceModels(wsDir);
+
 assert.equal(wsModels.size, 0, "blank model forgets it");
+
 // A subagent child shares its parent's cwd and must not move the workspace onto its model.
 assert.equal(
   countsForWorkspaceMemory({ model: "claude-opus-5-5", temporary: false, origin: undefined }),
   true,
 );
+
 assert.equal(
   countsForWorkspaceMemory({ model: "claude-sonnet-5-5", temporary: false, origin: "subagent" }),
   false,
 );
+
 assert.equal(
   countsForWorkspaceMemory({ model: "claude-opus-5-5", temporary: true, origin: undefined }),
   false,
 );
+
 assert.equal(
   countsForWorkspaceMemory({ model: undefined, temporary: false, origin: undefined }),
   false,
 );
+
 // A store file a hand edit broke is kept beside the new one, not written over.
 {
   const { readdir: rd, writeFile: wf, readFile: rf } = await import("node:fs/promises");
@@ -375,54 +460,83 @@ assert.equal(
     "a good file is not copied",
   );
 }
+
 console.log("workspace models ok");
+
 // Context sizes: per-workspace character cost of each dsh context block.
 const csDir = tempDir("omc-cs-");
 let csMap = await loadContextSizes(csDir);
+
 assert.equal(csMap.size, 0, "empty dir loads empty map");
+
 await saveContextSizes(csDir, "/w/a", { instructions: 100, skills: 200 }, 42);
+
 csMap = await loadContextSizes(csDir);
+
 assert.deepEqual(csMap.get("/w/a"), { sizes: { instructions: 100, skills: 200 }, at: 42 });
+
 // Merge, not replace: a resumed turn carries no instruction bundle and no skill catalog.
 await saveContextSizes(csDir, "/w/a", { skills: 0, tools: 50 }, 99);
+
 csMap = await loadContextSizes(csDir);
+
 assert.deepEqual(csMap.get("/w/a"), { sizes: { instructions: 100, skills: 0, tools: 50 }, at: 99 });
+
 await saveContextSizes(csDir, "/w/a", undefined);
+
 csMap = await loadContextSizes(csDir);
+
 assert.equal(csMap.get("/w/a"), undefined, "undefined sizes forgets the row");
+
 // A hand-written file with a non-number size drops that key and keeps the rest.
 await writeFile(
   join(csDir, "context-sizes.json"),
   JSON.stringify({ "/w/b": { sizes: { instructions: 10, skills: "bad", runtime: 30 }, at: 1 } }),
 );
+
 csMap = await loadContextSizes(csDir);
+
 assert.deepEqual(csMap.get("/w/b"), { sizes: { instructions: 10, runtime: 30 }, at: 1 });
+
 console.log("context sizes ok");
+
 // Started ids: what another writer put in the file between two of ours survives, which it did not
 // while the set was read once and cached for the life of the process.
 const startedFile = join(tempDir("omc-started-"), "sessions.json");
+
 await rememberStarted("a", true, startedFile);
+
 await writeFile(startedFile, JSON.stringify(["a", "other-process"]));
+
 await rememberStarted("b", true, startedFile);
+
 assert.deepEqual([...(await loadStarted(startedFile))], ["a", "other-process", "b"]);
+
 await rememberStarted("a", false, startedFile);
+
 assert.deepEqual([...(await loadStarted(startedFile))], ["other-process", "b"]);
+
 console.log("started ids ok");
+
 // Every store lands through a temp file and a rename, so a crash mid-write cannot leave a half
 // file the next read would treat as empty and the next save would write back from. Nothing of that
 // is left behind afterwards.
-for (const d of [dir, startersDir, asidesDir])
+for (const d of [dir, startersDir, asidesDir]) {
   assert.deepEqual(
     (await readdir(d)).filter((n) => n.includes(".tmp-")),
     [],
     "no temp file survives a save",
   );
+}
+
 console.log("atomic writes ok");
 
 // The suite runs under DSH_OMC_STATE_DIR (package.json sets it): every store must be under it, or
 // a test rewrites the running plugin's files.
-if (process.env.DSH_OMC_STATE_DIR !== undefined)
+if (process.env.DSH_OMC_STATE_DIR !== undefined) {
   assert.equal(STATE_DIR, process.env.DSH_OMC_STATE_DIR, "STATE_DIR follows the env for tests");
+}
+
 // Holds: a respawn writes the new record before the old hold's exit arrives, and that exit drops
 // only its own name.
 {
@@ -436,6 +550,7 @@ if (process.env.DSH_OMC_STATE_DIR !== undefined)
   assert.deepEqual(await loadHolds(dir), {}, "the named hold drops");
   await dropHold(dir, "missing", "x");
 }
+
 console.log("state.test: ok");
 
 // The terminal mirror: only a stored choice answers here. No file, or an unreadable one, answers
@@ -463,6 +578,7 @@ console.log("state.test: ok");
     { type: "model/selection", data: { provider: 42 } },
     { type: "assistant/message", data: {} },
   ];
+
   assert.deepEqual(
     pendingSelection(events),
     { provider: "claude-code", model: "claude-fable-5-1" },
@@ -544,7 +660,11 @@ console.log("state.test: ok");
   const dir = tempDir("omc-trace-");
   const file = join(dir, "resume.log");
   const big = "x".repeat(20_000);
-  for (let i = 0; i < 300; i++) await trace(file, `${i} ${big}`);
+
+  for (let i = 0; i < 300; i++) {
+    await trace(file, `${i} ${big}`);
+  }
+
   const text = await readFile(file, "utf8");
   assert.ok(text.length < 4 * 1024 * 1024, "trimmed under the cap");
   assert.ok(text.length > 1024 * 1024, "but a good tail kept");
@@ -561,15 +681,20 @@ console.log("state.test: ok");
   const apiKey = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
   const home = tempDir("omc-auth-");
+
   const login = (token: string, expiresAt: number) =>
     JSON.stringify({ claudeAiOauth: { accessToken: token, expiresAt } });
+
   const bearer = (token: string) => ({
     Authorization: `Bearer ${token}`,
     "anthropic-beta": "oauth-2025-04-20",
   });
+
   let asked = 0;
+
   const keychain = async () => {
     asked++;
+
     return login("from-keychain", Date.now() + 3_600_000);
   };
 
@@ -577,7 +702,7 @@ console.log("state.test: ok");
   assert.deepEqual(await authHeaders(home, keychain), bearer("from-keychain"), "no file: Keychain");
   assert.equal(await authHeaders(home, async () => null), null, "no file and no Keychain entry");
 
-  await writeFile(join(home, ".credentials.json"), login("stale", Date.now() - 1_000));
+  await writeFile(join(home, ".credentials.json"), login("stale", Date.now() - 1000));
   assert.deepEqual(
     await authHeaders(home, keychain),
     bearer("from-keychain"),
@@ -589,10 +714,14 @@ console.log("state.test: ok");
   assert.deepEqual(await authHeaders(home, keychain), bearer("from-file"), "a live file wins");
   assert.equal(asked, 0, "the Keychain is not asked when the file answers");
 
-  if (apiKey !== undefined) process.env.ANTHROPIC_API_KEY = apiKey;
+  if (apiKey !== undefined) {
+    process.env.ANTHROPIC_API_KEY = apiKey;
+  }
+
   await rm(home, { recursive: true, force: true });
   console.log("auth headers ok");
 }
+
 {
   // A write that fails rejects for its own caller only: the next mark still runs. A directory
   // where the file should be makes the rename throw.
@@ -606,11 +735,13 @@ console.log("state.test: ok");
   await rm(dir, { recursive: true, force: true });
   console.log("busy chain ok");
 }
+
 {
   // takeInterrupted queues on markBusy's chain. Called in the same tick as a mark, it runs strictly
   // before or after it, never between the mark's read and its write: a take called first leaves
   // the live mark in the file, and a take called second sees the mark already made.
   const dir = tempDir("omc-busy-take-");
+
   try {
     const path = join(dir, "busy.json");
     await writeFile(path, JSON.stringify(["old"]));
@@ -625,12 +756,15 @@ console.log("state.test: ok");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+
   console.log("busy take ok");
 }
+
 {
   // costTotal and apiTotal are what a restarted process restores its running totals from, so they
   // are kept only as a pair: one without the other would restore half a total.
   const dir = tempDir("omc-turn-totals-");
+
   try {
     const base = {
       at: 1,
@@ -643,6 +777,7 @@ console.log("state.test: ok");
       apiMs: 9,
       turns: 1,
     };
+
     await saveTurnRecords(dir, "s", [
       { ...base, costTotal: 7.5, apiTotal: 900, ttftMs: 40 },
       { ...base, costTotal: 8 },
@@ -662,5 +797,6 @@ console.log("state.test: ok");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+
   console.log("turn totals ok");
 }

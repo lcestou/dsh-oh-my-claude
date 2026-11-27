@@ -15,13 +15,14 @@ import {
   parseHoldLine,
   asHoldRecord,
   reattachDelay,
-  type RunOnBox,
 } from "./hold.js";
+import type { RunOnBox } from "./hold.js";
 import type { SubprocessHandle } from "./process.js";
 import { tempDir } from "./test-tmp.js";
 
 // One dir per spawn: same session, different stamp, different name; the hash part is stable.
 assert.notEqual(holdName("claude-code-box", "s1", 1), holdName("claude-code-box", "s1", 2));
+
 assert.equal(
   holdName("claude-code-box", "s1", 1).slice(0, 16),
   holdName("claude-code-box", "s1", 2).slice(0, 16),
@@ -34,6 +35,7 @@ assert.equal(
     token: "tok",
     window: 128_000,
   });
+
   assert.ok(
     s.startsWith(
       "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN || exit 71; ",
@@ -82,6 +84,7 @@ assert.equal(
     "offset 0 reads from the first byte",
   );
 }
+
 assert.match(
   holdKillScript("n"),
   /kill -TERM -- -"\$p" 2>\/dev\/null; sleep 5; kill -KILL -- -"\$p"/,
@@ -89,33 +92,43 @@ assert.match(
 
 // Line sorting: nothing counts before READY (a login banner), then output, stderr and the exit.
 assert.equal(parseHoldLine("Welcome to box", false), undefined);
+
 assert.deepEqual(parseHoldLine(READY, false), { kind: "ready" });
+
 assert.deepEqual(parseHoldLine('{"type":"result"}', true), {
   kind: "out",
   line: '{"type":"result"}',
 });
+
 assert.deepEqual(parseHoldLine(`${ERR}boom`, true), { kind: "err", line: "boom" });
+
 assert.deepEqual(parseHoldLine(`${EXIT}3`, true), { kind: "exit", code: 3 });
+
 assert.deepEqual(parseHoldLine(`${EXIT}`, true), { kind: "exit", code: 255 });
+
 assert.deepEqual([0, 1, 2, 3, 9].map(reattachDelay), [2000, 4000, 8000, 15_000, 15_000]);
 
 // A fake far side: each run() is one ssh whose output the test feeds and whose end the test decides.
 interface FakeSsh {
   script: string;
   out: PassThrough;
-  written: string[];
+  written: Array<string>;
   end: (code: number) => void;
 }
-const fakeRunner = (): { run: RunOnBox; sshes: FakeSsh[] } => {
-  const sshes: FakeSsh[] = [];
+
+const fakeRunner = (): { run: RunOnBox; sshes: Array<FakeSsh> } => {
+  const sshes: Array<FakeSsh> = [];
+
   const run: RunOnBox = (script) => {
     const out = new PassThrough();
     const err = new PassThrough();
-    const written: string[] = [];
+    const written: Array<string> = [];
     let finish: ((v: { exitCode: number | null; signal: string | null }) => void) | undefined;
+
     const done = new Promise<{ exitCode: number | null; signal: string | null }>((r) => {
       finish = r;
     });
+
     const fake: FakeSsh = {
       script,
       out,
@@ -125,7 +138,9 @@ const fakeRunner = (): { run: RunOnBox; sshes: FakeSsh[] } => {
         finish?.({ exitCode: code, signal: null });
       },
     };
+
     sshes.push(fake);
+
     return {
       stdin: new Writable({
         write(chunk, _e, cb) {
@@ -139,8 +154,10 @@ const fakeRunner = (): { run: RunOnBox; sshes: FakeSsh[] } => {
       terminate: () => {},
     };
   };
+
   return { run, sshes };
 };
+
 // Polls stop at the first answer; the budget (1000 ticks, 5 s) is for a box under load, where the
 // fake cli took more than half a second to answer and the suite failed for no fault of the code.
 const tick = () => new Promise((r) => setTimeout(r, 5));
@@ -151,10 +168,11 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
 // replayed after it reaches the stderr stream before the end.
 {
   const { run, sshes } = fakeRunner();
-  const offsets: number[] = [];
-  const lines: string[] = [];
-  const errs: string[] = [];
+  const offsets: Array<number> = [];
+  const lines: Array<string> = [];
+  const errs: Array<string> = [];
   let exited = 0;
+
   const h = holdHandle(
     run,
     "abc-1",
@@ -162,6 +180,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     (o) => offsets.push(o),
     () => exited++,
   );
+
   h.stdout.on("data", (d) => lines.push(String(d)));
   h.stderr.on("data", (d) => errs.push(String(d)));
   assert.equal(sshes.length, 1);
@@ -202,8 +221,8 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
 // reads it whole from the last full line's offset.
 {
   const { run, sshes } = fakeRunner();
-  const offsets: number[] = [];
-  const lines: string[] = [];
+  const offsets: Array<number> = [];
+  const lines: Array<string> = [];
   const h = holdHandle(run, "frag-1", 0, (o) => offsets.push(o));
   h.stdout.on("data", (d) => lines.push(String(d)));
   sshes[0]!.out.write(`${READY}\n{"a":1}\n{"par`);
@@ -223,8 +242,8 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
 // and the offset moves by the bytes the file holds, so the next attach starts on a line boundary.
 {
   const { run, sshes } = fakeRunner();
-  const offsets: number[] = [];
-  const lines: string[] = [];
+  const offsets: Array<number> = [];
+  const lines: Array<string> = [];
   const h = holdHandle(run, "utf8-1", 0, (o) => offsets.push(o));
   h.stdout.on("data", (d) => lines.push(String(d)));
   sshes[0]!.out.write(`${READY}\n`);
@@ -243,7 +262,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
 {
   const { run, sshes } = fakeRunner();
   const h = holdHandle(run, "gone-1", 0, () => {});
-  const errs: string[] = [];
+  const errs: Array<string> = [];
   h.stderr.on("data", (d) => errs.push(String(d)));
   sshes[0]!.end(GONE);
   const outcome = await h.done;
@@ -277,11 +296,13 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
   const { execFileSync } = await import("node:child_process");
   const { nodeSpawner } = await import("./process.js");
   let hasSetsid = true;
+
   try {
     execFileSync("setsid", ["--version"], { stdio: "ignore" });
   } catch {
     hasSetsid = false;
   }
+
   if (hasSetsid) {
     const home = tempDir("omc-hold-home-");
     const cli = join(home, "fake-claude");
@@ -312,12 +333,16 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     const dir = join(home, ".local", "state", "dsh-oh-my-claude", "hold", name);
     assert.ok(existsSync(join(dir, "in")) && existsSync(join(dir, "pid")), "far dir is laid out");
     // First attach: write, read, drop the ssh; second attach from the offset sees only what is new.
-    const offsets: number[] = [];
-    const seen: string[] = [];
+    const offsets: Array<number> = [];
+    const seen: Array<string> = [];
     const h1 = holdHandle(sh, name, 0, (o) => offsets.push(o));
     h1.stdout.on("data", (d) => seen.push(String(d)));
     h1.stdin.write("1\n");
-    for (let i = 0; i < 1000 && seen.length === 0; i++) await tick();
+
+    for (let i = 0; i < 1000 && seen.length === 0; i++) {
+      await tick();
+    }
+
     assert.deepEqual(seen, ['{"got":1}\n'], "the fake cli answered through the FIFO and the log");
     const off = offsets.at(-1)!;
     assert.equal(
@@ -327,10 +352,14 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     );
     // Ending the attach's shell is the ssh dropping; the cli keeps its FIFO and its log.
     const h2 = holdHandle(sh, name, off, () => {});
-    const seen2: string[] = [];
+    const seen2: Array<string> = [];
     h2.stdout.on("data", (d) => seen2.push(String(d)));
     h2.stdin.write("2\n");
-    for (let i = 0; i < 1000 && seen2.length === 0; i++) await tick();
+
+    for (let i = 0; i < 1000 && seen2.length === 0; i++) {
+      await tick();
+    }
+
     assert.deepEqual(seen2, ['{"got":2}\n'], "a second attach reads only from its offset");
     h2.stdin.write("quit\n");
     const outcome = await h2.done;
@@ -355,12 +384,14 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     startedAt: 5,
     owner: "web",
   };
+
   const r = asHoldRecord(good);
   assert.ok(r);
   assert.deepEqual(r.args, ["-p", "--verbose"], "a non-string arg is dropped, not passed to ssh");
   assert.equal(r.offset, 120);
   assert.equal(r.owner, "web");
   assert.equal(asHoldRecord({ ...good, owner: 3 })?.owner, undefined, "a bad owner reads as none");
+
   const required = [
     "sessionId",
     "host",
@@ -372,11 +403,13 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
     "offset",
     "startedAt",
   ];
+
   for (const key of required) {
     const rest: Record<string, unknown> = { ...good };
     delete rest[key];
     assert.equal(asHoldRecord(rest), undefined, `missing ${key} rejects`);
   }
+
   assert.equal(asHoldRecord({ ...good, offset: "120" }), undefined, "a string offset rejects");
   assert.equal(asHoldRecord({ ...good, procSpec: null }), undefined);
   assert.equal(asHoldRecord(null), undefined);
@@ -386,6 +419,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
 
 // A real SubprocessHandle shape is what the runner must answer; the fake above is one.
 const sample: SubprocessHandle = fakeRunner().run("true");
+
 assert.ok(sample.done instanceof Promise);
 
 console.log("hold ok");

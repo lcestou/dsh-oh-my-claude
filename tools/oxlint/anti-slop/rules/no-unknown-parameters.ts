@@ -1,7 +1,12 @@
 import { defineRule } from "@oxlint/plugins";
 import type { ESTree } from "@oxlint/plugins";
 
-type Parameter = ESTree.ParamPattern;
+import {
+  containsUnknownType,
+  functionParameterBindingName,
+  functionParameterTypeAnnotation,
+} from "../shared/function-parameters.ts";
+
 type ParameterOwner =
   | ESTree.ArrowFunctionExpression
   | ESTree.Function
@@ -11,38 +16,18 @@ type ParameterOwner =
   | ESTree.TSFunctionType
   | ESTree.TSMethodSignature;
 
-/** Drain the parameter shapes (property, rest, default) to reach the real type annotation, so an
- *  `unknown` on a destructured or defaulted parameter is still caught.
+/**
+ * Return true when the parameter is the subject of its function's `x is T` return type: a type
+ * guard takes `unknown` by design, so the rule lets it through.
  */
-function parameterAnnotation(parameter: Parameter): ESTree.TSTypeAnnotation | null | undefined {
-  if (parameter.type === "TSParameterProperty") {
-    return parameterAnnotation(parameter.parameter);
-  }
-  if (parameter.type === "RestElement") {
-    return parameter.typeAnnotation ?? parameterAnnotation(parameter.argument);
-  }
-  if (parameter.type === "AssignmentPattern") {
-    return parameter.typeAnnotation ?? parameter.left.typeAnnotation;
-  }
-  return parameter.typeAnnotation;
-}
+function isTypePredicateSubject(owner: ParameterOwner, parameterName: string): boolean {
+  const predicate = owner.returnType?.typeAnnotation;
 
-/** Return the parameter's binding name, descending through destructuring and defaults; for a
- *  non-identifier it strips a trailing `: unknown` so the report names the parameter, not the type.
- */
-function parameterName(parameter: Parameter, sourceText: string): string {
-  if (parameter.type === "TSParameterProperty") {
-    return parameterName(parameter.parameter, sourceText);
-  }
-  if (parameter.type === "AssignmentPattern") {
-    return parameterName(parameter.left, sourceText);
-  }
-  if (parameter.type === "RestElement") {
-    return parameterName(parameter.argument, sourceText);
-  }
-  return parameter.type === "Identifier"
-    ? parameter.name
-    : sourceText.replace(/\s*:\s*unknown\s*$/u, "");
+  return (
+    predicate?.type === "TSTypePredicate" &&
+    predicate.parameterName.type === "Identifier" &&
+    predicate.parameterName.name === parameterName
+  );
 }
 
 /** Disallow unknown inputs except explicitly named error-cause enrichment. */
@@ -51,7 +36,7 @@ export const noUnknownParametersRule = defineRule({
     type: "problem",
     docs: {
       description:
-        "Disallow explicitly unknown function parameters except `cause`; decode unknown input at its I/O boundary instead.",
+        "Disallow explicitly unknown function parameters except `cause` and type-predicate subjects; decode unknown input at its I/O boundary instead.",
     },
     messages: {
       unknownParameter:
@@ -61,10 +46,22 @@ export const noUnknownParametersRule = defineRule({
   createOnce(context) {
     const checkParameters = (node: ParameterOwner) => {
       for (const parameter of node.params) {
-        const annotation = parameterAnnotation(parameter);
-        if (annotation?.typeAnnotation.type !== "TSUnknownKeyword") continue;
-        const name = parameterName(parameter, context.sourceCode.getText(parameter));
-        if (name === "cause") continue;
+        const annotation = functionParameterTypeAnnotation(parameter);
+
+        if (annotation === null || annotation === undefined) {
+          continue;
+        }
+
+        if (!containsUnknownType(annotation.typeAnnotation)) {
+          continue;
+        }
+
+        const name = functionParameterBindingName(parameter, context.sourceCode);
+
+        if (name === "cause" || isTypePredicateSubject(node, name)) {
+          continue;
+        }
+
         context.report({
           node: annotation.typeAnnotation,
           messageId: "unknownParameter",

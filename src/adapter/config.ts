@@ -20,18 +20,22 @@ export const DSH_VERSION: string | null = (() => {
 
 /** Live placeholder→remote map for remote workspaces, shared by every box's ssh spawner. Loaded at
  * boot and replaced whenever the panel edits the list, so a redirect applies without a dsh restart. */
-let remoteWorkspaces: RemoteWorkspace[] = [];
+let remoteWorkspaces: Array<RemoteWorkspace> = [];
+
 /** Replace the redirect map: the boot read and every panel edit land here. Exported so the offline
  * suite can drive the two lookups below without a dsh mount. */
-export function setRemoteWorkspaces(workspaces: RemoteWorkspace[]): void {
+export function setRemoteWorkspaces(workspaces: Array<RemoteWorkspace>): void {
   remoteWorkspaces = workspaces;
   remoteWorkspacesKnown = true;
 }
+
 /** Whether the map above has been fed at all: before the routes' first read lands, an empty map
  *  means "not read yet", not "no remote workspaces". */
 let remoteWorkspacesKnown = false;
+
 /** Where every remote workspace's stand-in folder lives. */
 const STAND_INS = join(STATE_DIR, "remote-workspaces");
+
 /**
  * Whether `cwd` is the stand-in of a remote workspace that no longer exists. Removing a box, or
  * deleting the workspace, drops its row and its stand-in folder, but dsh keeps the sessions and
@@ -41,10 +45,12 @@ const STAND_INS = join(STATE_DIR, "remote-workspaces");
  */
 export const isOrphanedStandIn = (cwd: string): boolean =>
   remoteWorkspacesKnown && cwd.startsWith(`${STAND_INS}/`) && remoteWorkspaceFor(cwd) === undefined;
+
 /** The real remote path for a placeholder workspace on `host`, or `cwd` unchanged. */
 export function remoteCwdFor(host: string, cwd: string): string {
   return remoteWorkspaces.find((w) => w.host === host && w.path === cwd)?.remoteCwd ?? cwd;
 }
+
 /** The box a turn runs on: this instance's own host when it has one, else the box a remote-workspace
  * cwd belongs to. The choice is by truthiness because `sshHost` defaults to `""`, not undefined.
  * `??` treats that empty string as an answer, which is how a local provider's turn came to probe the
@@ -75,16 +81,16 @@ export type Config = {
     | "dontAsk"
     | "auto"
     | "manual";
-  hiddenModels: string[];
-  customModels: CustomModel[];
-  allowedTools: string[];
-  disallowedTools: string[];
-  builtinTools: string[];
+  hiddenModels: Array<string>;
+  customModels: Array<CustomModel>;
+  allowedTools: Array<string>;
+  disallowedTools: Array<string>;
+  builtinTools: Array<string>;
   toolLoading: "claude" | "dsh";
   followToolSet: boolean;
-  addDirs: string[];
-  pluginDirs: string[];
-  pluginUrls: string[];
+  addDirs: Array<string>;
+  pluginDirs: Array<string>;
+  pluginUrls: Array<string>;
   maxTurns?: number;
   maxBudgetUsd?: number;
   titleModel: string;
@@ -126,7 +132,7 @@ export interface CustomModel {
   /** The model's context window in tokens; 200,000 when absent. */
   contextWindow?: number;
   /** Effort levels the model takes; none when absent, and the effort picker stays hidden. */
-  efforts?: string[];
+  efforts?: Array<string>;
 }
 
 /** Configuration schema for Claude Code plugin settings. */
@@ -379,7 +385,14 @@ export function localConfig<T extends { command: string; sshHost: string; spawn?
   resolve: (command: string) => string = resolveCommand,
 ): T {
   const out = { ...config };
-  if (!out.sshHost) out.command = resolve(out.command);
-  if (platform === "win32" && out.spawn === "keeper") out.spawn = "node";
+
+  if (!out.sshHost) {
+    out.command = resolve(out.command);
+  }
+
+  if (platform === "win32" && out.spawn === "keeper") {
+    out.spawn = "node";
+  }
+
   return out;
 }

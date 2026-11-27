@@ -14,7 +14,8 @@ const delta = {
   index: 0,
   delta: { type: "text_delta", text: "hi" },
 };
-const queue: unknown[] = [
+
+const queue: Array<unknown> = [
   {
     type: "stream_event",
     event: {
@@ -25,7 +26,9 @@ const queue: unknown[] = [
   },
   { type: "stream_event", event: delta },
 ];
+
 let killed = 0;
+
 const proc = {
   alive: true,
   busy: false,
@@ -52,6 +55,7 @@ const proc = {
     killed += 1;
   },
 };
+
 const session = {
   header: { version: 0 },
   snapshotEvents: () => [
@@ -60,13 +64,17 @@ const session = {
   ],
   append: () => ({ seq: 1 }),
 };
+
 // SAFETY: partial fakes; the step reads the session's log and nothing else of the context
 const ctx = {
   on() {},
   sessions: { get: () => session },
 } as unknown as PluginContext;
+
 const a = new ClaudeCodeAdapter(ctx, Config({ resume: true, toolsInline: false }));
+
 a.stateDir = mkdtempSync(join(tmpdir(), "omc-stop-grace-"));
+
 const prep = {
   input: "go",
   spec: { model: "m" },
@@ -74,29 +82,47 @@ const prep = {
   session: undefined,
   args: [],
 };
+
 // SAFETY: the fakes below stand in for a spawned process and its side channels
 const loose = a as unknown as Record<string, unknown>;
+
 loose.acquire = async () => ({ prep, proc });
+
 loose.reconnectIfStale = async () => {};
+
 loose.watchTranscript = async () => {};
+
 loose.pumpMirror = async () => {};
+
 const stop = new AbortController();
+
 const options = {
   sessionId: "s",
   model: "m",
   messages: [{ role: "user", content: [{ type: "text", text: "go" }] }],
   signal: stop.signal,
 };
+
 // SAFETY: the options above are the fields a step reads
 const gen = a.stream(options as unknown as Parameters<typeof a.stream>[0]);
+
 await gen.next();
+
 stop.abort();
+
 await gen.return(undefined);
+
 assert.equal(proc.interruptOwed, true, "the interrupt went out and its answer is owed");
+
 // The CLI's answer lands with no turn reading; `noteIdleResult` settles the debt.
 proc.interruptOwed = false;
+
 await new Promise((r) => setTimeout(r, INTERRUPT_GRACE_MS + 300));
+
 assert.equal(killed, 0, "a process that answered the interrupt is kept");
+
 rmSync(a.stateDir, { recursive: true, force: true });
+
 console.log("stop grace ok");
+
 process.exit(0); // the fake's never-settling read would hold the run open

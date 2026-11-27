@@ -2,21 +2,24 @@
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
 import z from "@deepseek-ai/schemastery";
 import { execFile } from "node:child_process";
-import { type GenerateOptions } from "@deepseek-ai/dsh-llm";
+import type { GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { JsonValue, ToolSchema } from "../dsh.js";
 import { KEY_ENV, KEY_HEADER } from "../mcp-config.js";
 import { ISOLATED_ENV, ISOLATED_SETTINGS } from "./isolate.js";
 import type { stopHookSettings } from "../test-gate.js";
 import { CHILD_ENV, shq, sshArgs, userTurnLine } from "../process.js";
-import { probeRawToolRows, type RowsSupport } from "../rows-probe.js";
-import { Config } from "./config.js";
-import { textOf, type LooseMessage } from "./prompt.js";
+import { probeRawToolRows } from "../rows-probe.js";
+import type { RowsSupport } from "../rows-probe.js";
+import type { Config } from "./config.js";
+import { textOf } from "./prompt.js";
+import type { LooseMessage } from "./prompt.js";
 
 const MODE_FOR_ACCESS = {
   "read-only": "plan",
   "workspace-write": "acceptEdits",
   "danger-full-access": "bypassPermissions",
 } as const satisfies Record<string, string>;
+
 /** Claude permission mode for a dsh access mode, or undefined for one this table does not know. */
 export const modeForAccess = (accessMode: string): string | undefined =>
   // SAFETY: the key is checked against the table before it is used as its index
@@ -25,26 +28,43 @@ export const modeForAccess = (accessMode: string): string | undefined =>
     : undefined;
 
 /** dsh's access-mode switch arrives as text in the runtime-context injection; the last snapshot wins. */
-export function accessModeOf(messages: LooseMessage[] | undefined): string | undefined {
+export function accessModeOf(messages: Array<LooseMessage> | undefined): string | undefined {
   let mode: string | undefined;
+
   for (const m of messages ?? []) {
-    if (m.role !== "user") continue;
+    if (m.role !== "user") {
+      continue;
+    }
+
     const found = textOf(m.content).match(/Current DSH file policy: ([a-z-]+)/);
-    if (found) mode = found[1];
+
+    if (found) {
+      mode = found[1];
+    }
   }
+
   return mode;
 }
 
 /** dsh's approval-policy line rides in the same runtime-context injection as the file policy, and
  *  only while the policy is "never"; the last snapshot wins, so a switch back to "ask" clears it. */
-export function approvalsDisabled(messages: LooseMessage[] | undefined): boolean {
+export function approvalsDisabled(messages: Array<LooseMessage> | undefined): boolean {
   let disabled = false;
+
   for (const m of messages ?? []) {
-    if (m.role !== "user") continue;
+    if (m.role !== "user") {
+      continue;
+    }
+
     const text = textOf(m.content);
-    if (!text.includes("Current DSH file policy:")) continue;
+
+    if (!text.includes("Current DSH file policy:")) {
+      continue;
+    }
+
     disabled = text.includes("Approval prompts are disabled in this session");
   }
+
   return disabled;
 }
 
@@ -53,7 +73,10 @@ export function permissionModeFor(
   config: Schemastery.TypeT<typeof Config>,
   accessMode: string | undefined,
 ): string {
-  if (config.permissionMode !== "dsh") return config.permissionMode;
+  if (config.permissionMode !== "dsh") {
+    return config.permissionMode;
+  }
+
   return modeForAccess(accessMode ?? "") ?? "acceptEdits";
 }
 
@@ -84,21 +107,30 @@ let rowsProbe: Promise<RowsSupport> | undefined;
 
 /** Probe whether this target supports raw tool rows once and cache the answer, so repeated callers share one ssh probe instead of one per session. */
 export const rowsSupported = (): Promise<RowsSupport> => (rowsProbe ??= probeRawToolRows());
+
 /** Flags a target's binary rejected at runtime, per probe key. A probe can be wrong. A box's CLI
  * updates under us, `--help` comes back empty over a stalled ssh and every flag then reads as
  * supported, and the CLI's answer to a flag it does not have is exit 1 before the first frame. What
  * it printed is better evidence than the probe, so it is remembered and the flag is never sent to
  * that binary again. */
 const deniedFlags = new Map<string, Set<string>>();
+
 /** Forget what was probed on `host` ("" for this box): after `claude update` there, the flag set
  *  and the denials belong to a binary that is gone, and the next spawn probes the new one. */
 export function forgetCliProbe(host: string): void {
-  for (const map of [cliProbes, deniedFlags])
-    for (const key of map.keys()) if (key.startsWith(`${host}::`)) map.delete(key);
+  for (const map of [cliProbes, deniedFlags]) {
+    for (const key of map.keys()) {
+      if (key.startsWith(`${host}::`)) {
+        map.delete(key);
+      }
+    }
+  }
+
   // Hidden flags a CLI refused are not kept per host, so any update forgets them: the next spawn
   // passes them again, and the unknown-flag retry learns afresh which CLI still refuses one.
   hiddenDenied.clear();
 }
+
 /** Every flag buildArgs guards with supports(). An unprobed binary is assumed to have all of them;
  * this list is what "all of them" means once one has to be taken away. */
 const GUARDED_FLAGS = [
@@ -125,63 +157,83 @@ const GUARDED_FLAGS = [
   "--setting-sources",
   "--strict-mcp-config",
 ];
+
 /** The flag in `error: unknown option '--x'`, however the CLI wrapped the line. */
 export function unknownFlagIn(text: string): string | undefined {
   return /unknown option '(--[a-zA-Z][\w-]*)'/.exec(text)?.[1];
 }
+
 /** Record a flag the target's CLI refused. False when it was already known bad, which is what stops
  * a retry loop: the second refusal of the same flag is a real failure, not something to retry. */
 export function denyCliFlag(command: string, host: string | undefined, flag: string): boolean {
   const key = `${host ?? ""}::${command}`;
   const set = deniedFlags.get(key) ?? new Set<string>();
-  if (set.has(flag)) return false;
+
+  if (set.has(flag)) {
+    return false;
+  }
+
   set.add(flag);
   hiddenDenied.add(flag);
   deniedFlags.set(key, set);
+
   return true;
 }
+
 /** The slice of node's execFile the probe uses; tests hand in a fake with this shape. */
 export type ExecLike = (
   cmd: string,
-  args: string[],
+  args: Array<string>,
   opts: { timeout: number },
   cb: (err: Error | null, stdout: string | Buffer) => void,
 ) => void;
 
 /** The target binary's version and the flags its `--help` lists, probed once per binary. */
 // SAFETY: execFile's overloads include exactly this call shape; the alias only narrows them
-export function probeCli(exec: ExecLike = execFile as ExecLike, command = "claude", host?: string) {
+export function probeCli(exec: ExecLike = execFile, command = "claude", host?: string) {
   // One probe per target binary: the local `claude`, or a box's `claude` reached over ssh. A single
   // global cache used to let the first provider's flag set stand in for every box, so an older remote
   // claude was handed flags it does not have (e.g. --forward-subagent-text) and exited 1.
   const key = `${host ?? ""}::${command}`;
   let probe = cliProbes.get(key);
+
   if (!probe) {
     probe = (async () => {
-      const run = (args: string[]) =>
+      const run = (args: Array<string>) =>
         new Promise<string>((resolve) => {
           const cmd = host ? "ssh" : command;
           const cmdArgs = host ? sshArgs(host, [command, ...args].map(shq).join(" ")) : args;
-          exec(cmd, cmdArgs, { timeout: host ? 15000 : 8000 }, (err, stdout) =>
+          exec(cmd, cmdArgs, { timeout: host ? 15_000 : 8000 }, (err, stdout) =>
             resolve(err ? "" : String(stdout)),
           );
         });
+
       const [help, version] = await Promise.all([run(["--help"]), run(["--version"])]);
       const flags = new Set(help.match(/--[a-zA-Z-]+/g) ?? []);
+
       // A probe that answered nothing is not an answer. Dropping it from the cache costs one more
       // `--help` next turn and keeps a single stalled ssh from deciding this box's flags for the
       // life of the process.
-      if (flags.size === 0) cliProbes.delete(key);
+      if (flags.size === 0) {
+        cliProbes.delete(key);
+      }
+
       return { flags: flags.size > 0 ? flags : null, version: version.trim() || "unknown" };
     })();
     cliProbes.set(key, probe);
   }
+
   return probe.then(({ flags, version }) => {
     const bad = deniedFlags.get(key);
-    if (!bad?.size) return { flags, version };
+
+    if (!bad?.size) {
+      return { flags, version };
+    }
+
     // Unknown flags mean "assume everything", so a denial has to be subtracted from the full list
     // rather than from nothing.
     const base = flags ?? new Set(GUARDED_FLAGS);
+
     return { flags: new Set([...base].filter((f) => !bad.has(f))), version };
   });
 }
@@ -195,6 +247,7 @@ export const supports = (flags: Set<string> | null | undefined, flag: string) =>
 
 /** Flags some CLI refused (`denyCliFlag`), for flags `--help` does not list. */
 const hiddenDenied = new Set<string>();
+
 /** True once a CLI refused `flag`: the guard for a flag the help probe cannot see. */
 export const deniedOnly = (flag: string): boolean => hiddenDenied.has(flag);
 
@@ -211,7 +264,7 @@ const takes = (tool: ToolSchema | undefined, param: string): boolean =>
 const bridgedName = (tool: string): string => `mcp__dsh__${tool}`;
 
 /** "a", "a and b", "a, b and c". */
-const listed = (items: string[]): string =>
+const listed = (items: Array<string>): string =>
   items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 
 /**
@@ -234,62 +287,81 @@ const listed = (items: string[]): string =>
  * `read`), and the bridge can only offer them as `mcp__dsh__bash`, `mcp__dsh__read`.
  */
 export function dshToolsGuidance(
-  tools: readonly ToolSchema[] = [],
-  builtins: readonly string[] = ["default"],
+  tools: ReadonlyArray<ToolSchema> = [],
+  builtins: ReadonlyArray<string> = ["default"],
 ): string {
   const byName = new Map(tools.map((t) => [t.name, t]));
   const out = ["dsh tools are available as mcp__dsh__* over MCP."];
   const allNative = builtins.includes("default");
   const kept = new Set(builtins.flatMap((b) => b.split(",")).map((b) => b.trim()));
-  if (!allNative)
+
+  if (!allNative) {
     out.push(
       "A tool that instructions or skills name without a prefix (bash, read, edit, glob, grep,",
       "skill, subagent and the rest) is the mcp__dsh__ tool of that name.",
     );
+  }
 
   const subagent = byName.get("subagent");
   const presets = tools.map((t) => t.name).filter((n) => /^(subagent|researcher)_/.test(n));
+
   if (subagent || presets.length > 0) {
     out.push(
       "For any subagent, worker, helper or a specific model, use those and never the built-in",
       "Agent/Task tool: a native Agent child is invisible to dsh (no card, no header count, no",
       "completion notice, no transcript).",
     );
+
     if (subagent && takes(subagent, "provider")) {
       out.push(`${bridgedName("subagent")} takes provider and model for a named route;`);
-      if (byName.has("list_subagent_models"))
+
+      if (byName.has("list_subagent_models")) {
         out.push(`${bridgedName("list_subagent_models")} lists the allowed routes;`);
+      }
+
       out.push("omit both for the default.");
     } else if (subagent) {
       out.push(`${bridgedName("subagent")} runs a child on the default route.`);
     }
-    if (presets.length > 0)
+
+    if (presets.length > 0) {
       out.push(
         `${listed(presets.map(bridgedName))} ${presets.length > 1 ? "run children" : "runs a child"} too.`,
       );
+    }
+
     out.push(
       "run_in_background: false returns the answer inline; background returns an id and the",
       "notice arrives next turn.",
     );
   }
+
   // Code mode: dsh offers only run_code, so subagents and jobs live inside its programs and the
   // rules above never fire; the one about native Agent children still has to reach Claude.
-  if (byName.has("run_code"))
+  if (byName.has("run_code")) {
     out.push(
       `Every other dsh tool, subagents included, is called from a ${bridgedName("run_code")}`,
       "program (see its description), never the built-in Agent/Task tool: a native Agent child",
       "is invisible to dsh.",
     );
-  if (byName.has("open_session"))
+  }
+
+  if (byName.has("open_session")) {
     out.push(`${bridgedName("open_session")} makes a new top-level session, not a child.`);
+  }
+
   // Each named only when listed: the host offers the two independently.
-  if (byName.has("prompt_session"))
+  if (byName.has("prompt_session")) {
     out.push(`${bridgedName("prompt_session")} sends a session a follow-up, keeping its context.`);
-  if (byName.has("wait_session"))
+  }
+
+  if (byName.has("wait_session")) {
     out.push(`${bridgedName("wait_session")} reads a session's replies back.`);
+  }
 
   const shell = [byName.get("bash"), byName.get("pwsh")].find((t) => takes(t, "run_in_background"));
   const nativeShell = allNative || kept.has("Bash") || kept.has("PowerShell");
+
   if (shell && !nativeShell) {
     out.push(
       `Every command goes through \`${bridgedName(shell.name)}\`; long-running ones with`,
@@ -300,6 +372,7 @@ export function dshToolsGuidance(
       byName.has("job_output") ? `read output with \`${bridgedName("job_output")}\`` : "",
       byName.has("job_kill") ? `stop with \`${bridgedName("job_kill")}\`` : "",
     ].filter(Boolean);
+
     const native = shell.name === "bash" ? "native `Bash`" : "the native shell tool";
     out.push(
       "Long-running or background commands (test suites, builds, code reviews, watchers, anything",
@@ -310,6 +383,7 @@ export function dshToolsGuidance(
       "because dsh cannot see it.",
     );
   }
+
   return out.join(" ");
 }
 
@@ -352,7 +426,7 @@ export function buildArgs({
   flags?: Set<string> | null;
   promptText?: string;
   /** The bridge for this session, with the dsh tools it will list (see `dshToolsGuidance`). */
-  mcp?: { url: string; tools?: readonly ToolSchema[] | undefined } | undefined;
+  mcp?: { url: string; tools?: ReadonlyArray<ToolSchema> | undefined } | undefined;
   /** /temporary: keep no Claude transcript for this session. */
   temporary?: boolean;
   /** Optional permission mode override; if provided, used instead of computing from config. */
@@ -362,84 +436,161 @@ export function buildArgs({
   testGate?: ReturnType<typeof stopHookSettings> | undefined;
 }) {
   const args = ["-p"];
-  if (usesStdin(flags)) args.push("--input-format", "stream-json");
-  else args.push(promptText ?? "");
+
+  if (usesStdin(flags)) {
+    args.push("--input-format", "stream-json");
+  } else {
+    args.push(promptText ?? "");
+  }
+
   args.push("--output-format", "stream-json", "--verbose");
-  if (supports(flags, "--include-partial-messages")) args.push("--include-partial-messages");
-  if (supports(flags, "--forward-subagent-text")) args.push("--forward-subagent-text");
-  if (config.hookRows && supports(flags, "--include-hook-events"))
+
+  if (supports(flags, "--include-partial-messages")) {
+    args.push("--include-partial-messages");
+  }
+
+  if (supports(flags, "--forward-subagent-text")) {
+    args.push("--forward-subagent-text");
+  }
+
+  if (config.hookRows && supports(flags, "--include-hook-events")) {
     args.push("--include-hook-events");
-  if (model) args.push("--model", model);
-  if (reasoningEffort && supports(flags, "--effort")) args.push("--effort", reasoningEffort);
+  }
+
+  if (model) {
+    args.push("--model", model);
+  }
+
+  if (reasoningEffort && supports(flags, "--effort")) {
+    args.push("--effort", reasoningEffort);
+  }
+
   // `--thinking-display` is real but hidden from `claude --help` (2.1.323), so the help probe never
   // lists it. It is passed whenever configured; a CLI that refuses it is caught by the unknown-flag
   // retry (`denyCliFlag`), which then drops it.
-  if (config.thinkingDisplay && !purpose && !deniedOnly("--thinking-display"))
+  if (config.thinkingDisplay && !purpose && !deniedOnly("--thinking-display")) {
     args.push("--thinking-display", config.thinkingDisplay);
+  }
+
   // In -p mode /fast only works in a session launched with fast mode in --settings (fast-mode docs).
   const settings: Record<string, JsonValue> = config.isolate ? { ...ISOLATED_SETTINGS } : {};
-  if (config.fastMode) settings.fastMode = true;
+
+  if (config.fastMode) {
+    settings.fastMode = true;
+  }
+
   // A hook passed here fires under `isolate` too: --settings is a source of its own, which
   // `--setting-sources ""` leaves on (probed on 2.1.332).
-  if (testGate && !purpose) settings.hooks = testGate;
-  if (Object.keys(settings).length > 0 && supports(flags, "--settings"))
+  if (testGate && !purpose) {
+    settings.hooks = testGate;
+  }
+
+  if (Object.keys(settings).length > 0 && supports(flags, "--settings")) {
     args.push("--settings", JSON.stringify(settings));
+  }
+
   if (config.isolate) {
     // None of the user's settings files (with their hooks, permission rules and MCP servers), and
     // no MCP server but the bridge: Claude Code is the engine, and dsh is the rest. An empty list
     // is how the CLI spells "no source"; a side call takes the same, so a title or a compaction
     // runs no user hook either.
-    if (supports(flags, "--setting-sources")) args.push("--setting-sources", "");
-    if (supports(flags, "--strict-mcp-config")) args.push("--strict-mcp-config");
+    if (supports(flags, "--setting-sources")) {
+      args.push("--setting-sources", "");
+    }
+
+    if (supports(flags, "--strict-mcp-config")) {
+      args.push("--strict-mcp-config");
+    }
   }
+
   const guidance = mcp ? dshToolsGuidance(mcp.tools, config.builtinTools) : "";
+
   if (dshSystem !== undefined && supports(flags, "--system-prompt")) {
     // dsh's prompt stands in for Claude Code's, the tool guidance after it as it would follow
     // Claude Code's. The CLI records a conversation's prompt on its first request and replays that
     // record on every resume, so a prompt dsh changed would never arrive; the snapshot is off for
     // that reason, and the prompt is the same text for the life of the process anyway.
     args.push("--system-prompt", [dshSystem, guidance].filter(Boolean).join("\n\n"));
-    if (supports(flags, "--system-prompt-snapshot")) args.push("--system-prompt-snapshot", "off");
+
+    if (supports(flags, "--system-prompt-snapshot")) {
+      args.push("--system-prompt-snapshot", "off");
+    }
   } else {
     const appended = [system, guidance].filter(Boolean).join("\n\n");
+
     if (appended && supports(flags, "--append-system-prompt")) {
       args.push("--append-system-prompt", appended);
     }
   }
+
   if (purpose) {
     // Auxiliary calls (title, compaction): one turn, no tools, no session of their own. Without
     // --no-session-persistence each one still leaves a transcript under the scratch project dir.
     args.push("--tools", "", "--max-turns", "1");
-    if (supports(flags, "--no-session-persistence")) args.push("--no-session-persistence");
+
+    if (supports(flags, "--no-session-persistence")) {
+      args.push("--no-session-persistence");
+    }
+
     return args;
   }
-  if (temporary && supports(flags, "--no-session-persistence"))
+
+  if (temporary && supports(flags, "--no-session-persistence")) {
     args.push("--no-session-persistence");
+  }
+
   if (supports(flags, "--permission-mode")) {
     const mode = permissionMode ?? permissionModeFor(config, accessMode);
     args.push("--permission-mode", mode);
   }
+
   if (config.approvals && usesStdin(flags) && supports(flags, "--permission-prompt-tool")) {
     args.push("--permission-prompt-tool", "stdio");
   }
+
   // "default" is what the Agent SDK passes; without it the CLI keeps AskUserQuestion out of -p runs.
   // A shorter list keeps only those built-ins, and the bridge offers dsh's file tools in their place.
-  if (supports(flags, "--tools")) args.push("--tools", config.builtinTools.join(","));
-  if (config.allowedTools.length > 0) args.push("--allowedTools", ...config.allowedTools);
-  if (config.disallowedTools.length > 0) args.push("--disallowedTools", ...config.disallowedTools);
-  for (const d of config.addDirs) args.push("--add-dir", d);
+  if (supports(flags, "--tools")) {
+    args.push("--tools", config.builtinTools.join(","));
+  }
+
+  if (config.allowedTools.length > 0) {
+    args.push("--allowedTools", ...config.allowedTools);
+  }
+
+  if (config.disallowedTools.length > 0) {
+    args.push("--disallowedTools", ...config.disallowedTools);
+  }
+
+  for (const d of config.addDirs) {
+    args.push("--add-dir", d);
+  }
+
   // Session-only plugins: a per-spawn flag, not a settings write, so they never touch the roster.
-  if (supports(flags, "--plugin-dir"))
-    for (const d of config.pluginDirs) args.push("--plugin-dir", d);
-  if (supports(flags, "--plugin-url"))
-    for (const u of config.pluginUrls) args.push("--plugin-url", u);
-  if (config.maxTurns) args.push("--max-turns", String(config.maxTurns));
+  if (supports(flags, "--plugin-dir")) {
+    for (const d of config.pluginDirs) {
+      args.push("--plugin-dir", d);
+    }
+  }
+
+  if (supports(flags, "--plugin-url")) {
+    for (const u of config.pluginUrls) {
+      args.push("--plugin-url", u);
+    }
+  }
+
+  if (config.maxTurns) {
+    args.push("--max-turns", String(config.maxTurns));
+  }
+
   if (config.maxBudgetUsd && supports(flags, "--max-budget-usd")) {
     args.push("--max-budget-usd", String(config.maxBudgetUsd));
   }
+
   if (session && supports(flags, "--session-id") && supports(flags, "--resume")) {
     args.push(session.resuming ? "--resume" : "--session-id", session.id);
   }
+
   if (mcp && supports(flags, "--mcp-config")) {
     // The key itself travels in the environment (`localEnvOverride`); see KEY_ENV.
     // `timeout` is the server's own: Claude Code 2.1.323 aborts a call that sends nothing for 300 s
@@ -454,8 +605,10 @@ export function buildArgs({
       // hour: the CLI takes this field over MCP_TOOL_TIMEOUT for the server's total too.
       timeout: Number((config.isolate ? ISOLATED_ENV : CHILD_ENV).MCP_TOOL_TIMEOUT),
     };
+
     args.push("--mcp-config", JSON.stringify({ mcpServers: { dsh } }));
   }
+
   return args;
 }
 
@@ -472,13 +625,18 @@ export function buildInput(
     text?: string;
     source?: { type: string; media_type: string; data: string };
   }> = [{ type: "text", text: prompt }];
+
   for (const img of images) {
-    if (!img.data) continue; // by path only; `attachmentNotes` says where
+    if (!img.data) {
+      continue;
+    } // by path only; `attachmentNotes` says where
+
     content.push({
       type: "image",
       source: { type: "base64", media_type: img.mediaType, data: img.data },
     });
   }
+
   return userTurnLine(content, uuid, composed);
 }
 
@@ -486,12 +644,22 @@ export function buildInput(
 // stream-json → dsh chunks
 
 /** Names from the CLI's init frame that dsh's command grammar accepts (lowercase, `[a-z0-9_-]`), deduped. */
-export function commandNames(value: JsonValue | undefined): string[] {
-  if (!Array.isArray(value)) return [];
+export function commandNames(value: JsonValue | undefined): Array<string> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
   const out = new Set<string>();
-  for (const v of value) if (String(v) === v && /^[a-z0-9][a-z0-9_-]*$/.test(v)) out.add(v);
+
+  for (const v of value) {
+    if (String(v) === v && /^[a-z0-9][a-z0-9_-]*$/.test(v)) {
+      out.add(v);
+    }
+  }
+
   return [...out];
 }
+
 /**
  * The CLI flattens a server name into a tool id, so the id never carries a space, a dot or a
  * colon: compare a normalized form of both sides rather than the literal name.
@@ -499,7 +667,7 @@ export function commandNames(value: JsonValue | undefined): string[] {
 /** Replacing before lowercasing keeps this one code unit in, one code unit out: everything a
  *  case fold could change the length of has already become an underscore. */
 function serverKey(text: string): string {
-  return text.replace(/[^A-Za-z0-9-]/g, "_").toLowerCase();
+  return text.replaceAll(/[^A-Za-z0-9-]/g, "_").toLowerCase();
 }
 
 /**
@@ -508,17 +676,22 @@ function serverKey(text: string): string {
  * is dropped rather than guessed at.
  */
 export function mcpToolsByServer(
-  serverNames: readonly string[],
-  toolIds: readonly string[],
-): Map<string, string[]> {
+  serverNames: ReadonlyArray<string>,
+  toolIds: ReadonlyArray<string>,
+): Map<string, Array<string>> {
   const keys = new Map<string, string>();
-  const out = new Map<string, string[]>();
+  const out = new Map<string, Array<string>>();
+
   for (const server of serverNames) {
     keys.set(serverKey(server), server);
     out.set(server, []);
   }
+
   for (const id of toolIds) {
-    if (!id.startsWith(MCP_TOOL_PREFIX)) continue;
+    if (!id.startsWith(MCP_TOOL_PREFIX)) {
+      continue;
+    }
+
     const rest = id.slice(MCP_TOOL_PREFIX.length);
     // Normalizing is character-for-character, so an offset into the normalized form is also an
     // offset into `rest` and the bare name keeps its original case. Longest key wins: one server
@@ -526,21 +699,34 @@ export function mcpToolsByServer(
     const normalized = serverKey(rest);
     let owner = "";
     let ownerKey = "";
-    for (const [key, server] of keys)
+
+    for (const [key, server] of keys) {
       if (normalized.startsWith(`${key}__`) && key.length > ownerKey.length) {
         owner = server;
         ownerKey = key;
       }
-    if (ownerKey === "") continue;
+    }
+
+    if (ownerKey === "") {
+      continue;
+    }
+
     out.get(owner)?.push(rest.slice(ownerKey.length + 2));
   }
-  for (const bare of out.values()) bare.sort();
+
+  for (const bare of out.values()) {
+    bare.sort();
+  }
+
   return out;
 }
+
 /** Every MCP-contributed tool id the CLI reports starts with this. */
 const MCP_TOOL_PREFIX = "mcp__";
+
 /** Bridged Claude commands are registered as `/claude-<name>` in dsh. */
 export const BRIDGE_PREFIX = "claude-";
+
 /**
  * Names dsh's own client half owns, which the host registry cannot answer for. A host command of
  * one of these makes dsh's menu throw where it merges the two lists ("contribution /X collides with
@@ -550,6 +736,7 @@ export const BRIDGE_PREFIX = "claude-";
  * back to the prefixed name.
  */
 export const CLIENT_COMMANDS = new Set(["model"]);
+
 /**
  * Names dsh's own host plugins register (`dsh-command-goal` and the rest, read out of their
  * bundles). On dsh 0.2.2 the registry scopes a name per plugin, so the bridge's bare registration
@@ -559,18 +746,25 @@ export const CLIENT_COMMANDS = new Set(["model"]);
  * same name (`mountCompactOverride`), so the bridge leaves it alone.
  */
 export const HOST_COMMANDS = new Set(["feedback", "goal", "permission", "plan", "export"]);
+
 /** Claude's rename command, and the alias its catalog also offers. */
 const RENAME_COMMANDS = new Set(["rename", "name"]);
+
 /**
  * The dsh title a bridged command should set: the trimmed argument when this is Claude's rename
  * with one. An empty argument returns undefined so the line reaches Claude unchanged and the CLI
  * answers with its own usage message.
  */
 export function renameTitle(cmd: string, rawInput: string): string | undefined {
-  if (!RENAME_COMMANDS.has(cmd)) return undefined;
+  if (!RENAME_COMMANDS.has(cmd)) {
+    return undefined;
+  }
+
   const title = rawInput.trim();
+
   return title.length > 0 ? title : undefined;
 }
+
 // Claude Code tool names → dsh tool name that the client-ui-tool presenter recognises.
 // Unknown names fall through to the generic "others" row.
 export const NATIVE_TOOL_MAP = {
@@ -614,20 +808,33 @@ const TitleAnswer = z.object({ title: z.string() });
 export function cleanTitle(text: string): string {
   let t = text.trim();
   const fence = /^```[\w-]*[^\S\n]*\n([\s\S]*?)\n?```$/.exec(t);
-  if (fence) t = (fence[1] ?? "").trim();
-  if (t.startsWith("{"))
+
+  if (fence) {
+    t = (fence[1] ?? "").trim();
+  }
+
+  if (t.startsWith("{")) {
     try {
       // SAFETY: schemastery validates at runtime and throws on any other shape; the cast only
       //   widens the static input so the parsed value reaches the validator.
       t = (TitleAnswer(JSON.parse(t) as Parameters<typeof TitleAnswer>[0]).title ?? t).trim();
     } catch {}
+  }
+
   return t;
 }
 
 /** The text dsh's title provider sends: its one framed user message, joined when there are more. */
 export function titleInput(messages: GenerateOptions["messages"]): string {
-  const parts: string[] = [];
-  for (const m of messages)
-    for (const b of m.content) if (b.type === "text" && b.text) parts.push(b.text);
+  const parts: Array<string> = [];
+
+  for (const m of messages) {
+    for (const b of m.content) {
+      if (b.type === "text" && b.text) {
+        parts.push(b.text);
+      }
+    }
+  }
+
   return parts.join("\n").trim();
 }

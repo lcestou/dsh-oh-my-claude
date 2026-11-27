@@ -24,6 +24,7 @@ import { onBodyMutation, recordElement } from "./dom.js";
  *  only a header that starts with one of the translator's tool icons folds, so Claude's own prose code
  *  blocks are left alone. Kept in sync with the translator's TOOL_ICON set. */
 const TOOL_ICONS = "❯▤✎⌕✳⤓☑⚙☰⌘◆";
+
 /** The invisible word joiner the translator writes after the glyph (`HEADER_MARK` there), stripped
  *  with the glyph when it is there.
  *
@@ -35,6 +36,7 @@ const TOOL_ICONS = "❯▤✎⌕✳⤓☑⚙☰⌘◆";
  *  a bare glyph is prose \u2014 a pasted `\u276f npm test` keeps its glyph and the block under it stays open.
  *  A header already claimed keeps its fold either way, so the switch never reopens what is on screen. */
 const FOLD_MARK = "\u2060";
+
 /** Whether this page has seen the mark, which is what tells the two halves apart. */
 let markedHeaders = false;
 const HEAD_MARK = "data-omc-tool"; // on the header <p>: "1" collapsed · "open" expanded · "flat" no fence
@@ -151,7 +153,7 @@ const ensureFoldStyle = () => {
     `${head}+.md-code-block{margin-top:4px;margin-bottom:0}`,
     `${head}+.md-code-block+${head}{margin-top:8px}`,
   ].join("");
-  document.head.appendChild(el);
+  document.head.append(el);
 };
 
 /** Build the leading span for a glyph: dsh's tool icon with its chevron stacked on top, both cloned
@@ -160,41 +162,61 @@ const ensureFoldStyle = () => {
 const leadFor = (glyph: string): HTMLElement | null => {
   const svg = document.querySelector(`[${SPRITE_MARK}="${glyph}"] svg`);
   const chevron = document.querySelector(`[${SPRITE_MARK}="chevron"] svg`);
-  if (svg === null || chevron === null) return null;
+
+  if (svg === null || chevron === null) {
+    return null;
+  }
+
   const span = document.createElement("span");
   span.setAttribute(LEAD_MARK, glyph);
+
   for (const [part, source] of [
     ["icon", svg],
     ["chevron", chevron],
   ] as const) {
     const holder = document.createElement("span");
     holder.setAttribute("data-omc-part", part);
-    holder.appendChild(source.cloneNode(true));
-    span.appendChild(holder);
+    holder.append(source.cloneNode(true));
+    span.append(holder);
   }
+
   return span;
 };
 
 let foldClicksBound = false;
+
 /** One delegated listener pair toggles a header. Bound once per bundle and dropped when this bundle
  *  retires: a flag on documentElement outlives the reload the listeners do not, which left a tab
  *  answering clicks from whichever bundle loaded first and every later one silently unbound. */
 const bindFoldClicks = () => {
-  if (foldClicksBound) return;
+  if (foldClicksBound) {
+    return;
+  }
+
   foldClicksBound = true;
   const stop = new AbortController();
   // On teardown, abort the fold-click listeners, so a retired bundle stops answering header clicks.
   whenContextGone(() => {
     stop.abort();
   });
+
   const toggle = (target: EventTarget | null): boolean => {
-    if (!(target instanceof Element)) return false;
+    if (!(target instanceof Element)) {
+      return false;
+    }
+
     const head = target.closest<HTMLElement>(`p[${HEAD_MARK}]`);
     const state = head?.getAttribute(HEAD_MARK);
-    if (head === null || state === "flat" || state === null) return false;
+
+    if (head === null || state === "flat" || state === null) {
+      return false;
+    }
+
     setFoldState(head, state === "1" ? "open" : "1");
+
     return true;
   };
+
   document.addEventListener(
     "click",
     (e) => {
@@ -207,8 +229,13 @@ const bindFoldClicks = () => {
   document.addEventListener(
     "keydown",
     (e) => {
-      if (e.key !== "Enter" && e.key !== " ") return;
-      if (toggle(e.target)) e.preventDefault();
+      if (e.key !== "Enter" && e.key !== " ") {
+        return;
+      }
+
+      if (toggle(e.target)) {
+        e.preventDefault();
+      }
     },
     { signal: stop.signal },
   );
@@ -219,12 +246,15 @@ const bindFoldClicks = () => {
  *  showing. A flat header is not a control, so it carries none of it. */
 const setFoldState = (head: HTMLElement, state: "1" | "open" | "flat") => {
   head.setAttribute(HEAD_MARK, state);
+
   if (state === "flat") {
     head.removeAttribute("role");
     head.removeAttribute("tabindex");
     head.removeAttribute("aria-expanded");
+
     return;
   }
+
   head.setAttribute("role", "button");
   head.setAttribute("tabindex", "0");
   head.setAttribute("aria-expanded", state === "open" ? "true" : "false");
@@ -236,15 +266,22 @@ const setFoldState = (head: HTMLElement, state: "1" | "open" | "flat") => {
  *  while no marked header has been seen, or when this paragraph is one already folding. */
 export const glyphOf = (head: HTMLElement): string => {
   const node = head.firstChild;
+
   if (node?.nodeType === Node.TEXT_NODE) {
     const text = node.nodeValue ?? "";
     const at = text.search(/\S/);
+
     if (at >= 0 && TOOL_ICONS.includes(text.charAt(at))) {
-      if (text.startsWith(FOLD_MARK, at + 1)) markedHeaders = true;
-      else if (markedHeaders && !head.hasAttribute(HEAD_MARK)) return "";
+      if (text.startsWith(FOLD_MARK, at + 1)) {
+        markedHeaders = true;
+      } else if (markedHeaders && !head.hasAttribute(HEAD_MARK)) {
+        return "";
+      }
+
       return text.charAt(at);
     }
   }
+
   return (
     head.querySelector(`span[${LEAD_MARK}]`)?.getAttribute(LEAD_MARK) ??
     head.getAttribute("data-omc-icon") ??
@@ -261,14 +298,20 @@ export const glyphOf = (head: HTMLElement): string => {
  */
 const dotHeader = (head: HTMLElement): void => {
   const node = head.querySelector(`span[${LEAD_MARK}]`)?.nextSibling;
-  if (!node || node.nodeType !== Node.TEXT_NODE) return;
+
+  if (!node || node.nodeType !== Node.TEXT_NODE) {
+    return;
+  }
+
   const text = node.nodeValue ?? "";
+
   if (!text.includes(" · ")) {
     // "Read `path`" and "Write `path`" carry no dot in the text: the path is a code chip right
     // after the name. dsh draws those rows as name, dot, file; the dot goes in before the chip
     // and the chip is flattened to dsh's file-link look by the header's own rule. A converted
     // header has the dot span there instead of the chip, so the pass does nothing twice.
     const next = node.nextSibling;
+
     if (next instanceof HTMLElement && next.tagName === "CODE" && text.trim() !== "") {
       node.nodeValue = text.trimEnd();
       const sep = document.createElement("span");
@@ -276,8 +319,10 @@ const dotHeader = (head: HTMLElement): void => {
       sep.setAttribute("aria-hidden", "true");
       head.insertBefore(sep, next);
     }
+
     return;
   }
+
   const parts = text.split(" · ");
   const frag = document.createDocumentFragment();
   parts.forEach((part, i) => {
@@ -285,14 +330,17 @@ const dotHeader = (head: HTMLElement): void => {
       const sep = document.createElement("span");
       sep.setAttribute("data-omc-part", "sep");
       sep.setAttribute("aria-hidden", "true");
-      frag.appendChild(sep);
+      frag.append(sep);
     }
+
     if (i === parts.length - 1) {
       const summary = document.createElement("span");
       summary.setAttribute("data-omc-part", "summary");
       summary.textContent = part;
-      frag.appendChild(summary);
-    } else frag.appendChild(document.createTextNode(part));
+      frag.append(summary);
+    } else {
+      frag.append(document.createTextNode(part));
+    }
   });
   node.replaceWith(frag);
 };
@@ -312,8 +360,10 @@ export function watchToolFolds() {
   // Set when a header was left for the sprite sheet: the mutation that mounts the sheet says nothing
   // about the headers waiting on it, so the pass after one is skipped goes wide again.
   let sweepAgain = false;
+
   const visit = (head: HTMLElement) => {
     const glyph = glyphOf(head);
+
     // React reuses a `<p>` node across renders: the paragraph that held a tool header one frame
     // can hold prose the next. It rewrites the text (`textContent` on a node with our extra span
     // takes the wipe-and-append path, so the lead span goes with it) but never touches our
@@ -324,28 +374,40 @@ export function watchToolFolds() {
         setFoldState(head, "flat");
         head.removeAttribute(HEAD_MARK);
       }
+
       return;
     }
+
     // State first, icon second. The state attribute is what hides the fence, and a header that has
     // to wait for the sprite sheet would otherwise sit unmarked with its whole block on screen.
     // A header folded before its icon lands still opens on click or Enter. `setFoldState` is what
     // gives it the role and the tab stop, so the only thing missing for that frame is the glyph.
     const foldable = head.nextElementSibling?.classList.contains("md-code-block") === true;
     const state = head.getAttribute(HEAD_MARK);
+
     // A header can start flat and gain its fence a moment later while the step streams in, so the
     // flat state is never sticky: only an already-folding header keeps the state the user set.
     // Written only on a change: this runs on every mutation burst, and an attribute write on a
     // node the fold rules can match invalidates style for all of them.
     if (!foldable) {
-      if (state !== "flat") setFoldState(head, "flat");
-    } else if (state !== "1" && state !== "open") setFoldState(head, "1");
+      if (state !== "flat") {
+        setFoldState(head, "flat");
+      }
+    } else if (state !== "1" && state !== "open") {
+      setFoldState(head, "1");
+    }
+
     const node = head.firstChild;
+
     if (node?.nodeType === Node.TEXT_NODE && (node.nodeValue ?? "").trimStart().startsWith(glyph)) {
       const span = leadFor(glyph);
+
       if (span === null) {
         sweepAgain = true;
+
         return;
       }
+
       const text = node.nodeValue ?? "";
       head.querySelector(`span[${LEAD_MARK}]`)?.remove();
       head.removeAttribute("data-omc-icon");
@@ -358,45 +420,75 @@ export function watchToolFolds() {
     } else if (head.querySelector(`span[${LEAD_MARK}]`) === null) {
       // An older build stripped the glyph into the attribute; adopt it from there.
       const span = leadFor(glyph);
+
       if (span === null) {
         sweepAgain = true;
+
         return;
       }
+
       head.removeAttribute("data-omc-icon");
       head.insertBefore(span, head.firstChild);
     }
+
     dotHeader(head);
   };
+
   const MARKDOWN_P = '[class*="_markdown"] p';
+
   // What a burst touched, as headers. A record's target is the node whose children changed,
   // either the paragraph itself when React rewrites its text or the markdown container when a
   // step gains its fence. Its added nodes are whole blocks that may hold headers of their own.
-  const headsIn = (records: MutationRecord[]): Set<HTMLElement> => {
+  const headsIn = (records: Array<MutationRecord>): Set<HTMLElement> => {
     const heads = new Set<HTMLElement>();
+
     const take = (node: Node) => {
-      if (!(node instanceof HTMLElement)) return;
-      if (node.tagName === "P") {
-        if (node.closest('[class*="_markdown"]') !== null) heads.add(node);
+      if (!(node instanceof HTMLElement)) {
         return;
       }
-      for (const head of node.querySelectorAll<HTMLElement>(MARKDOWN_P)) heads.add(head);
+
+      if (node.tagName === "P") {
+        if (node.closest('[class*="_markdown"]') !== null) {
+          heads.add(node);
+        }
+
+        return;
+      }
+
+      for (const head of node.querySelectorAll<HTMLElement>(MARKDOWN_P)) {
+        heads.add(head);
+      }
     };
+
     for (const rec of records) {
       const el = recordElement(rec);
-      if (el) take(el);
-      for (const node of rec.addedNodes) take(node);
+
+      if (el) {
+        take(el);
+      }
+
+      for (const node of rec.addedNodes) {
+        take(node);
+      }
     }
+
     return heads;
   };
-  const scan = (records?: MutationRecord[]) => {
+
+  const scan = (records?: Array<MutationRecord>) => {
     // Scoped to the burst by default: dsh fires many bursts a frame and the document-wide query is
     // the one cost here that grows with the transcript, so a long turn used to get stickier as it
     // ran. The wide pass is for the first run and for the burst after a header waited on its icon.
     const wide = records === undefined || sweepAgain;
     sweepAgain = false;
-    for (const head of wide ? document.querySelectorAll<HTMLElement>(MARKDOWN_P) : headsIn(records))
+
+    for (const head of wide
+      ? document.querySelectorAll<HTMLElement>(MARKDOWN_P)
+      : headsIn(records)) {
       visit(head);
+    }
   };
+
   scan();
   onBodyMutation(scan, true);
 }

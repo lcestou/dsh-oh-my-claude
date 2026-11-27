@@ -13,9 +13,9 @@ import {
   ROUTE,
   ago,
   claudeProviderOf,
-  type ClientCtx,
   code,
 } from "../shared.js";
+import type { ClientCtx } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
 import type { PluginRoster, PluginLoadError } from "../../plugins.js";
 import { shortPath } from "./shared.js";
@@ -38,20 +38,21 @@ interface InstructionFile {
 export function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
-  const [files, setFiles] = useState<InstructionFile[]>([]);
+  const [files, setFiles] = useState<Array<InstructionFile>>([]);
   const [file, setFile] = useState<InstructionFile | null>(null);
   const [text, setText] = useState("");
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [roster, setRoster] = useState<PluginRoster | null>(null);
-  const [pluginErrors, setPluginErrors] = useState<PluginLoadError[]>([]);
-  const [pluginWarnings, setPluginWarnings] = useState<PluginLoadError[]>([]);
+  const [pluginErrors, setPluginErrors] = useState<Array<PluginLoadError>>([]);
+  const [pluginWarnings, setPluginWarnings] = useState<Array<PluginLoadError>>([]);
 
   // Every call names the session's own mount, so a session on a box lists and edits that box's
   // CLAUDE.md files rather than this PC's.
   const provider = claudeProviderOf(ctx, sessionId);
   const onBox = provider === undefined ? "" : `provider=${encodeURIComponent(provider)}`;
+
   const q = [
     cwd ? `cwd=${encodeURIComponent(cwd)}` : "",
     `session=${encodeURIComponent(sessionId)}`,
@@ -59,59 +60,84 @@ export function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: C
   ]
     .filter((p) => p !== "")
     .join("&");
+
   // A fetch in flight when the tab closes must not set state on the unmounted component (React
   // warns, and the stale result would flash if the tab reopened). Both loaders check this first.
   const mounted = useRef(true);
   useEffect(() => () => void (mounted.current = false), []);
+
   const refresh = () => {
-    if (!cwd) return;
+    if (!cwd) {
+      return;
+    }
+
     fetch(`${ROUTE}/instructions?${q}`)
-      .then((r) => readJson<{ files?: InstructionFile[] }>(r))
+      .then((r) => readJson<{ files?: Array<InstructionFile> }>(r))
       .then((b) => mounted.current && setFiles(b.files ?? []))
-      .catch((e: Error) => mounted.current && setError(e.message));
+      .catch((error_: Error) => mounted.current && setError(error_.message));
   };
+
   useEffect(() => {
     refresh();
   }, [cwd]);
+
   const refreshRoster = useCallback(() => {
-    if (!cwd) return;
+    if (!cwd) {
+      return;
+    }
+
     fetch(`${ROUTE}/plugins?${q}`)
       .then((r) =>
         readJson<
-          PluginRoster & { pluginErrors?: PluginLoadError[]; pluginWarnings?: PluginLoadError[] }
+          PluginRoster & {
+            pluginErrors?: Array<PluginLoadError>;
+            pluginWarnings?: Array<PluginLoadError>;
+          }
         >(r),
       )
       // A roster that will not load is not an instructions error: the file list is still good.
       .then((b) => {
-        if (!mounted.current) return;
+        if (!mounted.current) {
+          return;
+        }
+
         setRoster(b);
         setPluginErrors(b.pluginErrors ?? []);
         setPluginWarnings(b.pluginWarnings ?? []);
       })
       .catch(() => {});
   }, [cwd, q]);
+
   useEffect(() => {
     refreshRoster();
   }, [refreshRoster]);
+
   const openFile = async (f: InstructionFile) => {
     setError("");
+
     try {
       const body = await readJson<{ text: string; mtime?: number }>(
         await fetch(`${ROUTE}/instructions/file?${q}&path=${encodeURIComponent(f.path)}`),
       );
+
       // The read's own mtime, not the list's: the list can be minutes old by the time a row opens,
       // and the save sends this back for the server to check the file has not moved since.
       setFile({ ...f, mtime: body.mtime ?? f.mtime });
       setText(body.text);
       setSaved(body.text);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     }
   };
+
   const save = async () => {
-    if (!file || file.kind === "Managed") return;
+    if (!file || file.kind === "Managed") {
+      return;
+    }
+
     setBusy(true);
     setError("");
+
     try {
       await readJson(
         await fetch(`${ROUTE}/instructions/file${onBox === "" ? "" : `?${onBox}`}`, {
@@ -122,20 +148,22 @@ export function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: C
       );
       setSaved(text);
       refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     } finally {
       setBusy(false);
     }
   };
 
   // A session dsh reports no directory for has neither instructions nor settings to read.
-  if (!cwd)
+  if (!cwd) {
     return (
       <span style={{ ...meta, padding: "4px 0", color: error ? T.err : undefined }}>
         {error || t("panel.instructions.none")}
       </span>
     );
+  }
+
   const dirty = text !== saved;
 
   return (
@@ -213,7 +241,9 @@ export function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: C
             readOnly={file.kind === "Managed"}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") save();
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                save();
+              }
             }}
             style={{ ...code, minHeight: 300, resize: "vertical", whiteSpace: "pre-wrap" }}
           />

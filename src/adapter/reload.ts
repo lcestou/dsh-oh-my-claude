@@ -26,6 +26,7 @@ export function mountedInstance<T>(providerId: string): T | undefined {
   // SAFETY: the registry symbol is this plugin's own key on globalThis, filled only by `apply` and
   // the SSH-box mounts with adapter instances, which is the T every caller names
   const g = globalThis as typeof globalThis & { [ADAPTER_CURRENT]?: Map<string, T> };
+
   return g[ADAPTER_CURRENT]?.get(providerId);
 }
 

@@ -9,7 +9,8 @@
 import { lstat, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { homeAt, isEnoent, readTextAt, type FsBox } from "./remote-fs.js";
+import { homeAt, isEnoent, readTextAt } from "./remote-fs.js";
+import type { FsBox } from "./remote-fs.js";
 
 /** `path` with its symlinks resolved on this PC. Left as given on an SSH box, which has no helper
  *  for it, and when it cannot be resolved. */
@@ -25,8 +26,11 @@ const homeOf = (box: FsBox): Promise<string> =>
 async function lstatIfThere(path: string): Promise<Awaited<ReturnType<typeof lstat>> | null> {
   try {
     return await lstat(path);
-  } catch (e) {
-    if (!isEnoent(e)) throw e;
+  } catch (error) {
+    if (!isEnoent(error)) {
+      throw error;
+    }
+
     return null;
   }
 }
@@ -51,13 +55,20 @@ interface Checkout {
 async function checkoutOf(box: FsBox, cwd: string): Promise<Checkout | null> {
   for (let dir = cwd; ; dir = dirname(dir)) {
     let dotGit: string | null;
+
     try {
       dotGit = await readTextAt(box, join(dir, ".git"));
     } catch {
       return { root: dir, dotGit: null };
     }
-    if (dotGit !== null) return { root: dir, dotGit };
-    if (dir === dirname(dir)) return null;
+
+    if (dotGit !== null) {
+      return { root: dir, dotGit };
+    }
+
+    if (dir === dirname(dir)) {
+      return null;
+    }
   }
 }
 
@@ -74,18 +85,34 @@ async function checkoutOf(box: FsBox, cwd: string): Promise<Checkout | null> {
  */
 async function mainCheckout(box: FsBox, dir: string, dotGit: string): Promise<string> {
   const pointer = /^gitdir:(.+)$/.exec(dotGit.trim())?.[1]?.trim();
-  if (!pointer) return dir;
+
+  if (!pointer) {
+    return dir;
+  }
+
   const gitDir = resolve(dir, pointer);
   const read = (name: string) => readTextAt(box, join(gitDir, name)).catch(() => null);
   const [common, back] = await Promise.all([read("commondir"), read("gitdir")]);
-  if (common === null || back === null) return dir;
+
+  if (common === null || back === null) {
+    return dir;
+  }
+
   const commonDir = resolve(gitDir, common.trim());
-  if (dirname(gitDir) !== join(commonDir, "worktrees")) return dir;
+
+  if (dirname(gitDir) !== join(commonDir, "worktrees")) {
+    return dir;
+  }
+
   const [backLink, own] = await Promise.all([
     real(box, resolve(gitDir, back.trim())),
     real(box, dir),
   ]);
-  if (backLink !== join(own, ".git")) return dir;
+
+  if (backLink !== join(own, ".git")) {
+    return dir;
+  }
+
   // A bare repository's common dir is the repository itself; otherwise it is `<checkout>/.git`.
   return basename(commonDir) === ".git" ? dirname(commonDir) : commonDir;
 }
@@ -104,7 +131,11 @@ export async function checkoutRoot(box: FsBox, cwd: string): Promise<string> {
  */
 export async function repoRoot(box: FsBox, cwd: string): Promise<string> {
   const found = await checkoutOf(box, cwd);
-  if (found === null) return cwd;
+
+  if (found === null) {
+    return cwd;
+  }
+
   return found.dotGit === null ? found.root : mainCheckout(box, found.root, found.dotGit);
 }
 
@@ -116,14 +147,23 @@ export async function repoRoot(box: FsBox, cwd: string): Promise<string> {
  * scope: a session opened in the home directory has no project level at all. `home` is that box's
  * home directory, asked for when not given.
  */
-export async function projectLevels(box: FsBox, cwd: string, home?: string): Promise<string[]> {
+export async function projectLevels(
+  box: FsBox,
+  cwd: string,
+  home?: string,
+): Promise<Array<string>> {
   const found = await checkoutOf(box, cwd);
   home ??= await homeOf(box);
-  const levels: string[] = [];
+  const levels: Array<string> = [];
+
   for (let dir = cwd; dir !== home; dir = dirname(dir)) {
     levels.push(dir);
-    if (dir === found?.root || dir === dirname(dir)) break;
+
+    if (dir === found?.root || dir === dirname(dir)) {
+      break;
+    }
   }
+
   return levels;
 }
 
@@ -150,17 +190,30 @@ export async function localSettingsRoot(
   home?: string,
 ): Promise<string> {
   const root = await repoRoot(box, cwd);
-  if (root === cwd || root === (home ?? (await homeOf(box)))) return cwd;
-  if (box.sshHost) return root;
+
+  if (root === cwd || root === (home ?? (await homeOf(box)))) {
+    return cwd;
+  }
+
+  if (box.sshHost) {
+    return root;
+  }
+
   const uid = process.geteuid?.();
-  if (platform === "win32" || uid === undefined) return cwd;
+
+  if (platform === "win32" || uid === undefined) {
+    return cwd;
+  }
+
   try {
     const [rootStat, gitStat, claudeStat] = await Promise.all([
       stat(root),
       lstat(join(root, ".git")),
       lstatIfThere(join(root, ".claude")),
     ]);
+
     const owned = [rootStat, gitStat, claudeStat].every((s) => s === null || s.uid === uid);
+
     return owned ? root : cwd;
   } catch {
     return cwd;

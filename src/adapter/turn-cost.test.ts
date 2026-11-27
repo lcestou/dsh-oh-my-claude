@@ -9,6 +9,7 @@ import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
 
 const dir = await mkdtemp(join(tmpdir(), "omc-cost-probe-"));
+
 try {
   const session = {
     header: { version: 0 },
@@ -18,12 +19,15 @@ try {
     ],
     append: () => ({ seq: 1 }),
   };
+
   const a: any = new ClaudeCodeAdapter(
     { on() {}, sessions: { get: () => session } } as unknown as PluginContext,
     Config({ resume: true }),
   );
+
   a.stateDir = dir;
-  const queue: unknown[] = [];
+  const queue: Array<unknown> = [];
+
   const proc: any = {
     alive: true,
     busy: false,
@@ -44,6 +48,7 @@ try {
     nextEvent: async () => queue.shift() ?? null,
     kill: () => {},
   };
+
   const prep = {
     input: "go",
     spec: { model: "m" },
@@ -51,10 +56,14 @@ try {
     session: undefined,
     args: [],
   };
+
   a.acquire = async () => ({ prep, proc });
   a.reconnectIfStale = async () => {};
+
   a.watchTranscript = async () => {};
+
   a.pumpMirror = async () => {};
+
   const turn = async (result: object) => {
     queue.push({
       type: "result",
@@ -62,13 +71,16 @@ try {
       is_error: false,
       ...result,
     });
+
     for await (const _ of a.stream({
       sessionId: "scost",
       model: "m",
       messages: [{ role: "user", content: [{ type: "text", text: "go" }] }],
       signal: new AbortController().signal,
-    }));
+    })) {
+    }
   };
+
   await turn({ duration_ms: 1000 });
   assert.equal(proc.costSoFar, 3, "the total survives a frame without a figure");
   await turn({ total_cost_usd: 3.5, duration_ms: 1000 });
@@ -86,4 +98,5 @@ try {
 } finally {
   await rm(dir, { recursive: true, force: true });
 }
+
 console.log("turn cost ok");

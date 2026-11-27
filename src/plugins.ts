@@ -1,7 +1,8 @@
 // Which Claude Code plugins and marketplaces a session's settings turn on. Pure: the caller reads
 // the files, this works out what the CLI would load from them.
 import type { JsonValue } from "./dsh.js";
-import { parseSettings, type ScopeText } from "./switches.js";
+import { parseSettings } from "./switches.js";
+import type { ScopeText } from "./switches.js";
 
 /** One `enabledPlugins` entry, keyed `plugin-id@marketplace-id`. */
 export interface PluginRow {
@@ -23,8 +24,8 @@ export interface MarketplaceRow {
 }
 
 export interface PluginRoster {
-  plugins: PluginRow[];
-  marketplaces: MarketplaceRow[];
+  plugins: Array<PluginRow>;
+  marketplaces: Array<MarketplaceRow>;
 }
 
 /** One entry of the init frame's `plugin_errors`: a plugin the CLI could not load, and why.
@@ -42,32 +43,48 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 /** Parse the init frame's `plugin_errors` into typed rows. Absent or malformed entries drop out; a
  *  clean load has no key and yields `[]`. `typeof` is allowed here (developing.md: the runtime-typeof
  *  rule names only adapter.ts and client/index.tsx). */
-export function pluginErrorsOf(value: JsonValue): PluginLoadError[] {
-  if (!Array.isArray(value)) return [];
-  const out: PluginLoadError[] = [];
+export function pluginErrorsOf(value: JsonValue): Array<PluginLoadError> {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const out: Array<PluginLoadError> = [];
+
   for (const entry of value) {
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      continue;
+    }
+
     // SAFETY: guarded to a non-null, non-array object on the line above
     const row = entry as Record<string, JsonValue>;
     const message = str(row.message);
-    if (message === "") continue;
+
+    if (message === "") {
+      continue;
+    }
+
     out.push({ plugin: str(row.plugin), type: str(row.type), message });
   }
+
   return out;
 }
 
 /** Read a numeric field off a control-response object, `undefined` when absent or not a number.
  *  Lives here so adapter.ts (which forbids `typeof`) can read `reload_plugins`' `error_count`. */
 export function numberOf(value: JsonValue | undefined, key: string): number | undefined {
-  if (value === null || value === undefined || typeof value !== "object" || Array.isArray(value))
+  if (value === null || value === undefined || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
+  }
+
   // SAFETY: guarded to a non-null, non-array object on the line above
   const n = (value as Record<string, JsonValue>)[key];
+
   return typeof n === "number" ? n : undefined;
 }
 
 /** The scopes `claude plugin` writes to; same set the MCP tab uses, named for this surface. */
 const PLUGIN_SCOPES = ["user", "project", "local"] as const;
+
 export type PluginScope = (typeof PLUGIN_SCOPES)[number];
 
 /** True only for one of the plugin scopes the CLI accepts, `user`, `project` and `local`. */
@@ -95,19 +112,26 @@ export const isMarketplaceSource = (value: unknown): value is string =>
 
 /** The value as a record, or null for an array or a scalar. */
 const object = (value: JsonValue | undefined): Record<string, JsonValue> | null => {
-  if (!(value instanceof Object) || Array.isArray(value)) return null;
+  if (!(value instanceof Object) || Array.isArray(value)) {
+    return null;
+  }
+
   // SAFETY: the guard above leaves only the object arm of JsonValue, whose values are JsonValue.
-  return value as Record<string, JsonValue>;
+  return value;
 };
 
 /** What the panel shows for a value that is neither `true` nor `false`. */
 const extended = (value: JsonValue) => {
-  if (String(value) === value) return { enabled: true, detail: value };
+  if (String(value) === value) {
+    return { enabled: true, detail: value };
+  }
+
   const fields = object(value);
   // An extended entry can still say it is off; anything else with a shape is on, which is what the
   // key means, and the raw value is shown so an unfamiliar spelling is readable rather than lost.
   const enabled = fields?.enabled !== false;
   const version = fields?.version;
+
   return { enabled, detail: String(version) === version ? version : JSON.stringify(value) };
 };
 
@@ -118,13 +142,21 @@ const extended = (value: JsonValue) => {
  * unwrapped one level before the kind and location are read off it.
  */
 const sourceLine = (value: JsonValue): string => {
-  if (String(value) === value) return value;
+  if (String(value) === value) {
+    return value;
+  }
+
   const outer = object(value);
-  if (outer === null) return JSON.stringify(value);
+
+  if (outer === null) {
+    return JSON.stringify(value);
+  }
+
   const descriptor = object(outer.source) ?? outer;
   const kind = descriptor.source;
   const where = descriptor.repo ?? descriptor.url ?? descriptor.path;
   const kindText = String(kind) === kind ? kind : JSON.stringify(descriptor);
+
   return String(where) === where ? `${kindText}:${where}` : kindText;
 };
 
@@ -136,26 +168,44 @@ const sourceLine = (value: JsonValue): string => {
  * `additionalMarketplaces` is read as `extraKnownMarketplaces`, except in a file that spells both,
  * where the CLI ignores the alias with a warning.
  */
-export function pluginRoster(scopes: readonly ScopeText[]): PluginRoster {
+export function pluginRoster(scopes: ReadonlyArray<ScopeText>): PluginRoster {
   const plugins = new Map<string, PluginRow>();
   const marketplaces = new Map<string, MarketplaceRow>();
+
   for (const { scope, text } of scopes) {
     const settings = parseSettings(text);
     const enabled = object(settings.enabledPlugins);
+
     for (const [key, value] of Object.entries(enabled ?? {})) {
-      if (plugins.has(key)) continue;
-      if (value === true || value === false) plugins.set(key, { key, enabled: value, scope });
-      else plugins.set(key, { key, ...extended(value), scope });
+      if (plugins.has(key)) {
+        continue;
+      }
+
+      if (value === true || value === false) {
+        plugins.set(key, { key, enabled: value, scope });
+      } else {
+        plugins.set(key, { key, ...extended(value), scope });
+      }
     }
+
     const named = object(settings.extraKnownMarketplaces);
     const aliased = named === null ? object(settings.additionalMarketplaces) : null;
+
     for (const [name, value] of Object.entries(named ?? aliased ?? {})) {
-      if (marketplaces.has(name)) continue;
+      if (marketplaces.has(name)) {
+        continue;
+      }
+
       const row: MarketplaceRow = { name, source: sourceLine(value), scope };
-      if (aliased !== null) row.alias = true;
+
+      if (aliased !== null) {
+        row.alias = true;
+      }
+
       marketplaces.set(name, row);
     }
   }
+
   return {
     plugins: [...plugins.values()].toSorted((a, b) => a.key.localeCompare(b.key)),
     marketplaces: [...marketplaces.values()].toSorted((a, b) => a.name.localeCompare(b.name)),

@@ -3,20 +3,14 @@
 // The walk is a pure state machine (`recallStep`) so the rules are testable without a DOM; the hook
 // around it owns the list, the key listener and the caret check.
 import { useEffect, useRef } from "react";
-import {
-  ROUTE,
-  boxParam,
-  inOwnComposer,
-  isClaudeSession,
-  readJson,
-  type ClientCtx,
-} from "./shared.js";
+import { ROUTE, boxParam, inOwnComposer, isClaudeSession, readJson } from "./shared.js";
+import type { ClientCtx } from "./shared.js";
 import { useHintFlag } from "./hints.js";
 
 /** Where the walk stands: the prompts newest first, the index shown (null when not walking), and
  *  the text last written into the box, which the edit lock compares the draft against. */
 export interface RecallState {
-  entries: string[];
+  entries: Array<string>;
   at: number | null;
   shown: string | null;
 }
@@ -38,6 +32,7 @@ export const IDLE: RecallState = { entries: [], at: null, shown: null };
 /** The move to entry `i`, or no move when the list has no such entry. */
 const moveTo = (s: RecallState, i: number): RecallMove => {
   const text = s.entries[i];
+
   return text === undefined ? { state: s } : { state: { ...s, at: i, shown: text }, set: text };
 };
 
@@ -50,12 +45,25 @@ const moveTo = (s: RecallState, i: number): RecallMove => {
  */
 export function recallStep(s: RecallState, key: "up" | "down", draft: string): RecallMove {
   if (key === "up") {
-    if (draft === "") return moveTo({ ...s, at: null, shown: null }, 0);
-    if (s.at === null || draft !== s.shown) return { state: s };
+    if (draft === "") {
+      return moveTo({ ...s, at: null, shown: null }, 0);
+    }
+
+    if (s.at === null || draft !== s.shown) {
+      return { state: s };
+    }
+
     return moveTo(s, s.at + 1);
   }
-  if (s.at === null || draft === "" || draft !== s.shown) return { state: s };
-  if (s.at === 0) return { state: { ...s, at: null, shown: null }, set: "" };
+
+  if (s.at === null || draft === "" || draft !== s.shown) {
+    return { state: s };
+  }
+
+  if (s.at === 0) {
+    return { state: { ...s, at: null, shown: null }, set: "" };
+  }
+
   return moveTo(s, s.at - 1);
 }
 
@@ -65,7 +73,7 @@ export const PLUGIN_NOTICE = "[Oh My Claude] ";
 
 /** The route's prompts (newest first) as walk entries: trimmed, blanks and the plugin's own notices
  *  dropped, and a prompt sent twice in a row kept once, the way a shell's history collapses repeats. */
-export const recallEntries = (prompts: ReadonlyArray<{ text: string }>): string[] =>
+export const recallEntries = (prompts: ReadonlyArray<{ text: string }>): Array<string> =>
   prompts
     .map((p) => p.text.trim())
     .filter((text) => text !== "" && !text.startsWith(PLUGIN_NOTICE))
@@ -73,24 +81,35 @@ export const recallEntries = (prompts: ReadonlyArray<{ text: string }>): string[
 
 /** The full prompts of one transcript, by the dsh session's id or a bare transcript id (the route
  *  resolves either). An unreadable or missing transcript answers an empty list, never throws. */
-const promptsOf = (ctx: ClientCtx, sessionId: string, id: string, cwd: string): Promise<string[]> =>
+const promptsOf = (
+  ctx: ClientCtx,
+  sessionId: string,
+  id: string,
+  cwd: string,
+): Promise<Array<string>> =>
   fetch(
     `${ROUTE}/rewind?session=${encodeURIComponent(id)}&cwd=${encodeURIComponent(cwd)}&full=1${boxParam(ctx, sessionId)}`,
   )
-    .then((r) => readJson<{ prompts?: { text: string }[] }>(r))
+    .then((r) => readJson<{ prompts?: Array<{ text: string }> }>(r))
     .then((b) => recallEntries(b.prompts ?? []))
     .catch(() => []);
 
 /** The session's own prompts, or, while it has none (a session that has not sent anything yet),
  *  the prompts of the workspace's most recently written transcript, so a fresh session recalls
  *  what the last one in this workspace asked, as the terminal's per-project history does. */
-async function loadEntries(ctx: ClientCtx, sessionId: string, cwd: string): Promise<string[]> {
+async function loadEntries(ctx: ClientCtx, sessionId: string, cwd: string): Promise<Array<string>> {
   const own = await promptsOf(ctx, sessionId, sessionId, cwd);
-  if (own.length > 0) return own;
+
+  if (own.length > 0) {
+    return own;
+  }
+
   const list = await fetch(`${ROUTE}/sessions?cwd=${encodeURIComponent(cwd)}`)
-    .then((r) => readJson<{ sessions?: { id: string }[] }>(r))
+    .then((r) => readJson<{ sessions?: Array<{ id: string }> }>(r))
     .catch(() => ({ sessions: [] }));
+
   const last = list.sessions?.[0];
+
   return last ? promptsOf(ctx, sessionId, last.id, cwd) : [];
 }
 
@@ -128,7 +147,7 @@ export function useComposerRecall({
   const [off] = useHintFlag("recallOff");
   const state = useRef<RecallState>(IDLE);
   const stale = useRef(true);
-  const loading = useRef<Promise<string[]> | null>(null);
+  const loading = useRef<Promise<Array<string>> | null>(null);
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const setRef = useRef(setDraft);
@@ -137,7 +156,9 @@ export function useComposerRecall({
   // a stray newline after a send, counts as empty: the walk starts from it and replaces it.
   const empty = draft.trim() === "";
   useEffect(() => {
-    if (empty) state.current = { ...state.current, at: null, shown: null };
+    if (empty) {
+      state.current = { ...state.current, at: null, shown: null };
+    }
   }, [empty]);
   useEffect(() => {
     state.current = IDLE;
@@ -147,7 +168,10 @@ export function useComposerRecall({
   // A turn ending or a rewind marks the list stale, and disowns a read still in flight: its
   // answer is kept for the walk it was asked for, but it does not count as fresh.
   useEffect(() => {
-    if (running) return;
+    if (running) {
+      return;
+    }
+
     stale.current = true;
     loading.current = null;
   }, [running]);
@@ -156,41 +180,81 @@ export function useComposerRecall({
       stale.current = true;
       loading.current = null;
     };
+
     window.addEventListener(REWOUND_EVENT, onRewound);
+
     return () => window.removeEventListener(REWOUND_EVENT, onRewound);
   }, []);
   useEffect(() => {
-    if (off) return;
+    if (off) {
+      return;
+    }
+
     /** The list, read now if stale, shared between presses that land during one read. */
-    const entries = (): Promise<string[]> => {
-      if (!stale.current) return Promise.resolve(state.current.entries);
-      if (loading.current) return loading.current;
+    const entries = (): Promise<Array<string>> => {
+      if (!stale.current) {
+        return Promise.resolve(state.current.entries);
+      }
+
+      if (loading.current) {
+        return loading.current;
+      }
+
       const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
-      if (!cwd) return Promise.resolve([]);
+
+      if (!cwd) {
+        return Promise.resolve([]);
+      }
+
       const read = loadEntries(ctx, sessionId, cwd).then((list) => {
         state.current = { ...state.current, entries: list };
+
         if (loading.current === read) {
           loading.current = null;
           stale.current = false;
         }
+
         return list;
       });
+
       loading.current = read;
+
       return read;
     };
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
-      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) return;
-      if (!inOwnComposer(e.target, sessionId)) return;
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown") {
+        return;
+      }
+
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) {
+        return;
+      }
+
+      if (!inOwnComposer(e.target, sessionId)) {
+        return;
+      }
+
       const set = setRef.current;
-      if (!set) return;
+
+      if (!set) {
+        return;
+      }
+
       const key = e.key === "ArrowUp" ? "up" : "down";
       const draftNow = draftRef.current;
+
       if (draftNow.trim() === "") {
         // Only a Claude session has a list; elsewhere the key is the editor's. Nothing to recall
         // is known only after a read; a known-empty list leaves the key alone too.
-        if (key === "down" || !isClaudeSession(ctx, sessionId)) return;
-        if (!stale.current && state.current.entries.length === 0) return;
+        if (key === "down" || !isClaudeSession(ctx, sessionId)) {
+          return;
+        }
+
+        if (!stale.current && state.current.entries.length === 0) {
+          return;
+        }
+
         e.preventDefault();
         e.stopPropagation();
         void entries().then(() => {
@@ -199,24 +263,44 @@ export function useComposerRecall({
           // ends it.
           const s = state.current;
           const now = draftRef.current;
-          if (now.trim() !== "" && now !== s.shown) return;
+
+          if (now.trim() !== "" && now !== s.shown) {
+            return;
+          }
+
           const next = recallStep(s, "up", s.at === null ? "" : (s.shown ?? ""));
-          if (next.set === undefined) return;
+
+          if (next.set === undefined) {
+            return;
+          }
+
           state.current = next.state;
           set(next.set);
         });
+
         return;
       }
+
       const s = state.current;
-      if (s.at === null || draftNow !== s.shown) return;
+
+      if (s.at === null || draftNow !== s.shown) {
+        return;
+      }
+
       const next = recallStep(s, key, draftNow);
-      if (next.set === undefined) return;
+
+      if (next.set === undefined) {
+        return;
+      }
+
       e.preventDefault();
       e.stopPropagation();
       state.current = next.state;
       set(next.set);
     };
+
     document.addEventListener("keydown", onKey, true);
+
     return () => document.removeEventListener("keydown", onKey, true);
   }, [off, ctx, sessionId]);
 }

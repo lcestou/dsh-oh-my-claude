@@ -23,11 +23,15 @@ import type { CliModel } from "./process.js";
 // The test runner gives each file its own DSH_OMC_STATE_DIR; this file needs it, since it reads and
 // writes the windows file there.
 const dir = process.env.DSH_OMC_STATE_DIR;
+
 assert.ok(dir, "run through the repo's test script, which sets DSH_OMC_STATE_DIR");
+
 // SAFETY: asserted non-empty above
-mkdirSync(dir!, { recursive: true });
+mkdirSync(dir, { recursive: true });
+
 // The windows file is written first: the first catalog read below seeds from it, once per process.
-const file = join(dir!, "context-windows.json");
+const file = join(dir, "context-windows.json");
+
 writeFileSync(file, JSON.stringify({ "claude-stored-1": 640_000, bad: -5 }));
 
 /** One CLI row whose alias is its own id. */
@@ -44,10 +48,11 @@ const row = (id: string): CliModel => ({
   assert.deepEqual(ids, ["claude-opus-5-5"], "the table adds no row beside the CLI's lineup");
   assert.equal(mergeCatalog([], KNOWN_MODELS).length, KNOWN_MODELS.length, "no lineup: the floor");
 }
+
 // A base row the CLI reaches through an alias that keeps its own id stays, so a session bound to
 // the plain id still finds its row; so does an API row newer than the CLI, marked for an update.
 {
-  const cli: CliModel[] = [
+  const cli: Array<CliModel> = [
     {
       value: "fable",
       resolvedModel: "claude-fable-5-1[1m]",
@@ -55,17 +60,20 @@ const row = (id: string): CliModel => ({
       efforts: [],
     },
   ];
+
   const base = [
     modelFromApi({ id: "claude-fable-5-1", created_at: "2026-06-01T00:00:00Z" }),
     modelFromApi({ id: "claude-next-9", created_at: "2027-01-01T00:00:00Z" }),
     modelFromApi({ id: "claude-old-1", created_at: "2024-01-01T00:00:00Z" }),
   ];
+
   const merged = mergeCatalog(cli, base);
-  const ids = merged.map((m) => m.id);
-  assert.ok(ids.includes("claude-fable-5-1"), "the plain id behind a [1m] alias stays");
+  const ids = new Set(merged.map((m) => m.id));
+  assert.ok(ids.has("claude-fable-5-1"), "the plain id behind a [1m] alias stays");
   assert.match(merged.find((m) => m.id === "claude-next-9")?.description ?? "", /update/i);
-  assert.ok(!ids.includes("claude-old-1"), "an API row older than the CLI's lineup leaves");
+  assert.ok(!ids.has("claude-old-1"), "an API row older than the CLI's lineup leaves");
 }
+
 // A stale API cache that holds none of the CLI's models cannot date the lineup, so none of its rows
 // is called newer than the CLI and all of them leave.
 {
@@ -76,11 +84,13 @@ const row = (id: string): CliModel => ({
     "an undated lineup marks nothing as newer",
   );
 }
+
 // A dated API id the table does not undate still counts as reached by the CLI's undated alias row.
 {
-  const cli: CliModel[] = [
+  const cli: Array<CliModel> = [
     { value: "x", resolvedModel: "claude-x-6[1m]", displayName: "X (1M context)", efforts: [] },
   ];
+
   const base = [modelFromApi({ id: "claude-x-6-20270101", created_at: "2026-01-01T00:00:00Z" })];
   assert.ok(
     mergeCatalog(cli, base).some((m) => m.id === "claude-x-6-20270101"),
@@ -92,7 +102,7 @@ const row = (id: string): CliModel => ({
 // resolves its efforts and window from the API cache, or every turn with a stored effort fails.
 {
   writeFileSync(
-    join(dir!, "models.json"),
+    join(dir, "models.json"),
     JSON.stringify([
       {
         provider: "claude-code",
@@ -133,21 +143,33 @@ assert.deepEqual(
 
 // A model nothing names is named from its id, in the API's spelling.
 assert.equal(nameFromId("claude-opus-5-5"), "Claude Opus 5.5");
+
 assert.equal(nameFromId("claude-haiku-4-5-20251001"), "Claude Haiku 4.5");
+
 assert.equal(nameFromId("claude-fable-5-1[1m]"), "Claude Fable 5.1");
+
 assert.equal(nameFromId("claude-sonnet-5"), "Claude Sonnet 5");
+
 assert.equal(nameFromId("opus"), undefined, "an alias keeps the CLI's label");
+
 assert.equal(nameFromId("my-proxy-model"), undefined);
 
 // A window a session reported is written to disk, and a later boot reads it back. A figure this
 // boot already holds is not replaced by the stored one.
 await seedLiveWindows();
+
 assert.equal(liveWindowFor("claude-stored-1"), 640_000, "a stored window is read back");
+
 assert.equal(liveWindowFor("bad"), undefined, "a non-positive figure is skipped");
+
 noteLiveWindow("claude-opus-5-5", 1_000_000);
+
 await flushLiveWindows();
+
 const written = JSON.parse(readFileSync(file, "utf8"));
+
 assert.equal(written["claude-opus-5-5"], 1_000_000, "a new figure reaches the file");
+
 assert.equal(written["claude-stored-1"], 640_000, "a later write keeps the stored figures");
 
 // hiddenModels leaves rows out of the picker by exact id, or id plus a date stamp, and never by a
@@ -156,7 +178,8 @@ assert.equal(written["claude-stored-1"], 640_000, "a later write keeps the store
   const rows = ["default", "claude-opus-5", "claude-opus-5-5", "claude-haiku-4-5-20251001"].map(
     (id) => ({ id }),
   );
-  const ids = (hidden: string[]) => withoutHiddenModels(rows, hidden).map((r) => r.id);
+
+  const ids = (hidden: Array<string>) => withoutHiddenModels(rows, hidden).map((r) => r.id);
   assert.deepEqual(
     ids([]),
     rows.map((r) => r.id),
@@ -198,7 +221,9 @@ assert.deepEqual(
   ["claude-opus-5"],
   "this mount's keys to ids",
 );
+
 assert.deepEqual(hintHiddenModels({}, "claude-code"), []);
+
 // Hides written before the keys carried a box (`hideModel:<id>`) are no longer read. They move to
 // this box's key and the old one goes; a key already scoped, another hint and a false are left.
 assert.deepEqual(
@@ -216,11 +241,13 @@ assert.deepEqual(
     "hideModel:claude-code:claude-opus-4-8": true,
   },
 );
+
 assert.deepEqual(
   carriedHides({ "hideModel:claude-code:claude-opus-5": true }),
   {},
   "nothing to move",
 );
+
 console.log("hint hidden models ok");
 
 // A level the plugin does not know is kept out of the picker but named on the row, so Diagnostics
@@ -237,6 +264,7 @@ console.log("hint hidden models ok");
       },
     },
   });
+
   assert.deepEqual(row.efforts, ["high"], "only known levels reach the picker");
   assert.deepEqual(row.unknownEfforts, ["ultra"], "the supported unknown level is named");
   assert.equal(
@@ -252,6 +280,7 @@ console.log("hint hidden models ok");
   // Kept across a restart through the disk cache, and a cache written before the field still reads.
   const cached = parseCatalogCache(JSON.stringify([{ ...row, createdAt: 1 }]));
   assert.deepEqual(cached[0]?.unknownEfforts, ["ultra"], "the disk cache keeps unknown levels");
+
   const old = parseCatalogCache(
     JSON.stringify([
       {
@@ -264,6 +293,7 @@ console.log("hint hidden models ok");
       },
     ]),
   );
+
   assert.equal(old.length, 1, "a cache row without the field still loads");
   assert.equal(old[0]?.unknownEfforts, undefined, "and names no unknown level");
   console.log("unknown efforts ok");

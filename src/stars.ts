@@ -16,14 +16,20 @@ export function stargazerCount(text: string): number | undefined {
   // other shape the endpoint could send (an error object, an array, a bare number) reads as an
   // absent field below rather than throwing here.
   let body: { stargazers_count?: unknown };
+
   try {
     body = JSON.parse(text);
   } catch {
     return undefined; // not JSON at all: an error page, or a body cut short
   }
+
   const raw = body?.stargazers_count;
+
   // Zero is a real answer, so this tests the type and the range and never truthiness.
-  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) return undefined;
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
+    return undefined;
+  }
+
   return raw;
 }
 
@@ -47,13 +53,19 @@ export async function stars(
   timeoutMs = 2500,
 ): Promise<number | undefined> {
   const hit = cache.get(STAR_REPO);
-  if (hit && now - hit.at < hit.ttl) return hit.value;
+
+  if (hit && now - hit.at < hit.ttl) {
+    return hit.value;
+  }
+
   let value: number | undefined;
+
   try {
     const r = await fetchFn(`https://api.github.com/repos/${STAR_REPO}`, {
       headers: { Accept: "application/vnd.github+json" },
       signal: AbortSignal.timeout(timeoutMs),
     });
+
     if (r.ok) {
       // A 403 from the rate limiter or a 404 after a rename still carries a body; only read it
       // when GitHub actually answered, so an error page is never parsed as a count.
@@ -62,9 +74,11 @@ export async function stars(
   } catch {
     // offline, rate-limited, or slow: the nudge just does not show this time
   }
+
   // `value !== undefined`, not a truthy test: a repo with no stars yet answers 0, and treating
   // that as a failed read would retry GitHub every hour forever.
   cache.set(STAR_REPO, { at: now, ttl: value !== undefined ? TTL_OK : TTL_FAIL, value });
+
   return value;
 }
 

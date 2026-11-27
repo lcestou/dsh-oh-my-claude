@@ -8,8 +8,10 @@ import { inputStyle, select } from "./shared.js";
 
 /** The window sizes offered by name; anything else is typed under "Other". */
 export const WINDOWS = [128_000, 200_000, 256_000, 512_000, 1_000_000] as const;
+
 /** The dropdown's value for "type an exact number". */
 export const OTHER = "other";
+
 /** The smallest and largest window the server takes (`checkCustomModels`). */
 const MIN_WINDOW = 1000;
 const MAX_WINDOW = 10_000_000;
@@ -54,11 +56,16 @@ export function SizeSelect({
     setTyping(value !== undefined && !isNamed(value));
     setTokens(value === undefined ? "" : String(value));
   }, [value]);
+
   /** Hand the typed number on, when it is one the server would take and not what is stored. */
   const commit = () => {
     const n = /^\d+$/.test(tokens.trim()) ? Number(tokens.trim()) : Number.NaN;
-    if (Number.isInteger(n) && n >= MIN_WINDOW && n <= MAX_WINDOW && n !== value) onChange(n);
+
+    if (Number.isInteger(n) && n >= MIN_WINDOW && n <= MAX_WINDOW && n !== value) {
+      onChange(n);
+    }
   };
+
   return (
     <span data-omc-model-size="" style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
       <select
@@ -70,7 +77,11 @@ export function SizeSelect({
         onChange={(e) => {
           const pick = e.target.value;
           setTyping(pick === OTHER);
-          if (pick === OTHER) return;
+
+          if (pick === OTHER) {
+            return;
+          }
+
           onChange(pick === "" ? undefined : Number(pick));
         }}
       >
@@ -93,7 +104,9 @@ export function SizeSelect({
           onChange={(e) => setTokens(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
-            if (e.key === "Enter") commit();
+            if (e.key === "Enter") {
+              commit();
+            }
           }}
         />
       )}

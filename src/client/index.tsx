@@ -7,6 +7,7 @@ import { NewSessionDefaultRow } from "./new-session-default.js";
 import { SecondOpinionCard, SecondOpinionRow } from "./second-opinion.js";
 import { installLocale, t, useLocale } from "./i18n.js";
 import { useEffect, useState } from "react";
+import type { SessionData } from "./shared.js";
 import {
   ROUTE,
   fmtCost,
@@ -15,17 +16,15 @@ import {
   T,
   readJson,
   ACCENT,
-  SessionData,
   isOwnedActive,
   activeClaudeSession,
-  type ClientCtx,
-  type DirectoryFlowOwnerProps,
   openHere,
   whenContextGone,
   guard,
   retire,
   revive,
 } from "./shared.js";
+import type { ClientCtx, DirectoryFlowOwnerProps } from "./shared.js";
 import { ensureSendButtonStyle } from "./send-button.js";
 import { ensurePhoneStyle } from "./phone-style.js";
 import { themeSplitPatch, hasTheme } from "./theme.js";
@@ -92,44 +91,63 @@ import { TestGateCard } from "./test-gate-card.js";
 import { TestGateRow } from "./test-gate-settings.js";
 import { mountSelectionActions } from "./selection-actions.js";
 import { startBoxColours } from "./box-colour-swatch.js";
+
 export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
+
 // The entry keeps its export list while the split runs, re-exporting from the module that owns each.
 export { spinnerFrameAt, bracketOpen, pickVerb, mergeVerbs } from "./verbs.js";
+
 export { summarize } from "./boxes.js";
+
 export { type GroupInfo, pageSessions } from "./sessions-tab.js";
+
 export { costDetails, formatCacheRead, isStatsRow } from "./cost.js";
+
 export { glyphOf } from "./tool-folds.js";
+
 export { stopTurnLine, claudeRunningTitles } from "./turn-status.js";
 
 /** The client bundle's name, exported so dsh can identify this plugin. */
 export const name = "dsh-oh-my-claude-client";
+
 /** Services injected into the client plugin by dsh. */
 export const inject = ["slots", "sessions", "workspaces", "modelDirectories"];
 
 /** A deep link from another box's panel: open that session here once dsh is ready. */
 function followDeepLink(ctx: ClientCtx) {
   const m = /[#&]claude-session=([^&]+)(?:&cwd=([^&]*))?/.exec(window.location.hash ?? "");
-  if (!m) return;
+
+  if (!m) {
+    return;
+  }
+
   const id = decodeURIComponent(m[1] ?? "");
   const cwd = decodeURIComponent(m[2] ?? "");
   window.history.replaceState(null, "", window.location.pathname + window.location.search);
   const started = Date.now();
+
   const tick = async () => {
     const ready = ctx.sessions.list.getSnapshot()?.phase === "ready";
-    if (!ready && Date.now() - started < 15000) return void setTimeout(tick, 250);
+
+    if (!ready && Date.now() - started < 15_000) {
+      return void setTimeout(tick, 250);
+    }
+
     try {
-      const body = await readJson<{ sessions?: SessionData[] } | null>(
+      const body = await readJson<{ sessions?: Array<SessionData> } | null>(
         await fetch(`${ROUTE}/sessions?all=1`),
       );
+
       const sessions = body?.sessions ?? [];
       const s = sessions.find((x) => x.id === id) ?? { id, cwd };
       await openHere(ctx, s, s.cwd ?? cwd);
-    } catch (e) {
+    } catch (error) {
       console.warn(
-        `[dsh-oh-my-claude] deep link failed: ${e instanceof Error ? e.message : String(e)}`,
+        `[dsh-oh-my-claude] deep link failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   };
+
   void tick();
 }
 
@@ -161,10 +179,14 @@ let markActive = false;
  *  send button is a stylesheet rule now (`send-button.ts`). */
 function watchSessionSpinners(ctx: ClientCtx) {
   const MARK = "data-omc-spinner";
+
   const scan = () => {
     // A hidden tab is not being looked at, and this pass is two document-wide queries a second. The
     // visibility listener below runs it once the moment the tab comes back.
-    if (document.hidden) return;
+    if (document.hidden) {
+      return;
+    }
+
     // The glyphs are tinted by the stylesheet: the ones inside the open conversation off
     // `body[data-omc-claude]`, a sidebar row's off the `data-omc-claude` mark the row-action slot
     // paints on its own row. Only a dsh without that slot needs this walk, which tints the running
@@ -172,11 +194,13 @@ function watchSessionSpinners(ctx: ClientCtx) {
     if (!markActive) {
       const titles = claudeRunningTitles(ctx);
       const rowsOn = hasTheme("row");
+
       for (const dot of document.querySelectorAll<SVGElement>(
         '[role="treeitem"] svg[data-state="ongoing"]',
       )) {
         const title = spinnerRowTitle(dot);
         const want = rowsOn && title !== null && titles.has(title);
+
         if (want) {
           dot.style.color = ACCENT;
           dot.setAttribute(MARK, "1");
@@ -187,6 +211,7 @@ function watchSessionSpinners(ctx: ClientCtx) {
       }
     }
   };
+
   scan();
   // A dot going from idle to running is an attribute flip (`data-state`), not an added node, and a
   // new session row can appear at any time; a 1s poll catches both with one scan a second. A
@@ -213,7 +238,10 @@ const reapplyTheme = () =>
   void loadHints().then((hints) => {
     applyTheme(hints);
     const patch = themeSplitPatch(hints);
-    if (patch) writeHints(patch);
+
+    if (patch) {
+      writeHints(patch);
+    }
   }, console.error);
 
 /** Wire the plugin into a mounted dsh context: follow deep links and start every watcher, so a
@@ -266,13 +294,19 @@ export function apply(ctx: ClientCtx) {
       const cell = Array.from(
         document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"] nav button'),
       ).find((b) => b.textContent?.trim() === SECTION_LABEL);
+
       const gear = cell?.querySelector("svg");
-      if (!gear || gear.hasAttribute("data-omc-spark")) return;
+
+      if (!gear || gear.hasAttribute("data-omc-spark")) {
+        return;
+      }
+
       const spark = sparkNode(16, "currentColor");
       spark.setAttribute("class", gear.getAttribute("class") ?? "");
       spark.setAttribute("data-omc-spark", "1");
       gear.replaceWith(spark);
     });
+
     return null;
   }
 
@@ -283,6 +317,7 @@ export function apply(ctx: ClientCtx) {
     const [openSessions, setOpenSessions] = useState(false);
     const [openChangelog, setOpenChangelog] = useState(false);
     const [openReport, setOpenReport] = useState(false);
+
     return (
       <div data-omc-settings="">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -386,6 +421,7 @@ export function apply(ctx: ClientCtx) {
       },
       Section,
     );
+
     return null;
   });
 
@@ -399,6 +435,7 @@ export function apply(ctx: ClientCtx) {
       { name: "settings.action", id: "claude-nav-icon", order: 99, inject: () => ({}) },
       SectionNavIcon,
     );
+
     return null;
   });
 
@@ -408,6 +445,7 @@ export function apply(ctx: ClientCtx) {
       { name: "conversation.composer.dock", id: "claude-cost", order: 10 },
       (props) => (props.sessionId ? <CostLine sessionId={props.sessionId} ctx={ctx} /> : null),
     );
+
     return null;
   });
 
@@ -484,6 +522,7 @@ export function apply(ctx: ClientCtx) {
       (props) =>
         props.sessionId ? <StaleModelRepair sessionId={props.sessionId} ctx={ctx} /> : null,
     );
+
     return null;
   });
 
@@ -503,9 +542,13 @@ export function apply(ctx: ClientCtx) {
     const declared = new Set<{ name: string; id: string }>();
     let boxed = false;
     let fallback = false;
+
     /** Take one declared cell while a box is saved and it is not ours yet. */
     const seat = (cell: { name: string; id: string }) => {
-      if (!boxed || seats.has(cell.name) || fallback) return;
+      if (!boxed || seats.has(cell.name) || fallback) {
+        return;
+      }
+
       try {
         seats.set(
           cell.name,
@@ -526,26 +569,39 @@ export function apply(ctx: ClientCtx) {
             { name: "sidebar.footer.action", id: "claude-add-workspace", order: 90 },
             () => <AddWorkspaceFlow ctx={ctx} />,
           );
+
           return null;
         });
       }
     };
+
     /** Hand every seat back to dsh's own picker. */
     const vacate = () => {
-      for (const off of seats.values()) off();
+      for (const off of seats.values()) {
+        off();
+      }
+
       seats.clear();
     };
+
     const refresh = () =>
       fetch(`${ROUTE}/ssh-boxes`)
-        .then((r) => readJson<{ boxes?: unknown[] }>(r))
+        .then((r) => readJson<{ boxes?: Array<unknown> }>(r))
         .then((b) => {
           boxed = (b.boxes?.length ?? 0) > 0;
-          if (boxed) for (const cell of declared) seat(cell);
-          else vacate();
+
+          if (boxed) {
+            for (const cell of declared) {
+              seat(cell);
+            }
+          } else {
+            vacate();
+          }
         })
         .catch(() => {
           // The route is down; the seats stay as they were until the next reread.
         });
+
     for (const cell of [
       { name: "sidebar.workspaces.directoryFlow", id: "oh-my-claude-workflow" },
       { name: "conversation.hero.workspace.directoryFlow", id: "oh-my-claude-workflow-hero" },
@@ -553,12 +609,17 @@ export function apply(ctx: ClientCtx) {
       ctx.slots.inject(cell.name, () => {
         declared.add(cell);
         seat(cell);
+
         return null;
       });
     }
+
     const onVisible = () => {
-      if (document.visibilityState === "visible") void refresh();
+      if (document.visibilityState === "visible") {
+        void refresh();
+      }
     };
+
     window.addEventListener(BOXES_EVENT, refresh);
     document.addEventListener("visibilitychange", onVisible);
     void refresh();
@@ -578,6 +639,7 @@ export function apply(ctx: ClientCtx) {
       { name: "conversation.session.header.actions", id: "claude-idle-warn", order: 31 },
       (props) => (props.sessionId ? <IdleChip sessionId={props.sessionId} /> : null),
     );
+
     return null;
   });
 
@@ -589,6 +651,7 @@ export function apply(ctx: ClientCtx) {
       (props) =>
         props.sessionId ? <OhMyClaudeControl sessionId={props.sessionId} ctx={ctx} /> : null,
     );
+
     return null;
   });
 
@@ -602,6 +665,7 @@ export function apply(ctx: ClientCtx) {
         { name: "sidebar.workspaces.session.row.action", id: "oh-my-claude-mark", order: 300 },
         (props) => (props.sessionId ? <RowMark sessionId={props.sessionId} ctx={ctx} /> : null),
       );
+
       markActive = true;
       // The flag is module state and the entry is not: when dsh retires the entry (a redeclared
       // slot, a hot reload's old context) the scan has to go back to its title match.
@@ -616,6 +680,7 @@ export function apply(ctx: ClientCtx) {
       // A dsh that refuses the entry leaves the scan on its title match.
       markActive = false;
     }
+
     return null;
   });
 
@@ -633,21 +698,27 @@ export function apply(ctx: ClientCtx) {
     // tab spins forever.
     let providerOff: (() => void) | undefined;
     let providerFor: string | undefined;
+
     const stopProvider = () => {
       try {
         providerOff?.();
       } catch {
         // A disposed context retires the bundle on its own.
       }
+
       providerOff = undefined;
       providerFor = undefined;
     };
+
     const sync = () => {
       const active = activeClaudeSession(ctx);
+
       if (active !== providerFor) {
         stopProvider();
+
         if (active) {
           providerFor = active;
+
           try {
             providerOff = ctx.modelDirectories.directoryFor(active).store.subscribe(sync);
           } catch {
@@ -655,6 +726,7 @@ export function apply(ctx: ClientCtx) {
           }
         }
       }
+
       if (active && !dispose) {
         try {
           dispose = ctx.slots.register(
@@ -679,6 +751,7 @@ export function apply(ctx: ClientCtx) {
         dispose = undefined;
       }
     };
+
     const listOff = ctx.sessions.list.subscribe?.(sync);
     sync();
     ctx.effect?.(
@@ -689,6 +762,7 @@ export function apply(ctx: ClientCtx) {
       },
       "permission-access-sync",
     );
+
     return null;
   });
 }

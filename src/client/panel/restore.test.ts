@@ -8,23 +8,28 @@ assert.equal(
   panelOpenTab({ blank: true, restorable: 2, unknown: false, lastTab: "Memory" }),
   "Restore",
 );
+
 // The race: list still unknown, so Restore still wins.
 assert.equal(
   panelOpenTab({ blank: true, restorable: 0, unknown: true, lastTab: "Memory" }),
   "Restore",
 );
+
 // Known empty list: the last tab, as before.
 assert.equal(
   panelOpenTab({ blank: true, restorable: 0, unknown: false, lastTab: "Changes" }),
   "Changes",
 );
+
 // A session with content never opens on Restore, even when Restore was the last tab.
 assert.equal(
   panelOpenTab({ blank: false, restorable: 3, unknown: true, lastTab: "Restore" }),
   "Memory",
 );
+
 assert.equal(
   panelOpenTab({ blank: false, restorable: 0, unknown: false, lastTab: "Tasks" }),
   "Tasks",
 );
+
 console.log("panelOpenTab ok");

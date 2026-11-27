@@ -13,7 +13,6 @@ import { STATE_DIR, stateDir } from "../state.js";
 import { tempDir } from "../test-tmp.js";
 import {
   askBoxRoute,
-  type BoxRunner,
   boxRouteKnown,
   boxRouteOf,
   boxProbeScript,
@@ -22,6 +21,7 @@ import {
   parseBoxEnv,
   parseBoxProbe,
 } from "./box-route.js";
+import type { BoxRunner } from "./box-route.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { probeCli } from "./cli.js";
 import { Config } from "./config.js";
@@ -45,6 +45,7 @@ const MARK = "\n<<omc-box-route>>\n";
     }),
     "",
   ].join(MARK);
+
   const read = parseBoxEnv(out);
   assert.equal(read?.env.baseUrl, "http://127.0.0.1:15721", "the user file outranks the shell");
   assert.equal(read?.env.aliasNames.sonnet, "Managed Name", "the managed file outranks both");
@@ -53,15 +54,20 @@ const MARK = "\n<<omc-box-route>>\n";
   assert.equal(read?.ownWindow, false);
   assert.ok(!JSON.stringify(read).includes("sk-router-key"), "the router's key is not kept");
 }
+
 // A window the box states itself, by settings key or by variable.
 assert.equal(parseBoxEnv(["", '{"autoCompactWindow":90000}', "", ""].join(MARK))?.ownWindow, true);
+
 assert.equal(
   parseBoxEnv(["CLAUDE_CODE_MAX_CONTEXT_TOKENS=64000", "", "", ""].join(MARK))?.ownWindow,
   true,
 );
+
 // No files at all is a box with no router; an answer cut short is no answer.
 assert.deepEqual(parseBoxEnv(["", "", "", ""].join(MARK))?.env.baseUrl, undefined);
+
 assert.equal(parseBoxEnv(["", "{}"].join(MARK)), undefined);
+
 assert.equal(parseBoxEnv(""), undefined);
 
 // A settings file caught mid-edit says nothing, and the other layers still count.
@@ -70,6 +76,7 @@ assert.equal(
     ?.env.baseUrl,
   "http://shell:1",
 );
+
 // An address is quoted whole for the far shell, whatever it holds.
 assert.ok(
   boxProbeScript("http://h/'; rm -rf ~; '").endsWith(
@@ -84,9 +91,13 @@ assert.equal(
   ),
   true,
 );
+
 assert.equal(parseBoxProbe('HTTP/1.1 401 Unauthorized\r\n\r\n{"detail":"unauthorized"}'), false);
+
 assert.equal(parseBoxProbe("HTTP/1.1 404 Not Found\r\n\r\nnot json"), false);
+
 assert.equal(parseBoxProbe(""), undefined);
+
 assert.equal(parseBoxProbe(undefined), undefined);
 
 /** The far shell, played by a local one whose home is `home`. The host is not used. */
@@ -108,6 +119,7 @@ const shellAt =
     res.writeHead(401, { "content-type": "application/json" });
     res.end(JSON.stringify({ detail: "unauthorized" }));
   });
+
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
   // SAFETY: a listening TCP server's address is the object form
   const host = `127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -126,17 +138,21 @@ const shellAt =
   assert.equal(routed?.env.baseUrl, `http://${host}`);
   assert.equal(routed?.env.aliasNames.sonnet, "GLM 4.6");
   let curl = true;
+
   try {
     execFileSync("curl", ["--version"], { stdio: "ignore" });
   } catch {
     curl = false;
   }
+
   // Without curl the endpoint cannot be asked from the box, and the state stays unknown.
-  if (routed)
+  if (routed) {
     assert.deepEqual(boxRouteState(routed), {
       state: curl ? "routed" : "unknown",
       host,
     });
+  }
+
   server.close();
 
   // A box with no settings file talks straight to Anthropic.
@@ -149,23 +165,30 @@ const shellAt =
 {
   forgetBoxRoutes();
   let asked = 0;
+
   const run: BoxRunner = async () => {
     asked += 1;
+
     return ["ANTHROPIC_DEFAULT_OPUS_MODEL_NAME=Big", "", "", ""].join(MARK);
   };
+
   const changed = new Promise<void>((done) => {
     assert.equal(boxRouteKnown("nova", done, run), undefined, "nothing kept yet");
   });
+
   await changed;
   assert.equal(boxRouteKnown("nova", () => {}, run)?.env.aliasNames.opus, "Big");
   assert.equal((await boxRouteOf("nova", run))?.env.aliasNames.opus, "Big");
   assert.equal(asked, 1, "a fresh answer is not asked for again");
 
   let dead = 0;
+
   const down: BoxRunner = async () => {
     dead += 1;
+
     return undefined;
   };
+
   assert.equal(await boxRouteOf("gone", down), undefined);
   assert.equal(
     boxRouteKnown("gone", () => {}, down),
@@ -178,7 +201,8 @@ const shellAt =
 // answer. A second box with no router, in the same process, is left as it was.
 {
   forgetBoxRoutes();
-  const answers: Record<string, string[]> = {
+
+  const answers: Record<string, Array<string>> = {
     nova: [
       "",
       JSON.stringify({
@@ -193,10 +217,12 @@ const shellAt =
     ],
     vega: ["", "", "", ""],
   };
+
   const far: BoxRunner = async (host, script) =>
     script.startsWith("curl")
       ? 'HTTP/1.1 401 Unauthorized\r\n\r\n{"detail":"unauthorized"}'
       : (answers[host] ?? []).join(MARK);
+
   const lineup = (routed: boolean) => [
     {
       value: "sonnet",
@@ -211,10 +237,12 @@ const shellAt =
       efforts: [],
     },
   ];
+
   /** A panel login in the shape the store accepts. */
   const loginOf = (host: string) => `sk-ant-oat01-${host}-${"a".repeat(50)}`;
   // SAFETY: partial fake; a listing and a turn's preparation read the event hook and nothing else
   const ctx = { on() {} } as unknown as PluginContext;
+
   /** A mount for `host` whose box has answered, with its lineup and a panel login on file. */
   const mountOn = async (host: string, routed: boolean) => {
     await boxRouteOf(host, far);
@@ -231,6 +259,7 @@ const shellAt =
     const token = sshTokenPath(STATE_DIR, host);
     mkdirSync(join(token, ".."), { recursive: true });
     writeFileSync(token, loginOf(host));
+
     // SAFETY: the cases below read private members of the mount
     return new ClaudeCodeAdapter(
       ctx,
@@ -246,10 +275,12 @@ const shellAt =
   const names = (await nova.listModels("claude-code-nova")).map((m: { name: string }) => m.name);
   assert.ok(names.includes("GLM 4.6"), "the box's router names its row");
   assert.ok(!names.some((n: string) => /Haiku/.test(n)), "Claude's own rows are set aside there");
+
   const turn = await nova.prepare({
     messages: [{ role: "user", content: "hi" }],
     model: "sonnet",
   });
+
   assert.equal(turn.via, "127.0.0.1:15721", "the turn is recorded as the router's");
   assert.equal(turn.spec.routed, true);
   assert.equal(turn.spec.window, 200_000, "the window for a router's row rides to the box");
@@ -260,13 +291,16 @@ const shellAt =
 
   const vega = await mountOn("vega", false);
   assert.deepEqual(await vega.route(), { state: "direct" });
+
   const plain = await vega.prepare({
     messages: [{ role: "user", content: "hi" }],
     model: "sonnet",
   });
+
   assert.equal(plain.via, undefined);
   assert.equal(plain.spec.routed, undefined);
   assert.equal(plain.spec.window, undefined);
   assert.equal(vega.farEnv("vega", plain.spec.routed, plain.spec.window).token, loginOf("vega"));
 }
+
 console.log("box route ok");

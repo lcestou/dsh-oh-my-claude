@@ -5,9 +5,9 @@ import {
   contractMisses,
   contractSummary,
   DSH_CONTRACT,
-  type ContractProbe,
   TURN_STATUS_SELECTOR,
 } from "./contract.js";
+import type { ContractProbe } from "./contract.js";
 import { RING_ARC } from "./shared.js";
 
 /** A stand-in document: every selector answers the count this map gives it. */
@@ -16,7 +16,7 @@ const docOf = (counts: Record<string, number>) => ({
     ({ length: counts[sel] ?? 0 }) as unknown as NodeListOf<Element>,
 });
 
-const probes: ContractProbe[] = [
+const probes: Array<ContractProbe> = [
   {
     id: "always-one",
     breaks: "a",
@@ -56,6 +56,7 @@ const probes: ContractProbe[] = [
       detects: "exact",
     } as ContractProbe,
   ];
+
   const r = checkContract(docOf({ "#a": 1, "#c": 9 }), two);
   assert.deepEqual(
     contractMisses(r).map((m) => m.id),
@@ -104,10 +105,12 @@ const probes: ContractProbe[] = [
   const turn = DSH_CONTRACT.find((p) => p.id === "turn-status")!;
   const composer = DSH_CONTRACT.find((p) => p.id === "composer-input")!;
   const ring = DSH_CONTRACT.find((p) => p.id === "ring-button")!;
+
   const r = checkContract(
     docOf({ [md.selector]: 1, [turn.selector]: 1, [composer.selector]: 1, [ring.selector]: 0 }),
     DSH_CONTRACT,
   );
+
   assert.deepEqual(
     contractMisses(r).map((m) => m.id),
     ["ring-button"],
@@ -134,6 +137,7 @@ const probes: ContractProbe[] = [
 {
   const ids = DSH_CONTRACT.map((p) => p.id);
   assert.equal(new Set(ids).size, ids.length, "ids are unique so a report can be diffed");
+
   for (const p of DSH_CONTRACT) {
     assert.ok(p.selector.length > 0, `${p.id} has a selector`);
     assert.ok(p.breaks.length > 0, `${p.id} says what breaks`);
@@ -158,11 +162,13 @@ const probes: ContractProbe[] = [
     RING_ARC.endsWith("> svg > circle + circle[stroke-dasharray]"),
     "the arc sits directly in the button's svg and carries the meter's dash array",
   );
-  for (const probe of DSH_CONTRACT)
+
+  for (const probe of DSH_CONTRACT) {
     assert.ok(
       probe.detects === "exact" || probe.detects === "presence",
       `${probe.id} says what a green answer is worth`,
     );
+  }
 }
 
 // The turn-status writer claims a polite status region only inside the conversation: another

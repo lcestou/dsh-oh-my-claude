@@ -41,8 +41,10 @@ import { tempDir } from "./test-tmp.js";
 
 // probeBox forwards init.method and init.body, plus content-type when body is set. Fake fetch, no network.
 {
-  const calls: [string, { headers?: Record<string, string>; method?: string; body?: string }][] =
-    [];
+  const calls: Array<
+    [string, { headers?: Record<string, string>; method?: string; body?: string }]
+  > = [];
+
   // SAFETY: partial fake for tests
   const res = (
     status: number,
@@ -55,17 +57,22 @@ import { tempDir } from "./test-tmp.js";
     json: async () => body,
     text: async () => JSON.stringify(body),
   });
+
   // SAFETY: partial fake for tests
   const fakeFetch = async (u: string, init?: Record<string, unknown>) => {
     calls.push([u, init as Record<string, unknown>]);
-    if (u === "http://box/dsh-oh-my-claude/settings")
+
+    if (u === "http://box/dsh-oh-my-claude/settings") {
       return res(
         200,
         {},
         { path: "~/.claude/settings.json", exists: true, text: "{}\n", mtime: 1 },
       );
+    }
+
     throw new Error("unexpected call to " + u);
   };
+
   // SAFETY: cast to fetch signature for test double
   const result = await probeBox(
     { name: "box", url: "http://box" },
@@ -73,25 +80,25 @@ import { tempDir } from "./test-tmp.js";
     "settings",
     { method: "PUT", body: JSON.stringify({ text: "{}\n" }) },
   );
+
   assert.equal(result.ok, true);
-  const lastCall = calls[calls.length - 1]!;
+  const lastCall = calls.at(-1)!;
   const url = lastCall[0];
   const init = lastCall[1];
   assert.equal(url, "http://box/dsh-oh-my-claude/settings");
   assert.equal(init?.method, "PUT");
   assert.equal(init?.body, JSON.stringify({ text: "{}\n" }));
-  assert.equal(
-    (init?.headers as Record<string, string> | undefined)?.["content-type"],
-    "application/json",
-  );
+  assert.equal(init?.headers?.["content-type"], "application/json");
 }
 
 // probeBox without init still works unchanged (existing callers).
 {
-  const calls: string[] = [];
+  const calls: Array<string> = [];
+
   // SAFETY: partial fake for tests
   const fakeFetch = async (u: string) => {
     calls.push(u);
+
     return {
       status: 200,
       ok: true,
@@ -100,6 +107,7 @@ import { tempDir } from "./test-tmp.js";
       text: async () => JSON.stringify({ host: "x" }),
     };
   };
+
   // SAFETY: cast to fetch signature for test double
   await probeBox({ name: "b", url: "http://b" }, fakeFetch as unknown as typeof fetch);
   assert.equal(calls.length, 1);
@@ -111,6 +119,7 @@ import { tempDir } from "./test-tmp.js";
 {
   let pulled = 0;
   let cancelled = false;
+
   const endless = new ReadableStream<Uint8Array>({
     pull: (c) => {
       pulled += 1;
@@ -118,6 +127,7 @@ import { tempDir } from "./test-tmp.js";
     },
     cancel: () => void (cancelled = true),
   });
+
   // SAFETY: partial fake for tests; only the status route is asked
   const fakeFetch = async () => ({
     status: 200,
@@ -127,12 +137,14 @@ import { tempDir } from "./test-tmp.js";
     text: async () => "",
     body: endless,
   });
+
   const result = await probeBox(
     { name: "b", url: "http://b" },
     fakeFetch as unknown as typeof fetch,
   );
+
   assert.equal(result.ok, false);
-  assert.match((result as { ok: false; error: string }).error, /larger than 16 MB/);
+  assert.match(result.error, /larger than 16 MB/);
   assert.ok(cancelled, "the rest of the stream is cancelled");
   assert.ok(pulled <= 18, `stopped near the cap, pulled ${pulled} chunks`);
   // A real-sized stream still reads whole.
@@ -190,13 +202,15 @@ import { tempDir } from "./test-tmp.js";
   );
 
   let handler: ((req: any, res: any) => void) | undefined;
+
   // SAFETY: partial fake for tests
   const ctx = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -216,6 +230,7 @@ import { tempDir } from "./test-tmp.js";
       });
     },
   } as any;
+
   registerSessionRoutes(ctx, {
     log: () => {},
     remoteWorkspacesPath,
@@ -245,27 +260,39 @@ import { tempDir } from "./test-tmp.js";
 
   const respond = async (method: string, url: string, body?: string, raw = false) => {
     let respBody = "";
-    const resChunks: Buffer[] = [];
+    const resChunks: Array<Buffer> = [];
+
     // SAFETY: partial fake for tests
     const fakeRes = {
       writeHead: (_s: number, _h: Record<string, string>) => {},
       end: (b: Buffer | string) => {
-        if (typeof b === "string") resChunks.push(Buffer.from(b));
-        else resChunks.push(b);
+        if (typeof b === "string") {
+          resChunks.push(Buffer.from(b));
+        } else {
+          resChunks.push(b);
+        }
       },
     };
+
     // SAFETY: partial fake for tests
     const fakeReq = {
       method,
       url,
       on: (ev: string, cb: (c?: Buffer) => void) => {
-        if (ev === "data" && body !== undefined) cb(Buffer.from(body));
-        if (ev === "end") cb();
+        if (ev === "data" && body !== undefined) {
+          cb(Buffer.from(body));
+        }
+
+        if (ev === "end") {
+          cb();
+        }
       },
       destroy: () => {},
     } as any;
+
     await handler!(fakeReq, fakeRes);
     respBody = Buffer.concat(resChunks).toString("utf8");
+
     return raw ? respBody : JSON.parse(respBody);
   };
 
@@ -323,7 +350,7 @@ import { tempDir } from "./test-tmp.js";
   assert.equal(r.ok, true);
   r = await respond("GET", `${mem}&provider=claude-code-other`);
   assert.deepEqual(
-    (r.files as { name: string }[]).map((f) => f.name),
+    (r.files as Array<{ name: string }>).map((f) => f.name),
     ["b.md"],
     "the other box lists its own memories",
   );
@@ -373,16 +400,24 @@ import { tempDir } from "./test-tmp.js";
 
   // The CLAUDE.md list follows the same mount: the user-scope file it names is the one in that
   // box's config dir, so the tab never offers this PC's file for a session running elsewhere.
-  for (const dir of ["other", "claude"]) await mkdir(join(tmp, dir), { recursive: true });
+  for (const dir of ["other", "claude"]) {
+    await mkdir(join(tmp, dir), { recursive: true });
+  }
+
   await writeFile(join(tmp, "other", "CLAUDE.md"), "# other box\n");
   await writeFile(join(tmp, "claude", "CLAUDE.md"), "# this box\n");
-  const userFiles = async (at: string, provider: string): Promise<string[]> => {
+
+  const userFiles = async (at: string, provider: string): Promise<Array<string>> => {
     const reply = await respond(
       "GET",
       `/dsh-oh-my-claude/instructions?cwd=${encodeURIComponent(at)}&provider=${provider}`,
     );
-    return (reply.files as InstructionFile[]).filter((f) => f.kind === "User").map((f) => f.path);
+
+    return (reply.files as Array<InstructionFile>)
+      .filter((f) => f.kind === "User")
+      .map((f) => f.path);
   };
+
   assert.deepEqual(
     await userFiles(cwd, "claude-code-other"),
     [join(tmp, "other", "CLAUDE.md")],
@@ -398,6 +433,7 @@ import { tempDir } from "./test-tmp.js";
   // instance's binary against this instance's config dir, so on an ssh box they would change this PC
   // while the roster beside them still reported the box: refuse rather than write the wrong machine.
   const onBox = "provider=claude-code-box";
+
   for (const [path, body, what] of [
     ["/plugins/toggle", { session: "sid1", scope: "user", key: "p@m" }, "plugin changes"],
     ["/plugins/uninstall", { session: "sid1", scope: "user", key: "p@m" }, "plugin changes"],
@@ -447,7 +483,7 @@ import { tempDir } from "./test-tmp.js";
   );
   r = await respond("GET", `${wsMem}&provider=claude-code-other`);
   assert.deepEqual(
-    (r.files as { name: string }[]).map((f) => f.name),
+    (r.files as Array<{ name: string }>).map((f) => f.name),
     ["w.md"],
     "another model selected does not move the workspace's memories",
   );
@@ -476,6 +512,7 @@ import { tempDir } from "./test-tmp.js";
     "plugin changes do not reach an SSH box yet",
     "a remote workspace refuses a plugin change with no provider named at all",
   );
+
   // Export and import. An imported transcript lands in the plugin's own store, keeps the id its
   // records carry while that is free, and downloads back byte for byte.
   const transcript =
@@ -495,28 +532,35 @@ import { tempDir } from "./test-tmp.js";
       message: { id: "m9", role: "assistant", content: [{ type: "text", text: "imported reply" }] },
     }) +
     "\n";
+
   r = await respond("POST", "/dsh-oh-my-claude/import", JSON.stringify({ text: "not jsonl" }));
   assert.equal(r.error, "not a Claude Code transcript", "a file with no turn is refused");
   r = await respond("POST", "/dsh-oh-my-claude/import", JSON.stringify({ text: transcript }));
   assert.equal(r.id, "11111111-2222-3333-4444-555555555555", "a free id is kept");
   assert.equal(r.turns, 1);
+
   const again = await respond(
     "POST",
     "/dsh-oh-my-claude/import",
     JSON.stringify({ text: transcript }),
   );
+
   assert.notEqual(again.id, r.id, "a second copy takes a fresh id rather than overwriting");
   r = await respond("GET", "/dsh-oh-my-claude/sessions?all=1");
-  const row = (r.sessions as { id: string; imported?: boolean }[]).find(
+
+  const row = (r.sessions as Array<{ id: string; imported?: boolean }>).find(
     (x) => x.id === "11111111-2222-3333-4444-555555555555",
   );
+
   assert.equal(row?.imported, true, "the merged list shows it, marked as imported");
+
   const file = await respond(
     "GET",
     "/dsh-oh-my-claude/transcript?id=11111111-2222-3333-4444-555555555555",
     undefined,
     true,
   );
+
   assert.equal(file, transcript, "the download is the file as it sits on disk");
   r = await respond("GET", "/dsh-oh-my-claude/transcript?id=00000000-0000-0000-0000-000000000000");
   assert.equal(r.error, "transcript not found");
@@ -590,11 +634,13 @@ import { tempDir } from "./test-tmp.js";
   );
   const realPath = process.env.PATH;
   process.env.PATH = "";
+
   try {
     r = await respond("GET", find);
   } finally {
     process.env.PATH = realPath;
   }
+
   assert.deepEqual(
     r.hits.map((h: { id: string }) => h.id),
     [searched],
@@ -634,9 +680,11 @@ import { tempDir } from "./test-tmp.js";
   // while the project file stays the session directory's own. A local save lands in the root.
   const inRepo = `cwd=${encodeURIComponent(repoSub)}`;
   r = await respond("GET", `/dsh-oh-my-claude/settings/scopes?${inRepo}`);
+
   const scopePaths = Object.fromEntries(
-    (r.scopes as { scope: string; path: string }[]).map((s) => [s.scope, s.path]),
+    (r.scopes as Array<{ scope: string; path: string }>).map((s) => [s.scope, s.path]),
   );
+
   assert.equal(scopePaths.local, join(repo, ".claude", "settings.local.json"));
   assert.equal(scopePaths.project, join(repoSub, ".claude", "settings.json"));
   r = await respond(
@@ -661,9 +709,11 @@ import { tempDir } from "./test-tmp.js";
     JSON.stringify({ enabledPlugins: { "both@m": true, "own@m": true } }),
   );
   r = await respond("GET", `/dsh-oh-my-claude/plugins?${inRepo}`);
+
   const roster = Object.fromEntries(
-    (r.plugins as { key: string; enabled: boolean }[]).map((p) => [p.key, p.enabled]),
+    (r.plugins as Array<{ key: string; enabled: boolean }>).map((p) => [p.key, p.enabled]),
   );
+
   assert.deepEqual(roster, { "both@m": false, "own@m": true });
 }
 
@@ -679,29 +729,41 @@ type RouteReply = { status: number; body: Record<string, any> };
 const responder =
   (handler: () => ((req: any, res: any) => void) | undefined) =>
   async (method: string, url: string, body?: string): Promise<RouteReply> => {
-    const resChunks: Buffer[] = [];
+    const resChunks: Array<Buffer> = [];
     let status = 0;
+
     // SAFETY: partial fake for tests
     const fakeRes = {
       writeHead: (s: number, _h: Record<string, string>) => {
         status = s;
       },
       end: (b: Buffer | string) => {
-        if (typeof b === "string") resChunks.push(Buffer.from(b));
-        else resChunks.push(b);
+        if (typeof b === "string") {
+          resChunks.push(Buffer.from(b));
+        } else {
+          resChunks.push(b);
+        }
       },
     } as any;
+
     // SAFETY: partial fake for tests
     const fakeReq = {
       method,
       url,
       on: (ev: string, cb: (c?: Buffer) => void) => {
-        if (ev === "data" && body !== undefined) cb(Buffer.from(body));
-        if (ev === "end") cb();
+        if (ev === "data" && body !== undefined) {
+          cb(Buffer.from(body));
+        }
+
+        if (ev === "end") {
+          cb();
+        }
       },
       destroy: () => {},
     } as any;
+
     await handler()!(fakeReq, fakeRes);
+
     return { status, body: JSON.parse(Buffer.concat(resChunks).toString("utf8")) };
   };
 
@@ -710,14 +772,16 @@ const responder =
 {
   const tmp = tempDir("dsh-steer-edit-test-");
   let handler: ((req: any, res: any) => void) | undefined;
-  const calls: Array<{ sid: string; op: string; arg: string[] }> = [];
+  const calls: Array<{ sid: string; op: string; arg: Array<string> }> = [];
+
   // SAFETY: partial fake for tests
   const ctx = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -728,6 +792,7 @@ const responder =
       });
     },
   } as any;
+
   registerSessionRoutes(ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
@@ -743,8 +808,9 @@ const responder =
       sid === "s1"
         ? { waiting: [{ id: "m1", text: "first", at: 1 }], held: [{ id: "m0", text: "zero" }] }
         : { waiting: [], held: [] },
-    holdSteers: async (sid: string, ids: string[]) => {
+    holdSteers: async (sid: string, ids: Array<string>) => {
       calls.push({ sid, op: "hold", arg: ids });
+
       return ids.includes("late")
         ? { ok: false as const, reason: "sent" as const }
         : { ok: true as const, holdId: ids[0]!, text: "t" };
@@ -755,11 +821,13 @@ const responder =
       how: "restore" | "drop" | { text: string },
     ) => {
       calls.push({ sid, op: "release", arg: [holdId, typeof how === "string" ? how : how.text] });
+
       return { ok: true as const };
     },
   });
   assert.ok(handler);
   const respond = responder(() => handler);
+
   const post = (body: object) =>
     respond("POST", "/dsh-oh-my-claude/steer-edit", JSON.stringify(body));
 
@@ -824,13 +892,15 @@ const responder =
 {
   const tmp = tempDir("dsh-side-question-test-");
   let handler: ((req: any, res: any) => void) | undefined;
+
   // SAFETY: partial fake for tests
   const ctx = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -841,6 +911,7 @@ const responder =
       });
     },
   } as any;
+
   registerSessionRoutes(ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
@@ -863,12 +934,14 @@ const responder =
     "/dsh-oh-my-claude/side-questions",
     JSON.stringify({ session: "s", question: "q" }),
   );
+
   assert.equal(r.status, 404);
   assert.equal(r.body.error, "not found");
 
   // Now register with askAside and sideQuestions in place.
-  const ring = new Map<string, any[]>();
+  const ring = new Map<string, Array<any>>();
   let received: { session: string; question: string; withDiff: boolean; path: string } | undefined;
+
   const askAside = async (
     sid: string,
     question: string,
@@ -876,16 +949,19 @@ const responder =
   ) => {
     received = { session: sid, question, withDiff: seed.withDiff, path: seed.path };
     ring.set(sid, (ring.get(sid) ?? []).concat([{ id: "a1", question, pending: false }]));
+
     return { ok: true };
   };
+
   // Re-register with the callbacks; registerSessionRoutes is called once per ctx but we pass a new one.
   // SAFETY: partial fake for tests
   const ctx2 = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -896,6 +972,7 @@ const responder =
       });
     },
   } as any;
+
   registerSessionRoutes(ctx2, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
@@ -956,6 +1033,7 @@ const responder =
   const took = () => {
     const seen = received;
     received = undefined;
+
     return seen;
   };
 
@@ -995,13 +1073,15 @@ const responder =
 {
   const tmp = tempDir("dsh-permissions-test-");
   let handler: ((req: any, res: any) => void) | undefined;
+
   // SAFETY: partial fake for tests
   const ctx = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -1012,6 +1092,7 @@ const responder =
       });
     },
   } as any;
+
   registerSessionRoutes(ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
@@ -1041,14 +1122,16 @@ const responder =
     managedOnly: false,
     hooks: [{ event: "PreToolUse", matcher: "Bash", source: "", text: `Before bash in ${sid}` }],
   });
+
   // Re-register with the callback; registerSessionRoutes is called once per ctx but we pass a new one.
   // SAFETY: partial fake for tests
   const ctx2 = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -1059,6 +1142,7 @@ const responder =
       });
     },
   } as any;
+
   registerSessionRoutes(ctx2, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
@@ -1096,13 +1180,15 @@ const responder =
 {
   const tmp = tempDir("dsh-live-turn-test-");
   let handler: ((req: any, res: any) => void) | undefined;
+
   // SAFETY: partial fake for tests
   const ctx = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -1113,10 +1199,12 @@ const responder =
       });
     },
   } as any;
+
   const liveTurn = new Map<string, LiveTurn>([
     ["waiting", { at: 1, output: 120, tool: true, relay: { name: "bash", at: Date.now() - 5000 } }],
     ["writing", { at: 1, output: 40 }],
   ]);
+
   registerSessionRoutes(ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
@@ -1163,13 +1251,15 @@ const responder =
 {
   const tmp = tempDir("dsh-mcp-ask-test-");
   let handler: ((req: any, res: any) => void) | undefined;
+
   // SAFETY: partial fake for tests
   const ctx = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -1180,6 +1270,7 @@ const responder =
       });
     },
   } as any;
+
   registerSessionRoutes(ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
@@ -1202,28 +1293,33 @@ const responder =
     "/dsh-oh-my-claude/mcp-servers/ask",
     JSON.stringify({ session: "s", name: "n", ask: true }),
   );
+
   assert.equal(r.status, 404);
   assert.equal(r.body.error, "not found");
 
   // Now register with mcp.ask in place.
   let receivedMcpAsk: { session: string; name: string; ask: boolean } | undefined;
+
   const mcp = {
     status: async (): Promise<McpStatusReply> => ({ ok: true, servers: [] }),
     reconnect: async () => ({ ok: true }),
     ask: async (sid: string, name: string, ask: boolean) => {
       receivedMcpAsk = { session: sid, name, ask };
+
       return { ok: true };
     },
     authenticate: async () => ({ ok: true }),
   };
+
   // Re-register with the callback; registerSessionRoutes is called once per ctx but we pass a new one.
   // SAFETY: partial fake for tests
   const ctx2 = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -1234,6 +1330,7 @@ const responder =
       });
     },
   } as any;
+
   registerSessionRoutes(ctx2, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
@@ -1353,7 +1450,7 @@ const responder =
 // isWindowsPathCommand: only a Windows host with a path-shaped command skips `where`, which cannot
 // take a drive letter; a bare name still goes to `where` and POSIX hosts are unaffected.
 {
-  assert.equal(isWindowsPathCommand("C:\\Users\\me\\claude.exe", "win32"), true);
+  assert.equal(isWindowsPathCommand(String.raw`C:\Users\me\claude.exe`, "win32"), true);
   assert.equal(isWindowsPathCommand("C:/Users/me/claude.exe", "win32"), true);
   assert.equal(isWindowsPathCommand("claude", "win32"), false);
   assert.equal(isWindowsPathCommand("/usr/local/bin/claude", "linux"), false);
@@ -1364,11 +1461,26 @@ const responder =
 {
   assert.equal(validCwd("/home/me/app"), true);
   assert.equal(validCwd("/home/me/app", "win32"), true, "a WSL or SSH path on a Windows host");
-  assert.equal(validCwd("C:\\work\\repo", "win32"), true);
+  assert.equal(validCwd(String.raw`C:\work\repo`, "win32"), true);
   assert.equal(validCwd("d:/work/repo", "win32"), true, "forward slashes and a lowercase drive");
-  assert.equal(validCwd("C:\\work\\repo", "linux"), false, "a drive path is relative off Windows");
-  for (const bad of ["", "app", "C:", "C:repo", "\\\\server\\share", "\\\\?\\C:\\x", "C:\\a\0b"])
+  assert.equal(
+    validCwd(String.raw`C:\work\repo`, "linux"),
+    false,
+    "a drive path is relative off Windows",
+  );
+
+  for (const bad of [
+    "",
+    "app",
+    "C:",
+    "C:repo",
+    String.raw`\\server\share`,
+    String.raw`\\?\C:\x`,
+    "C:\\a\0b",
+  ]) {
     assert.equal(validCwd(bad, "win32"), false, JSON.stringify(bad));
+  }
+
   assert.equal(validCwd(null, "win32"), false);
 }
 
@@ -1391,7 +1503,10 @@ const responder =
 
 // Only the four names the CLI merges are scopes; anything else a browser sends is rejected.
 {
-  for (const scope of SETTINGS_SCOPES) assert.ok(isSettingsScope(scope));
+  for (const scope of SETTINGS_SCOPES) {
+    assert.ok(isSettingsScope(scope));
+  }
+
   assert.equal(isSettingsScope("managed-settings"), false);
   assert.equal(isSettingsScope(""), false);
   assert.equal(isSettingsScope(undefined), false);
@@ -1409,13 +1524,16 @@ const responder =
     (id) => id,
     new Set(["s-new"]),
   );
+
   assert.deepEqual(owned.get("s-new"), { id: "s-new", archived: true }, "snapshot shape is read");
   assert.deepEqual(owned.get("s-old"), { id: "s-old", archived: false }, "bare header still read");
 }
+
 // dshSessionsFor flags a subagent-origin session so the archive can drop it: dsh cannot open one
 // standalone. Both the dsh id and the derived Claude id resolve to the same flagged entry.
 {
   const claudeIdOf = (id: string) => `claude-${id}`;
+
   const owned = dshSessionsFor(
     [
       { id: "top", cwd: "/w" },
@@ -1424,6 +1542,7 @@ const responder =
     "/w",
     claudeIdOf,
   );
+
   assert.equal(owned.get("top")?.subagent, undefined);
   assert.equal(owned.get("sub")?.subagent, true);
   assert.equal(owned.get("claude-sub")?.subagent, true);
@@ -1482,6 +1601,7 @@ const responder =
         message: { id: "m1", role: "assistant", content: [{ type: "text", text: "hello" }] },
       }),
   );
+
   const run = async (opts: {
     inStore: boolean;
     persisted: boolean;
@@ -1492,9 +1612,10 @@ const responder =
     createCollision?: boolean;
   }) => {
     const dshId = opts.dshId ?? id;
-    const calls: string[] = [];
-    const attached: { id: string; events: number }[] = [];
-    let written: { header: Record<string, unknown>; events: unknown[] } | undefined;
+    const calls: Array<string> = [];
+    const attached: Array<{ id: string; events: number }> = [];
+    let written: { header: Record<string, unknown>; events: Array<unknown> } | undefined;
+
     const ws = {
       id: "w1",
       path: cwd,
@@ -1503,9 +1624,11 @@ const responder =
       attachSession: async (sid: string) =>
         void attached.push({ id: sid, events: written?.events.length ?? 0 }),
     };
-    let state: { archivedSessionIds: string[] } = {
+
+    let state: { archivedSessionIds: Array<string> } = {
       archivedSessionIds: opts.archived ? [dshId] : [],
     };
+
     // SAFETY: partial fakes; the function reads only these members
     const ctx = {
       sessions: {
@@ -1515,14 +1638,17 @@ const responder =
         list: async () => (opts.persisted ? [{ header: { id: dshId, cwd } }] : []),
         create: async (header: Record<string, unknown>) => {
           calls.push("create");
+
           if (opts.createCollision) {
             const err = new Error(`session "${id}" already exists`);
             err.name = "SessionAlreadyExistsError";
             throw err;
           }
+
           written = { header, events: [] };
+
           return {
-            append: async (events: unknown[]) => {
+            append: async (events: Array<unknown>) => {
               calls.push("append");
               written?.events.push(...events);
             },
@@ -1532,6 +1658,7 @@ const responder =
         },
       },
     } as any;
+
     const registry = {
       get archivedSessionIds() {
         return state.archivedSessionIds;
@@ -1544,6 +1671,7 @@ const responder =
           archivedSessionIds: state.archivedSessionIds.filter((x: string) => x !== sid),
         }),
     } as any;
+
     const out = await openTranscriptOnce(
       ctx,
       [dir],
@@ -1552,6 +1680,7 @@ const responder =
       (x) => (x === dshId ? id : x),
       registry,
     );
+
     return { out, calls, attached, state, written };
   };
 
@@ -1621,15 +1750,20 @@ const responder =
 {
   /** A stored session header at `version`; only the version matters to createVersion. */
   const header = (version: number) => ({ id: "s", version, createdAt: 0, isSeeded: false });
+
   /** A persistence whose list() answers `entries`, or rejects when given an Error. */
   // SAFETY: partial fakes; createVersion reads only list()
-  const persistence = (entries: unknown[] | Error) =>
+  const persistence = (entries: Array<unknown> | Error) =>
     ({
       list: async () => {
-        if (entries instanceof Error) throw entries;
+        if (entries instanceof Error) {
+          throw entries;
+        }
+
         return entries;
       },
     }) as any;
+
   assert.equal(
     await createVersion(persistence([{ header: header(5), formatStatus: "current" }])),
     5,
@@ -1657,15 +1791,18 @@ const responder =
 // throw: both are read before anything is on screen, and a throw there is a blank panel.
 {
   const tmp = tempDir("dsh-readers-test-");
+
   const write = async (name: string, text: string) => {
     const path = join(tmp, name);
     await writeFile(path, text, "utf8");
+
     return path;
   };
 
   const boxes = await readSshBoxes(
     await write("boxes.json", JSON.stringify([{ name: "box1", host: "host1" }])),
   );
+
   assert.deepEqual(boxes, [{ name: "box1", host: "host1" }]);
   assert.deepEqual(
     await readSshBoxes(
@@ -1692,6 +1829,7 @@ const responder =
     workspaceId: `ws-${name}`,
     ...extra,
   });
+
   assert.deepEqual(
     await readRemoteWorkspaces(await write("ws.json", JSON.stringify([ws("app")]))),
     [ws("app")],
@@ -1737,15 +1875,17 @@ const responder =
       },
     }),
   );
+
   // Run by whatever runtime runs this suite; a box runs it under node. The script sticks to the
   // CommonJS subset both accept, which is the point of checking it here rather than over ssh.
   const out = execFileSync(process.execPath, ["-e", SSH_TRANSCRIPT_LISTER], {
     env: { ...process.env, HOME: home },
     maxBuffer: 1 << 24,
   }).toString();
+
   // SAFETY: the script writes `JSON.stringify` of the array it built; a parse failure is the
   // failure this check is for.
-  const rows = JSON.parse(out) as TranscriptListItem[];
+  const rows = JSON.parse(out) as Array<TranscriptListItem>;
   assert.deepEqual(
     rows.map((r) => r.id).toSorted(),
     [small, huge].toSorted(),
@@ -1772,10 +1912,12 @@ const responder =
   const ghost = join(tmp, "remote-workspaces", "box__ghost");
   await mkdir(kept, { recursive: true });
   await mkdir(ghost, { recursive: true });
+
   const rows = [
     { name: "kept", host: "box", remoteCwd: "/srv/kept", path: kept, workspaceId: "w-kept" },
     { name: "ghost", host: "box", remoteCwd: "/srv/ghost", path: ghost, workspaceId: "w-ghost" },
   ];
+
   const remoteWorkspacesPath = join(tmp, "remote-workspaces.json");
   await writeFile(remoteWorkspacesPath, JSON.stringify(rows), "utf8");
 
@@ -1785,15 +1927,17 @@ const responder =
   assert.equal(blind.dropped.length, 0, "no registry: nothing dropped");
   assert.equal(JSON.parse(await readFile(remoteWorkspacesPath, "utf8")).length, 2);
 
-  const published: string[][] = [];
+  const published: Array<Array<string>> = [];
   let handler: ((req: any, res: any) => void) | undefined;
+
   // SAFETY: partial fake for tests
   const ctx = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -1806,6 +1950,7 @@ const responder =
       });
     },
   } as any;
+
   registerSessionRoutes(ctx, {
     log: () => {},
     remoteWorkspacesPath,
@@ -1855,6 +2000,7 @@ const responder =
 {
   const tmp = tempDir("dsh-rws-cascade-test-");
   const dirOf = (slug: string) => join(tmp, "remote-workspaces", slug);
+
   const row = (id: string, host: string) => ({
     name: id,
     host,
@@ -1862,8 +2008,13 @@ const responder =
     path: dirOf(id),
     workspaceId: id,
   });
+
   const rows = [row("wa", "hosta"), row("wb1", "hostb"), row("wb2", "hostb")];
-  for (const r of rows) await mkdir(r.path, { recursive: true });
+
+  for (const r of rows) {
+    await mkdir(r.path, { recursive: true });
+  }
+
   const remoteWorkspacesPath = join(tmp, "remote-workspaces.json");
   const sshBoxesPath = join(tmp, "ssh-boxes.json");
   await writeFile(remoteWorkspacesPath, JSON.stringify(rows), "utf8");
@@ -1871,17 +2022,19 @@ const responder =
   const boxB = { name: "B", host: "hostb" };
   await writeFile(sshBoxesPath, JSON.stringify([boxA, boxB]), "utf8");
 
-  const deleted: string[] = [];
+  const deleted: Array<string> = [];
   const failing = new Set<string>(["wb2"]);
-  const mounted: string[][] = [];
+  const mounted: Array<Array<string>> = [];
   let handler: ((req: any, res: any) => void) | undefined;
+
   // SAFETY: partial fake for tests
   const ctx = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -1894,7 +2047,11 @@ const responder =
           get: (id: string) => ({ id }),
           delete: async (id: string) => {
             deleted.push(id);
-            if (failing.has(id)) throw new Error("table write failed");
+
+            if (failing.has(id)) {
+              throw new Error("table write failed");
+            }
+
             return true;
           },
         },
@@ -1902,6 +2059,7 @@ const responder =
       });
     },
   } as any;
+
   registerSessionRoutes(ctx, {
     log: () => {},
     remoteWorkspacesPath,
@@ -1921,6 +2079,7 @@ const responder =
   });
   assert.ok(handler);
   const respond = responder(() => handler);
+
   const idsOnDisk = async () =>
     (await readRemoteWorkspaces(remoteWorkspacesPath)).map((w) => w.workspaceId);
 
@@ -1997,13 +2156,15 @@ console.log("sessions ok");
 {
   const tmp = tempDir("dsh-fallback-route-test-");
   let handler: ((req: any, res: any) => void) | undefined;
+
   // SAFETY: partial fake for tests
   const ctx = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -2014,6 +2175,7 @@ console.log("sessions ok");
       });
     },
   } as any;
+
   const rec: FallbackRecord = {
     sessionId: "sid1",
     kind: "model_refusal_fallback",
@@ -2024,6 +2186,7 @@ console.log("sessions ok");
     category: "cyber",
     at: 1_700_000_000_000,
   };
+
   registerSessionRoutes(ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
@@ -2071,13 +2234,15 @@ console.log("sessions ok");
   const pluginPath = join(tmp, "plug", "skills", "pfoo", "SKILL.md");
 
   let handler: ((req: any, res: any) => void) | undefined;
+
   // SAFETY: partial fake for tests
   const ctx = {
-    inject: (_deps: string[], cb: (host: any) => void) => {
+    inject: (_deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -2088,6 +2253,7 @@ console.log("sessions ok");
       });
     },
   } as any;
+
   registerSessionRoutes(ctx, {
     log: () => {},
     projectDir: (c: string) => [join(tmp, "claude", "projects", projectDirName(c))],
@@ -2110,6 +2276,7 @@ console.log("sessions ok");
     "/dsh-oh-my-claude/skills/create",
     JSON.stringify({ session: "s1", cwd, name: "ok-name", scope: "plugin" }),
   );
+
   assert.equal(r.status, 400);
   assert.equal(r.body.error, "scope is user or project");
 
@@ -2204,13 +2371,15 @@ console.log("sessions ok");
 {
   const tmp = tempDir("dsh-live-turn-test-");
   let handler: ((req: any, res: any) => void) | undefined;
+
   // SAFETY: partial fake for tests
   const ctx = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -2221,9 +2390,11 @@ console.log("sessions ok");
       });
     },
   } as any;
+
   const turnRecords = new Map([
     ["s1", [{ costUsd: 0.5, durationMs: 100, input: 10, output: 20, cacheRead: 5, cacheWrite: 1 }]],
   ]) as any;
+
   registerSessionRoutes(ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
@@ -2255,13 +2426,15 @@ console.log("sessions ok");
 {
   const tmp = tempDir("dsh-live-turn-test-");
   let handler: ((req: any, res: any) => void) | undefined;
+
   // SAFETY: partial fake for tests
   const ctx = {
-    inject: (deps: string[], cb: (host: any) => void) => {
+    inject: (deps: Array<string>, cb: (host: any) => void) => {
       cb({
         webServer: {
           register: (r: any) => {
             handler = r.handler as (req: any, res: any) => void;
+
             return () => {};
           },
         },
@@ -2272,6 +2445,7 @@ console.log("sessions ok");
       });
     },
   } as any;
+
   const { EventHub } = await import("./events.js");
   const hub = new EventHub();
   registerSessionRoutes(ctx, {
@@ -2327,10 +2501,11 @@ console.log("sessions ok");
     },
   });
   assert.ok(handler);
-  const chunks: string[] = [];
+  const chunks: Array<string> = [];
   let status = 0;
   let headers: Record<string, string> = {};
   let ended = false;
+
   const res = {
     writeHead: (s: number, h: Record<string, string>) => {
       status = s;
@@ -2338,6 +2513,7 @@ console.log("sessions ok");
     },
     write: (c: string) => {
       chunks.push(c);
+
       return true;
     },
     end: () => {
@@ -2346,7 +2522,8 @@ console.log("sessions ok");
     on: () => {},
     writableNeedDrain: false,
   } as any;
-  await handler!(
+
+  await handler(
     {
       method: "GET",
       url: "/dsh-oh-my-claude/events?session=s1",
@@ -2393,6 +2570,7 @@ console.log("sessions ok");
   const cwd = join(f.root, "work");
   const id = f.sessionId("open-heal");
   const tid = f.transcriptId(id);
+
   const row = (seq: number, type: string, data: object, extra: object = {}) => ({
     type,
     seq,
@@ -2400,6 +2578,7 @@ console.log("sessions ok");
     data,
     ...extra,
   });
+
   const stopped = () => [
     row(
       0,
@@ -2432,20 +2611,32 @@ console.log("sessions ok");
     row(5, "step/end", { turn: 1, step: 1 }),
     row(6, "turn/end", { turn: 1, reason: "aborted" }),
   ];
+
   /** dsh 0.1.7's rule for an open call, read against the rows on every open. */
-  const unresolved = (rows: Row[]) => {
+  const unresolved = (rows: Array<Row>) => {
     const open = new Set<string>();
+
     for (const r of rows) {
-      if (r.type === "tool/call" && typeof r.data?.callId === "string") open.add(r.data.callId);
-      if (r.type === "tool/result" && typeof r.data?.message?.toolCallId === "string")
+      if (r.type === "tool/call" && typeof r.data?.callId === "string") {
+        open.add(r.data.callId);
+      }
+
+      if (r.type === "tool/result" && typeof r.data?.message?.toolCallId === "string") {
         open.delete(r.data.message.toolCallId);
-      if (r.type === "step/end" && open.size > 0) return "step/end leaves unresolved tool call";
+      }
+
+      if (r.type === "step/end" && open.size > 0) {
+        return "step/end leaves unresolved tool call";
+      }
     }
+
     return undefined;
   };
+
   const run = async (withHeal = true) => {
     const { registry, attached } = f.registry(cwd);
     const before = f.calls.length;
+
     // SAFETY: partial fakes; the function reads only these members
     const out = await openTranscriptOnce(
       f.ctx() as any,
@@ -2456,12 +2647,14 @@ console.log("sessions ok");
       registry as any,
       withHeal ? f.heal(f.root) : undefined,
     );
+
     return {
       out,
       attached,
       opens: f.calls.slice(before).filter((x) => x.startsWith("open:")).length,
     };
   };
+
   f.writeLog(id, cwd, stopped());
   let r = await run();
   assert.deepEqual([r.out.existed, r.out.healed, r.attached, r.opens], [true, false, [id], 1]);
@@ -2497,32 +2690,41 @@ console.log("sessions ok");
   const cwd = join(f.root, "work");
   const id = f.sessionId("fold");
   const tid = f.transcriptId(id);
+
   /** A transcript of `n` completed turns, prompt i reading `prompt <i>` (or `texts[i]`). */
-  const transcript = (n: number, texts: string[] = []) => {
-    const rows: object[] = [];
+  const transcript = (n: number, texts: Array<string> = []) => {
+    const rows: Array<object> = [];
+
     for (let i = 1; i <= n; i++) {
-      rows.push({
-        type: "user",
-        uuid: `u${i}`,
-        cwd,
-        timestamp: `2026-09-05T10:0${i}:00Z`,
-        message: { role: "user", content: [{ type: "text", text: texts[i - 1] ?? `prompt ${i}` }] },
-      });
-      rows.push({
-        type: "assistant",
-        uuid: `a${i}`,
-        parentUuid: `u${i}`,
-        cwd,
-        timestamp: `2026-09-05T10:0${i}:01Z`,
-        message: {
-          id: `m${i}`,
-          role: "assistant",
-          content: [{ type: "text", text: `answer ${i}` }],
+      rows.push(
+        {
+          type: "user",
+          uuid: `u${i}`,
+          cwd,
+          timestamp: `2026-09-05T10:0${i}:00Z`,
+          message: {
+            role: "user",
+            content: [{ type: "text", text: texts[i - 1] ?? `prompt ${i}` }],
+          },
         },
-      });
+        {
+          type: "assistant",
+          uuid: `a${i}`,
+          parentUuid: `u${i}`,
+          cwd,
+          timestamp: `2026-09-05T10:0${i}:01Z`,
+          message: {
+            id: `m${i}`,
+            role: "assistant",
+            content: [{ type: "text", text: `answer ${i}` }],
+          },
+        },
+      );
     }
+
     return rows;
   };
+
   const stored = toSessionEvents(
     foldTranscript(
       transcript(2)
@@ -2531,8 +2733,9 @@ console.log("sessions ok");
     ),
     4,
   );
+
   const run = async (
-    transcriptRows: object[],
+    transcriptRows: Array<object>,
     opts: { owned?: boolean; openTail?: boolean } = {},
   ) => {
     f.writeLog(
@@ -2544,6 +2747,7 @@ console.log("sessions ok");
     f.own(id, opts.owned === true);
     f.appended.length = 0;
     const { registry } = f.registry(cwd);
+
     // SAFETY: partial fakes; the function reads only these members
     const out = await openTranscriptOnce(
       f.ctx() as any,
@@ -2554,8 +2758,10 @@ console.log("sessions ok");
       registry as any,
       f.heal(f.root),
     );
+
     return { out, appended: [...f.appended] };
   };
+
   let r = await run(transcript(5));
   assert.equal(r.out.turnsAdded, 3, "three transcript turns were missing");
   assert.equal(r.appended[0]?.seq, stored.length, "seqs continue from the stored length");
@@ -2606,11 +2812,13 @@ console.log("sessions ok");
     ),
     true,
   );
+
   // What dsh stored against what the CLI's transcript holds for the same message. Each pair below
   // was read off a real log and its transcript; the comparison before this one called all but the
   // first two missing and would have appended them a second time.
   const held = (storedText: string, prompt: string) =>
-    storedHolds(new Set([storedText.replace(/[ \t]+/g, " ").trim()]), prompt);
+    storedHolds(new Set([storedText.replaceAll(/[ \t]+/g, " ").trim()]), prompt);
+
   assert.ok(held("fix it", "fix it"));
   assert.ok(held("fix it", "fix it\n\nCurrent runtime context. x"));
   assert.ok(held("/ship what else we got banked ", "/ship what else we got banked"));
@@ -2713,19 +2921,24 @@ console.log("sessions ok");
   const { fakeDsh } = await import("./test-dsh.js");
   const { STATE_DIR } = await import("./state.js");
   const f = fakeDsh(join(STATE_DIR, "selection-ask"));
+
   const seen: Array<{
     sid: string;
     question: string;
     seed: { withDiff: boolean; path: string; quote: string };
   }> = [];
+
   const { respond } = f.routes({
     askAside: async (sid, question, seed) => {
       seen.push({ sid, question, seed });
+
       return { ok: true };
     },
   });
+
   const post = (body: object) =>
     respond("POST", "/dsh-oh-my-claude/side-questions", JSON.stringify(body));
+
   let r = await post({ session: "s", question: "", quote: "x".repeat(5000) });
   assert.equal(r.status, 200, "a blank question beside a quote is accepted");
   assert.equal(seen.at(-1)?.question, "", "the blank question reaches the adapter as blank");
@@ -2757,10 +2970,12 @@ console.log("sessions ok");
   assert.equal(r.body.costOff, true, "which reads back");
 
   const legacyDir = join(f.root, "legacy");
+
   const legacy = f.routes(
     { sshBoxesPath: join(legacyDir, "ssh-boxes.json") },
     { requestRejection: () => 401 },
   );
+
   r = await legacy.respond("POST", "/dsh-oh-my-claude/hints", JSON.stringify({ costOff: true }));
   assert.equal(r.status, 401, "an older dsh's refusal still stops the request");
   await assert.rejects(access(join(legacyDir, "hints.json")), "and nothing is written");

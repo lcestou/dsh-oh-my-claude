@@ -47,6 +47,7 @@ const coldCtx = (byId: Record<string, unknown>): ClientCtx =>
       },
     }),
   );
+
   assert.deepEqual(
     [...titles].toSorted(),
     ["Build", "Recipe"],
@@ -65,11 +66,14 @@ const coldCtx = (byId: Record<string, unknown>): ClientCtx =>
       },
     }),
   );
+
   assert.deepEqual([...noTitle], [], "a row without a title is skipped");
   assert.deepEqual([...claudeRunningTitles(coldCtx({}))], [], "no rows answers an empty set");
+
   const none = {
     sessions: { list: { getSnapshot: () => undefined } },
   } as unknown as ClientCtx;
+
   assert.deepEqual([...claudeRunningTitles(none)], [], "a missing snapshot answers an empty set");
 }
 

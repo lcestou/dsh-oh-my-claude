@@ -14,6 +14,7 @@ export const CLOSING_VERBS = [
   "Sautéed",
   "Worked",
 ];
+
 /** The same eight in the register the Chinese spinner verbs use: kitchen and workshop, past tense. */
 export const ZH_CLOSING_VERBS = [
   "烘焙了",
@@ -31,9 +32,13 @@ export const ZH_CLOSING_VERBS = [
  * modulo the list. The CLI hashes a message uuid the page never sees, so the pick does not match the
  * terminal's for the same turn; it only has to stay put for this one.
  */
-export const closingVerb = (key: string, verbs: readonly string[]): string => {
+export const closingVerb = (key: string, verbs: ReadonlyArray<string>): string => {
   let h = 0;
-  for (let i = 0; i < key.length; i++) h = ((h << 5) - h + key.charCodeAt(i)) | 0;
+
+  for (let i = 0; i < key.length; i++) {
+    h = ((h << 5) - h + key.charCodeAt(i)) | 0;
+  }
+
   return verbs[(h >>> 0) % verbs.length] ?? verbs[0] ?? "";
 };
 
@@ -45,6 +50,7 @@ export const closingVerb = (key: string, verbs: readonly string[]): string => {
  */
 export const tookDuration = (label: string): string | undefined => {
   const m = /^(?:Completed in|Took|(?:已完成，)?用时)\s*(\S.*)$/.exec(label.trim());
+
   return m?.[1]?.trim();
 };
 
@@ -55,9 +61,14 @@ export const tookDuration = (label: string): string | undefined => {
  */
 export const clockText = (dshClock: string, zh: boolean): string => {
   const m = /^(.*?)(\d{1,2}):(\d{2})$/.exec(dshClock.trim());
-  if (m === null || zh) return dshClock.trim();
+
+  if (m === null || zh) {
+    return dshClock.trim();
+  }
+
   const [, before = "", hh = "0", mm = "00"] = m;
   const h = Number(hh);
+
   return `${before}${h % 12 === 0 ? 12 : h % 12}:${mm} ${h < 12 ? "AM" : "PM"}`;
 };
 

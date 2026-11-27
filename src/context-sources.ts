@@ -1,11 +1,13 @@
 /** Every block dsh adds to a prompt that this plugin can recognise. `runtime` is the file and
  *  approval policy snapshot: it is here to be classified and measured, never to be withheld. */
 export const CONTEXT_SOURCES = ["instructions", "skills", "runtime"] as const;
+
 export type ContextSource = (typeof CONTEXT_SOURCES)[number];
 
 /** The blocks the Settings switches can withhold. A session without the runtime snapshot asks for
  *  approvals that are auto-rejected, so it is deliberately not in here. */
 export const TOGGLEABLE = ["instructions", "skills"] as const;
+
 export type Toggleable = (typeof TOGGLEABLE)[number];
 
 /** Hint key per source. These only matter once the master switch is on; absent means the block is
@@ -25,12 +27,15 @@ export function contextDrops(hints: Record<string, boolean | number>): Set<Conte
   if (hints[MASTER_KEY] !== true) {
     return new Set(TOGGLEABLE);
   }
+
   const dropped = new Set<ContextSource>();
+
   for (const t of TOGGLEABLE) {
     if (hints[OFF_KEY[t]] === true) {
       dropped.add(t);
     }
   }
+
   return dropped;
 }
 
@@ -43,13 +48,24 @@ export type LoggedSource = { readonly kind?: string; readonly plugin?: string } 
  *  wake notice and the background job notices share that kind and are how those features report
  *  back. */
 export function sourceBlockOf(source: LoggedSource): ContextSource | undefined {
-  if (source?.kind === "agent-instructions") return "instructions";
-  if (source?.kind === "skill-catalog") return "skills";
+  if (source?.kind === "agent-instructions") {
+    return "instructions";
+  }
+
+  if (source?.kind === "skill-catalog") {
+    return "skills";
+  }
+
   // dsh's own system prompt row: the v3 plugin wrapper, or the v4 producer kind its migrator
   // renames it to.
-  if (source?.kind === "plugin" && source.plugin === "@deepseek-ai/dsh-system-prompt")
+  if (source?.kind === "plugin" && source.plugin === "@deepseek-ai/dsh-system-prompt") {
     return "runtime";
-  if (source?.kind === "runtime-context") return "runtime";
+  }
+
+  if (source?.kind === "runtime-context") {
+    return "runtime";
+  }
+
   return undefined;
 }
 
@@ -72,23 +88,39 @@ export interface ChatFlowNode {
  * @returns the keys to fold away, in render order.
  */
 export function maskedRows(
-  order: readonly string[],
+  order: ReadonlyArray<string>,
   node: (key: string) => ChatFlowNode | undefined,
   drops: ReadonlySet<ContextSource>,
   systemPromptSent = false,
-): string[] {
-  const masked: string[] = [];
+): Array<string> {
+  const masked: Array<string> = [];
+
   for (const key of order) {
     const row = node(key);
-    if (row === undefined) continue;
-    if (row.kind === "system-prompt") {
-      if (!systemPromptSent) masked.push(key);
+
+    if (row === undefined) {
       continue;
     }
-    if (row.kind !== "context") continue;
+
+    if (row.kind === "system-prompt") {
+      if (!systemPromptSent) {
+        masked.push(key);
+      }
+
+      continue;
+    }
+
+    if (row.kind !== "context") {
+      continue;
+    }
+
     const block = sourceBlockOf(row.data?.source);
-    if (block !== undefined && drops.has(block)) masked.push(key);
+
+    if (block !== undefined && drops.has(block)) {
+      masked.push(key);
+    }
   }
+
   return masked;
 }
 
@@ -96,6 +128,7 @@ export function maskedRows(
  *  plugin's own guidance appended to the system prompt, and `claudemd` is what the CLAUDE.md filter
  *  took out of dsh's instruction bundle before the rest was sent. */
 export const CONTEXT_SIZE_KEYS = [...CONTEXT_SOURCES, "tools", "claudemd"] as const;
+
 export type ContextSizeKey = (typeof CONTEXT_SIZE_KEYS)[number];
 
 /** Characters per row, absent where this turn carried nothing to measure. */

@@ -1,6 +1,7 @@
 // Reply shapes, event shapes and the shared types behind the server's control surface.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
-import { LlmError, type GenerateOptions, type Message } from "@deepseek-ai/dsh-llm";
+import { LlmError } from "@deepseek-ai/dsh-llm";
+import type { GenerateOptions, Message } from "@deepseek-ai/dsh-llm";
 import type { Agent, JsonValue, SessionId } from "../dsh.js";
 import type {
   ClaudeEvent,
@@ -19,8 +20,10 @@ import type { FallbackRecord, LiveMode, SuggestionRow } from "../translator.js";
 
 /** A dsh request that belongs to a session; everything on the persistent path has one. */
 export type SessionOptions = GenerateOptions & { sessionId: SessionId };
+
 /** The CLI asking for a permission or a question. */
 export type ControlRequestEvent = Extract<ClaudeEvent, { type: "control_request" }>;
+
 /** How a turn ended, as the turn loop tracks it. */
 export type Outcome =
   | "continue"
@@ -30,15 +33,17 @@ export type Outcome =
   | "relayed"
   | "ended"
   | undefined;
+
 /** Whether a step's end keeps the status row's live figures: only when the step parked the CLI
  *  mid-turn (on a dsh tool dsh is running, or on a steer), since dsh calls back within the same
  *  turn. Every other outcome is the turn ending. */
 export const keepsLiveTurn = (outcome: string | undefined): boolean =>
   outcome === "relayed" || outcome === "parked";
+
 /** How this request continues the session's Claude process; see continuationFor(). */
 export type Continuation =
   | { mode: "abandon" | "steer"; proc: ClaudeProcess; options: SessionOptions }
-  | { mode: "relay"; proc: ClaudeProcess; options: SessionOptions; results: RelayResult[] }
+  | { mode: "relay"; proc: ClaudeProcess; options: SessionOptions; results: Array<RelayResult> }
   | { mode: "prompt"; proc?: undefined; options: SessionOptions };
 
 /** The permission decision inputs, one control request's worth. */
@@ -58,7 +63,10 @@ export const isSettled = (p: ClaudeProcess) => !p.busy && p.relays.size === 0 &&
 
 /** Throw rather than return a null prep: a process is assumed to carry the turn state acquire() set, so a missing one means it was used out of order. */
 export function requirePrep(proc: ClaudeProcess): TurnPrep {
-  if (!proc.prep) throw new LlmError("claude process has no turn state", "PROVIDER_ERROR");
+  if (!proc.prep) {
+    throw new LlmError("claude process has no turn state", "PROVIDER_ERROR");
+  }
+
   return proc.prep;
 }
 
@@ -76,6 +84,7 @@ export interface LoginNeed {
 export type ControlReply =
   | { ok: true; error?: undefined; response?: JsonValue }
   | { ok: false; error: string; response?: undefined };
+
 /**
  * One `/btw` side question and its answer. The CLI answers a `side_question` control request out of
  * band, off the transcript, so the answer lands here and the client draws it in a floating bubble
@@ -96,17 +105,20 @@ export interface AsideEntry {
    *  the answer. Absent for `/btw` and the Changes tab's Ask. With a blank `question` it means "explain". */
   quote?: string;
 }
+
 /** One user prompt of a session's transcript, as the Rewind list shows it. */
 export interface RewindPrompt {
   id: string;
   time: number;
   text: string;
 }
+
 /** What `rewind_files` answers, plus whether the conversation was rewound too. */
 export interface RewindReply extends Partial<RewindResult> {
   ok: boolean;
   dryRun: boolean;
 }
+
 /** What the steer card's route answers. `sent`: Claude already has it (or it was never waiting);
  *  `gone`: no live process; `error`: the CLI did not answer the cancel. */
 /** Whether the CLI is inside a dsh tool right now: a live process with a relay pending. Reads the
@@ -121,10 +133,12 @@ export const inRelay = (
 export type SteerEditReply =
   | { ok: true }
   | { ok: false; reason: "sent" | "gone" | "error" | "relayed"; error?: string };
+
 /** What taking steers back answers: the hold to end later and the text the editor starts from. */
 export type HoldReply =
   | { ok: true; holdId: string; text: string }
   | { ok: false; reason: "sent" | "gone" | "error"; error?: string };
+
 /** The steer card's poll: steers still waiting in the CLI, and holds open for an edit. */
 export interface SteerCardState {
   /** The CLI is inside a dsh tool, so Send now is refused for every row; present only when true. */
@@ -137,27 +151,31 @@ export interface SteerCardState {
     text: string;
     at: number;
     relayed?: true;
-    attachments?: SteerAttachment[];
+    attachments?: Array<SteerAttachment>;
   }>;
-  held: Array<{ id: string; text: string; attachments?: SteerAttachment[] }>;
+  held: Array<{ id: string; text: string; attachments?: Array<SteerAttachment> }>;
 }
+
 /** Steers taken back from Claude while someone edits them. */
 export interface HeldSteer {
   /** The dsh messages, oldest first, as they left the inbox; a restore puts these back unchanged. */
-  messages: Message[];
+  messages: Array<Message>;
   /** Their texts one per line, what the editor starts from. */
   text: string;
   /** Restores the hold when its card stops polling, so an abandoned edit never loses a message. */
   timer: ReturnType<typeof setTimeout>;
 }
+
 /** How long a hold waits for a poll before it goes back to Claude unchanged. The card polls every
  *  3 s while its tab is visible; a minute covers a tab switch mid-edit without leaving a closed
  *  tab's message stranded for long. */
 export const HOLD_IDLE_MS = 60_000;
+
 /** What the context route reports: the CLI's own context breakdown for a live session. */
 export type ContextUsageReply =
   | ({ ok: true; error?: undefined } & ContextUsage)
   | { ok: false; error: string };
+
 /** What the skill-report route answers. A decline (the CLI's own `no_user_skills` or
  *  `scan_policy_denied`) and a failure (spawn, timeout, missing binary) both leave `ok` false, but
  *  the card shows a decline verbatim and wraps a failure, so `declined` tells them apart. `partial`
@@ -179,26 +197,38 @@ export function skillDoctorReply(
   partial: boolean,
   failure: string,
 ): SkillDoctorReply {
-  if (result === null) return { ok: false, error: failure };
+  if (result === null) {
+    return { ok: false, error: failure };
+  }
+
   const report = String(result.result ?? "");
-  if (result.is_error) return { ok: false, declined: true, error: report };
+
+  if (result.is_error) {
+    return { ok: false, declined: true, error: report };
+  }
+
   return partial ? { ok: true, report, partial: true } : { ok: true, report };
 }
+
 /** What the diff route reports: the CLI's working-tree diff for a live session. */
 export type WorkspaceDiffReply =
   | ({ ok: true; error?: undefined } & WorkspaceDiff)
   | { ok: false; error: string };
+
 /** What `/permissions` answers: both lists, or the reason there are none. */
 export type PermissionReadoutReply =
   | ({ ok: true } & PermissionRules & HooksListing)
   | { ok: false; error: string };
+
 /** What the MCP route reports: the servers Claude's process has, as `mcp_status` lists them. */
 export type McpStatusReply =
-  | { ok: true; error?: undefined; servers: McpServerStatus[] }
+  | { ok: true; error?: undefined; servers: Array<McpServerStatus> }
   | { ok: false; error: string };
+
 /** What the MCP login route reports: the sign-in page to open, an already-signed-in success with
  *  no page, or the reason the CLI refused. */
 export type McpAuthReply = { ok: true; authUrl?: string } | { ok: false; error: string };
+
 /** What the permission-mode route reports: the mode in force and the stored override. */
 export interface PermissionModeInfo {
   mode: string;
@@ -211,22 +241,25 @@ export interface PermissionModeInfo {
    *  A pick equal to the entry for the shield it lands on clears the override. */
   defaultModes: Record<string, string>;
   /** Permission modes the client may pick (at or below the ceiling). */
-  allowed: readonly string[];
+  allowed: ReadonlyArray<string>;
   /** The mode the session's running Claude process is in, or null when no process is alive. It
    *  lags `mode` after a pick the CLI could not take live; the next turn spawns with `mode`. */
   liveMode: string | null;
 }
+
 export interface PermissionModeReply extends PermissionModeInfo {
   /** A live process was told; false when the override only applies at the next spawn. */
   live: boolean;
   error?: string;
 }
+
 /** `GET /awaiting` and the `awaiting` event: the open prompts keyed by dsh session id. */
 export interface AwaitingRow {
   kind: "approval" | "question" | "plan";
   id: string;
   since: number;
 }
+
 /** `GET /live-turn` and the `live-turn` event while a turn runs; the empty object once it ends.
  *  The ages are computed when the body is built; the tab adds the time since it received it. */
 export interface LiveTurnReply {
@@ -247,6 +280,7 @@ export interface LiveTurnReply {
   /** How long the CLI's compaction has run; absent when none is running. */
   compactingMs?: number;
 }
+
 /** The sums over a session's turn records, with how many records were summed. */
 export interface TurnTotals {
   costUsd: number;
@@ -262,7 +296,7 @@ export interface TurnTotals {
  *  for one session. `GET /side-questions` answers these plus `claudeUpdate`, which the updater's
  *  own tick in sessions.ts adds and which no event carries. */
 export interface AsidesReply {
-  items: AsideEntry[];
+  items: Array<AsideEntry>;
   loginNeeded: LoginNeed | null;
   fallback: FallbackRecord | null;
   steers: SteerCardState;
@@ -270,15 +304,17 @@ export interface AsidesReply {
    *  out since. */
   suggestion: SuggestionRow | null;
 }
+
 /** `GET /idle` and the `idle` event: when the idle watchdog would end the process, or null. */
 export interface IdleReply {
   deadline: number | null;
   timeoutMs: number;
 }
+
 /** `GET /permission-mode` and the `permission-mode` event: the info plus the modes the client may
  *  pick, under the name the client already reads (`modes`). */
 export interface PermissionModeState extends PermissionModeInfo {
-  modes: readonly string[];
+  modes: ReadonlyArray<string>;
 }
 
 /** The key every live process is stored under, `providerId` then `sessionId`; a session id must not contain a colon or it would collide with this separator. */

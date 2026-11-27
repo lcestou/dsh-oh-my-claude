@@ -17,10 +17,12 @@ const scopes = (files: Record<string, unknown>) =>
 {
   const user = featureSwitches(scopes({ user: { cleanupPeriodDays: 3 } }), {});
   assert.deepEqual(user.retention, { days: 3, scope: "user" });
+
   const both = featureSwitches(
     scopes({ managed: { cleanupPeriodDays: 7 }, user: { cleanupPeriodDays: 3 } }),
     {},
   );
+
   assert.deepEqual(both.retention, { days: 7, scope: "managed" }, "the higher scope decides");
 }
 
@@ -46,16 +48,21 @@ for (const days of [0, -5, 2.5, "30", null]) {
     scopes({ user: { permissions: { disableBypassPermissionsMode: "disable" } } }),
     {},
   );
+
   assert.deepEqual(off.bypassDisabled, { scope: "user" });
+
   const written = featureSwitches(
     scopes({ project: { permissions: { disableBypassPermissionsMode: true } } }),
     {},
   );
+
   assert.deepEqual(written.bypassDisabled, { scope: "project" });
+
   const on = featureSwitches(
     scopes({ user: { permissions: { disableBypassPermissionsMode: "allow" } } }),
     {},
   );
+
   assert.equal(on.bypassDisabled, undefined);
 }
 
@@ -68,12 +75,14 @@ for (const days of [0, -5, 2.5, "30", null]) {
 
 // Checkpointing: any non-empty value is on, because the CLI's check is truthiness.
 {
-  for (const value of ["1", "0", "false"])
+  for (const value of ["1", "0", "false"]) {
     assert.equal(
       featureSwitches([], { CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING: value }).checkpointingDisabled,
       true,
       `${value} disables checkpointing`,
     );
+  }
+
   assert.equal(
     featureSwitches([], { CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING: "" }).checkpointingDisabled,
     false,
@@ -86,6 +95,7 @@ for (const days of [0, -5, 2.5, "30", null]) {
   assert.deepEqual(none.usageLimit, { plugin: true, cli: null }, "unset is not off");
   const off = featureSwitches(scopes({ user: { autoContinueAtUsageLimit: false } }), {}, false);
   assert.deepEqual(off.usageLimit, { plugin: false, cli: false });
+
   const higher = featureSwitches(
     scopes({
       project: { autoContinueAtUsageLimit: true },
@@ -93,6 +103,7 @@ for (const days of [0, -5, 2.5, "30", null]) {
     }),
     {},
   );
+
   assert.deepEqual(higher.usageLimit.cli, true, "the higher scope decides");
 }
 

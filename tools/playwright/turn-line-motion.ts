@@ -41,27 +41,43 @@ async function read(
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
   await p.waitForTimeout(2500);
   const running = p.locator('[role="treeitem"]').filter({ hasText: /Running|运行中/ });
+
   if ((await running.count()) === 0) {
     const ws = p
       .locator('[role="treeitem"]')
       .filter({ hasText: process.env.PW_WORKSPACE ?? "oh-my-claude" })
       .first();
-    if (await ws.count()) await ws.click({ force: true });
+
+    if (await ws.count()) {
+      await ws.click({ force: true });
+    }
+
     await p.waitForTimeout(1500);
   }
+
   const row = name
     ? p.locator('[role="treeitem"]').filter({ hasText: name }).first()
     : running.first();
-  if ((await row.count()) === 0) throw new Error("no running Claude session to read");
+
+  if ((await row.count()) === 0) {
+    throw new Error("no running Claude session to read");
+  }
+
   await row.click({ force: true });
-  if (viewport.width < 500) await p.setViewportSize(viewport);
+
+  if (viewport.width < 500) {
+    await p.setViewportSize(viewport);
+  }
+
   await p.waitForTimeout(4000);
+
   const out = await p.evaluate(async () => {
     const line = document.querySelector<HTMLElement>("[data-omc-turn-line]");
     const cs = line ? getComputedStyle(line) : null;
     const root = getComputedStyle(document.documentElement);
     const sid = new URL(location.href).searchParams.get("session") ?? "";
     let live: Read["live"] = {};
+
     try {
       // The route needs the session id; the row's own subscription knows it, the check does not,
       // so read the first live-turn body off the event stream instead.
@@ -69,7 +85,7 @@ async function read(
         const es = new EventSource("/dsh-oh-my-claude/events");
         es.addEventListener("live-turn", (e) => {
           // SAFETY: an EventSource listener for a named event receives a MessageEvent.
-          resolve(JSON.parse((e as MessageEvent).data).data);
+          resolve(JSON.parse(e.data).data);
           es.close();
         });
         setTimeout(() => {
@@ -80,6 +96,7 @@ async function read(
     } catch {
       /* the figures are optional */
     }
+
     return {
       found: document.querySelectorAll("[data-omc-turn-line]").length,
       animationName: cs?.animationName ?? "",
@@ -95,16 +112,20 @@ async function read(
       sid,
     };
   });
+
   if (shotsDir !== undefined) {
     // The line's own box clips the verb's left edge (the sheen is painted past it), so the shot is
     // of the group button that holds the line, which also shows dsh's label beside it.
     const group = p.locator("button[data-turn-process]:has([data-omc-turn-line])").last();
+
     if (await group.count()) {
       await group.scrollIntoViewIfNeeded();
       await group.screenshot({ path: `${shotsDir}/${viewport.width}-${colorScheme}.png` });
     }
   }
+
   await ctx.close();
+
   return out;
 }
 
@@ -114,5 +135,7 @@ const result = {
   phoneDark: await read({ width: 390, height: 844 }, "dark"),
   phoneLight: await read({ width: 390, height: 844 }, "light"),
 };
+
 console.log(JSON.stringify(result, null, 2));
+
 await b.close();

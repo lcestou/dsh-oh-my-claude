@@ -11,14 +11,23 @@
  * the alias itself): the family alias with the same `[1m]` choice, the plain alias, then the first
  * offered id of that family, which is the newest while the lineup lists newest first.
  */
-export function livingModelId(id: string, offered: readonly string[]): string | undefined {
+export function livingModelId(id: string, offered: ReadonlyArray<string>): string | undefined {
   const bare = id.endsWith("[1m]") ? id.slice(0, -4) : id;
   const forms = [id, bare, id.replace(/-\d{8}(?=$|\[)/, ""), bare.replace(/-\d{8}$/, "")];
   const same = forms.find((form) => offered.includes(form));
-  if (same !== undefined) return same;
+
+  if (same !== undefined) {
+    return same;
+  }
+
   const family = bare.replace(/^claude-/, "").split("-")[0] ?? "";
-  if (!/^[a-z]+$/.test(family) || family === "default") return undefined;
+
+  if (!/^[a-z]+$/.test(family) || family === "default") {
+    return undefined;
+  }
+
   const aliases = id === bare ? [family] : [`${family}[1m]`, family];
+
   return (
     aliases.find((alias) => offered.includes(alias)) ??
     offered.find((m) => m.startsWith(`claude-${family}-`))

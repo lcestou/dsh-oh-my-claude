@@ -52,27 +52,40 @@ const asidePill = (color: string): CSSProperties => ({
  *  line, a loading line, or an empty note when there are none. */
 export function AsidesBody({ sessionId }: { sessionId: string }) {
   useLocale();
-  const [items, setItems] = useState<AsideRow[] | null>(null);
+  const [items, setItems] = useState<Array<AsideRow> | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
     fetch(`${ROUTE}/side-questions?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => readJson<{ items: AsideRow[] } | { error: string }>(r))
+      .then((r) => readJson<{ items: Array<AsideRow> } | { error: string }>(r))
       .then((b) => {
-        if (!live) return;
-        if ("error" in b) setError(b.error);
-        else setItems(b.items ?? []);
+        if (!live) {
+          return;
+        }
+
+        if ("error" in b) {
+          setError(b.error);
+        } else {
+          setItems(b.items ?? []);
+        }
       })
-      .catch((e: Error) => live && setError(e.message));
+      .catch((error_: Error) => live && setError(error_.message));
+
     return () => {
       live = false;
     };
   }, [sessionId]);
 
-  if (error !== null) return <span style={errText}>{error}</span>;
-  if (items === null) return <span style={stateText}>{t("loading")}</span>;
+  if (error !== null) {
+    return <span style={errText}>{error}</span>;
+  }
+
+  if (items === null) {
+    return <span style={stateText}>{t("loading")}</span>;
+  }
+
   if (items.length === 0) {
     return (
       <div style={{ ...meta, paddingBottom: 4, fontSize: 12, whiteSpace: "normal" }}>

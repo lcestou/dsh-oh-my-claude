@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
-import { type SessionData, isOwnedActive } from "./index.js";
+import { isOwnedActive } from "./index.js";
+import type { SessionData } from "./index.js";
 
 const sess = (id: string, over: Partial<SessionData> = {}): SessionData => ({
   id,
@@ -35,13 +36,14 @@ const sess = (id: string, over: Partial<SessionData> = {}): SessionData => ({
 
 // Full pipeline: filter + cap.
 {
-  const transcripts: SessionData[] = [
+  const transcripts: Array<SessionData> = [
     sess("a"), // fresh
     sess("b", { dsh: { id: "x", archived: false } }), // owned active
     sess("c"), // fresh
     sess("d", { dsh: { id: "y", archived: true } }), // archived
     sess("e"), // fresh
   ];
+
   const owned = transcripts.filter(isOwnedActive);
   const rest = transcripts.filter((s) => !isOwnedActive(s)).slice(0, 8);
   assert.equal(owned.length, 1, "only one owned active");

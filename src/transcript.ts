@@ -2,7 +2,8 @@
 // session started in the terminal can be opened in dsh with its history and resumed from there.
 // This is an I/O boundary: transcript lines are decoded here and typed shapes leave.
 import { open, readdir, stat } from "node:fs/promises";
-import { readAt, type FsBox } from "./remote-fs.js";
+import { readAt } from "./remote-fs.js";
+import type { FsBox } from "./remote-fs.js";
 import { join } from "node:path";
 import type { JsonValue } from "./dsh.js";
 import { NATIVE_TOOL_MAP } from "./adapter/cli.js";
@@ -11,6 +12,7 @@ import { serverText } from "./locale.js";
 
 const UUID_FILE = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
 const RESULT_TEXT_LIMIT = 4000;
+
 /** A subagent can talk for pages; the resumed step shows the same amount a tool result gets. */
 const SUBAGENT_TEXT_LIMIT = 4000;
 const TITLE_BYTES = 80;
@@ -29,6 +31,7 @@ const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !
  */
 const toolNameOf = (name: unknown): string => {
   const raw = String(name ?? "tool");
+
   // SAFETY: NATIVE_TOOL_MAP is a closed literal type; keyof narrows the index to its known keys,
   // and an unlisted name reads as undefined, which falls back to Claude's own spelling.
   return NATIVE_TOOL_MAP[raw as keyof typeof NATIVE_TOOL_MAP] ?? raw;
@@ -47,6 +50,7 @@ const isSystemPrompt = (rec: Rec): boolean => rec.promptSource === "system";
 const parseLine = (line: string): Rec | undefined => {
   try {
     const v: unknown = JSON.parse(line);
+
     return isRec(v) ? v : undefined;
   } catch {
     return undefined;
@@ -56,16 +60,28 @@ const parseLine = (line: string): Rec | undefined => {
 /** A row's timestamp in epoch milliseconds, or `fallback` when it has none that parses. */
 const timeOf = (rec: Rec | undefined, fallback: number): number => {
   const t = Date.parse(typeof rec?.timestamp === "string" ? rec.timestamp : "");
+
   return Number.isFinite(t) ? t : fallback;
 };
 
 /** Plain text of a user prompt, or "" for tool results / injections that are not a prompt. */
 function promptText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  const texts: string[] = [];
-  for (const b of content)
-    if (isRec(b) && b.type === "text" && typeof b.text === "string") texts.push(b.text);
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const texts: Array<string> = [];
+
+  for (const b of content) {
+    if (isRec(b) && b.type === "text" && typeof b.text === "string") {
+      texts.push(b.text);
+    }
+  }
+
   return texts.join("\n");
 }
 
@@ -89,7 +105,7 @@ export const typedPrompt = (text: string): string => {
     // session" or, once cleared, "Current runtime context: none". dsh escapes a closing tag inside
     // the body, so the first `</system-reminder>` after the opening is the block's own; text after
     // the block is kept. A reminder the person typed into the prompt does not open with either line.
-    .replace(
+    .replaceAll(
       /\s*<system-reminder>\n(?:The following information describes your current session|Current runtime context: none\.)[\s\S]*?<\/system-reminder>/g,
       "",
     )
@@ -98,6 +114,7 @@ export const typedPrompt = (text: string): string => {
       "",
     )
     .trim();
+
   return typed === "" ? text.trim() : typed;
 };
 
@@ -114,13 +131,24 @@ const isNoise = (text: string) => /^\s*<(command-|local-command|system-reminder)
  * of its 1.35 s here.
  */
 export function truncateBytes(text: string, max: number): string {
-  if (max <= 0) return "";
+  if (max <= 0) {
+    return "";
+  }
+
   const buf = Buffer.from(text, "utf8");
-  if (buf.length <= max) return text;
+
+  if (buf.length <= max) {
+    return text;
+  }
+
   // Back off over continuation bytes (0b10xxxxxx) so the cut lands between characters, never inside
   // one. At most three steps, whatever the budget.
   let end = max;
-  while (end > 0 && (buf[end]! & 0xc0) === 0x80) end--;
+
+  while (end > 0 && (buf[end]! & 0xc0) === 0x80) {
+    end--;
+  }
+
   return buf.toString("utf8", 0, end);
 }
 
@@ -135,11 +163,11 @@ const titleFrom = (text: string): string =>
   truncateBytes(
     (
       text
-        .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
-        .replace(FILE_HANDLE_LINE, "$1")
+        .replaceAll(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+        .replaceAll(FILE_HANDLE_LINE, "$1")
         .trim()
         .split("\n")[0] ?? ""
-    ).replace(/\s+/g, " "),
+    ).replaceAll(/\s+/g, " "),
     TITLE_BYTES,
   );
 
@@ -154,8 +182,13 @@ const titleFrom = (text: string): string =>
  */
 export const commandTitle = (text: string): string => {
   const cmd = commandOf(text);
-  if (!cmd) return "";
+
+  if (!cmd) {
+    return "";
+  }
+
   const args = cmd.args.replace(/(?:^|\n\n)Current runtime context\.[\s\S]*$/, "");
+
   return titleFrom(`${cmd.name} ${titleFrom(args)}`.trim());
 };
 
@@ -163,7 +196,11 @@ export const commandTitle = (text: string): string => {
  *  for text with no command name in it (a `<local-command-stdout>` echo, a system reminder). */
 const commandOf = (text: string): { name: string; args: string } | undefined => {
   const name = /<command-name>\s*([^<\s]+)\s*<\/command-name>/.exec(text)?.[1];
-  if (!name) return undefined;
+
+  if (!name) {
+    return undefined;
+  }
+
   return { name, args: /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1] ?? "" };
 };
 
@@ -176,9 +213,19 @@ const commandOf = (text: string): { name: string; args: string } | undefined => 
  */
 const commandPrompt = (text: string): string | undefined => {
   const cmd = commandOf(text);
-  if (!cmd) return undefined;
-  if (cmd.args === "") return cmd.name;
-  if (cmd.args.startsWith("Current runtime context.")) return `${cmd.name}\n\n${cmd.args}`;
+
+  if (!cmd) {
+    return undefined;
+  }
+
+  if (cmd.args === "") {
+    return cmd.name;
+  }
+
+  if (cmd.args.startsWith("Current runtime context.")) {
+    return `${cmd.name}\n\n${cmd.args}`;
+  }
+
   // An attachment sent with a bare command: dsh puts the file's handle on the line after it.
   return cmd.args.startsWith('[File "') ? `${cmd.name}\n${cmd.args}` : `${cmd.name} ${cmd.args}`;
 };
@@ -194,7 +241,7 @@ const isAuxPrompt = (text: string) => text.startsWith("Generate the session titl
 async function peek(
   path: string,
   maxBytes = 256 * 1024,
-): Promise<{ lines: string[]; partial: boolean }> {
+): Promise<{ lines: Array<string>; partial: boolean }> {
   // ONE READ, NOT A LINE STREAM. This used to run `readline` over a `createReadStream` and call
   // `rl.close()` once the running byte total passed the cap, which was both slow and wrong:
   // `close()` does not stop the iterator, so every line already buffered in the current chunk was
@@ -203,6 +250,7 @@ async function peek(
   // between two peeks of the same bytes. Reading the head once and splitting it is deterministic
   // and, measured over 187 transcripts, 88 ms became 24 ms.
   const fh = await open(path, "r");
+
   try {
     // `allocUnsafe`: only the first `bytesRead` bytes are ever read back, and the default head is
     // far past `Buffer.poolSize`, so this is a fresh allocation rather than a slice of the shared
@@ -211,9 +259,13 @@ async function peek(
     const { bytesRead } = await fh.read(buf, 0, maxBytes, 0);
     const partial = bytesRead >= maxBytes;
     const lines = buf.toString("utf8", 0, bytesRead).split("\n");
+
     // The last element is either the empty string after a trailing newline or, when the cap cut
     // the file mid-record, a fragment. Neither is a line; a fragment would fail to parse anyway.
-    if (lines.at(-1) === "" || partial) lines.pop();
+    if (lines.at(-1) === "" || partial) {
+      lines.pop();
+    }
+
     return { lines, partial };
   } finally {
     await fh.close();
@@ -265,13 +317,15 @@ interface Scan {
 export async function listTranscripts(
   dir: string,
   exclude: Set<string> = new Set(),
-): Promise<TranscriptListItem[]> {
-  let names: string[];
+): Promise<Array<TranscriptListItem>> {
+  let names: Array<string>;
+
   try {
     names = await readdir(dir);
   } catch {
     return [];
   }
+
   // ONE FILE AT A TIME WAS THE WHOLE COST HERE. Every transcript needs a `stat` and a bounded
   // `peek`, and awaiting them in a plain loop made 187 files into 374 sequential round-trips.
   // That is 160 ms on a warm cache for one project dir, and `listAllTranscripts` pays it per dir.
@@ -279,7 +333,7 @@ export async function listTranscripts(
   // `Promise.all`: the caller already fans out across every project dir at once, and an
   // unbounded map would multiply that into hundreds of open descriptors for no extra speed.
   /** What a listing needs from the head of one transcript. */
-  const scan = (lines: string[], fallbackTime: number): Scan => {
+  const scan = (lines: Array<string>, fallbackTime: number): Scan => {
     const found: Scan = {
       turns: 0,
       createdAt: fallbackTime,
@@ -288,40 +342,86 @@ export async function listTranscripts(
       answered: false,
       typed: false,
     };
+
     for (const line of lines) {
       const rec = parseLine(line);
-      if (!rec) continue;
-      if (found.cwd === undefined && typeof rec.cwd === "string") found.cwd = rec.cwd;
-      if (rec.type === "summary" && typeof rec.summary === "string") found.summary = rec.summary;
-      if (rec.type === "assistant" && !rec.isSidechain) found.answered = true;
-      if (rec.type !== "user" || rec.isSidechain || rec.isMeta || isSystemPrompt(rec)) continue;
+
+      if (!rec) {
+        continue;
+      }
+
+      if (found.cwd === undefined && typeof rec.cwd === "string") {
+        found.cwd = rec.cwd;
+      }
+
+      if (rec.type === "summary" && typeof rec.summary === "string") {
+        found.summary = rec.summary;
+      }
+
+      if (rec.type === "assistant" && !rec.isSidechain) {
+        found.answered = true;
+      }
+
+      if (rec.type !== "user" || rec.isSidechain || rec.isMeta || isSystemPrompt(rec)) {
+        continue;
+      }
+
       const text = promptText(isRec(rec.message) ? rec.message.content : undefined);
-      if (!text) continue;
-      if (found.turns === 0 && isAuxPrompt(text)) break;
+
+      if (!text) {
+        continue;
+      }
+
+      if (found.turns === 0 && isAuxPrompt(text)) {
+        break;
+      }
+
       found.turns += 1;
-      if (found.turns === 1) found.createdAt = timeOf(rec, found.createdAt);
+
+      if (found.turns === 1) {
+        found.createdAt = timeOf(rec, found.createdAt);
+      }
+
       const noise = isNoise(text);
-      if (!noise) found.typed = true;
-      if (found.title) continue;
+
+      if (!noise) {
+        found.typed = true;
+      }
+
+      if (found.title) {
+        continue;
+      }
+
       // The first thing a person wrote names the session: a prompt, or a command with words after
       // it. A bare `/skill` says less than the prompt that follows it, so it waits as a fallback,
       // and the CLI's interrupt echo is nobody's words at all.
       const cmd = commandTitle(text);
-      if (cmd.includes(" ")) found.title = cmd;
-      else if (cmd) found.command ||= cmd;
-      else if (!noise && !CLI_ECHO.test(text)) found.title = titleFrom(text);
+
+      if (cmd.includes(" ")) {
+        found.title = cmd;
+      } else if (cmd) {
+        found.command ||= cmd;
+      } else if (!noise && !CLI_ECHO.test(text)) {
+        found.title = titleFrom(text);
+      }
     }
+
     return found;
   };
 
   const read = async (name: string): Promise<TranscriptListItem | undefined> => {
     const m = UUID_FILE.exec(name);
     const id = m?.[1];
-    if (!id || exclude.has(id)) return undefined;
+
+    if (!id || exclude.has(id)) {
+      return undefined;
+    }
+
     const path = join(dir, name);
     const info = await stat(path);
     let head = await peek(path);
     let found = scan(head.lines, info.mtimeMs);
+
     // A SECOND LOOK, ONLY WHEN THE FIRST ONE FOUND NOTHING. A transcript can open with a single
     // enormous record, a pasted image or a dumped file, and push its first real user turn past the
     // head bound, which makes a real session look empty and drops it from the list entirely. Nine
@@ -331,11 +431,18 @@ export async function listTranscripts(
       head = await peek(path, DEEP_PEEK_BYTES);
       found = scan(head.lines, info.mtimeMs);
     }
-    if (found.turns === 0) return undefined;
+
+    if (found.turns === 0) {
+      return undefined;
+    }
+
     // Commands only and no reply anywhere in a file read whole: `/usage` and nothing else. Opening
     // one fails with "no completed turn", so the row was a dead end. A capped head proves nothing
     // about the rest of the file, and a typed prompt still waiting for its answer stays listed.
-    if (!found.typed && !found.summary && !found.answered && !head.partial) return undefined;
+    if (!found.typed && !found.summary && !found.answered && !head.partial) {
+      return undefined;
+    }
+
     const item: TranscriptListItem = {
       id,
       title: found.summary ?? (found.title || found.command),
@@ -345,14 +452,26 @@ export async function listTranscripts(
       turns: found.turns,
       turnsPartial: head.partial,
     };
-    if (found.cwd) item.cwd = found.cwd;
+
+    if (found.cwd) {
+      item.cwd = found.cwd;
+    }
+
     return item;
   };
-  const out: TranscriptListItem[] = [];
+
+  const out: Array<TranscriptListItem> = [];
+
   for (let i = 0; i < names.length; i += LIST_BATCH) {
     const batch = await Promise.all(names.slice(i, i + LIST_BATCH).map(read));
-    for (const item of batch) if (item) out.push(item);
+
+    for (const item of batch) {
+      if (item) {
+        out.push(item);
+      }
+    }
   }
+
   return out.toSorted((a, b) => b.modifiedAt - a.modifiedAt);
 }
 
@@ -365,14 +484,28 @@ export type SeedBlock =
 /** The text blocks of a message, with an image kept as the word `[image]` and every other block
  *  type dropped. An empty string gives no block. */
 const textBlocks = (content: unknown): Array<{ type: "text"; text: string }> => {
-  if (typeof content === "string") return content ? [{ type: "text", text: content }] : [];
-  if (!Array.isArray(content)) return [];
-  const out: Array<{ type: "text"; text: string }> = [];
-  for (const b of content) {
-    if (!isRec(b)) continue;
-    if (b.type === "text" && typeof b.text === "string") out.push({ type: "text", text: b.text });
-    else if (b.type === "image") out.push({ type: "text", text: "[image]" });
+  if (typeof content === "string") {
+    return content ? [{ type: "text", text: content }] : [];
   }
+
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  const out: Array<{ type: "text"; text: string }> = [];
+
+  for (const b of content) {
+    if (!isRec(b)) {
+      continue;
+    }
+
+    if (b.type === "text" && typeof b.text === "string") {
+      out.push({ type: "text", text: b.text });
+    } else if (b.type === "image") {
+      out.push({ type: "text", text: "[image]" });
+    }
+  }
+
   return out;
 };
 
@@ -380,12 +513,16 @@ const textBlocks = (content: unknown): Array<{ type: "text"; text: string }> => 
 const resultBlocks = (content: unknown): Array<{ type: "text"; text: string }> => {
   const blocks = textBlocks(content);
   const text = blocks.map((b) => b.text).join("\n");
+
   return text ? [{ type: "text", text: truncateBytes(text, RESULT_TEXT_LIMIT) }] : [];
 };
 
 /** The subagent a Task result names, from the `toolUseResult` the CLI writes beside the result. */
 const agentIdOf = (result: unknown): string | undefined => {
-  if (!isRec(result)) return undefined;
+  if (!isRec(result)) {
+    return undefined;
+  }
+
   return typeof result.agentId === "string" && result.agentId ? result.agentId : undefined;
 };
 
@@ -398,13 +535,22 @@ const agentIdOf = (result: unknown): string | undefined => {
  * it and its result.
  */
 export function subagentText(text: string, limit = SUBAGENT_TEXT_LIMIT): string {
-  const said: string[] = [];
+  const said: Array<string> = [];
+
   for (const line of stripBom(text).split("\n")) {
     const rec = parseLine(line);
-    if (rec?.type !== "assistant") continue;
+
+    if (rec?.type !== "assistant") {
+      continue;
+    }
+
     const msg = isRec(rec.message) ? rec.message : undefined;
-    for (const b of textBlocks(msg?.content)) said.push(b.text);
+
+    for (const b of textBlocks(msg?.content)) {
+      said.push(b.text);
+    }
   }
+
   return truncateBytes(said.join("\n").trim(), limit);
 }
 
@@ -414,18 +560,35 @@ export function subagentText(text: string, limit = SUBAGENT_TEXT_LIMIT): string 
  * read is simply not there, and its call resumes the way it does today.
  */
 export function attachSubagents(folded: FoldedTranscript, texts: Map<string, string>): void {
-  if (texts.size === 0) return;
-  for (const turn of folded.turns)
+  if (texts.size === 0) {
+    return;
+  }
+
+  for (const turn of folded.turns) {
     for (const step of turn.steps)
-      // Backwards, so an insert cannot shift a block this loop has not looked at yet.
+    // Backwards, so an insert cannot shift a block this loop has not looked at yet.
+    {
       for (let i = step.content.length - 1; i >= 0; i--) {
         const block = step.content[i];
-        if (block?.type !== "tool-call") continue;
+
+        if (block?.type !== "tool-call") {
+          continue;
+        }
+
         const file = texts.get(block.id);
-        if (file === undefined) continue;
+
+        if (file === undefined) {
+          continue;
+        }
+
         const said = subagentText(file);
-        if (said) step.content.splice(i + 1, 0, { type: "reasoning", text: `↳ subagent\n${said}` });
+
+        if (said) {
+          step.content.splice(i + 1, 0, { type: "reasoning", text: `↳ subagent\n${said}` });
+        }
       }
+    }
+  }
 }
 
 /** One tool call's outcome inside a folded step. */
@@ -441,7 +604,7 @@ export interface FoldedStep {
   id: string;
   model: string | undefined;
   time: number;
-  content: SeedBlock[];
+  content: Array<SeedBlock>;
   calls: Array<{ id: string; name: string; arguments: Record<string, JsonValue> }>;
   results: Map<string, FoldedResult>;
 }
@@ -451,13 +614,13 @@ export interface FoldedTurn {
   id: string;
   time: number;
   content: Array<{ type: "text"; text: string }>;
-  steps: FoldedStep[];
+  steps: Array<FoldedStep>;
   /** The prompt was a slash command, rebuilt from the CLI's markup by `commandPrompt`. */
   command?: true;
 }
 
 export interface FoldedTranscript {
-  turns: FoldedTurn[];
+  turns: Array<FoldedTurn>;
   title: string | undefined;
   createdAt: number;
   /** Task call id to the subagent that answered it, for the records kept in a file of their own. */
@@ -483,13 +646,20 @@ export interface FoldedTranscript {
  *  route at all. A terminal-only session opens from neither the mirror nor the seed. Measured on
  *  a real transcript 2026-09-11: 68 `enqueue` rows, of which 25 never appeared as a user row. */
 const queuedPrompt = (rec: Rec): string | undefined => {
-  if (rec.type !== "queue-operation" || rec.operation !== "enqueue") return undefined;
+  if (rec.type !== "queue-operation" || rec.operation !== "enqueue") {
+    return undefined;
+  }
+
   const text = typeof rec.content === "string" ? rec.content : "";
+
   // The CLI queues its own background-task notices on the same rows (2.1.3xx: `<task-notification>`,
   // with a matching `queued_command` attachment whose `origin.kind` is "task-notification"). They are
   // no one's words, and reading them as typed put a bubble of task-id markup in the owner's name into
   // every restored session that ran a background command (owner, 2026-11-04).
-  if (TASK_NOTICE.test(text)) return undefined;
+  if (TASK_NOTICE.test(text)) {
+    return undefined;
+  }
+
   return text.trim() ? text : undefined;
 };
 
@@ -510,12 +680,21 @@ const queueKey = (text: string): string => text.trim().slice(0, 200);
  *  reads queue rows for at all. */
 const deliveredAsPrompt = (text: string): Set<string> => {
   const out = new Set<string>();
+
   for (const line of stripBom(text).split("\n")) {
     const rec = parseLine(line);
-    if (rec?.type !== "user") continue;
+
+    if (rec?.type !== "user") {
+      continue;
+    }
+
     const content = isRec(rec.message) ? rec.message.content : undefined;
-    if (typeof content === "string" && content.trim()) out.add(queueKey(content));
+
+    if (typeof content === "string" && content.trim()) {
+      out.add(queueKey(content));
+    }
   }
+
   return out;
 };
 
@@ -524,7 +703,7 @@ const deliveredAsPrompt = (text: string): Set<string> => {
  *  sent, but never dropping a message the CLI removed: it keeps such a line and folds it at its own prompt
  *  arrival rather than showing a retraction. */
 export function foldTranscript(text: string): FoldedTranscript {
-  const turns: FoldedTurn[] = [];
+  const turns: Array<FoldedTurn> = [];
   const delivered = deliveredAsPrompt(text);
   let cur: FoldedTurn | undefined;
   let title: string | undefined;
@@ -532,20 +711,33 @@ export function foldTranscript(text: string): FoldedTranscript {
   let createdAt: number | undefined;
   let permissionMode: string | undefined;
   const agents = new Map<string, string>();
+
   const close = () => {
-    if (cur?.steps.length) turns.push(cur);
+    if (cur?.steps.length) {
+      turns.push(cur);
+    }
+
     cur = undefined;
   };
+
   for (const line of stripBom(text).split("\n")) {
     const rec = parseLine(line);
-    if (!rec || rec.isSidechain) continue;
-    if (rec.type === "user" && typeof rec.permissionMode === "string")
+
+    if (!rec || rec.isSidechain) {
+      continue;
+    }
+
+    if (rec.type === "user" && typeof rec.permissionMode === "string") {
       permissionMode = rec.permissionMode;
+    }
+
     if (rec.type === "summary" && typeof rec.summary === "string") {
       title = rec.summary;
       continue;
     }
+
     const queued = queuedPrompt(rec);
+
     if (queued !== undefined) {
       // A message typed mid-turn opens an exchange of its own here. The CLI hands it to the same
       // turn it was typed during, but dsh has no way to show a second prompt inside one turn, and a
@@ -559,7 +751,10 @@ export function foldTranscript(text: string): FoldedTranscript {
       // one removal in 2046 names a retraction. Showing a line someone took back is a cosmetic
       // oddity; dropping one is the failure this reads queue rows to prevent, so nothing is dropped.
       // The exception is a message that also arrives as a prompt of its own: fold it there, once.
-      if (delivered.has(queueKey(queued))) continue;
+      if (delivered.has(queueKey(queued))) {
+        continue;
+      }
+
       close();
       const qtime = timeOf(rec, Date.now());
       createdAt ??= qtime;
@@ -572,32 +767,54 @@ export function foldTranscript(text: string): FoldedTranscript {
       };
       continue;
     }
+
     const msg = isRec(rec.message) ? rec.message : undefined;
+
     if (rec.type === "user") {
-      const content: unknown[] = Array.isArray(msg?.content) ? msg.content : [];
+      const content: Array<unknown> = Array.isArray(msg?.content) ? msg.content : [];
       const results = content.filter((b): b is Rec => isRec(b) && b.type === "tool_result");
+
       if (results.length) {
         const step = cur?.steps.at(-1);
-        if (!step) continue;
+
+        if (!step) {
+          continue;
+        }
+
         // A Task's result carries the id of the subagent that ran it, and the record holds one
         // result, so the id belongs to that call. Two results in a record leave it unclaimed rather
         // than guessing which call the subagent answered.
         const agent = agentIdOf(rec.toolUseResult);
+
         for (const r of results) {
           const id = typeof r.tool_use_id === "string" ? r.tool_use_id : String(r.tool_use_id);
-          if (agent !== undefined && results.length === 1) agents.set(id, agent);
+
+          if (agent !== undefined && results.length === 1) {
+            agents.set(id, agent);
+          }
+
           step.results.set(id, {
             content: resultBlocks(r.content),
             isError: r.is_error === true,
             time: timeOf(rec, step.time),
           });
         }
+
         continue;
       }
-      if (rec.isMeta || isSystemPrompt(rec)) continue;
+
+      if (rec.isMeta || isSystemPrompt(rec)) {
+        continue;
+      }
+
       const prompt = textBlocks(msg?.content);
-      if (prompt.length === 0) continue;
+
+      if (prompt.length === 0) {
+        continue;
+      }
+
       const plain = promptText(msg?.content);
+
       // Slash-command echoes, hook stdout and system reminders are stored as user lines, but they
       // are injections, not prompts: live they never render as a turn of their own, and copying
       // them in gave a resumed session user bubbles full of `<command-message>` markup. Checked
@@ -610,13 +827,21 @@ export function foldTranscript(text: string): FoldedTranscript {
         // prompt still waiting for its answer, which would be dropped in its favour. A command the
         // CLI answers by itself (`/model`) gets no step and `close()` drops it again.
         const sent = cur === undefined || cur.steps.length > 0 ? commandPrompt(plain) : undefined;
-        if (sent === undefined) continue;
+
+        if (sent === undefined) {
+          continue;
+        }
+
         close();
         const sentAt = timeOf(rec, Date.now());
         createdAt ??= sentAt;
         // Same order as the listing: a command with words after it names the session.
         const named = commandTitle(plain);
-        if (!title && named.includes(" ")) title = named;
+
+        if (!title && named.includes(" ")) {
+          title = named;
+        }
+
         cur = {
           id: typeof rec.uuid === "string" ? rec.uuid : `c${turns.length}`,
           time: sentAt,
@@ -626,10 +851,15 @@ export function foldTranscript(text: string): FoldedTranscript {
         };
         continue;
       }
+
       close();
       const time = timeOf(rec, Date.now());
       createdAt ??= time;
-      if (!title && !CLI_ECHO.test(plain)) title = titleFrom(plain);
+
+      if (!title && !CLI_ECHO.test(plain)) {
+        title = titleFrom(plain);
+      }
+
       cur = {
         id: typeof rec.uuid === "string" ? rec.uuid : `u${turns.length}`,
         time,
@@ -639,6 +869,7 @@ export function foldTranscript(text: string): FoldedTranscript {
     } else if (rec.type === "assistant" && cur) {
       const last = cur.steps.at(-1);
       const msgId = typeof msg?.id === "string" ? msg.id : undefined;
+
       const step: FoldedStep =
         last && last.msgId === msgId
           ? last
@@ -653,15 +884,23 @@ export function foldTranscript(text: string): FoldedTranscript {
               calls: [],
               results: new Map(),
             };
-      if (step !== last) cur.steps.push(step);
-      const blocks: unknown[] = Array.isArray(msg?.content) ? msg.content : [];
+
+      if (step !== last) {
+        cur.steps.push(step);
+      }
+
+      const blocks: Array<unknown> = Array.isArray(msg?.content) ? msg.content : [];
+
       for (const b of blocks) {
-        if (!isRec(b)) continue;
-        if (b.type === "text" && typeof b.text === "string")
+        if (!isRec(b)) {
+          continue;
+        }
+
+        if (b.type === "text" && typeof b.text === "string") {
           step.content.push({ type: "text", text: b.text });
-        else if (b.type === "thinking" && typeof b.thinking === "string")
+        } else if (b.type === "thinking" && typeof b.thinking === "string") {
           step.content.push({ type: "reasoning", text: b.thinking });
-        else if (b.type === "tool_use" && typeof b.id === "string") {
+        } else if (b.type === "tool_use" && typeof b.id === "string") {
           // SAFETY: a tool_use input is the JSON object Claude sent; any JSON object is a JsonValue map
           const args = isRec(b.input) ? (b.input as Record<string, JsonValue>) : {};
           const name = toolNameOf(b.name);
@@ -677,7 +916,9 @@ export function foldTranscript(text: string): FoldedTranscript {
       }
     }
   }
+
   close();
+
   return {
     turns,
     title: title || command || undefined,
@@ -702,7 +943,7 @@ export interface SeedEvent {
   time: number;
   data: Record<string, JsonValue>;
   surfaceOp?: "append";
-  sourceEventSeqs?: number[];
+  sourceEventSeqs?: Array<number>;
 }
 
 /** Where an appended fold continues from: the write handle's cursor and the log's last turn
@@ -719,30 +960,34 @@ export function toSessionEvents(
   folded: FoldedTranscript,
   logVersion = 3,
   base: SeedBase = { seq: 0, turn: 0 },
-): SeedEvent[] {
-  const events: SeedEvent[] = [];
+): Array<SeedEvent> {
+  const events: Array<SeedEvent> = [];
   // Record times are copied from the transcript, where a tool result can be stamped later than the
   // `turn/end` that follows it (Claude writes the result when it arrives, not when the turn closed).
   // dsh reads these events in order, so a time that goes backwards puts a step after the end of its
   // own turn. Each event is stamped at least as late as the one before it.
   let last = 0;
+
   const push = (
     type: string,
     time: number,
     data: Record<string, JsonValue>,
-    extra?: { surfaceOp?: "append"; sourceEventSeqs?: number[] },
+    extra?: { surfaceOp?: "append"; sourceEventSeqs?: Array<number> },
   ): number => {
     last = Math.max(last, time);
     events.push({ type, seq: base.seq + events.length, time: last, data, ...extra });
+
     // The row's own seq, absolute in the log, which is what a later row's `sourceEventSeqs` cites.
     return base.seq + events.length - 1;
   };
+
   folded.turns.forEach((t, i) => {
     const turn = base.turn + i + 1;
     push("turn/start", t.time, { turn });
     t.steps.forEach((s, j) => {
       const step = j + 1;
       push("step/start", s.time, { turn, step });
+
       // The log's first surface event must be a `system/message`: dsh's loader protects that node
       // as the system head, and once any other surface event has landed it refuses a log where a
       // `system/message` follows ("system/message requires a protected first surface head"). dsh's
@@ -752,7 +997,7 @@ export function toSessionEvents(
       // never shares the prompt it ran with, so the head says so; dsh replaces it on the first
       // live turn and this plugin never forwards history's system messages to the CLI. v3 logs
       // (dsh up to 0.1.6) require a plugin source on it, v4 (0.1.7) a system-prompt one.
-      if (turn === 1 && step === 1)
+      if (turn === 1 && step === 1) {
         push(
           "system/message",
           t.time,
@@ -771,13 +1016,17 @@ export function toSessionEvents(
           },
           { surfaceOp: "append" },
         );
-      if (step === 1)
+      }
+
+      if (step === 1) {
         push(
           "user/message",
           t.time,
           { id: t.id, role: "user", content: t.content, source: { kind: "user" } },
           { surfaceOp: "append" },
         );
+      }
+
       push(
         "assistant/message",
         s.time,
@@ -798,6 +1047,7 @@ export function toSessionEvents(
         },
         { surfaceOp: "append" },
       );
+
       for (const c of s.calls) {
         const callSeq = push("tool/call", s.time, {
           turn,
@@ -806,6 +1056,7 @@ export function toSessionEvents(
           name: c.name,
           arguments: JSON.stringify(c.arguments),
         });
+
         // A call with no result in the file never returned. The session was killed mid-tool, or
         // the transcript was cut. dsh needs a result for every call, but seeding a settled empty
         // one erased the single fact worth keeping: that this is where the session died.
@@ -814,10 +1065,12 @@ export function toSessionEvents(
           isError: true,
           time: s.time,
         };
+
         // v4 (dsh 0.1.7) stores the result as a tool-role message with the text as plain blocks
         // and refuses the wrapper block; up to v3 it is a user message holding that wrapper. See
         // `toolResultMessage` in rows-probe.ts, which the probe uses for the same choice.
         let message: SeedEvent["data"];
+
         if (logVersion >= 4) {
           message = {
             id: `${c.id}:result`,
@@ -826,14 +1079,21 @@ export function toSessionEvents(
             content: r.content,
             source: { kind: "tool", callId: c.id },
           };
-          if (r.isError) Object.assign(message, { isError: true });
+
+          if (r.isError) {
+            Object.assign(message, { isError: true });
+          }
         } else {
           const block: ToolResultSeed = {
             type: "tool-result",
             toolCallId: c.id,
             content: r.content,
           };
-          if (r.isError) block.isError = true;
+
+          if (r.isError) {
+            block.isError = true;
+          }
+
           message = {
             id: `${c.id}:result`,
             role: "user",
@@ -841,6 +1101,7 @@ export function toSessionEvents(
             source: { kind: "tool", callId: c.id },
           };
         }
+
         push(
           "tool/result",
           r.time,
@@ -848,16 +1109,20 @@ export function toSessionEvents(
           { surfaceOp: "append", sourceEventSeqs: [callSeq] },
         );
       }
+
       push("step/end", s.time, { turn, step });
     });
     push("turn/end", t.steps.at(-1)?.time ?? t.time, { turn, reason: { kind: "completed" } });
   });
-  if (folded.title && base.turn === 0)
+
+  if (folded.title && base.turn === 0) {
     push("session/title", folded.createdAt, {
       title: titleFrom(folded.title),
       messageSeqs: [],
       source: { kind: "user" },
     });
+  }
+
   return events;
 }
 
@@ -888,18 +1153,24 @@ export function settingsEvents(
   pick: { provider: string | undefined; model: string | undefined; permissionMode?: string },
   time: number,
   seq: number,
-): SeedEvent[] {
-  const out: SeedEvent[] = [];
+): Array<SeedEvent> {
+  const out: Array<SeedEvent> = [];
+
   const push = (type: string, data: Record<string, JsonValue>) =>
     out.push({ type, seq: seq + out.length, time, data });
-  if (pick.provider !== undefined && pick.model !== undefined)
+
+  if (pick.provider !== undefined && pick.model !== undefined) {
     push("model/selection", { provider: pick.provider, model: pick.model });
+  }
+
   const access = PRESET_FOR_MODE.get(pick.permissionMode ?? "");
+
   if (access !== undefined) {
     push("permission/preset", { preset: access.preset });
     push("sandbox/mode", { mode: access.preset });
     push("approval/policy", { policy: access.approval });
   }
+
   return out;
 }
 
@@ -907,7 +1178,7 @@ export function settingsEvents(
  *  bytes of the stretch are settled. A prompt still being answered is not settled: `consumed` stops
  *  at its row, so the next read starts there and reports the whole turn once. */
 export interface ForeignTurns {
-  turns: FoldedTurn[];
+  turns: Array<FoldedTurn>;
   consumed: number;
   /** Bytes through the end of the first completed turn, or `consumed` when there is none. A live
    *  stream owns one exchange: settling it moves the baseline by this much rather than by
@@ -929,8 +1200,10 @@ export interface ForeignTurns {
 const isPromptContent = (content: unknown): boolean =>
   typeof content === "string" ||
   (Array.isArray(content) && !content.some((b) => isRec(b) && b.type === "tool_result"));
+
 /** Stop reasons that end a Claude turn; `tool_use` does not. The assistant resumes after it. */
 const TERMINAL_STOPS = new Set(["end_turn", "stop_sequence", "max_tokens"]);
+
 /** Whether an assistant row closes the turn it belongs to. The CLI splits one turn into several
  *  assistant rows (thinking, text, then a tool call), and stamps every row before a tool with
  *  `stop_reason: "tool_use"`; only the last row of a finished turn carries a terminal stop reason.
@@ -939,8 +1212,13 @@ const TERMINAL_STOPS = new Set(["end_turn", "stop_sequence", "max_tokens"]);
  *  falls back to "has text, no tool call", the shape used before the field was read. */
 const endsTurn = (message: Rec | undefined): boolean => {
   const stop = typeof message?.stop_reason === "string" ? message.stop_reason : undefined;
-  if (stop !== undefined) return TERMINAL_STOPS.has(stop);
+
+  if (stop !== undefined) {
+    return TERMINAL_STOPS.has(stop);
+  }
+
   const content = message?.content;
+
   return (
     Array.isArray(content) &&
     content.some((b) => isRec(b) && b.type === "text") &&
@@ -962,19 +1240,21 @@ const SDK_STAMPS = new Set(["sdk-cli", "sdk-ts", "sdk-py"]);
  * rest is mirrored whole, not cut at the sentence.
  */
 export function foreignTurns(text: string, own: string): ForeignTurns {
-  const lines: string[] = [];
+  const lines: Array<string> = [];
   const stamps = new Set<string>();
   let offset = 0;
   let pending: { at: number; line: number } | undefined;
   let lastPromptAt: number | undefined;
   let firstEnd: number | undefined;
   const delivered = deliveredAsPrompt(text);
+
   for (const l of text.split("\n")) {
     const e = parseLine(l);
     // A queued message carries no stamp to judge it by, only its text. Nothing this plugin drives
     // queues anything. dsh sends one prompt per turn over stream-json, and the queue is the
     // terminal's own, so a queue row is a person at a terminal, which is exactly what to mirror.
     const queued = e ? queuedPrompt(e) : undefined;
+
     if (queued !== undefined && !delivered.has(queueKey(queued))) {
       pending = { at: offset, line: lines.length };
       lastPromptAt = offset;
@@ -986,6 +1266,7 @@ export function foreignTurns(text: string, own: string): ForeignTurns {
     ) {
       stamps.add(e.entrypoint);
       const content = isRec(e.message) ? e.message.content : undefined;
+
       if (e.type === "user" && isPromptContent(content) && !isSystemPrompt(e)) {
         pending = { at: offset, line: lines.length };
         lastPromptAt = offset;
@@ -993,18 +1274,23 @@ export function foreignTurns(text: string, own: string): ForeignTurns {
         pending = undefined;
         firstEnd ??= offset + Buffer.byteLength(l) + 1;
       }
+
       lines.push(l);
     }
+
     offset += Buffer.byteLength(l) + 1;
   }
+
   const done = pending ? lines.slice(0, pending.line) : lines;
   const consumed = pending?.at ?? Buffer.byteLength(text);
   // The unfinished turn at the tail, folded up to whatever completed steps it has so far, so a live
   // stream can render it while it grows. foldTranscript drops a trailing prompt with no step, so a
   // just-typed prompt with no reply yet yields nothing here until its first step lands.
   const runningLines = pending ? lines.slice(pending.line) : [];
+
   const running =
     runningLines.length > 0 ? foldTranscript(runningLines.join("\n")).turns[0] : undefined;
+
   return {
     turns: done.length === 0 ? [] : foldTranscript(done.join("\n")).turns,
     consumed,
@@ -1021,9 +1307,18 @@ export function foreignTurns(text: string, own: string): ForeignTurns {
 /** The text blocks of a dsh assistant/message's content, joined; other block kinds are skipped.
  *  A boundary decode so callers outside this file need no `typeof` on event data. */
 export function assistantMessageText(content: unknown): string {
-  if (!Array.isArray(content)) return "";
-  const out: string[] = [];
-  for (const b of content) if (isRec(b) && typeof b.text === "string") out.push(b.text);
+  if (!Array.isArray(content)) {
+    return "";
+  }
+
+  const out: Array<string> = [];
+
+  for (const b of content) {
+    if (isRec(b) && typeof b.text === "string") {
+      out.push(b.text);
+    }
+  }
+
   return out.join("\n");
 }
 
@@ -1035,13 +1330,18 @@ export function assistantMessageText(content: unknown): string {
  *  tool-heavy reply can open with the same rendered line as another, so the reply alone is not enough
  *  to tell two exchanges apart. `shown` must carry the text of recent user *and* assistant messages. */
 export function alreadyShown(turn: FoldedTurn, shown: string, limit: number): boolean {
-  if (shown === "") return false;
+  if (shown === "") {
+    return false;
+  }
+
   const prompt = turn.content
     .map((b) => b.text)
     .join(" ")
     .trim()
     .slice(0, 60);
+
   const reply = mirrorReply(turn, limit).trim().slice(0, 60);
+
   return prompt !== "" && reply !== "" && shown.includes(prompt) && shown.includes(reply);
 }
 
@@ -1053,29 +1353,41 @@ const MIRROR_REPLY_BYTES = 48 * 1024;
  *  turn, text as it is. Thinking stays out, as it does live. Results are cut at `limit` bytes. */
 export function mirrorReply(turn: FoldedTurn, limit: number): string {
   const md = mirrorReplyBlocks(turn, limit).join("\n\n") || serverText("noReply");
-  if (Buffer.byteLength(md) <= MIRROR_REPLY_BYTES) return md;
+
+  if (Buffer.byteLength(md) <= MIRROR_REPLY_BYTES) {
+    return md;
+  }
+
   return `${truncateBytes(md, MIRROR_REPLY_BYTES)}\n\n${serverText("mirrorCut")}`;
 }
 
 /** The reply as one markdown chunk per rendered block, a text block or a tool call with its
  *  result, in order. Live streaming yields the chunks a running turn has gained since the last
  *  render, so a long turn fills into one dsh turn step by step instead of landing all at once. */
-export function mirrorReplyBlocks(turn: FoldedTurn, limit: number): string[] {
-  const parts: string[] = [];
+export function mirrorReplyBlocks(turn: FoldedTurn, limit: number): Array<string> {
+  const parts: Array<string> = [];
+
   for (const step of turn.steps) {
     for (const block of step.content) {
       if (block.type === "text") {
-        if (block.text.trim()) parts.push(block.text.trim());
+        if (block.text.trim()) {
+          parts.push(block.text.trim());
+        }
       } else if (block.type === "tool-call") {
         const name = toolNameOf(block.name);
         const result = step.results.get(block.id);
         let filePath = "";
+
         try {
           const args: unknown = JSON.parse(block.arguments);
-          if (isRec(args) && typeof args.file_path === "string") filePath = args.file_path;
+
+          if (isRec(args) && typeof args.file_path === "string") {
+            filePath = args.file_path;
+          }
         } catch {
           // arguments that are not JSON have no path to read
         }
+
         // The call is one block and its output is the next. The CLI writes the call row when it makes
         // the call and result row only when the tool returns. A median of 1.5s apart on this box
         // and minutes for a slow command, so pairing them into a block left the tab blank for
@@ -1083,7 +1395,8 @@ export function mirrorReplyBlocks(turn: FoldedTurn, limit: number): string[] {
         // the live render append-only: a block that has been shown is never rewritten, only followed
         // by its output when that lands. Joined for a settled turn, the rendered text is unchanged.
         parts.push(formatToolCall(name, block.arguments));
-        if (result)
+
+        if (result) {
           parts.push(
             formatToolResult(
               name,
@@ -1092,9 +1405,11 @@ export function mirrorReplyBlocks(turn: FoldedTurn, limit: number): string[] {
               result.isError,
             ),
           );
+        }
       }
     }
   }
+
   return parts;
 }
 
@@ -1103,16 +1418,18 @@ export function mirrorReplyBlocks(turn: FoldedTurn, limit: number): string[] {
  * reply rendered by the same blocks the terminal mirror draws (text, tool calls, results).
  */
 export function toMarkdown(folded: FoldedTranscript, limit = 4000): string {
-  const lines: string[] = [
+  const lines: Array<string> = [
     `# ${folded.title ?? "Claude Code session"}`,
     "",
     `_${new Date(folded.createdAt).toISOString()}_`,
   ];
+
   for (const turn of folded.turns) {
     const userText = turn.content
       .map((b) => b.text)
       .join("\n")
       .trim();
+
     lines.push(
       "",
       "## You",
@@ -1125,6 +1442,7 @@ export function toMarkdown(folded: FoldedTranscript, limit = 4000): string {
       mirrorReplyBlocks(turn, limit).join("\n\n"),
     );
   }
+
   return `${lines.join("\n")}\n`;
 }
 
@@ -1142,9 +1460,17 @@ export async function readTranscript(
   path: string,
 ): Promise<FoldedTranscript | undefined> {
   const file = await readAt(box, path);
-  if (file === null) return undefined;
+
+  if (file === null) {
+    return undefined;
+  }
+
   const folded = foldTranscript(file.text);
-  if (folded.agents.size === 0) return folded;
+
+  if (folded.agents.size === 0) {
+    return folded;
+  }
+
   const dir = subagentsDir(path);
   const texts = new Map<string, string>();
   await Promise.all(
@@ -1152,10 +1478,14 @@ export async function readTranscript(
       // A subagent file that is not there is normal: the directory is a 2.1 addition, and a run the
       // CLI never finished writing has none. The Task call resumes without its text either way.
       const text = await readAt(box, join(dir, `agent-${agentId}.jsonl`)).catch(() => null);
-      if (text !== null) texts.set(callId, text.text);
+
+      if (text !== null) {
+        texts.set(callId, text.text);
+      }
     }),
   );
   attachSubagents(folded, texts);
+
   return folded;
 }
 
@@ -1167,14 +1497,19 @@ export function forkTranscriptText(
   toId: string,
   keep: number,
 ): string {
-  const out: string[] = [];
+  const out: Array<string> = [];
   let prompts = 0;
+
   for (const line of stripBom(text).split("\n")) {
-    if (!line) continue;
+    if (!line) {
+      continue;
+    }
+
     if (keep > 0) {
       const entry = parseLine(line);
       const message = isRec(entry?.message) ? entry.message : undefined;
       const content = message?.content;
+
       const human =
         entry?.type === "user" &&
         entry.isSidechain !== true &&
@@ -1184,9 +1519,14 @@ export function forkTranscriptText(
         !isSystemPrompt(entry) &&
         (typeof content === "string" ||
           (Array.isArray(content) && !content.some((b) => isRec(b) && b.type === "tool_result")));
-      if (human && ++prompts > keep) break;
+
+      if (human && ++prompts > keep) {
+        break;
+      }
     }
+
     out.push(line);
   }
+
   return `${out.join("\n").replaceAll(fromId, toId)}\n`;
 }

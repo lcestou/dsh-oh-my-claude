@@ -23,9 +23,19 @@ export function ReportBlock({ sessionId, provider }: Props) {
   useEffect(() => {
     let live = true;
     const q = new URLSearchParams();
-    if (sessionId) q.set("session", sessionId);
-    if (provider) q.set("provider", provider);
-    if (host) q.set("host", "1");
+
+    if (sessionId) {
+      q.set("session", sessionId);
+    }
+
+    if (provider) {
+      q.set("provider", provider);
+    }
+
+    if (host) {
+      q.set("host", "1");
+    }
+
     fetch(`${ROUTE}/report?${q}`)
       .then((r) => readJson<{ text: string; issues: string }>(r))
       .then((b) => {
@@ -35,12 +45,18 @@ export function ReportBlock({ sessionId, provider }: Props) {
           setError("");
         }
       })
-      .catch((e) => {
-        if (live) setError(e instanceof Error ? e.message : String(e));
+      .catch((error_) => {
+        if (live) {
+          setError(error_ instanceof Error ? error_.message : String(error_));
+        }
       });
+
     return () => {
       live = false;
-      if (timerRef.current !== null) clearTimeout(timerRef.current);
+
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+      }
     };
   }, [sessionId, provider, host]);
 

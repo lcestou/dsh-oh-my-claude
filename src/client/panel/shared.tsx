@@ -31,52 +31,73 @@ export function useFitAbove(
   const [maxHeight, setMaxHeight] = useState(cap);
   useLayoutEffect(() => {
     const el = ref.current;
-    if (el === null) return;
+
+    if (el === null) {
+      return;
+    }
+
     const fit = () => {
       let top = 0;
+
       for (let a = el.parentElement; a; a = a.parentElement) {
         const c = getComputedStyle(a);
-        if (c.overflowX !== "visible" || c.overflowY !== "visible")
+
+        if (c.overflowX !== "visible" || c.overflowY !== "visible") {
           top = Math.max(top, a.getBoundingClientRect().top);
+        }
       }
+
       // A phone's soft keyboard shrinks only the visual viewport and scrolls it down; without this
       // the top of a 640 px panel sat above the visible band while the keyboard was up. Zero on a
       // desktop that is not pinch-zoomed, so the desktop fit is unchanged.
       top = Math.max(top, window.visualViewport?.offsetTop ?? 0);
       // max-height sizes the content box, so the panel's own padding and border come off too.
       const own = getComputedStyle(el);
+
       const frame =
-        parseFloat(own.paddingTop) +
-        parseFloat(own.paddingBottom) +
-        parseFloat(own.borderTopWidth) +
-        parseFloat(own.borderBottomWidth);
+        Number.parseFloat(own.paddingTop) +
+        Number.parseFloat(own.paddingBottom) +
+        Number.parseFloat(own.borderTopWidth) +
+        Number.parseFloat(own.borderBottomWidth);
+
       const room = el.getBoundingClientRect().bottom - top - FIT_MARGIN - frame;
       setMaxHeight(Math.min(cap, Math.max(0, room)));
     };
+
     // The scroll listener is on the capture phase of the window, so it fires for every scroll of
     // every scroller, including the conversation following a streaming turn; each fit reads
     // layout up the whole ancestor chain. One fit per frame is all a screen can show.
     let queued = 0;
+
     const fitSoon = () => {
-      if (queued !== 0) return;
+      if (queued !== 0) {
+        return;
+      }
+
       queued = requestAnimationFrame(() => {
         queued = 0;
         fit();
       });
     };
+
     fit();
     window.addEventListener("resize", fitSoon);
     window.addEventListener("scroll", fitSoon, true);
     window.visualViewport?.addEventListener("resize", fitSoon);
     window.visualViewport?.addEventListener("scroll", fitSoon);
+
     return () => {
-      if (queued !== 0) cancelAnimationFrame(queued);
+      if (queued !== 0) {
+        cancelAnimationFrame(queued);
+      }
+
       window.removeEventListener("resize", fitSoon);
       window.removeEventListener("scroll", fitSoon, true);
       window.visualViewport?.removeEventListener("resize", fitSoon);
       window.visualViewport?.removeEventListener("scroll", fitSoon);
     };
   }, [ref, cap, open]);
+
   return maxHeight;
 }
 
@@ -90,22 +111,40 @@ export function useFitAbove(
 export function useHeightEase(ref: { current: HTMLElement | null }, active: boolean) {
   useEffect(() => {
     const el = ref.current;
-    if (!active || !el) return;
+
+    if (!active || !el) {
+      return;
+    }
+
     let last = el.getBoundingClientRect().height;
     let anim: Animation | undefined;
+
     const ro = new ResizeObserver(() => {
-      if (anim?.playState === "running") return;
+      if (anim?.playState === "running") {
+        return;
+      }
+
       const next = el.getBoundingClientRect().height;
-      if (Math.abs(next - last) < 1) return;
+
+      if (Math.abs(next - last) < 1) {
+        return;
+      }
+
       const from = last;
       last = next;
-      if (easeMs() === 0) return;
+
+      if (easeMs() === 0) {
+        return;
+      }
+
       anim = el.animate([{ height: `${from}px` }, { height: `${next}px` }], {
         duration: easeMs() * 1.5,
         easing: "ease",
       });
     });
+
     ro.observe(el);
+
     return () => {
       ro.disconnect();
       anim?.cancel();
@@ -130,12 +169,14 @@ export const workspaceName = (cwd: string): string =>
  * read answers nothing, so no hint fires on a box that cannot remember it fired.
  */
 let hintsCache: Promise<Record<string, boolean | number> | null> | undefined;
+
 /** Returns the cached `GET /hints` answer, fetched once and kept; resolves null on a failed
  *  read, so a box that cannot remember is treated as no hints rather than an error. */
 export const readHints = (): Promise<Record<string, boolean | number> | null> =>
   (hintsCache ??= fetch(`${ROUTE}/hints`)
     .then((r) => readJson<Record<string, boolean | number>>(r))
     .catch(() => null));
+
 /** Record a numbered hint (a dismissal that names what it dismissed) the way `markHint` records a
  *  flag: the box remembers it, and this tab's cache sees it without a refetch. */
 export const markHintValue = (key: string, value: number): void => {
@@ -146,6 +187,7 @@ export const markHintValue = (key: string, value: number): void => {
     body: JSON.stringify({ [key]: value }),
   }).catch(() => {});
 };
+
 /** Mark a hint seen: POST it to the box, and add it to this tab's cached hints so the next read here
  *  sees it without a refetch. It is added, not swapped in: replacing the cache with the one key
  *  used to drop every other hint the tab had read, so a second mark brought the first one back. A
@@ -168,6 +210,7 @@ export const shortPath = (path: string, cwd: string): string =>
 
 /** The body of an open fold: in behind the Settings rule, the line set under the marker. */
 export const FOLD_BODY: CSSProperties = { ...nested, marginLeft: 3 };
+
 /** A fold's own title: the section label, kept a list item so the browser still draws its marker. */
 export const FOLD_HEAD: CSSProperties = { ...sectionHead, display: "list-item", cursor: "pointer" };
 
@@ -179,6 +222,7 @@ export function useFold(total: number) {
   useLocale();
   const [shown, setShown] = useState(8);
   const allShown = shown >= total;
+
   const button =
     total > 8 ? (
       <button
@@ -189,5 +233,6 @@ export function useFold(total: number) {
         {allShown ? t("panel.fold.showFewer") : t("panel.fold.showAll", { total })}
       </button>
     ) : null;
+
   return { shown, allShown, button };
 }

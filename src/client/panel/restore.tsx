@@ -13,10 +13,9 @@ import {
   ago,
   isOwnedActive,
   matchesQuery,
-  type ClientCtx,
-  type SessionData,
   openHere,
 } from "../shared.js";
+import type { ClientCtx, SessionData } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
 import { SearchField } from "../search-field.js";
 import type { FeatureSwitches } from "../../switches.js";
@@ -40,6 +39,7 @@ function TranscriptRow({
   const label = sessionLabel(s);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
   return (
     <div data-omc-restore-row={s.id}>
       <button
@@ -54,12 +54,15 @@ function TranscriptRow({
         onClick={async () => {
           setBusy(true);
           setError("");
+
           try {
             await openHere(ctx, s, cwd);
             onClose();
-          } catch (e) {
+          } catch (error_) {
             setError(
-              t("panel.restore.failed", { error: e instanceof Error ? e.message : String(e) }),
+              t("panel.restore.failed", {
+                error: error_ instanceof Error ? error_.message : String(error_),
+              }),
             );
           } finally {
             setBusy(false);
@@ -100,16 +103,21 @@ function TranscriptRow({
 export function useFeatureSwitches(cwd: string | undefined): FeatureSwitches | null {
   const [switches, setSwitches] = useState<FeatureSwitches | null>(null);
   useEffect(() => {
-    if (!cwd) return;
+    if (!cwd) {
+      return;
+    }
+
     let live = true;
     fetch(`${ROUTE}/feature-switches?cwd=${encodeURIComponent(cwd)}`)
       .then((r) => readJson<FeatureSwitches>(r))
       .then((b) => live && setSwitches(b))
       .catch(() => {});
+
     return () => {
       live = false;
     };
   }, [cwd]);
+
   return switches;
 }
 
@@ -127,27 +135,36 @@ export const retentionNote = (s: FeatureSwitches | null): string =>
  * tab and the composer button, which reads it to know whether a blank session has anything to
  * restore before the panel is ever opened.
  */
-export function useTranscripts(cwd: string | undefined): SessionData[] | undefined {
+export function useTranscripts(cwd: string | undefined): Array<SessionData> | undefined {
   // `undefined` while the workspace's answer is still on its way, so a caller can tell "not known
   // yet" from "none": the panel used to read the in-flight list as empty and open a blank session
   // on the last tab instead of Restore when the flower was clicked before the answer landed
   // (owner, 2026-11-04). No cwd is a known empty list, nothing is ever read for it.
-  const [transcripts, setTranscripts] = useState<SessionData[] | undefined>(cwd ? undefined : []);
+  const [transcripts, setTranscripts] = useState<Array<SessionData> | undefined>(
+    cwd ? undefined : [],
+  );
+
   useEffect(() => {
     // The list is the workspace's: a switch to another workspace (or to a session with no cwd yet)
     // clears it before the new answer lands, so the Restore tab never shows the last workspace's
     // transcripts under the new one's name (owner, 2026-10-21, on a new session in IC-Saves).
     setTranscripts(cwd ? undefined : []);
-    if (!cwd) return;
+
+    if (!cwd) {
+      return;
+    }
+
     let live = true;
     fetch(`${ROUTE}/sessions?cwd=${encodeURIComponent(cwd)}`)
-      .then((r) => readJson<{ sessions?: SessionData[] }>(r))
+      .then((r) => readJson<{ sessions?: Array<SessionData> }>(r))
       .then((body) => live && setTranscripts(body.sessions ?? []))
       .catch(() => live && setTranscripts([]));
+
     return () => {
       live = false;
     };
   }, [cwd]);
+
   return transcripts;
 }
 
@@ -163,7 +180,11 @@ export function panelOpenTab(args: {
   lastTab: string;
 }): string {
   const { blank, restorable, unknown, lastTab } = args;
-  if (blank && (restorable > 0 || unknown)) return "Restore";
+
+  if (blank && (restorable > 0 || unknown)) {
+    return "Restore";
+  }
+
   return lastTab === "Restore" ? "Memory" : lastTab;
 }
 
@@ -193,12 +214,14 @@ export function SessionRepairsNotice({
   const [seen, setSeen] = useState<number | undefined>(undefined);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ id: string; text: string } | null>(null);
+
   /** The person's click: the route moves the refused log to .bak and seeds the session again
    *  from its transcript; on success the tab opens it the way the Restore tab does, and the
    *  route's sentence shows under the row otherwise. */
   const reseed = async (id: string) => {
     setBusyId(id);
     setRowError(null);
+
     try {
       const seeded = await readJson<{ transcriptId?: string }>(
         await fetch(`${ROUTE}/reseed`, {
@@ -207,30 +230,44 @@ export function SessionRepairsNotice({
           body: JSON.stringify({ id }),
         }),
       );
+
       // The open helper posts the transcript's id to `/open` and adopts the session under its
       // dsh id, as the Restore tab's rows do; the route names the transcript for that.
       await openHere(ctx, { id: seeded.transcriptId ?? id, dsh: { id } }, cwd);
-    } catch (e) {
-      setRowError({ id, text: e instanceof Error ? e.message : String(e) });
+    } catch (error) {
+      setRowError({ id, text: error instanceof Error ? error.message : String(error) });
     } finally {
       setBusyId(null);
     }
   };
+
   useEffect(() => {
     let live = true;
     void readHints().then((h) => {
-      if (!live) return;
+      if (!live) {
+        return;
+      }
+
       const v = h?.sessionRepairsSeen;
       // A flag or nothing reads as never dismissed; only a number names a dismissal.
       setSeen(v === undefined || v === true || v === false ? 0 : v);
     });
+
     return () => {
       live = false;
     };
   }, []);
-  if (!repairs || seen === undefined) return null;
+
+  if (!repairs || seen === undefined) {
+    return null;
+  }
+
   const refused = repairs.unknown + repairs.rolledBack;
-  if (repairs.healed + refused === 0 || repairs.at <= seen) return null;
+
+  if (repairs.healed + refused === 0 || repairs.at <= seen) {
+    return null;
+  }
+
   return (
     // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- a live notice, not a form result, which is what <output> is for
     <div data-omc-session-repairs="" role="status" style={{ padding: "4px 0" }}>
@@ -321,7 +358,10 @@ export function RestoreBody({
   const switches = useFeatureSwitches(cwd);
 
   // Hide when the session already has content or the workspace is unknown.
-  if (!cwd || entry?.blank === false) return null;
+  if (!cwd || entry?.blank === false) {
+    return null;
+  }
+
   const owned = transcripts.filter(isOwnedActive);
   const candidates = transcripts.filter((s) => !isOwnedActive(s));
   const name = workspaceName(cwd);

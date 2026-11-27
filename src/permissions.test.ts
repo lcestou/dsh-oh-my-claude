@@ -1,15 +1,14 @@
 // Offline self-check: bun src/permissions.test.ts. No CLI, no file, no network.
 import assert from "node:assert/strict";
-import {
-  readPermissionRules,
-  setPermissionRule,
-  suggestRule,
-  type PermissionKind,
-} from "./permissions.js";
+import { readPermissionRules, setPermissionRule, suggestRule } from "./permissions.js";
+import type { PermissionKind } from "./permissions.js";
 
 /** The text of a write that was meant to succeed; a failure fails the test where it happened. */
 const written = (out: ReturnType<typeof setPermissionRule>): string => {
-  if (out.error !== undefined) assert.fail(out.error);
+  if (out.error !== undefined) {
+    assert.fail(out.error);
+  }
+
   return out.text;
 };
 
@@ -84,6 +83,7 @@ const written = (out: ReturnType<typeof setPermissionRule>): string => {
     const out = setPermissionRule("{}", "allow", bad, "add");
     assert.ok(out.error !== undefined, `refused: ${JSON.stringify(bad)}`);
   }
+
   assert.equal(
     setPermissionRule("{}", "allow", "Bash", "add").error,
     undefined,
@@ -114,13 +114,16 @@ const written = (out: ReturnType<typeof setPermissionRule>): string => {
     "Bash(ls:*)",
     "remove",
   );
+
   assert.deepEqual(JSON.parse(written(kept)), { permissions: { deny: ["Bash(rm:*)"] } });
 
   const absent = setPermissionRule(`{"model":"opus"}`, "ask", "Bash(ls:*)", "remove");
   assert.deepEqual(JSON.parse(written(absent)), { model: "opus" }, "removing what is not there");
-  const kinds: PermissionKind[] = ["allow", "deny", "ask"];
-  for (const kind of kinds)
+  const kinds: Array<PermissionKind> = ["allow", "deny", "ask"];
+
+  for (const kind of kinds) {
     assert.equal(setPermissionRule("{}", kind, "Bash", "remove").error, undefined);
+  }
 }
 
 console.log("permissions ok");

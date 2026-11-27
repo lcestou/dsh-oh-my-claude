@@ -7,11 +7,12 @@ import { runInNewContext } from "node:vm";
 import { PUSH_SW_SOURCE } from "./push-sw.js";
 
 /** Load the worker against a fake `self` holding `tabs`; returns its handlers and what it did. */
-function load(tabs: Array<{ focused: boolean; posted: unknown[] }>) {
+function load(tabs: Array<{ focused: boolean; posted: Array<unknown> }>) {
   const handlers: Record<string, (e: unknown) => void> = {};
   const shown: Array<[string, Record<string, unknown>]> = [];
-  const opened: string[] = [];
-  const waits: Promise<unknown>[] = [];
+  const opened: Array<string> = [];
+  const waits: Array<Promise<unknown>> = [];
+
   const self = {
     location: { origin: "https://dsh.example" },
     addEventListener: (name: string, fn: (e: unknown) => void) => (handlers[name] = fn),
@@ -29,19 +30,24 @@ function load(tabs: Array<{ focused: boolean; posted: unknown[] }>) {
       openWindow: async (u: string) => opened.push(u),
     },
   };
+
   runInNewContext(PUSH_SW_SOURCE, { self, URL });
+
   const fire = async (name: string, e: Record<string, unknown>) => {
     handlers[name]?.({ ...e, waitUntil: (p: Promise<unknown>) => waits.push(p) });
     await Promise.all(waits);
   };
+
   return { fire, shown, opened };
 }
 
 {
   const sw = load([]);
+
   const data = {
     json: () => ({ title: "Fix the build", body: "Claude finished its turn.", session: "s1" }),
   };
+
   await sw.fire("push", { data });
   assert.equal(sw.shown.length, 1, "one push, one notice");
   assert.equal(sw.shown[0]?.[0], "Fix the build");
@@ -56,7 +62,7 @@ function load(tabs: Array<{ focused: boolean; posted: unknown[] }>) {
 }
 
 {
-  const tab = { focused: false, posted: [] as unknown[] };
+  const tab = { focused: false, posted: [] as Array<unknown> };
   const sw = load([tab]);
   const notification = { data: { session: "s2" }, close: () => undefined };
   await sw.fire("notificationclick", { notification });
@@ -69,4 +75,5 @@ function load(tabs: Array<{ focused: boolean; posted: unknown[] }>) {
   );
   assert.deepEqual(sw.opened, [], "rather than opening a second tab");
 }
+
 console.log("push-sw ok");

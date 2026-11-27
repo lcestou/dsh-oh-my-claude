@@ -3,18 +3,26 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { t, activeLocale } from "./i18n.js";
 
 export const ROUTE = "/dsh-oh-my-claude";
+
 /** "m*****@gmail.com": first letter, stars, then the domain. Every surface that shows the login
  *  masks it. The panel and the diagnostics rows get screen-shared. */
 export const maskEmail = (email: string): string => {
   const at = email.indexOf("@");
-  if (at < 1) return email;
+
+  if (at < 1) {
+    return email;
+  }
+
   return `${email[0]}${"*".repeat(Math.max(3, at - 1))}${email.slice(at)}`;
 };
+
 /** A hints-store value as a number, or undefined for a flag or a missing key. */
 export const numberOr = (v: boolean | number | undefined): number | undefined =>
   typeof v === "number" ? v : undefined;
+
 /** Format a turn's cost in USD with two decimals. */
 export const fmtCost = (usd: number): string => `$${usd.toFixed(2)}`;
+
 /** A duration the way the CLI's own status line writes one: `34s`, `1m 35s`, `1h 40m 42s`. Past an
  *  hour every part is written, as the CLI does; below it an exact minute stays `1m` (the CLI
  *  writes `1m 0s`), kept for the cost dialog that has read that way since 1.0. No day part. */
@@ -23,11 +31,22 @@ export const fmtDuration = (ms: number): string => {
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
   const sec = s % 60;
-  if (h > 0) return `${h}h ${m}m ${sec}s`;
-  if (m === 0) return `${sec}s`;
-  if (sec === 0) return `${m}m`;
+
+  if (h > 0) {
+    return `${h}h ${m}m ${sec}s`;
+  }
+
+  if (m === 0) {
+    return `${sec}s`;
+  }
+
+  if (sec === 0) {
+    return `${m}m`;
+  }
+
   return `${m}m ${sec}s`;
 };
+
 /** Cache share = cacheRead / (input + cacheRead + cacheWrite), clamped to [0,1]. */
 export const cacheShare = ({
   input,
@@ -39,7 +58,11 @@ export const cacheShare = ({
   cacheWrite: number;
 }): number => {
   const denom = input + cacheRead + cacheWrite;
-  if (denom === 0) return 0;
+
+  if (denom === 0) {
+    return 0;
+  }
+
   return Math.max(0, Math.min(1, cacheRead / denom));
 };
 
@@ -47,8 +70,15 @@ export const cacheShare = ({
  *  reading future times as now. */
 export const ago = (ms: number): string => {
   const s = Math.max(0, (Date.now() - ms) / 1000);
-  if (s < 3600) return t("time.minAgo", { n: Math.max(1, Math.round(s / 60)) });
-  if (s < 86400) return t("time.hAgo", { n: Math.round(s / 3600) });
+
+  if (s < 3600) {
+    return t("time.minAgo", { n: Math.max(1, Math.round(s / 60)) });
+  }
+
+  if (s < 86_400) {
+    return t("time.hAgo", { n: Math.round(s / 3600) });
+  }
+
   return new Date(ms).toLocaleDateString(activeLocale());
 };
 
@@ -61,28 +91,46 @@ const KEYWORD_PAIRS = new Map<string, string>([
   ["(", ")"],
   ["'", "'"],
 ]);
+
 /** A letter, digit or underscore. A closing quote followed by one is an apostrophe inside a
  *  word, so the quoted span stays open. */
 const wordy = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}_]/u.test(ch);
+
 /** The CLI's keyword matcher (`SOt`) for a composer keyword such as `ultracode`: no match when the
  *  text is a slash command, inside quotes, backticks, brackets or a tag, glued to a path or flag
  *  character, or followed by a dotted member. A keyword typed as an example is not a trigger, so
  *  it is not painted. */
-export const keywordMatches = (text: string, word: string): { start: number; end: number }[] => {
-  const out: { start: number; end: number }[] = [];
-  if (!new RegExp(word, "i").test(text) || text.startsWith("/")) return out;
-  const spans: { start: number; end: number }[] = [];
+export const keywordMatches = (
+  text: string,
+  word: string,
+): Array<{ start: number; end: number }> => {
+  const out: Array<{ start: number; end: number }> = [];
+
+  if (!new RegExp(word, "i").test(text) || text.startsWith("/")) {
+    return out;
+  }
+
+  const spans: Array<{ start: number; end: number }> = [];
   let open: string | null = null;
   let at = 0;
+
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]!;
+
     if (open) {
       if (open === "[" && ch === "[") {
         at = i;
         continue;
       }
-      if (ch !== KEYWORD_PAIRS.get(open)) continue;
-      if (open === "'" && wordy(text[i + 1])) continue;
+
+      if (ch !== KEYWORD_PAIRS.get(open)) {
+        continue;
+      }
+
+      if (open === "'" && wordy(text[i + 1])) {
+        continue;
+      }
+
       spans.push({ start: at, end: i + 1 });
       open = null;
     } else if (
@@ -94,17 +142,33 @@ export const keywordMatches = (text: string, word: string): { start: number; end
       at = i;
     }
   }
+
   for (const m of text.matchAll(new RegExp(`\\b${word}\\b`, "gi"))) {
     const start = m.index;
     const end = start + m[0].length;
-    if (spans.some((sp) => start >= sp.start && start < sp.end)) continue;
+
+    if (spans.some((sp) => start >= sp.start && start < sp.end)) {
+      continue;
+    }
+
     const before = text[start - 1];
     const after = text[end];
-    if (before === "/" || before === "\\" || before === "-") continue;
-    if (after === "/" || after === "\\" || after === "-" || after === "?") continue;
-    if (after === "." && wordy(text[end + 1])) continue;
+
+    if (before === "/" || before === "\\" || before === "-") {
+      continue;
+    }
+
+    if (after === "/" || after === "\\" || after === "-" || after === "?") {
+      continue;
+    }
+
+    if (after === "." && wordy(text[end + 1])) {
+      continue;
+    }
+
     out.push({ start, end });
   }
+
   return out;
 };
 
@@ -132,18 +196,22 @@ export const T = {
 
 /** Claude's brand orange (the CLI theme table): the one accent this plugin adds. */
 export const CLAUDE_ORANGE = "#D97757";
+
 /** The same pair as the page paints them: the accent custom properties applyTheme writes, with
  *  today's values as the fallback, for inline styles that must follow the Claude look switch. */
 export const ACCENT = "var(--omc-accent, #D97757)";
 export const SHIMMER = "var(--omc-shimmer, #F59575)";
+
 /** The accent as the panel and its trigger see it: `--omc-accent-panel` where ensurePanelStyle
  *  sets it (the panel group switch can point that at dsh's brand colour), the page accent elsewhere. */
 export const PANEL_ACCENT = "var(--omc-accent-panel, var(--omc-accent, #D97757))";
+
 /** Claude's own spinner glyph, used as the mark beside anything Claude-owned in dsh's chrome. */
 export const CLAUDE_MARK = "✻";
 
 export const h3: CSSProperties = { margin: 0, fontSize: 15, fontWeight: 600, color: T.text };
 export const meta: CSSProperties = { color: T.faint, fontSize: 12, whiteSpace: "nowrap" };
+
 /** One voice for a failure inside a tab: small, the error colour, wrapping, never a raw red line. */
 export const errText: CSSProperties = {
   color: T.err,
@@ -152,8 +220,10 @@ export const errText: CSSProperties = {
   whiteSpace: "normal",
   wordBreak: "break-word",
 };
+
 /** One voice for "Loading…" and empty states: the meta colour, flush with the panel's inset. */
 export const stateText: CSSProperties = { ...meta, padding: "2px 0", whiteSpace: "normal" };
+
 /**
  * The panel's one horizontal inset, applied once by the tab body and the tab strip: every row,
  * card, search field and heading lines up on it instead of carrying its own side padding. 10 px
@@ -161,6 +231,7 @@ export const stateText: CSSProperties = { ...meta, padding: "2px 0", whiteSpace:
  * the plugin panel stands in that menu's place.
  */
 export const PANEL_INSET = 10;
+
 /** A section label inside a tab: dsh's menu group label (12 px, weight 500, the secondary label
  *  colour, 6 px above), so every tab titles its sections the same way. */
 export const sectionHead: CSSProperties = {
@@ -173,6 +244,7 @@ export const sectionHead: CSSProperties = {
   color: T.muted,
   whiteSpace: "normal",
 };
+
 /** What belongs to the row or fold above it, set in behind a thin rule: the Settings look for the
  *  update options, shared so a nested group reads the same wherever it opens. */
 export const nested: CSSProperties = { paddingLeft: 12, borderLeft: `1px solid ${T.border}` };
@@ -180,6 +252,7 @@ export const nested: CSSProperties = { paddingLeft: 12, borderLeft: `1px solid $
 /** Markers on the panel and the dock, so a check or a style can find them without a class name. */
 export const PANEL_ATTR = "data-omc-panel";
 export const DOCK_ATTR = "data-omc-dock";
+
 /**
  * The panel's own surface: dsh's layer colour warmed with a few percent of Claude's orange, so the
  * panel reads as Claude's and stands off the dark chrome instead of vanishing into it. The edge
@@ -192,6 +265,7 @@ export const panelSurface: CSSProperties = {
   border: `1px solid color-mix(in srgb, ${PANEL_ACCENT} 34%, ${T.border})`,
   boxShadow: `0 10px 28px rgba(0,0,0,.26), 0 0 0 1px color-mix(in srgb, ${PANEL_ACCENT} 10%, transparent)`,
 };
+
 /** A tab in the strip under the body: text only, the accent as a 2px rule on the open one. */
 export const tabStyle = (selected: boolean): CSSProperties => ({
   padding: "6px 10px 5px",
@@ -212,6 +286,7 @@ export const tabStyle = (selected: boolean): CSSProperties => ({
 });
 
 const PANEL_STYLE_ID = "dsh-oh-my-claude-panel";
+
 /**
  * The one stylesheet for everything interactive the plugin draws in the panel and the aside dock.
  * Inline styles cannot say `:hover`, `:focus-visible` or `:active`, and a hover written as React
@@ -269,8 +344,12 @@ export function ensurePanelStyle(): void {
     `button[aria-label="Oh My Claude"]:focus-visible { outline: 2px solid color-mix(in srgb, var(--omc-accent) 70%, transparent); outline-offset: 2px; }`,
     `@media (prefers-reduced-motion: reduce) { ${inScope(controls)} { transition: none; } }`,
   ].join("\n");
-  if (!existing) document.head.appendChild(el);
+
+  if (!existing) {
+    document.head.append(el);
+  }
 }
+
 export const row: CSSProperties = {
   display: "flex",
   gap: 12,
@@ -279,6 +358,7 @@ export const row: CSSProperties = {
   padding: "12px 0",
   borderTop: `1px solid ${T.border}`,
 };
+
 /** dsh's own settings-card buttons (ui-settings-plugins, 2026-09-13): the secondary is a hairline
  *  box in the secondary label colour; the primary is the primary label colour filled, text in the
  *  layer colour. Under the pointer the background tints, the way dsh's own list rows do; the border
@@ -298,6 +378,7 @@ export const btn: CSSProperties = {
   lineHeight: 1.5,
   whiteSpace: "nowrap",
 };
+
 /** A list row that happens to be a button (a transcript, a memory file, a prompt to rewind to, a
  *  changed file): dsh's own rows draw no box at rest and tint under the pointer, so this one keeps
  *  `btn`'s metrics with a transparent border. Transparent, not none, so the row does not move when
@@ -312,12 +393,14 @@ export const rowBtn: CSSProperties = {
   textAlign: "left",
   padding: "5px 10px",
 };
+
 export const btnPrimary: CSSProperties = {
   ...btn,
   background: "var(--dsw-alias-label-primary, #eee)",
   color: "var(--dsw-alias-bg-layer-3, #111)",
   border: "1px solid transparent",
 };
+
 /** The states those two need, plus the fields', as one stylesheet rule set under `scope`. */
 export const controlStatesCss = (scope: string): string =>
   `${scope} button:not([role="switch"]):not([aria-expanded]):disabled{opacity:.4;cursor:default}` +
@@ -325,6 +408,7 @@ export const controlStatesCss = (scope: string): string =>
   `${scope} button:not([role="switch"]):focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:1px}` +
   `${scope} input:not([type="checkbox"]):not([type="file"]):focus-visible,${scope} select:focus-visible,${scope} textarea:focus-visible{border-color:var(--dsw-alias-brand-primary,#3b82f6);outline:none}` +
   `${scope} input:disabled,${scope} select:disabled{color:var(--dsw-alias-label-tertiary,rgba(128,128,128,.7));cursor:default}`;
+
 /** Shared capsule styling for a labelled chip: a small rounded pill whose border and text take
  *  `color`, reused for the status stamps the plugin puts on rows. */
 export const pill = (color: string): CSSProperties => ({
@@ -342,6 +426,7 @@ export const pill = (color: string): CSSProperties => ({
   // and squashing it hides them. The text beside it gives way instead.
   flex: "0 0 auto",
 });
+
 /** dsh's settings field (ui-settings-plugins `input`, ui-settings-models `selectInput`): a hairline
  *  box on the layer colour, 32px tall, the brand colour on focus, and a drawn chevron on a select. */
 export const inputStyle: CSSProperties = {
@@ -359,6 +444,7 @@ export const inputStyle: CSSProperties = {
   minWidth: 0,
   flex: 1,
 };
+
 export const select: CSSProperties = {
   ...inputStyle,
   flex: "0 1 auto",
@@ -371,6 +457,7 @@ export const select: CSSProperties = {
   backgroundRepeat: "no-repeat",
   backgroundSize: "12px 12px",
 };
+
 export const code: CSSProperties = {
   width: "100%",
   boxSizing: "border-box",
@@ -385,6 +472,7 @@ export const code: CSSProperties = {
   tabSize: 2,
   whiteSpace: "pre",
 };
+
 /** A word of code inside a sentence: sits on the text line, no block padding or full width. */
 export const codeInline: CSSProperties = {
   fontFamily: T.mono,
@@ -400,7 +488,11 @@ export const codeInline: CSSProperties = {
 export const readJson = async <T>(r: Response): Promise<T> => {
   // SAFETY: the body comes from this plugin's own routes; the caller names the route's reply shape
   const body = (await r.json().catch(() => ({}))) as T & { error?: string };
-  if (!r.ok) throw new Error(body.error ?? `HTTP ${r.status}`);
+
+  if (!r.ok) {
+    throw new Error(body.error ?? `HTTP ${r.status}`);
+  }
+
   return body;
 };
 
@@ -426,8 +518,13 @@ export const matchesQuery = (
   query: string,
 ): boolean => {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return true;
+
+  if (words.length === 0) {
+    return true;
+  }
+
   const hay = `${s.title ?? ""} ${s.id} ${s.cwd ?? ""}`.toLowerCase();
+
   return words.every((w) => hay.includes(w));
 };
 
@@ -454,13 +551,17 @@ async function openHere(
       body: JSON.stringify({ cwd, id: s.id }),
     }),
   );
+
   // A session dsh owns but has not loaded (persisted, then a restart) is as unknown to the store as
   // a raw transcript the route just seeded: `open` on either is a no-op until the store lists it.
   // Pull dsh's session list again rather than `sessions.create`: since dsh 0.2.1 create adopts a
   // named session only while its log has no turn, so for a transcript it minted a new blank
   // session under another id and the store never learned the one the route wrote.
   if (s.dsh?.archived || !existed) {
-    if (!s.dsh?.archived) await ctx.sessions.refresh();
+    if (!s.dsh?.archived) {
+      await ctx.sessions.refresh();
+    }
+
     // Unarchiving/importing lands server-side; the client's session store learns of the session
     // through its own subscription a beat later. Opening an id the store does not know yet is a
     // no-op. The restored session would never come to the foreground on its own, so
@@ -469,15 +570,22 @@ async function openHere(
     // whose session that list still calls archived, which undid the open about half the time.
     const archived = () =>
       ctx.workspaces.list.getSnapshot()?.archivedSessionIds?.includes(id) === true;
-    for (let i = 0; i < 40 && (!known()[id] || archived()); i++)
+
+    for (let i = 0; i < 40 && (!known()[id] || archived()); i++) {
       await new Promise((r) => setTimeout(r, 50));
+    }
+
     // Never listed: `open` below would be a no-op and the click would look dead, so throw for the
     // caller's error line instead (every caller shows or logs it). The route answered, so the
     // session may still reach the sidebar after a slow list.
-    if (!known()[id]) throw new Error(t("panel.restore.notListed"));
+    if (!known()[id]) {
+      throw new Error(t("panel.restore.notListed"));
+    }
   }
+
   openSession(ctx, id);
 }
+
 export { openHere };
 
 /**
@@ -488,15 +596,19 @@ export { openHere };
  */
 export function openSession(ctx: ClientCtx, id: string): void {
   const uiWorkspace = ctx.get?.<{ openSession?: (target: string) => void }>("uiWorkspace");
+
   if (uiWorkspace?.openSession) {
     uiWorkspace.openSession(id);
+
     return;
   }
+
   console.warn(`[oh-my-claude] no session navigation on this dsh; cannot open ${id}`);
 }
 
 /** The ring's arc inside its button; `isRingRoot` says why it must be this exact shape. */
 export const RING_ARC = 'button[aria-haspopup="dialog"] > svg > circle + circle[stroke-dasharray]';
+
 /**
  * Put the plan usage inside dsh's context-meter popover, above the "N% of context used" line,
  * and one compact line into the ring's hover tooltip.
@@ -524,15 +636,21 @@ export const isRingRoot = (el: HTMLElement | null) => !!el?.querySelector(`:scop
  */
 export const claudeMount = (provider: string | undefined): string | undefined =>
   provider?.startsWith("claude-code") === true ? provider : undefined;
+
 /** Per session, the last mount dsh actually reported (undefined: a known non-Claude session), for
  *  the moments dsh reports nothing. Capped so a long-lived tab does not keep every id it ever saw. */
 const lastMount = new Map<string, string | undefined>();
 const LAST_MOUNT_KEEP = 10_000;
+
 /** Record `mount` as what dsh said about `id`, and return it. */
 const remember = (id: string, mount: string | undefined): string | undefined => {
   lastMount.delete(id);
   lastMount.set(id, mount);
-  if (lastMount.size > LAST_MOUNT_KEEP) lastMount.delete(lastMount.keys().next().value ?? "");
+
+  if (lastMount.size > LAST_MOUNT_KEEP) {
+    lastMount.delete(lastMount.keys().next().value ?? "");
+  }
+
   return mount;
 };
 
@@ -542,22 +660,32 @@ const remember = (id: string, mount: string | undefined): string | undefined => 
 export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined => {
   try {
     const live = ctx.modelDirectories.directoryFor(id).store.getSnapshot().current?.provider;
+
     // A live provider is the answer, Claude or not. Falling through on a non-Claude one used to
     // land on `lastUsed` below, so a session that had run a Claude turn and then switched to
     // another provider kept the Claude control and the ✻ button (owner, 2026-09-23).
-    if (live !== undefined) return remember(id, claudeMount(live));
+    if (live !== undefined) {
+      return remember(id, claudeMount(live));
+    }
   } catch {
     // `directoryFor` needs a scope and a binding, and dsh only holds those for a session this tab
     // has opened. A session running in the sidebar and never clicked throws here, which used to
     // read as "not a Claude session" and left its row painted in dsh's blue until it was opened.
   }
+
   // The cold summary answers for the rest: dsh keeps the last and next model selection in the list
   // projection so a session can be described without being activated. A pending pick outranks the
   // last request for the same reason as above: it is the newer truth, whichever provider it names.
   const sel = ctx.sessions.list.getSnapshot()?.byId[id]?.projectionValues?.modelSelection;
-  if (sel?.next?.provider !== undefined) return remember(id, claudeMount(sel.next.provider));
-  if (sel?.lastUsed?.provider !== undefined)
+
+  if (sel?.next?.provider !== undefined) {
+    return remember(id, claudeMount(sel.next.provider));
+  }
+
+  if (sel?.lastUsed?.provider !== undefined) {
     return remember(id, claudeMount(sel.lastUsed.provider));
+  }
+
   // Nothing to read: after a reconnect dsh reloads the model catalog (the directory's `current` is
   // null while it loads) and resends list rows before their projections (or with the projection's
   // empty initial state, both selections null), so for a moment neither
@@ -585,7 +713,11 @@ export const claudeProviderOf = (ctx: ClientCtx, id: string): string | undefined
  */
 export const hasRunTurn = (ctx: ClientCtx, id: string): boolean => {
   const summary = ctx.sessions.list.getSnapshot()?.byId[id];
-  if (summary === undefined || summary.running === true) return true;
+
+  if (summary === undefined || summary.running === true) {
+    return true;
+  }
+
   return Boolean(summary.projectionValues?.modelSelection?.lastUsed);
 };
 
@@ -596,6 +728,7 @@ export const hasRunTurn = (ctx: ClientCtx, id: string): boolean => {
  */
 export const boxQuery = (ctx: ClientCtx, id: string): string => {
   const provider = claudeProviderOf(ctx, id);
+
   return provider === undefined ? "" : `?provider=${encodeURIComponent(provider)}`;
 };
 
@@ -615,36 +748,49 @@ export const isClaudeSession = (ctx: ClientCtx, id: string): boolean =>
  */
 let gone = false;
 const goneWatchers = new Set<() => void>();
+
 /** Run `fn` once the context this bundle holds is disposed; immediately if it already is. Returns
  *  an unregister: a caller that stops on its own (a turn row dsh unmounted) calls it so the Set
  *  does not keep `fn` and everything it closes over alive until the bundle retires. Module-level
  *  callers that register once can ignore it. */
 export const whenContextGone = (fn: () => void): (() => void) => {
-  if (gone) fn();
-  else goneWatchers.add(fn);
+  if (gone) {
+    fn();
+  } else {
+    goneWatchers.add(fn);
+  }
+
   return () => {
     goneWatchers.delete(fn);
   };
 };
+
 /** Mark this bundle disposed and run the watchers registered through `whenContextGone` once, so
  *  loops bound to the dead context stop reading it. Exported so `apply` can hang it on dsh's own
  *  dispose (`ctx.effect`), which is the signal to trust; the error-based calls below are the net for
  *  a dsh that disposes without running effects. */
 export const retire = (): void => {
   gone = true;
-  for (const fn of goneWatchers) fn();
+
+  for (const fn of goneWatchers) {
+    fn();
+  }
+
   goneWatchers.clear();
 };
+
 /** Undo a retirement at the start of `apply`. dsh can apply this same module again without
  *  reloading it, and a `gone` left over from the last context would keep every loop of the new one
  *  silent: no Claude look on a new session until the tab is refreshed. */
 export const revive = (): void => {
   gone = false;
 };
+
 /** Whether a thrown error's message is dsh saying this bundle's context is disposed, the only error
  *  that retires. */
 const isInactiveContext = (message: string | undefined): boolean =>
   message?.includes("inactive context") === true;
+
 /**
  * Wrap a loop body, whether an interval tick or a registered scan, so the first
  * disposed-context throw retires this bundle instead of reaching the console. Any
@@ -652,23 +798,34 @@ const isInactiveContext = (message: string | undefined): boolean =>
  * loop's edge rather than at each read: guarding one read only moves the flood to the
  * next line. A throw that is not the context dying is rethrown.
  */
-export const guard = <A extends unknown[]>(fn: (...args: A) => void): ((...args: A) => void) => {
+export const guard = <A extends Array<unknown>>(
+  fn: (...args: A) => void,
+): ((...args: A) => void) => {
   return (...args) => {
-    if (gone) return;
+    if (gone) {
+      return;
+    }
+
     try {
       fn(...args);
-    } catch (e) {
-      if (!isInactiveContext(e instanceof Error ? e.message : undefined)) throw e;
+    } catch (error) {
+      if (!isInactiveContext(error instanceof Error ? error.message : undefined)) {
+        throw error;
+      }
+
       retire();
     }
   };
 };
+
 /** The last list snapshot `openSessionId` scanned and what it found there. */
 interface OpenCache {
   snap: unknown;
   id: string | undefined;
 }
+
 let openCache: OpenCache = { snap: undefined, id: undefined };
+
 /**
  * The session the main view is showing. The main view retains its session through the Session
  * Controller, which shows up on the row as `retainedBy.mainView`. Exactly one row carries it, so
@@ -676,29 +833,42 @@ let openCache: OpenCache = { snap: undefined, id: undefined };
  * when the read throws.
  */
 export const openSessionId = (ctx: ClientCtx): string | undefined => {
-  if (gone) return undefined;
+  if (gone) {
+    return undefined;
+  }
+
   try {
     const snap = ctx.sessions.list.getSnapshot();
+
     // The scan walks every session dsh lists, hundreds on a busy box, and a dozen components ask
     // on every render: typing in the composer re-renders them, and on a phone this walk was most
     // of the plugin's cost per keystroke (owner, 2026-11-17: about 35 ms a character at a Pixel
     // 3a's speed). dsh hands out a new snapshot object whenever the list changes, so the answer
     // holds for as long as the object does.
-    if (snap !== undefined && snap === openCache.snap) return openCache.id;
+    if (snap !== undefined && snap === openCache.snap) {
+      return openCache.id;
+    }
+
     let found: string | undefined;
+
     for (const [id, summary] of Object.entries(snap?.byId ?? {})) {
       if ((summary.retainedBy?.mainView ?? 0) > 0) {
         found = id;
         break;
       }
     }
+
     openCache = { snap, id: found };
+
     return found;
-  } catch (e) {
+  } catch (error) {
     // Only a disposed context retires the bundle. Any other throw (a store dsh is rebuilding, say
     // mid language switch) used to retire it too, and every loop went quiet until a refresh: new
     // sessions opened without the Claude look.
-    if (isInactiveContext(e instanceof Error ? e.message : undefined)) retire();
+    if (isInactiveContext(error instanceof Error ? error.message : undefined)) {
+      retire();
+    }
+
     return undefined;
   }
 };
@@ -706,7 +876,11 @@ export const openSessionId = (ctx: ClientCtx): string | undefined => {
 /** The open session's provider when it is one of this plugin's mounts (`claude-code*`), else undefined. */
 export const activeClaudeSession = (ctx: ClientCtx): string | undefined => {
   const id = openSessionId(ctx);
-  if (!id) return undefined;
+
+  if (!id) {
+    return undefined;
+  }
+
   return isClaudeSession(ctx, id) ? id : undefined;
 };
 
@@ -723,50 +897,66 @@ export function useActiveClaude(ctx: ClientCtx, sessionId: string): boolean {
   const subscribe = useCallback(
     (fn: () => void) => {
       const offs: Array<() => void> = [];
+
       try {
         offs.push(ctx.modelDirectories.directoryFor(sessionId).store.subscribe(fn));
       } catch {
         // Unbound in this tab (see claudeProviderOf); the list store below still carries the
         // cold selection, which is all the read can see for such a session anyway.
       }
+
       try {
         const off = ctx.sessions.list.subscribe?.(fn);
-        if (off) offs.push(off);
+
+        if (off) {
+          offs.push(off);
+        }
       } catch {
         // A disposed context: the read side retires the bundle on its own.
       }
+
       return () => {
-        for (const off of offs) off();
+        for (const off of offs) {
+          off();
+        }
       };
     },
     [ctx, sessionId],
   );
+
   return useSyncExternalStore(subscribe, () => activeClaudeSession(ctx) === sessionId);
 }
+
 /** The open Claude session's own provider id (e.g. `claude-code` or `claude-code-prod`), else undefined. */
 export const activeClaudeProvider = (ctx: ClientCtx): string | undefined => {
   const id = openSessionId(ctx);
+
   return id ? claudeProviderOf(ctx, id) : undefined;
 };
 
 /** A single-quoted shell word: `'` inside becomes `'\''`. */
-const shq = (s: string): string => `'${s.replaceAll("'", "'\\''")}'`;
+const shq = (s: string): string => `'${s.replaceAll("'", String.raw`'\''`)}'`;
 
 /** `cd '<cwd>' && claude --resume <id>`, wrapped in `ssh <host> "…"` for a session on an ssh box. */
 export const resumeCommand = (id: string, cwd: string | undefined, host?: string): string => {
   const local = cwd ? `cd ${shq(cwd)} && claude --resume ${id}` : `claude --resume ${id}`;
+
   return host ? `ssh ${host} ${JSON.stringify(local)}` : local;
 };
 
 /** Fetch a file and save it through a temporary anchor; the object URL is revoked after 30 s. */
 export async function saveBlob(url: string, filename: string): Promise<void> {
   const reply = await fetch(url);
-  if (!reply.ok) throw new Error(`${filename}: ${reply.status}`);
+
+  if (!reply.ok) {
+    throw new Error(`${filename}: ${reply.status}`);
+  }
+
   const href = URL.createObjectURL(await reply.blob());
   const a = document.createElement("a");
   a.href = href;
   a.download = filename;
-  document.body.appendChild(a);
+  document.body.append(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(href), 30_000);
@@ -776,6 +966,7 @@ interface RestoreButtonProps {
   sessionId: string;
   ctx: ClientCtx;
 }
+
 export type { RestoreButtonProps };
 
 /** Body of one Oh My Claude tab: plain flow inside the host panel, which owns position and size. */
@@ -789,15 +980,25 @@ export function useDismiss(
   root: { current: HTMLElement | null },
 ) {
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      return;
+    }
+
     const onDown = (e: MouseEvent) => {
-      if (e.target instanceof Node && !root.current?.contains(e.target)) close("pointer");
+      if (e.target instanceof Node && !root.current?.contains(e.target)) {
+        close("pointer");
+      }
     };
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close("key");
+      if (e.key === "Escape") {
+        close("key");
+      }
     };
+
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
+
     return () => {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
@@ -812,8 +1013,10 @@ export function useNarrow(): boolean {
     const mql = window.matchMedia("(max-width: 640px)");
     const onChange = (e: MediaQueryListEvent) => setNarrow(e.matches);
     mql.addEventListener("change", onChange);
+
     return () => mql.removeEventListener("change", onChange);
   }, []);
+
   return narrow;
 }
 
@@ -872,12 +1075,13 @@ type DshSlots = {
         select: (state: {
           draft: string;
           phase?: "plain" | "adjudicating" | "claimed" | "submitting";
-          attachmentIds?: readonly string[];
+          attachmentIds?: ReadonlyArray<string>;
         }) => T,
       ) => T;
     }) => ReactNode,
   ) => () => void;
 };
+
 /** One directory row as dsh's listing reports it (dsh-host-directory-picker `DirectoryEntry`). */
 export interface DirEntry {
   name: string;
@@ -899,8 +1103,8 @@ export interface UiWorkspaceFace {
     path: string;
     home: string;
     /** Root-to-level ancestry, every crumb a jump target. */
-    crumbs: DirEntry[];
-    entries: DirEntry[];
+    crumbs: Array<DirEntry>;
+    entries: Array<DirEntry>;
     truncated?: boolean;
   }>;
   createDirectory: (path: string, name: string) => Promise<string>;
@@ -946,7 +1150,7 @@ export interface ClientCtx {
   /** cordis: run `fn` in a scope of its own while every named service is present, and dispose that
    *  scope when one goes. Optional for the same reason as `effect`. */
   inject?: (
-    names: string[],
+    names: Array<string>,
     fn: (scope: { effect: (fn: () => () => void, label?: string) => void }) => void,
   ) => void;
   slots: DshSlots;
@@ -1006,7 +1210,7 @@ export interface ClientCtx {
     list: {
       getSnapshot: () => {
         items: Array<{ path: string; workspaceId: string }>;
-        archivedSessionIds?: readonly string[];
+        archivedSessionIds?: ReadonlyArray<string>;
       };
       /** dsh's own sidebar reconciles on this; the Boxes card refetches its rows on it. */
       subscribe: (fn: () => void) => () => void;
@@ -1028,12 +1232,12 @@ export interface ClientCtx {
         subscribe: (fn: () => void) => () => void;
         getSnapshot: () => {
           current: { provider: string; model: string; reasoningEffort?: string } | null;
-          groups?: readonly { id: string; models: readonly { id: string }[] }[];
+          groups?: ReadonlyArray<{ id: string; models: ReadonlyArray<{ id: string }> }>;
         };
       };
       // Bind a resumed session to a provider/model (dsh-client-ui-model-selection ModelDirectory).
       load?: () => Promise<{
-        groups: readonly { id: string; models: readonly { id: string }[] }[];
+        groups: ReadonlyArray<{ id: string; models: ReadonlyArray<{ id: string }> }>;
       }>;
       // dsh's answer is a RemoteResult; `ok: false` is a refused selection, not a throw.
       select?: (sel: {
@@ -1046,19 +1250,25 @@ export interface ClientCtx {
 }
 
 /** The three Skills-tab buckets a skill falls into. */
-type SkillGroups<T> = { user: T[]; project: T[]; plugin: T[] };
+type SkillGroups<T> = { user: Array<T>; project: Array<T>; plugin: Array<T> };
 
 /** Split skills into the three Skills-tab sections: `user`, `project`, and everything else (a
  *  `plugin:<name>` scope) under `plugin`. */
 export function groupSkillsByScope<T extends { scope: string }>(
-  rows: readonly T[],
+  rows: ReadonlyArray<T>,
 ): SkillGroups<T> {
   const out: SkillGroups<T> = { user: [], project: [], plugin: [] };
+
   for (const item of rows) {
-    if (item.scope === "user") out.user.push(item);
-    else if (item.scope === "project") out.project.push(item);
-    else out.plugin.push(item);
+    if (item.scope === "user") {
+      out.user.push(item);
+    } else if (item.scope === "project") {
+      out.project.push(item);
+    } else {
+      out.plugin.push(item);
+    }
   }
+
   return out;
 }
 
@@ -1080,9 +1290,14 @@ export function skillStateFromReply(reply: {
   error?: string;
   partial?: boolean;
 }): SkillState {
-  if (reply.ok && reply.report !== undefined)
+  if (reply.ok && reply.report !== undefined) {
     return { kind: "report", text: reply.report, partial: reply.partial === true };
-  if (reply.declined) return { kind: "declined", text: reply.error ?? "" };
+  }
+
+  if (reply.declined) {
+    return { kind: "declined", text: reply.error ?? "" };
+  }
+
   return { kind: "error", text: reply.error ?? t("common.unknownError") };
 }
 
@@ -1091,25 +1306,28 @@ export interface UsageDriver {
   name: string;
   pct: number;
 }
+
 export interface UsageDriverGroup {
   label: string;
-  drivers: UsageDriver[];
+  drivers: Array<UsageDriver>;
 }
+
 export interface UsageBreakdownWindow {
   label: string;
   requests: number;
   sessions: number;
-  groups: UsageDriverGroup[];
+  groups: Array<UsageDriverGroup>;
   /** The CLI's own sentences about how the work was shaped, verbatim ("83% of your usage was at
    *  >150k context"). Claude Code calls these independent characteristics rather than a
    *  breakdown, so they do not add to 100 and are never summed or sorted with the groups. */
-  behaviours: string[];
+  behaviours: Array<string>;
 }
+
 export type UsageBreakdownReply =
   | {
       ok: true;
       fetchedAt: number;
-      windows: UsageBreakdownWindow[];
+      windows: Array<UsageBreakdownWindow>;
       host?: string;
       email?: string | null;
     }
@@ -1124,6 +1342,7 @@ export type UsageBreakdownReply =
 // second tab paid it whenever it was first to ask. Without it the server answers from its
 // five-minute cache and the figures, which cover a 24 h and a 7 d window, lose nothing.
 const breakdownCache = new Map<string, { at: number; reply: UsageBreakdownReply }>();
+
 /** The usage breakdown for a provider, remembered in this tab for a minute. `force` skips that and
  *  asks the box to read again, which spawns `claude -p "/usage"` there. */
 export const loadBreakdown = async (
@@ -1132,18 +1351,26 @@ export const loadBreakdown = async (
 ): Promise<UsageBreakdownReply> => {
   const key = provider ?? "";
   const hit = breakdownCache.get(key);
-  if (!force && hit && Date.now() - hit.at < 60_000) return hit.reply;
+
+  if (!force && hit && Date.now() - hit.at < 60_000) {
+    return hit.reply;
+  }
+
   // `force` is the Refresh button and nothing else. An ordinary open answers from whatever the
   // box already has, however old, because reading this figure spawns a `claude -p "/usage"` and
   // the wait is what makes the section feel broken.
   const q = force ? "force=1" : "";
+
   const url = provider
     ? `${ROUTE}/usage/breakdown?${q}${q ? "&" : ""}provider=${encodeURIComponent(provider)}`
     : `${ROUTE}/usage/breakdown${q ? `?${q}` : ""}`;
+
   const reply = await readJson<UsageBreakdownReply>(await fetch(url));
   breakdownCache.set(key, { at: Date.now(), reply });
+
   return reply;
 };
+
 /** The six columns /skill-doctor prints, in order. A parse that does not find all six on one line
  *  returns null and the caller keeps showing the raw report, so a CLI table change degrades to the
  *  text we already show rather than to garbage. */
@@ -1165,32 +1392,65 @@ export interface SkillCostRow {
  *  4 to 176, line 177 is blank, lines 178 to 180 are the indented legend, 181 is blank, 182 to 184
  *  are the flush-left summary. Column bounds come from the header's own token positions, and the
  *  CLI pads that header to the widest cell, so a long skill name shifts the header with it. */
-export function parseSkillCosts(text: string): SkillCostRow[] | null {
+export function parseSkillCosts(text: string): Array<SkillCostRow> | null {
   const lines = text.split("\n");
   const hi = lines.findIndex((l) => SKILL_COST_HEADERS.every((h) => l.includes(h)));
-  if (hi === -1) return null;
+
+  if (hi === -1) {
+    return null;
+  }
+
   const header = lines[hi];
-  if (typeof header !== "string") return null;
+
+  if (typeof header !== "string") {
+    return null;
+  }
+
   const starts = SKILL_COST_HEADERS.map((h) => header.indexOf(h));
-  if (starts.some((s) => s === -1)) return null;
+
+  if (starts.some((s) => s === -1)) {
+    return null;
+  }
+
   // Columns must start in order; a start at or before the previous one means the header no longer
   // names all six columns in order, so the parse keeps the raw report instead of slicing garbage.
   let prev = -1;
+
   for (const s of starts) {
-    if (s <= prev) return null;
+    if (s <= prev) {
+      return null;
+    }
+
     prev = s;
   }
-  const rows: SkillCostRow[] = [];
+
+  const rows: Array<SkillCostRow> = [];
+
   for (let i = hi + 1; i < lines.length; i++) {
     const l = lines[i];
-    if (typeof l !== "string") break;
-    if (l.trim() === "") break; // the first blank line after the header ends the table
-    if (!l.startsWith("  ")) break; // the summary is flush-left
+
+    if (typeof l !== "string") {
+      break;
+    }
+
+    if (l.trim() === "") {
+      break;
+    } // the first blank line after the header ends the table
+
+    if (!l.startsWith("  ")) {
+      break;
+    } // the summary is flush-left
+
     const cell = (n: number): string => {
       const end = n + 1 < starts.length ? starts[n + 1] : undefined;
+
       return l.slice(starts[n], end).trim();
     };
-    if (cell(0) === "") continue;
+
+    if (cell(0) === "") {
+      continue;
+    }
+
     rows.push({
       skill: cell(0),
       source: cell(1),
@@ -1200,6 +1460,7 @@ export function parseSkillCosts(text: string): SkillCostRow[] | null {
       lastUsed: cell(5),
     });
   }
+
   return rows;
 }
 
@@ -1207,26 +1468,49 @@ export function parseSkillCosts(text: string): SkillCostRow[] | null {
  *  is a wrong order and never a wrong value; the raw report stays one fold away. */
 function magnitude(cell: string): number {
   const v = cell.trim();
-  if (v === "" || v === "-") return 0;
-  if (v === "never") return Number.POSITIVE_INFINITY;
-  if (v === "today") return 0;
+
+  if (v === "" || v === "-") {
+    return 0;
+  }
+
+  if (v === "never") {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  if (v === "today") {
+    return 0;
+  }
+
   const days = /^(\d+) days?$/.exec(v);
-  if (days !== null) return Number(days[1]);
+
+  if (days !== null) {
+    return Number(days[1]);
+  }
+
   const uses = /^([\d.]+)×$/.exec(v);
-  if (uses !== null) return Number(uses[1]);
+
+  if (uses !== null) {
+    return Number(uses[1]);
+  }
+
   const num = /^[~<\s]*([\d.]+)([km]?)$/.exec(v);
-  if (num === null) return 0;
+
+  if (num === null) {
+    return 0;
+  }
+
   const base = Number(num[1]);
+
   return num[2] === "k" ? base * 1e3 : num[2] === "m" ? base * 1e6 : base;
 }
 
 /** Order rows for the cost table. Text cells sort by the magnitude they name, so 188.5m beats
  *  54.3m, which a string sort gets backwards. */
 export function sortSkillCosts(
-  rows: SkillCostRow[],
+  rows: Array<SkillCostRow>,
   col: "skill" | "source" | "context" | "tokens" | "uses" | "lastUsed",
   dir: "asc" | "desc",
-): SkillCostRow[] {
+): Array<SkillCostRow> {
   const key = (r: SkillCostRow): string =>
     col === "skill"
       ? r.skill
@@ -1239,14 +1523,23 @@ export function sortSkillCosts(
             : col === "uses"
               ? r.uses
               : r.lastUsed;
+
   const sign = dir === "asc" ? 1 : -1;
+
   return rows.toSorted((a, b) => {
-    if (col === "skill") return sign * a.skill.localeCompare(b.skill);
-    if (col === "source") return sign * a.source.localeCompare(b.source);
+    if (col === "skill") {
+      return sign * a.skill.localeCompare(b.skill);
+    }
+
+    if (col === "source") {
+      return sign * a.source.localeCompare(b.source);
+    }
+
     // Two `never` cells are both +Infinity and their difference is NaN, which is not a comparator
     // answer any sort is required to honour. Read equal magnitudes as a tie and let the sort's own
     // stability keep the report's order.
     const gap = magnitude(key(a)) - magnitude(key(b));
+
     return Number.isNaN(gap) ? 0 : sign * gap;
   });
 }

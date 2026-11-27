@@ -36,31 +36,41 @@ const OWNED = "projects";
 
 /** What a build has to do: link these names, and copy these back home before relinking them. */
 export interface MirrorWork {
-  link: string[];
-  repair: string[];
+  link: Array<string>;
+  repair: Array<string>;
 }
 
 /**
  * What has to happen for the mirror to hold: which names to link, and which forked back into a real
  * file and have to be copied home first. Split out from the filesystem so it can be asserted.
  */
-export function mirrorPlan(real: string[], mirror: MirrorEntry[]): MirrorWork {
+export function mirrorPlan(real: Array<string>, mirror: Array<MirrorEntry>): MirrorWork {
   const state = new Map(mirror.map((e) => [e.name, e]));
-  const link: string[] = [];
-  const repair: string[] = [];
+  const link: Array<string> = [];
+  const repair: Array<string> = [];
+
   for (const name of real) {
-    if (name === OWNED) continue;
+    if (name === OWNED) {
+      continue;
+    }
+
     const at = state.get(name);
-    if (at === undefined) link.push(name);
-    else if (at.forked === true) repair.push(name);
+
+    if (at === undefined) {
+      link.push(name);
+    } else if (at.forked === true) {
+      repair.push(name);
+    }
   }
+
   return { link, repair };
 }
 
 /** How the mirror dir looks right now, in the shape `mirrorPlan` reads. */
-const mirrorState = (dir: string): MirrorEntry[] =>
+const mirrorState = (dir: string): Array<MirrorEntry> =>
   readdirSync(dir).map((name) => {
     const stat = lstatSync(join(dir, name));
+
     return { name, forked: !stat.isSymbolicLink() };
   });
 
@@ -75,26 +85,34 @@ export function buildMirror(
   log: (level: string, msg: string) => void,
 ): string {
   mkdirSync(join(mirror, OWNED), { recursive: true });
-  if (!existsSync(realHome)) return mirror;
+
+  if (!existsSync(realHome)) {
+    return mirror;
+  }
+
   const { link, repair } = mirrorPlan(readdirSync(realHome), mirrorState(mirror));
+
   for (const name of repair) {
     // The CLI replaced the link with a file of its own, so that file, not the real one, holds
     // what it last wrote. Put it back where the rest of the box reads it, then relink.
     const from = join(mirror, name);
     const to = join(realHome, name);
+
     try {
       if (lstatSync(from).isDirectory()) {
         log("warn", `claude home mirror: ${name} is a real directory; leaving it alone`);
         continue;
       }
+
       copyFileSync(to, `${to}.bak`);
       renameSync(from, to);
       symlinkSync(to, from);
       log("info", `claude home mirror: ${name} had forked; copied back over ${to} (.bak kept)`);
-    } catch (e) {
-      log("warn", `claude home mirror: could not repair ${name}: ${String(e)}`);
+    } catch (error) {
+      log("warn", `claude home mirror: could not repair ${name}: ${String(error)}`);
     }
   }
+
   for (const name of link) {
     try {
       symlinkSync(join(realHome, name), join(mirror, name));
@@ -102,9 +120,13 @@ export function buildMirror(
       // A racing build (two instances, same dir) already made it; anything else surfaces on use.
     }
   }
+
   // A link whose target the user deleted points nowhere and the CLI would fail on it.
-  for (const entry of mirrorState(mirror))
-    if (entry.forked !== true && !existsSync(join(mirror, entry.name)))
+  for (const entry of mirrorState(mirror)) {
+    if (entry.forked !== true && !existsSync(join(mirror, entry.name))) {
       rmSync(join(mirror, entry.name), { force: true });
+    }
+  }
+
   return mirror;
 }

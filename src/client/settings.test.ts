@@ -1,7 +1,8 @@
 // Offline checks for the settings scope note: precedence decides which file wins a key, a scope
 // missing from the payload is skipped rather than shifting the order, and unreadable text is quiet.
 import assert from "node:assert/strict";
-import { overrideNote, type SettingsScopeInfo } from "./settings.js";
+import { overrideNote } from "./settings.js";
+import type { SettingsScopeInfo } from "./settings.js";
 
 const scope = (name: SettingsScopeInfo["scope"], text: string): SettingsScopeInfo => ({
   scope: name,
@@ -21,6 +22,7 @@ const scope = (name: SettingsScopeInfo["scope"], text: string): SettingsScopeInf
     ],
     "user",
   );
+
   assert.equal(note, "Overridden here: model by the managed file; env by settings.local.json.");
 }
 
@@ -39,6 +41,7 @@ const scope = (name: SettingsScopeInfo["scope"], text: string): SettingsScopeInf
     [scope("managed", `{"permissions":{}}`), scope("user", `{"permissions":{}}`)],
     "user",
   );
+
   assert.equal(note, "Overridden here: permissions by the managed file.");
 }
 
@@ -57,6 +60,7 @@ const scope = (name: SettingsScopeInfo["scope"], text: string): SettingsScopeInf
     [scope("local", `{"a":1,"b":2,"c":3}`), scope("user", `{"a":1,"b":2,"c":3}`)],
     "user",
   );
+
   assert.equal(note, "Overridden here: a, b and c by settings.local.json.");
 }
 

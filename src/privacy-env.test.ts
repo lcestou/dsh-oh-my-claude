@@ -13,6 +13,7 @@ const PRIVATE = {
   DO_NOT_TRACK: "",
   HOME: "/home/u",
 };
+
 assert.deepEqual(forwardedEnv(PRIVATE), [
   ["DISABLE_TELEMETRY", "1"],
   ["DISABLE_ERROR_REPORTING", "1"],
@@ -22,18 +23,21 @@ assert.deepEqual(forwardedEnv(PRIVATE), [
 // A local child inherits them unchanged.
 {
   const env = childEnv(PRIVATE);
+
   for (const key of [
     "DISABLE_TELEMETRY",
     "DISABLE_ERROR_REPORTING",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
-  ])
+  ]) {
     assert.equal(env[key], "1", `${key} reaches a local claude`);
+  }
 }
 
 // A child on another machine starts from that machine's shell, so each path carries them.
 {
   const script =
     sshInvocation("nova", "claude", ["-p"], "/w", undefined, PRIVATE).args.at(-1) ?? "";
+
   assert.match(
     script,
     /exec env DISABLE_TELEMETRY='1' DISABLE_ERROR_REPORTING='1' CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1' MCP_TOOL_TIMEOUT=/,
@@ -49,11 +53,10 @@ assert.deepEqual(forwardedEnv(PRIVATE), [
   );
 
   let env: Record<string, string> | undefined;
+
   // SAFETY: the fake carries the one method the spawner calls
-  const spawn = seamSpawner(
-    { spawn: (spec: any) => ((env = spec.env), {} as any) } as any,
-    PRIVATE,
-  );
+  const spawn = seamSpawner({ spawn: (spec: any) => ((env = spec.env), {} as any) }, PRIVATE);
+
   spawn("claude", ["-p"], "/w");
   assert.equal(
     env?.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
@@ -71,4 +74,5 @@ assert.deepEqual(forwardedEnv(PRIVATE), [
   );
   assert.equal(env?.KEPT, "1");
 }
+
 console.log("privacy-env ok");

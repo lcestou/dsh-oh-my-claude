@@ -13,8 +13,8 @@ import {
   ROUTE,
   activeClaudeSession,
   hasRunTurn,
-  type ClientCtx,
 } from "../shared.js";
+import type { ClientCtx } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
 import { queueDraft } from "../draft.js";
 import { diffQuestion, reviewPrompt } from "../../prompts.js";
@@ -26,10 +26,17 @@ interface DiffFile {
   removed: number;
   binary: boolean;
   untracked: boolean;
-  hunks: Array<{ oldStart: number; newStart: number; lines: string[] }>;
+  hunks: Array<{ oldStart: number; newStart: number; lines: Array<string> }>;
 }
+
 type DiffReply =
-  | { ok: true; filesCount: number; linesAdded: number; linesRemoved: number; files: DiffFile[] }
+  | {
+      ok: true;
+      filesCount: number;
+      linesAdded: number;
+      linesRemoved: number;
+      files: Array<DiffFile>;
+    }
   | { ok: false; error: string };
 
 /**
@@ -69,9 +76,11 @@ export function ChangesBody({
   // Which Ask is in flight, by path ("" is the whole tree), so pressing one does not blank the other.
   const [asking, setAsking] = useState<string | null>(null);
   const [note, setNote] = useState("");
+
   const ask = async (path: string) => {
     setAsking(path);
     setNote("");
+
     try {
       const r = await fetch(`${ROUTE}/side-questions`, {
         method: "POST",
@@ -83,13 +92,18 @@ export function ChangesBody({
           path,
         }),
       });
+
       const body = await readJson<{ ok: boolean; error?: string }>(r);
+
       // On success the dialog gets out of the way: the answer docks above the composer, which this
       // panel covers. A failure keeps it open, because the message is the only place the error shows.
-      if (body.ok) onClose();
-      else setNote(body.error ?? t("panel.plugins.actionFailed"));
-    } catch (e) {
-      setNote(e instanceof Error ? e.message : String(e));
+      if (body.ok) {
+        onClose();
+      } else {
+        setNote(body.error ?? t("panel.plugins.actionFailed"));
+      }
+    } catch (error) {
+      setNote(error instanceof Error ? error.message : String(error));
     } finally {
       setAsking(null);
     }
@@ -100,24 +114,32 @@ export function ChangesBody({
     setReply(null);
     setShown(null);
     setNote("");
+
     // A session that has never run has no CLI to ask, and the route can only refuse. Answer it here
     // so the tab reads the same without the round trip.
     if (!hasRunTurn(ctx, sessionId)) {
       setReply(NOT_RUNNING);
+
       return;
     }
+
     fetch(`${ROUTE}/diff?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<DiffReply>(r))
       .then((b) => live && setReply(b))
-      .catch((e: Error) => live && setReply({ ok: false, error: e.message }));
+      .catch((error: Error) => live && setReply({ ok: false, error: error.message }));
+
     return () => {
       live = false;
     };
   }, [sessionId]);
 
-  if (!isClaude) return null;
+  if (!isClaude) {
+    return null;
+  }
+
   const files = reply?.ok ? reply.files : [];
   const current = files.find((f) => f.path === shown);
+
   return (
     <div style={bodyFlow}>
       {/* Above the branches, not below them: Ask is pressed from the file list and from a file's own

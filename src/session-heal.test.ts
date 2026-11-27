@@ -5,18 +5,20 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { STATE_DIR, loadSessionRepairs } from "./state.js";
-import { frame, readLog, type Catalog, type Row } from "./session-repair.js";
+import { frame, readLog } from "./session-repair.js";
+import type { Catalog, Row } from "./session-repair.js";
 import {
   healLog,
   probeLoad,
   rawLogPath,
   repairsSummary,
   sweepRefusedLogs,
-  type HealHost,
 } from "./session-heal.js";
+import type { HealHost } from "./session-heal.js";
 import { writeFileSync } from "node:fs";
 
 const dir = join(STATE_DIR, "heal-test");
+
 mkdirSync(dir, { recursive: true });
 
 /** A row with seq, time and data, the shape the repair reads. */
@@ -27,8 +29,9 @@ const ev = (seq: number, type: string, data: Row["data"], extra: Partial<Row> = 
   data,
   ...extra,
 });
+
 /** A v4 log: a system head, then a turn stopped with a native call open (no tool/result). */
-const stoppedRows = (): Row[] => [
+const stoppedRows = (): Array<Row> => [
   ev(
     0,
     "system/message",
@@ -60,19 +63,32 @@ const stoppedRows = (): Row[] => [
   ev(5, "step/end", { turn: 1, step: 1 }),
   ev(6, "turn/end", { turn: 1, reason: "aborted" }),
 ];
+
 /** dsh 0.1.7's rule, as both the fake load and the fake catalog apply it. */
-const refusalOf = (rows: readonly Row[]): string | undefined => {
+const refusalOf = (rows: ReadonlyArray<Row>): string | undefined => {
   const open = new Set<string>();
+
   for (const r of rows) {
-    if (r.type === "tool/call" && typeof r.data?.callId === "string") open.add(r.data.callId);
+    if (r.type === "tool/call" && typeof r.data?.callId === "string") {
+      open.add(r.data.callId);
+    }
+
     const answered = r.data?.message?.toolCallId ?? r.data?.message?.source?.callId;
-    if (r.type === "tool/result" && typeof answered === "string") open.delete(answered);
-    if (r.type === "step/end" && open.size > 0) return "step/end leaves unresolved tool call";
+
+    if (r.type === "tool/result" && typeof answered === "string") {
+      open.delete(answered);
+    }
+
+    if (r.type === "step/end" && open.size > 0) {
+      return "step/end leaves unresolved tool call";
+    }
   }
+
   return undefined;
 };
+
 /** Write a log file as two frames, header then rows. */
-const writeFixture = (file: string, rows: Row[]) => {
+const writeFixture = (file: string, rows: Array<Row>) => {
   const header = { type: "session", version: 4, id: "s1", cwd: "/w" };
   writeFileSync(
     file,
@@ -82,40 +98,53 @@ const writeFixture = (file: string, rows: Row[]) => {
     ]),
   );
 };
+
 const catalog: Catalog = {
   currentVersion: 4,
   createRestore() {
-    const rows: Row[] = [];
+    const rows: Array<Row> = [];
+
     return {
       decodeRow(row: Row) {
         rows.push(row);
       },
       finish() {
         const why = refusalOf(rows);
-        if (why) throw new Error(why);
+
+        if (why) {
+          throw new Error(why);
+        }
       },
     };
   },
 };
+
 /** A host over one directory of logs named `<id>.zstd`; `open` reads the file and applies the
  *  rule, `opens` counts the calls, `alwaysRefuse` makes every open fail (the rollback case). */
 function hostFor(opts: { alwaysRefuse?: boolean } = {}) {
-  const opens: string[] = [];
-  const logs: string[] = [];
+  const opens: Array<string> = [];
+  const logs: Array<string> = [];
+
   const host: HealHost = {
     persistence: {
       list: async () => logs.map((id) => ({ header: { id, cwd: "/w" } })),
       open: async (id) => {
         opens.push(id);
         const file = join(dir, `${id}.zstd`);
+
         if (!existsSync(file)) {
           const e = new Error("no such session");
           e.name = "SessionPersistenceNotFoundError";
           throw e;
         }
+
         const { rows } = readLog(file);
         const why = opts.alwaysRefuse ? "still refused after the rewrite" : refusalOf(rows);
-        if (why) throw new Error(why);
+
+        if (why) {
+          throw new Error(why);
+        }
+
         return { read: async () => ({ events: rows }), close: async () => {} };
       },
       locate: (meta) => ({ kind: "jsonl", path: join(dir, `${meta.id}.zstd`) }),
@@ -124,6 +153,7 @@ function hostFor(opts: { alwaysRefuse?: boolean } = {}) {
     stateDir: dir,
     log: () => {},
   };
+
   return { host, opens, logs };
 }
 
@@ -202,12 +232,14 @@ function hostFor(opts: { alwaysRefuse?: boolean } = {}) {
   const file = join(dir, "s1.zstd");
   writeFixture(file, stoppedRows());
   const before = readFileSync(file);
+
   const record = await healLog(
     host,
     "s1",
     file,
     "V3 catalog migration requires explicit historical child facts",
   );
+
   // The repair closes the open call regardless of the reason text, so this is a heal; the
   // unknown case is a log with nothing to repair:
   assert.equal(record.verdict, "healed");
@@ -238,6 +270,7 @@ assert.equal(
   ),
   "/home/u/.dsh/sessions/--w--/session-bbc4e917/session.v4.jsonl.zstd",
 );
+
 assert.equal(rawLogPath("no path here"), undefined);
 
 // The sweep: a refused log is healed, a log whose stat matches its record is not opened again,

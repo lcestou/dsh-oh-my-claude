@@ -12,7 +12,8 @@
 // PLAYWRIGHT_ROOT names a project with Playwright; arg 1 is dsh's launch token; PW_WIDTH and
 // PW_SCHEME pick the viewport (1280, dark by default). Screenshots go to /tmp/pw/.
 import { mkdirSync } from "node:fs";
-import { dshUrl, launch, type Locator, type Page, type Route } from "./pw.js";
+import { dshUrl, launch } from "./pw.js";
+import type { Locator, Page, Route } from "./pw.js";
 
 const [token] = process.argv.slice(2);
 const name = process.env.PW_SESSION;
@@ -21,6 +22,7 @@ const height = 800;
 const scheme = process.env.PW_SCHEME === "light" ? "light" : "dark";
 const tag = `${width}-${scheme}`;
 const SIDE_QUESTIONS = "**/dsh-oh-my-claude/side-questions";
+
 /** Errors the plugin logs on dsh 0.2.2-rc.1 that predate this feature: the cost pill's
  *  `useAnchoredPosition` import is gone from dsh's primitives (cost.tsx, on main as well). */
 const KNOWN_ERRORS = /useAnchoredPosition|'conversation\.composer\.dock'/;
@@ -28,7 +30,10 @@ let failed = 0;
 
 /** Prints one check's line and counts it when it fails, so the run exits non-zero on any miss. */
 const check = (label: string, ok: boolean, got: string | number | boolean) => {
-  if (!ok) failed++;
+  if (!ok) {
+    failed++;
+  }
+
   console.log(`${ok ? "ok  " : "FAIL"} ${label}: ${JSON.stringify(got)}`);
 };
 
@@ -40,17 +45,23 @@ const check = (label: string, ok: boolean, got: string | number | boolean) => {
 const selectReply = async (p: Page, back = 0) => {
   await p.evaluate(() => document.getSelection()?.removeAllRanges());
   await p.waitForTimeout(200);
+
   return p.evaluate((skip) => {
     const paras = document.querySelectorAll('[data-chat-flow-kind="assistant-step"] p');
     const para = paras[paras.length - 1 - skip];
     const text = para && document.createTreeWalker(para, NodeFilter.SHOW_TEXT).nextNode();
     const sel = document.getSelection();
-    if (!(text instanceof Text) || sel === null) return "";
+
+    if (!(text instanceof Text) || sel === null) {
+      return "";
+    }
+
     const range = document.createRange();
     range.setStart(text, 0);
     range.setEnd(text, Math.min(19, text.length));
     sel.removeAllRanges();
     sel.addRange(range);
+
     return sel.toString().trim();
   }, back);
 };
@@ -58,8 +69,12 @@ const selectReply = async (p: Page, back = 0) => {
 /** Whether the element is rendered with its whole box inside the viewport. A popover that drew
  *  off screen or stayed hidden answers false here instead of a 30 s click timeout. */
 const onScreen = async (el: Locator): Promise<boolean> => {
-  if ((await el.count()) === 0 || !(await el.first().isVisible())) return false;
+  if ((await el.count()) === 0 || !(await el.first().isVisible())) {
+    return false;
+  }
+
   const box = await el.first().boundingBox();
+
   return (
     box !== null &&
     box.x >= 0 &&
@@ -73,11 +88,15 @@ const onScreen = async (el: Locator): Promise<boolean> => {
  *  caller skips the steps that depended on the click. */
 const press = async (label: string, el: Locator): Promise<boolean> => {
   const shown = await onScreen(el);
+
   if (!shown) {
     check(`${label} is on screen`, false, await el.count());
+
     return false;
   }
+
   await el.first().click({ timeout: 3000 });
+
   return true;
 };
 
@@ -88,11 +107,13 @@ const coloursOf = (el: Locator) =>
     const resolve = (value: string) => {
       const probe = document.createElement("span");
       probe.style.color = value;
-      node.parentElement?.appendChild(probe);
+      node.parentElement?.append(probe);
       const got = getComputedStyle(probe).color;
       probe.remove();
+
       return got;
     };
+
     return {
       colour: getComputedStyle(node).color,
       neutral: resolve("var(--dsw-alias-label-primary)"),
@@ -104,22 +125,33 @@ if (!name) {
   console.log("set PW_SESSION to an idle Claude session's sidebar text");
   process.exit(1);
 }
+
 mkdirSync("/tmp/pw", { recursive: true });
+
 const b = await launch();
 const ctx = await b.newContext({ viewport: { width, height }, colorScheme: scheme });
 const p = await ctx.newPage();
-const pluginErrors: string[] = [];
+const pluginErrors: Array<string> = [];
+
 p.on("console", (m) => {
   const text = m.text();
-  if (text.includes("dsh-oh-my-claude") && !KNOWN_ERRORS.test(text))
+
+  if (text.includes("dsh-oh-my-claude") && !KNOWN_ERRORS.test(text)) {
     pluginErrors.push(text.split("\n")[0] ?? text);
+  }
 });
+
 await p.goto(dshUrl(token), { waitUntil: "load" });
+
 await p.waitForTimeout(3000);
+
 const row = p.locator('[role="treeitem"]').filter({ hasText: name }).first();
+
 check("session row found", (await row.count()) === 1, await row.count());
+
 // A DOM click, not a pointer one: at phone width the sidebar is folded off screen.
 await row.evaluate((el) => el.click());
+
 await p.waitForTimeout(4000);
 
 const surface = p.locator("[data-text-interaction-surface]");
@@ -129,6 +161,7 @@ const field = p.locator("[data-omc-selection-question]");
 const preview = p.locator("[data-omc-selection-preview]");
 const note = p.locator("[data-omc-selection-note]");
 const chip = p.locator("[data-composer-input] [data-composer-quote]");
+
 /** Empties the composer, as the check found it. */
 const clearComposer = async () => {
   await p.locator("[data-composer-input]").click({ force: true });
@@ -136,43 +169,66 @@ const clearComposer = async () => {
   await p.keyboard.press("Backspace");
   await p.waitForTimeout(300);
 };
+
 /** Selects a passage and opens Ask on it; answers the passage, or null when Ask was not there. */
 const openAsk = async (): Promise<string | null> => {
   const picked = await selectReply(p);
   await p.waitForTimeout(600);
-  if (!(await press("Ask", askBtn))) return null;
+
+  if (!(await press("Ask", askBtn))) {
+    return null;
+  }
+
   await p.waitForTimeout(400);
+
   return picked;
 };
+
 /** The body of the side-questions POST a stub answered; null until one arrives. */
 type Sent = { body: string | null };
+
 /** Answers every side-questions POST with `reply` until `unrouteAll`, and hands back the body of
  *  the latest, so a check can read what the popover sent without anything reaching Claude. */
 const stubSends = async (reply: (route: Route) => Promise<void>): Promise<Sent> => {
   const seen: Sent = { body: null };
   await p.route(SIDE_QUESTIONS, async (route) => {
-    if (route.request().method() !== "POST") return route.continue();
+    if (route.request().method() !== "POST") {
+      return route.continue();
+    }
+
     seen.body = route.request().postData();
     await reply(route);
   });
+
   return seen;
 };
+
 let asked = 0;
+
 p.on("request", (r) => {
-  if (r.method() === "POST" && r.url().includes("/side-questions")) asked++;
+  if (r.method() === "POST" && r.url().includes("/side-questions")) {
+    asked++;
+  }
 });
 
 const picked = await selectReply(p);
+
 await p.waitForTimeout(600);
+
 const popoverShown = await onScreen(quoteBtn);
+
 check("popover shows Quote text on screen", popoverShown, picked);
+
 check("popover shows Ask in a Claude session", await onScreen(askBtn), await askBtn.count());
+
 check("popover surface is dsh's", (await surface.count()) > 0, await surface.count());
+
 if (popoverShown) {
   const { colour, neutral, accent } = await coloursOf(quoteBtn.first());
   check("Quote is not dsh's neutral label colour", colour !== neutral, `${colour} vs ${neutral}`);
   check("Quote takes the Claude accent", colour === accent, `${colour} vs ${accent}`);
 }
+
 await p.screenshot({ path: `/tmp/pw/selection-actions-${tag}.png` });
 
 if (await press("Quote text", quoteBtn)) {
@@ -187,6 +243,7 @@ if (await press("Quote text", quoteBtn)) {
 }
 
 const passage = await openAsk();
+
 if (passage !== null) {
   const focused = await field.evaluate((el) => el === document.activeElement);
   check("Ask opens a focused question box", focused, focused);
@@ -211,6 +268,7 @@ if (passage !== null) {
 
 // A send in flight: held for a second so the box can be read, then failed with dsh's 409.
 let held = { readOnly: false, disabled: true, focused: false, label: "" };
+
 const sent409 = await stubSends(async (route) => {
   held = await field.evaluate((el) => ({
     readOnly: el instanceof HTMLTextAreaElement && el.readOnly,
@@ -220,6 +278,7 @@ const sent409 = await stubSends(async (route) => {
   }));
   await route.fulfill({ status: 409, json: { ok: false, error: "no process" } });
 });
+
 if ((await openAsk()) !== null) {
   await p.keyboard.press("Enter");
   await p.waitForTimeout(1200);
@@ -250,6 +309,7 @@ if ((await openAsk()) !== null) {
   await p.waitForTimeout(400);
   check("Escape closes the box after a failure", (await field.count()) === 0, await field.count());
 }
+
 await p.unrouteAll({ behavior: "ignoreErrors" });
 
 // A send still in flight when the person clicks away and selects another passage: its late answer
@@ -258,10 +318,13 @@ const lateSent = await stubSends(async (route) => {
   await new Promise((resolve) => setTimeout(resolve, 2500));
   await route.fulfill({ status: 200, json: { ok: true } });
 });
+
 // It needs a second reply paragraph to select; a session with one skips the check.
 const paragraphs = await p.locator('[data-chat-flow-kind="assistant-step"] p').count();
-if (paragraphs < 2) console.log("skip a late answer: the session has one reply paragraph");
-else if ((await openAsk()) !== null) {
+
+if (paragraphs < 2) {
+  console.log("skip a late answer: the session has one reply paragraph");
+} else if ((await openAsk()) !== null) {
   await p.keyboard.type("late");
   await p.keyboard.press("Enter");
   await p.waitForTimeout(300);
@@ -286,11 +349,13 @@ else if ((await openAsk()) !== null) {
   await p.keyboard.press("Escape");
   await p.waitForTimeout(400);
 }
+
 await p.unrouteAll({ behavior: "ignoreErrors" });
 
 if (process.env.PW_ASK === "1") {
   const question = `what is this? ${Date.now() % 1000}`;
   const quoted = await openAsk();
+
   if (quoted !== null) {
     await p.keyboard.type(question);
     const before = asked;
@@ -314,6 +379,7 @@ if (process.env.PW_ASK === "1") {
 
 // The switch in Settings → Oh My Claude is the box-wide `selectionOff` hint.
 const hintsUrl = "/dsh-oh-my-claude/hints";
+
 /** Writes the `selectionOff` hint through the plugin's route from inside the page, which carries
  *  dsh's session cookie; null clears it. The box pushes the new store to every open tab. */
 const setHint = (value: boolean | null) =>
@@ -327,10 +393,13 @@ const setHint = (value: boolean | null) =>
     },
     { url: hintsUrl, value },
   );
+
 const was = await p.evaluate(async (url) => {
   const hints: Record<string, boolean | number> = await (await fetch(url)).json();
+
   return hints.selectionOff === true;
 }, hintsUrl);
+
 try {
   await setHint(true);
   await p.waitForTimeout(1500);
@@ -359,8 +428,11 @@ check(
   pluginErrors.length === 0,
   pluginErrors.join(" | "),
 );
+
 await b.close();
+
 console.log(
   failed === 0 ? "selection actions: all checks passed" : `selection actions: ${failed} failed`,
 );
+
 process.exit(failed === 0 ? 0 : 1);

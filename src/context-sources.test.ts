@@ -1,52 +1,68 @@
 // Offline self-check: bun src/context-sources.test.ts. Pure, no DOM, no network.
 import assert from "node:assert/strict";
 import {
-  type ChatFlowNode,
   contextDrops,
   CONTEXT_SOURCES,
   maskedRows,
   sourceBlockOf,
   TOGGLEABLE,
 } from "./context-sources.js";
+import type { ChatFlowNode } from "./context-sources.js";
 
 // A fresh box has no hints, and a fresh box sends no dsh context: the master switch is off until
 // someone turns it on, and the per-source keys mean nothing while it is.
 assert.deepEqual(contextDrops({}), new Set(["instructions", "skills"]));
+
 assert.deepEqual(
   contextDrops({ dshContextInstructionsOff: false, dshContextSkillsOff: false }),
   new Set(["instructions", "skills"]),
 );
+
 assert.deepEqual(contextDrops({ dshContextOn: false }), new Set(["instructions", "skills"]));
+
 assert.deepEqual(contextDrops({ dshContextOn: true }), new Set());
+
 assert.deepEqual(
   contextDrops({ dshContextOn: true, dshContextInstructionsOff: true }),
   new Set(["instructions"]),
 );
+
 assert.deepEqual(
   contextDrops({ dshContextOn: true, dshContextSkillsOff: true }),
   new Set(["skills"]),
 );
+
 assert.deepEqual(
   contextDrops({ dshContextOn: true, dshContextInstructionsOff: true, dshContextSkillsOff: true }),
   new Set(["instructions", "skills"]),
 );
+
 assert.equal(contextDrops({}).has("runtime"), false);
+
 assert.equal(contextDrops({ dshContextOn: true }).has("runtime"), false);
+
 assert.equal(
   contextDrops({ dshContextOn: true, dshContextInstructionsOff: true }).has("runtime"),
   false,
 );
+
 assert.equal(contextDrops({ dshContextOn: true, dshContextSkillsOff: true }).has("runtime"), false);
+
 assert.equal(contextDrops({ dshContextRuntimeOff: true }).has("runtime"), false);
+
 assert.equal(
   contextDrops({ dshContextOn: true, dshContextRuntimeOff: true }).has("runtime"),
   false,
 );
+
 const HINT_KEYS = ["dshContextOn", "dshContextInstructionsOff", "dshContextSkillsOff"];
+
 for (const k of HINT_KEYS) {
   assert.equal(/^[a-zA-Z][a-zA-Z0-9]{0,40}$/.test(k), true);
 }
+
 assert.deepEqual(CONTEXT_SOURCES, ["instructions", "skills", "runtime"]);
+
 assert.deepEqual(TOGGLEABLE, ["instructions", "skills"]);
 
 // Row shapes copied from a real session's chat: the three injected blocks dsh draws, dsh's own
@@ -63,24 +79,33 @@ const rows: Record<string, ChatFlowNode> = {
   harness: { kind: "system-prompt" },
   typed: { kind: "user", data: { source: { kind: "user" } } },
 };
+
 const order = ["typed", "instructions", "catalog", "snapshot", "job", "harness"];
 const node = (key: string) => rows[key];
 
 // Master switch on: dsh's system prompt is still masked, because by default this plugin never
 // passes it on; a mount on `systemPrompt: dsh` does, so there it stays.
 assert.deepEqual(maskedRows(order, node, contextDrops({ dshContextOn: true })), ["harness"]);
+
 assert.deepEqual(maskedRows(order, node, contextDrops({ dshContextOn: true }), true), []);
+
 assert.deepEqual(maskedRows(order, node, contextDrops({}), true), ["instructions", "catalog"]);
+
 assert.deepEqual(maskedRows(order, node, contextDrops({})), ["instructions", "catalog", "harness"]);
+
 assert.deepEqual(
   maskedRows(order, node, contextDrops({ dshContextOn: true, dshContextSkillsOff: true })),
   ["catalog", "harness"],
 );
+
 // The runtime snapshot goes out whatever the switches say, and so does a job notice that happens
 // to share its source kind. Masking either would hide a block Claude Code did receive.
 assert.equal(maskedRows(order, node, contextDrops({})).includes("snapshot"), false);
+
 assert.equal(maskedRows(order, node, contextDrops({})).includes("job"), false);
+
 assert.equal(maskedRows(order, node, contextDrops({})).includes("typed"), false);
+
 // A key the store no longer holds is skipped rather than named in the sheet.
 assert.deepEqual(maskedRows(["gone"], node, contextDrops({})), []);
 
@@ -89,9 +114,12 @@ console.log("context-sources.test.ts: ok");
 // Session format v4 renames dsh's system prompt source from the `plugin` wrapper to
 // `runtime-context`; both name the runtime block. The plugin's own v4 notice kind names none.
 assert.equal(sourceBlockOf({ kind: "runtime-context" }), "runtime");
+
 assert.equal(
   sourceBlockOf({ kind: "plugin", plugin: "@deepseek-ai/dsh-system-prompt" }),
   "runtime",
 );
+
 assert.equal(sourceBlockOf({ kind: "plugin:dsh-oh-my-claude" }), undefined);
+
 assert.equal(sourceBlockOf(undefined), undefined);

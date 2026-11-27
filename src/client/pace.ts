@@ -19,14 +19,26 @@ export function paceOf(
   windowMs: number,
   now = Date.now(),
 ): Pace | undefined {
-  if (resetsAt === null || usedPercent <= 0 || usedPercent >= 100) return undefined;
+  if (resetsAt === null || usedPercent <= 0 || usedPercent >= 100) {
+    return undefined;
+  }
+
   const left = resetsAt - now;
   const elapsed = windowMs - left;
-  if (left <= 0 || elapsed < windowMs * 0.05) return undefined;
+
+  if (left <= 0 || elapsed < windowMs * 0.05) {
+    return undefined;
+  }
+
   const projected = (usedPercent * windowMs) / elapsed;
-  if (projected < 100) return { kind: "ends", percent: Math.round(projected) };
+
+  if (projected < 100) {
+    return { kind: "ends", percent: Math.round(projected) };
+  }
+
   // Time to the cap at the same rate: the remaining percent takes (remaining / used) of the
   // time spent so far.
   const at = now + ((100 - usedPercent) / usedPercent) * elapsed;
+
   return { kind: "cap", at };
 }

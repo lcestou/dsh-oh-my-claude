@@ -4,8 +4,9 @@ import type { ESTree } from "@oxlint/plugins";
 
 type RuntimeFunction = ESTree.ArrowFunctionExpression | ESTree.Function;
 
-/** Narrow a node to a runtime function (arrow, declaration, or expression), the kind whose return
- *  type can be a type predicate.
+/**
+ * Narrow a node to a runtime function (arrow, declaration, or expression), the kind whose return
+ * type can be a type predicate.
  */
 function isRuntimeFunction(node: ESTree.Node): node is RuntimeFunction {
   return (
@@ -15,18 +16,39 @@ function isRuntimeFunction(node: ESTree.Node): node is RuntimeFunction {
   );
 }
 
-/** Walk up to test whether a node sits inside a function whose return type is a type predicate, so
- *  a `typeof` there narrows a value rather than inspecting a representation.
+/**
+ * Walk up to test whether a node sits inside a function whose return type is a type predicate, so
+ * a `typeof` there narrows a value rather than inspecting a representation.
  */
 function isInsideTypeGuard(node: ESTree.Node): boolean {
   let current: ESTree.Node | null = node.parent;
+
   while (current !== null && current.type !== "Program") {
     if (isRuntimeFunction(current)) {
       return current.returnType?.typeAnnotation.type === "TSTypePredicate";
     }
+
     current = current.parent;
   }
+
   return false;
+}
+
+/** Return whether typeof safely probes for the existence of a possibly absent binding. */
+function isExistenceProbe(node: ESTree.UnaryExpression): boolean {
+  const parent = node.parent;
+
+  if (parent.type !== "BinaryExpression") {
+    return false;
+  }
+
+  if (!["===", "!==", "==", "!="].includes(parent.operator)) {
+    return false;
+  }
+
+  const other = parent.left === node ? parent.right : parent.left;
+
+  return other.type === "Literal" && other.value === "undefined";
 }
 
 /** Disallow runtime typeof checks that narrow unparsed values instead of decoding them. */
@@ -56,12 +78,18 @@ export const noRuntimeTypeofRule = defineRule({
     return {
       UnaryExpression(node) {
         const option = context.options?.[0];
+
         const allowInTypeGuards =
           typeof option === "object" &&
           option !== null &&
           !Array.isArray(option) &&
           option.allowInTypeGuards === true;
-        if (node.operator === "typeof" && (!allowInTypeGuards || !isInsideTypeGuard(node))) {
+
+        if (
+          node.operator === "typeof" &&
+          !isExistenceProbe(node) &&
+          (!allowInTypeGuards || !isInsideTypeGuard(node))
+        ) {
           context.report({ node, messageId: "runtimeTypeof" });
         }
       },

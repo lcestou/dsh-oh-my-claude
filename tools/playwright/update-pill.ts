@@ -10,6 +10,7 @@ const [token, out = "/tmp/pw"] = process.argv.slice(2);
 const UPDATE = "dsh plugin --profile web update dsh-oh-my-claude";
 const b = await launch();
 let failed = false;
+
 for (const [label, width] of [
   ["desktop", 1400],
   ["phone", 390],
@@ -19,6 +20,7 @@ for (const [label, width] of [
     colorScheme: "dark",
     permissions: ["clipboard-read", "clipboard-write"],
   });
+
   const p = await ctx.newPage();
   await p.route("**/dsh-oh-my-claude/status", async (route) => {
     const r = await route.fetch();
@@ -29,10 +31,18 @@ for (const [label, width] of [
   await p.waitForTimeout(2000);
   // dsh's first-run notice covers the page on a fresh profile.
   const notice = p.getByRole("button", { name: /^Continue$/ });
-  if (await notice.count()) await notice.first().click();
+
+  if (await notice.count()) {
+    await notice.first().click();
+  }
+
   // A phone keeps the sidebar, and with it the Account menu, folded away until it is opened.
   const sidebar = p.getByRole("button", { name: /^(Open sidebar|打开侧边栏)$/ });
-  if (width < 600 && (await sidebar.count())) await sidebar.first().click();
+
+  if (width < 600 && (await sidebar.count())) {
+    await sidebar.first().click();
+  }
+
   // Since dsh 0.2.2 Settings sits in the Account menu at the foot of the sidebar.
   await p
     .getByRole("button", { name: /^Account menu$/ })
@@ -66,17 +76,25 @@ for (const [label, width] of [
   const settingsGone = (await p.locator("[data-omc-settings]").count()) === 0;
   // dsh's bundle page names the package under its title; the plugin list does not.
   const onPage = (await p.getByText(/^dsh-oh-my-claude$/).count()) > 0;
+
   const ok =
     shown === "1.0.1 available" &&
     said === "Command copied" &&
     clip === UPDATE &&
     settingsGone &&
     onPage;
+
   console.log(
     `${ok ? "PASS" : "FAIL"} ${label}: shown=${JSON.stringify(shown)} said=${JSON.stringify(said)} clipboard=${JSON.stringify(clip)} settingsGone=${settingsGone} onPluginPage=${onPage}`,
   );
-  if (!ok) failed = true;
+
+  if (!ok) {
+    failed = true;
+  }
+
   await ctx.close();
 }
+
 await b.close();
+
 process.exit(failed ? 1 : 0);

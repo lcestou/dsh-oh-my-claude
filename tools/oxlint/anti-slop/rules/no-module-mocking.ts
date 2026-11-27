@@ -1,41 +1,35 @@
 import { defineRule } from "@oxlint/plugins";
 
-import type { ESTree, Scope, SourceCode, Variable } from "@oxlint/plugins";
+import { resolveVariable } from "../shared/scope.ts";
+
+import type { ESTree, SourceCode } from "@oxlint/plugins";
 
 const moduleMockMethods = new Set(["doMock", "mock", "unstable_mockModule"]);
 
-/** Walk scopes upward to find a binding; return null for an unbound name so a bare reference is
- *  treated as the global.
- */
-function resolveVariable(
-  sourceCode: SourceCode,
-  identifier: ESTree.IdentifierReference,
-): Variable | null {
-  let scope: Scope | null = sourceCode.getScope(identifier);
-  while (scope !== null) {
-    const variable = scope.set.get(identifier.name);
-    if (variable !== undefined) return variable;
-    scope = scope.upper;
-  }
-  return null;
-}
-
-/** Return the name a specifier imports, whether written as `as` or a string, or null when the node
- *  is not an import specifier.
+/**
+ * Return the name a specifier imports, whether written as `as` or a string, or null when the node
+ * is not an import specifier.
  */
 function importedName(node: ESTree.Node): string | null {
-  if (node.type !== "ImportSpecifier") return null;
+  if (node.type !== "ImportSpecifier") {
+    return null;
+  }
+
   return node.imported.type === "Identifier" ? node.imported.name : node.imported.value;
 }
 
-/** Return true when an expression is the vitest `vi` or jest `jest` mock object, global or
- *  imported, so only those drive module mocking.
+/**
+ * Return true when an expression is the vitest `vi` or jest `jest` mock object, global or
+ * imported, so only those drive module mocking.
  */
 function isTestFrameworkObject(
   sourceCode: SourceCode,
   expression: ESTree.Expression,
 ): expression is ESTree.IdentifierReference {
-  if (expression.type !== "Identifier") return false;
+  if (expression.type !== "Identifier") {
+    return false;
+  }
+
   if (
     (expression.name === "vi" || expression.name === "jest") &&
     sourceCode.isGlobalReference(expression)
@@ -44,28 +38,40 @@ function isTestFrameworkObject(
   }
 
   const variable = resolveVariable(sourceCode, expression);
+
   if (variable === null || variable.defs.length === 0) {
     return expression.name === "vi" || expression.name === "jest";
   }
+
   return variable.defs.some((definition) => {
     if (definition.type !== "ImportBinding" || definition.parent?.type !== "ImportDeclaration") {
       return false;
     }
+
     const source = definition.parent.source.value;
     const name = importedName(definition.node);
+
     return (
       (source === "vitest" && name === "vi") || (source === "@jest/globals" && name === "jest")
     );
   });
 }
 
-/** Return true when a call is a `doMock`, `mock`, or `unstable_mockModule` method on the test
- *  framework's mock object, the pattern the rule bans.
+/**
+ * Return true when a call is a `doMock`, `mock`, or `unstable_mockModule` method on the test
+ * framework's mock object, the pattern the rule bans.
  */
 function moduleMockCall(sourceCode: SourceCode, callee: ESTree.Expression): boolean {
-  if (!("property" in callee) || !("object" in callee) || !("computed" in callee)) return false;
-  if (!isTestFrameworkObject(sourceCode, callee.object)) return false;
+  if (!("property" in callee) || !("object" in callee) || !("computed" in callee)) {
+    return false;
+  }
+
+  if (!isTestFrameworkObject(sourceCode, callee.object)) {
+    return false;
+  }
+
   const property = callee.property;
+
   const method = callee.computed
     ? property.type === "Literal" &&
       (property.value === "doMock" ||
@@ -76,6 +82,7 @@ function moduleMockCall(sourceCode: SourceCode, callee: ESTree.Expression): bool
     : property.type === "Identifier"
       ? property.name
       : null;
+
   return method !== null && moduleMockMethods.has(method);
 }
 
@@ -95,7 +102,10 @@ export const noModuleMockingRule = defineRule({
   createOnce(context) {
     return {
       CallExpression(node) {
-        if (node.callee.type === "Super" || node.callee.type === "V8IntrinsicExpression") return;
+        if (node.callee.type === "Super" || node.callee.type === "V8IntrinsicExpression") {
+          return;
+        }
+
         if (moduleMockCall(context.sourceCode, node.callee)) {
           context.report({ node, messageId: "moduleMock" });
         }

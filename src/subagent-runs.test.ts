@@ -45,12 +45,14 @@ const folded: FoldedTranscript = {
     "notes.txt",
     "agent-ccc333.jsonl",
   ]);
+
   assert.deepEqual(runs, [
     { agentId: "bbb222", description: "bbb222", subagentType: undefined, time: 11 },
     { agentId: "aaa111", description: "Review the diff", subagentType: "reviewer", time: 11 },
     { agentId: "ccc333", description: "ccc333", time: 0 },
   ]);
 }
+
 {
   assert.deepEqual(subagentRunsOf(undefined, ["agent-x.jsonl"]), [
     { agentId: "x", description: "x", time: 0 },

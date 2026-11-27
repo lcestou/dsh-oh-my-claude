@@ -15,6 +15,7 @@ import { tempDir } from "./test-tmp.js";
 {
   const plain =
     "---\nname: unslop\ndescription: Cut AI tells from any writing. Must always apply.\n---\n# Body\n";
+
   assert.deepEqual(parseSkillHead(plain), {
     name: "unslop",
     description: "Cut AI tells from any writing. Must always apply.",
@@ -24,8 +25,10 @@ import { tempDir } from "./test-tmp.js";
     name: "flux",
     description: "Local AI image generation",
   });
+
   const block =
     "---\nname: research\ndescription: >\n  Investigate a question against primary sources.\n  Second line.\n---\n";
+
   assert.equal(
     parseSkillHead(block).description,
     "Investigate a question against primary sources.",
@@ -70,6 +73,7 @@ import { tempDir } from "./test-tmp.js";
   const tmp = tempDir("omc-skills-");
   const root = join(tmp, "repo");
   const sub = join(root, "packages", "app");
+
   const skill = async (dir: string, name: string) => {
     await mkdir(join(dir, ".claude", "skills", name), { recursive: true });
     await writeFile(
@@ -77,6 +81,7 @@ import { tempDir } from "./test-tmp.js";
       `---\nname: ${name}\ndescription: d\n---\n`,
     );
   };
+
   await mkdir(join(root, ".git"), { recursive: true });
   await skill(sub, "own");
   await skill(root, "shared");

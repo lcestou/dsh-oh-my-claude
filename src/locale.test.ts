@@ -6,7 +6,9 @@ import { HEADER_MARK, formatToolCall, formatToolResult, resetClock } from "./tra
 
 // Unbound (a test, an older dsh): English, placeholders filled.
 assert.equal(serverText("planApprove"), "Approve");
+
 assert.equal(serverText("notLoggedIn"), "not logged in");
+
 assert.ok(serverText("loggedOutError", { host: "nova" }).startsWith("not logged in on nova."));
 
 // The stored preference decides; any zh tag counts, anything else and a throwing read are English.
@@ -16,10 +18,15 @@ const reader = (preference?: string) => ({
     { ns: "locale", value: preference ? { preference } : {} },
   ],
 });
+
 assert.equal(serverIsChinese(reader("zh")), true);
+
 assert.equal(serverIsChinese(reader("zh-CN")), true);
+
 assert.equal(serverIsChinese(reader("en")), false);
+
 assert.equal(serverIsChinese(reader()), false, "no stored pick");
+
 assert.equal(
   serverIsChinese({
     describe: () => {
@@ -90,6 +97,7 @@ for (const lang of ["en", "zh"]) {
     description?: string;
     meta?: { title?: string; description?: string };
   } = JSON.parse(readFileSync(new URL(`../locale/${lang}.json`, import.meta.url), "utf8"));
+
   assert.equal(file.meta?.title, "Oh My Claude", `${lang}: meta.title`);
   assert.ok((file.meta?.description ?? "").length > 20, `${lang}: meta.description`);
   assert.equal(file.title, file.meta?.title, `${lang}: top-level title matches`);
@@ -109,15 +117,20 @@ for (const lang of ["en", "zh"]) {
   // same, so the two readers must ask with the name dsh reads.
   {
     let leaked = 0;
+
     const dshLike = {
       describe: (options?: { redactSecrets?: boolean }) => {
-        if (options?.redactSecrets !== true) leaked++;
+        if (options?.redactSecrets !== true) {
+          leaked++;
+        }
+
         return [
           { ns: "locale", value: { preference: "zh-CN" } },
           { ns: "ui-conversation", value: { busyEnter: "steer" } },
         ];
       },
     };
+
     assert.equal(serverIsChinese(dshLike), true);
     assert.equal(busyEnterOf(dshLike), "steer");
     assert.equal(leaked, 0, "both reads asked dsh to hide secrets");

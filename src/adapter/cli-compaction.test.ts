@@ -4,9 +4,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ClaudeCodeAdapter, Config, registryKey } from "../adapter.js";
-import { asSessionId, type PluginContext } from "../dsh.js";
+import { asSessionId } from "../dsh.js";
+import type { PluginContext } from "../dsh.js";
 import type { ClaudeEvent, ClaudeProcess } from "../process.js";
-import { cliMidTurn, compactionRoute, type CompactionFacts } from "./cli-compaction.js";
+import { cliMidTurn, compactionRoute } from "./cli-compaction.js";
+import type { CompactionFacts } from "./cli-compaction.js";
 import { tempDir } from "../test-tmp.js";
 
 const facts = (o: Partial<CompactionFacts> = {}): CompactionFacts => ({
@@ -21,13 +23,17 @@ const facts = (o: Partial<CompactionFacts> = {}): CompactionFacts => ({
   switchPending: false,
   ...o,
 });
+
 const refusal = (o: Partial<CompactionFacts>) => {
   const route = compactionRoute(facts(o));
+
   return route.kind === "refuse" ? route : undefined;
 };
 
 assert.deepEqual(compactionRoute(facts()), { kind: "cli" });
+
 assert.equal(compactionRoute(facts({ enabled: false, pending: "S" })).kind, "fallback");
+
 assert.deepEqual(
   compactionRoute(
     facts({
@@ -42,55 +48,75 @@ assert.deepEqual(
   { kind: "reuse", summary: "S" },
   "a pending summary serves any dsh compaction",
 );
+
 assert.equal(refusal({ midTurn: true })?.owe, true, "mid-turn: refused, compacted once idle");
+
 assert.match(refusal({ midTurn: true })?.why ?? "", /mid-turn/);
+
 assert.equal(refusal({ justCompacted: true })?.owe, false, "already compacted: nothing is owed");
+
 assert.equal(refusal({ justCompacted: true, midTurn: true })?.owe, false);
+
 assert.deepEqual(
   compactionRoute(facts({ midTurn: true, switchPending: true })),
   { kind: "fallback", why: "model switch pending" },
   "a failed compaction ahead of a switch fails the switch",
 );
+
 assert.equal(compactionRoute(facts({ justCompacted: true, switchPending: true })).kind, "fallback");
+
 assert.deepEqual(
   compactionRoute(facts({ switchPending: true })),
   { kind: "cli" },
   "an idle CLI compacts ahead of a switch between Claude models",
 );
+
 assert.deepEqual(compactionRoute(facts({ provider: "deepseek", midTurn: true })), {
   kind: "fallback",
   why: "switching to deepseek",
 });
+
 assert.deepEqual(
   compactionRoute(facts({ provider: undefined })),
   { kind: "cli" },
   "an unreadable provider is not a switch",
 );
+
 assert.equal(compactionRoute(facts({ mirrored: true })).kind, "fallback");
+
 assert.equal(compactionRoute(facts({ reachable: false })).kind, "fallback");
 
 const idleCli = { busy: false, relays: { size: 0 }, parked: undefined };
+
 assert.equal(cliMidTurn(idleCli), false);
+
 assert.equal(cliMidTurn({ ...idleCli, busy: true }), true);
+
 assert.equal(cliMidTurn({ ...idleCli, relays: { size: 1 } }), true);
+
 assert.equal(cliMidTurn({ ...idleCli, parked: "steer" }), true);
 
 const stateDir = tempDir("omc-cli-compaction-");
 const resumeLog = () => readFile(join(stateDir, "resume.log"), "utf8").catch(() => "");
+
 // SAFETY: partial fakes for tests; each carries what the code under test reads
 const fakeCtx = (o: object): PluginContext => o as unknown as PluginContext;
+
 const adapterWith = (ctx: object = {}, config: object = {}) => {
   const a = new ClaudeCodeAdapter(
     fakeCtx({ on() {}, logger: { info() {}, warn() {} }, ...ctx }),
     Config(config),
   );
+
   a.stateDir = stateDir;
+
   return a;
 };
+
 /** A session store answering one session: its header and its log's events. */
 const sessionsWith = (
   header: object,
-  events: object[] = [],
+  events: Array<object> = [],
   ran: object = { provider: "claude-code", model: "claude-opus-5-5" },
 ) => ({
   get: () => ({
@@ -101,9 +127,10 @@ const sessionsWith = (
 });
 
 /** A live, idle CLI that answers `/compact` with `events`, then a result. */
-const cliAnswering = (events: object[], o: object = {}) => {
-  const written: string[] = [];
-  let queue: object[] = [];
+const cliAnswering = (events: Array<object>, o: object = {}) => {
+  const written: Array<string> = [];
+  let queue: Array<object> = [];
+
   const proc = {
     alive: true,
     busy: false,
@@ -111,7 +138,7 @@ const cliAnswering = (events: object[], o: object = {}) => {
     relays: new Map(),
     parked: undefined,
     steers: new Map(),
-    queue: { lines: [] as string[] },
+    queue: { lines: [] as Array<string> },
     hasTurnOutput: () => false,
     spec: { cwd: "/work", sessionId: "claude-1" },
     lastUsed: 0,
@@ -121,7 +148,11 @@ const cliAnswering = (events: object[], o: object = {}) => {
     },
     write(line: string) {
       written.push(line);
-      if (line.includes("/compact")) queue = [...events, { type: "result", subtype: "success" }];
+
+      if (line.includes("/compact")) {
+        queue = [...events, { type: "result", subtype: "success" }];
+      }
+
       return true;
     },
     async nextEvent(): Promise<ClaudeEvent | null> {
@@ -130,9 +161,11 @@ const cliAnswering = (events: object[], o: object = {}) => {
     },
     ...o,
   };
+
   // SAFETY: partial fake; compactOnCli reads only the fields above
   return { proc: proc as unknown as ClaudeProcess & { killed: boolean }, written };
 };
+
 const boundary = {
   type: "system",
   subtype: "compact_boundary",
@@ -157,17 +190,21 @@ const boundary = {
 // `/compact` on the live CLI: the boundary's preTokens pick the summary; the process ends idle.
 {
   const a = adapterWith();
+
   const { proc, written } = cliAnswering([
     { type: "system", subtype: "status", status: "compacting" },
     { type: "control_request", request_id: "r1", request: { subtype: "hook_callback" } },
     boundary,
   ]);
+
   a.processes.set(registryKey(a.providerId, "s1"), proc);
-  const asked: unknown[] = [];
+  const asked: Array<unknown> = [];
   a.compactSummary = async (...args) => {
     asked.push(args);
+
     return "fresh summary";
   };
+
   assert.equal(await a.compactionFromCli("s1"), "fresh summary");
   assert.match(written[0]!, /"\/compact"/, "the prompt is the CLI's own command");
   assert.match(written[1]!, /not supported while compacting/, "a control request is refused");
@@ -186,11 +223,13 @@ const boundary = {
 // would run it as a turn of its own after the compaction, with nobody reading.
 {
   const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+
   const a = adapterWith({
     on(name: string, fn: (session: unknown, event: unknown) => void) {
       handlers[name] = fn;
     },
   });
+
   const { proc, written } = cliAnswering([boundary], { sent: new Set<string>() });
   const next = proc.nextEvent.bind(proc);
   let compactingSeen = false;
@@ -212,8 +251,10 @@ const boundary = {
         },
       },
     );
+
     return next();
   };
+
   a.processes.set(registryKey(a.providerId, "s1"), proc);
   a.compactSummary = async () => "fresh summary";
   assert.equal(await a.compactionFromCli("s1"), "fresh summary");
@@ -244,6 +285,7 @@ for (const state of [{ busy: true }, { relays: new Map([["t1", {}]]) }, { parked
   assert.deepEqual(written, []);
   assert.equal(a.owedCompactions.has("s1"), true);
 }
+
 assert.match(await resumeLog(), /compaction s1: refused, owed until idle: Claude Code is mid-turn/);
 
 // The refusal reaches dsh as a failed stream, so its compaction fails at once and the step goes on.
@@ -251,7 +293,8 @@ assert.match(await resumeLog(), /compaction s1: refused, owed until idle: Claude
   const a = adapterWith();
   const { proc } = cliAnswering([boundary], { busy: true });
   a.processes.set(registryKey(a.providerId, "s1"), proc);
-  const chunks: unknown[] = [];
+  const chunks: Array<unknown> = [];
+
   const run = async () => {
     for await (const c of a.stream({
       provider: "claude-code",
@@ -259,9 +302,11 @@ assert.match(await resumeLog(), /compaction s1: refused, owed until idle: Claude
       messages: [],
       sessionId: asSessionId("s1"),
       purpose: "compaction",
-    }))
+    })) {
       chunks.push(c);
+    }
   };
+
   await assert.rejects(run(), /mid-turn/);
   assert.deepEqual(chunks, []);
 }
@@ -273,6 +318,7 @@ assert.match(await resumeLog(), /compaction s1: refused, owed until idle: Claude
     { type: "request/header", data: {} },
     { type: "model/selection", data: { provider: "claude-code", model } },
   ];
+
   const a = adapterWith({ sessions: sessionsWith({}, pick("claude-sonnet-5-5")) });
   const { proc, written } = cliAnswering([boundary], { busy: true });
   a.processes.set(registryKey(a.providerId, "s1"), proc);
@@ -299,10 +345,12 @@ assert.match(await resumeLog(), /compaction s1: refused, owed until idle: Claude
 {
   const a = adapterWith();
   a.claudeHome = stateDir;
+
   const { proc, written } = cliAnswering([boundary], {
     resuming: false,
     spec: { cwd: "/work", sessionId: "never-started" },
   });
+
   a.processes.set(registryKey(a.providerId, "s1"), proc);
   assert.equal(await a.compactionFromCli("s1"), undefined);
   assert.deepEqual(written, []);
@@ -314,6 +362,7 @@ assert.match(await resumeLog(), /compaction s1: refused, owed until idle: Claude
   const a = adapterWith();
   a.pendingCompactions.set("s1", "CLI summary");
   const chunks = [];
+
   for await (const c of a.stream({
     provider: "claude-code",
     model: "m",
@@ -323,6 +372,7 @@ assert.match(await resumeLog(), /compaction s1: refused, owed until idle: Claude
   })) {
     chunks.push(c);
   }
+
   assert.ok(JSON.stringify(chunks).includes("CLI summary"), "the summary is the answer");
   assert.deepEqual(chunks.at(-1), { type: "finish", reason: { kind: "stop" } });
 }
@@ -332,23 +382,28 @@ assert.match(await resumeLog(), /compaction s1: refused, owed until idle: Claude
 // inside the turn they belong to, keeps them.
 for (const mode of ["relay", "steer", "prompt"] as const) {
   const a = adapterWith();
+
   for (const id of ["s1", "s2"]) {
     a.pendingCompactions.set(id, "CLI summary");
     a.owedCompactions.add(id);
     a.compactedSinceRequest.add(id);
   }
+
   const { proc } = cliAnswering([]);
+
   const options = {
     provider: "claude-code",
     model: "m",
     messages: [],
     sessionId: asSessionId("s1"),
   };
+
   // SAFETY: the fields turn() reads before it stops on the stand-in process
   a.continuationFor = () => ({ mode, proc, options, results: [] }) as never;
   a.acquire = async () => {
     throw new Error("stop here");
   };
+
   await assert.rejects(a.turn(options).next(), /stop here|no turn state/);
   const newTurn = mode === "prompt";
   assert.equal(a.compactedSinceRequest.has("s1"), false, mode);
@@ -361,29 +416,37 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
 // syncCompaction: once idle, dsh compacts its copy; nothing left to shadow drops the summary,
 // `busy` waits for the next idle, any other failure drops it.
 {
-  type Compacted = { shadowedSeqs: number[]; shadowedTokenCount: number } | null;
-  const calls: string[] = [];
+  type Compacted = { shadowedSeqs: Array<number>; shadowedTokenCount: number } | null;
+
+  const calls: Array<string> = [];
   let answer: () => Promise<Compacted> = async () => ({ shadowedSeqs: [1], shadowedTokenCount: 9 });
   const agent = { whenIdle: async () => {} };
+
   const compaction = {
     compactNow: async () => {
       calls.push("compactNow");
+
       return answer();
     },
   };
+
   const a = adapterWith({
     agents: { get: () => agent },
     get: (name: string) => (name === "compaction" ? compaction : undefined),
   });
+
   const busy = Object.assign(new Error("busy"), { code: "busy" });
+
   /** Waits for the retry a `busy` answer starts in the background. The retry marks the session as
    *  syncing before its first await and holds it until its log line is written, so it is done
    *  once the mark is gone. A fixed sleep lost that race under the parallel suite: a retry still
    *  writing its log line made the next block's sync return at once (a slow `whenIdle` would miss
    *  the retry's own call instead). */
   const retried = async () => {
-    for (let i = 0; i < 1000 && a.syncingCompactions.has("s1"); i++)
+    for (let i = 0; i < 1000 && a.syncingCompactions.has("s1"); i++) {
       await new Promise((r) => setTimeout(r, 5));
+    }
+
     assert.equal(a.syncingCompactions.has("s1"), false, "the retry finished");
   };
 
@@ -393,8 +456,10 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
   a.pendingCompactions.set("s1", "S");
   answer = async () => {
     a.pendingCompactions.delete("s1"); // compactionFromCli takes it during compactNow
+
     return { shadowedSeqs: [1], shadowedTokenCount: 9 };
   };
+
   await a.syncCompaction("s1");
   assert.deepEqual(calls, ["compactNow"]);
 
@@ -410,9 +475,12 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
       first = false;
       throw busy;
     }
+
     a.pendingCompactions.delete("s1");
+
     return { shadowedSeqs: [1], shadowedTokenCount: 9 };
   };
+
   calls.length = 0;
   await a.syncCompaction("s1");
   await retried();
@@ -423,6 +491,7 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
   answer = async () => {
     throw busy;
   };
+
   calls.length = 0;
   await a.syncCompaction("s1");
   await retried();
@@ -432,6 +501,7 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
   answer = async () => {
     throw new Error("summary rejected");
   };
+
   await a.syncCompaction("s1");
   assert.equal(a.pendingCompactions.has("s1"), false, "a failure drops the summary");
 
@@ -447,13 +517,15 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
   answer = async () => {
     throw new Error("summary rejected");
   };
+
   await a.syncCompaction("s1");
   assert.equal(a.owedCompactions.has("s1"), false, "a failure drops what was owed");
 }
 
 // Nothing runs on an idle subagent or team member: dsh is settling it, and its parent waits on that.
 {
-  const calls: string[] = [];
+  const calls: Array<string> = [];
+
   const a = adapterWith({
     agents: { get: () => ({ whenIdle: async () => {} }) },
     sessions: sessionsWith({ origin: "subagent" }),
@@ -462,11 +534,13 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
         ? {
             compactNow: async () => {
               calls.push("compactNow");
+
               return null;
             },
           }
         : undefined,
   });
+
   a.pendingCompactions.set("s1", "S");
   a.owedCompactions.add("s1");
   await a.syncCompaction("s1");
@@ -477,18 +551,22 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
 // dsh's web and desktop profiles mount compaction inside the agent's preset and disable the root
 // seam: syncCompaction asks the preset first, and still logs why when there is neither.
 {
-  const calls: string[] = [];
+  const calls: Array<string> = [];
   const agent = { whenIdle: async () => {} };
+
   const compaction = {
     compactNow: async () => {
       calls.push("preset compactNow");
+
       return { shadowedSeqs: [1], shadowedTokenCount: 9 };
     },
   };
+
   const a = adapterWith({
     agents: { get: () => agent },
     get: (name: string) => (name === "agentPresets" ? { serviceFor: () => compaction } : undefined),
   });
+
   a.owedCompactions.add("s1");
   await a.syncCompaction("s1");
   assert.deepEqual(calls, ["preset compactNow"], "the preset's compaction runs the owed one");
@@ -513,6 +591,7 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
 {
   const a = adapterWith();
   let wrote = 0;
+
   // SAFETY: compactOnCli reads alive, busy, the queue and spec before it writes
   const proc = {
     alive: true,
@@ -522,9 +601,11 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
     spec: { cwd: "/tmp", sessionId: "c1" },
     write: () => {
       wrote++;
+
       return true;
     },
   } as unknown as ClaudeProcess;
+
   a.revive = async () => proc;
   assert.equal(await a.compactOnCli("s1"), undefined);
   assert.equal(wrote, 0, "nothing written behind the CLI's own turn");

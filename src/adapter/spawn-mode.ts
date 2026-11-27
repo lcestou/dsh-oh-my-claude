@@ -45,6 +45,7 @@ export function spawnModeFor(
   platform: NodeJS.Platform,
 ): SpawnSetting {
   const wanted = configuredSpawn(configured) ?? (keeperOff ? "dsh" : "keeper");
+
   return wanted === "keeper" && platform === "win32" ? "node" : wanted;
 }
 

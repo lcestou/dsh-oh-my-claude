@@ -30,7 +30,8 @@ const frames = [
     parent_tool_use_id: null,
     message: { id: "m1", role: "assistant", content: [], stop_reason: "refusal" },
   },
-] as unknown as ClaudeEvent[];
+] as unknown as Array<ClaudeEvent>;
+
 /** A result frame that stopped with `refusal`, as an error or not. */
 // SAFETY: hand-written result frame
 const result = (isError: boolean) =>
@@ -44,9 +45,14 @@ const result = (isError: boolean) =>
 /** The finish reason a translator ends the fixture turn with. */
 const finish = (refusalAsFailure: boolean, isError: boolean, events = frames) => {
   const tr = new Translator({ refusalAsFailure });
-  for (const e of events) tr.translate(e);
+
+  for (const e of events) {
+    tr.translate(e);
+  }
+
   const last = tr.translate(result(isError)).at(-1);
   assert.equal(last?.type, "finish");
+
   return { tr, reason: last?.type === "finish" ? last.reason : undefined };
 };
 
@@ -54,6 +60,7 @@ const finish = (refusalAsFailure: boolean, isError: boolean, events = frames) =>
   const { reason } = finish(false, false);
   assert.equal(reason?.kind, "stop", "off: a refusal ends the turn as it always did");
 }
+
 for (const isError of [false, true]) {
   const { tr, reason } = finish(true, isError);
   assert.equal(reason?.kind, "error");
@@ -62,17 +69,23 @@ for (const isError of [false, true]) {
   assert.match(reason.failure.message, /declined to answer \(test\): This request was declined\./);
   assert.ok(tr.refusal);
 }
+
 {
   // An older CLI without the system frame: the error frame alone is enough.
   const { reason } = finish(true, true, frames.slice(1));
   assert.ok(reason?.kind === "error" && reason.failure.code === REFUSAL_CODE);
 }
+
 {
   // A subagent's refused reply is the subagent's: the parent turn ends normally.
   // SAFETY: hand-written fixture
-  const child = [{ ...frames[1], parent_tool_use_id: "toolu_1" }] as unknown as ClaudeEvent[];
+  const child = [{ ...frames[1], parent_tool_use_id: "toolu_1" }] as unknown as Array<ClaudeEvent>;
   const tr = new Translator({ refusalAsFailure: true });
-  for (const e of child) tr.translate(e);
+
+  for (const e of child) {
+    tr.translate(e);
+  }
+
   // SAFETY: hand-written fixture
   const end = tr.translate({ type: "result", is_error: false, stop_reason: "end_turn" } as never);
   const last = end.at(-1);
@@ -106,7 +119,8 @@ for (const isError of [false, true]) {
         stop_reason: "refusal",
       },
     },
-  ] as unknown as ClaudeEvent[];
+  ] as unknown as Array<ClaudeEvent>;
+
   const on = new Translator({ refusalAsFailure: true });
   const out = [...real.flatMap((e) => on.translate(e)), ...on.translate(result(true))];
   assert.deepEqual(
@@ -140,6 +154,7 @@ for (const isError of [false, true]) {
   assert.ok(last?.type === "finish" && last.reason.kind === "stop", "the result overruled it");
   assert.equal(tr.refusalEnded, false, "so the transcript stays");
 }
+
 {
   const { tr } = finish(true, true);
   assert.equal(tr.refusalEnded, true, "a turn ended as REFUSAL marks its transcript for dropping");
@@ -157,11 +172,13 @@ for (const isError of [false, true]) {
   writeFileSync(join(dir, "s2.jsonl"), "{}\n");
   await rememberStarted("s1", true);
   let killed = 0;
+
   // SAFETY: partial fake; dropRefused reads kill and child.done
   const proc = {
     kill: () => killed++,
     child: { done: Promise.resolve({ exitCode: 0, signal: null }) },
   } as unknown as ClaudeProcess;
+
   await adapter.dropRefused(proc, "/w", "s1");
   assert.equal(killed, 1);
   assert.equal(existsSync(join(dir, "s1.jsonl")), false, "the next turn does not resume it");

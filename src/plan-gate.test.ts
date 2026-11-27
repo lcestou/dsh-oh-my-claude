@@ -8,7 +8,8 @@ import { PLAN_REFUSAL, planRefuses } from "./plan-gate.js";
 import { ClaudeProcess, statusMode } from "./process.js";
 
 const agent = { id: "a1" };
-const ran: string[] = [];
+const ran: Array<string> = [];
+
 /** A dsh tool fake that records its own name when executed. */
 const fake = (name: string) => ({
   name,
@@ -16,16 +17,21 @@ const fake = (name: string) => ({
   parameters: { type: "object", properties: {} },
   execute: () => {
     ran.push(name);
+
     return [{ type: "text", text: `ran ${name}` }];
   },
 });
+
 const registered = new Map(["bash", "subagent", "job_list"].map((n) => [n, fake(n)]));
+
 // SAFETY: partial fake for tests
 const tools = {
   schemas: () => [...registered.values()],
   get: (name: string) => registered.get(name),
 };
+
 let mode: string | undefined = "default";
+
 // SAFETY: cast to HandleRpcParams shape for test double
 const env = {
   tools,
@@ -38,13 +44,16 @@ const env = {
 } as unknown as Parameters<typeof handleRpc>[1];
 
 type Reply = { result: { content: Array<{ text: string }>; isError?: boolean } };
+
 let id = 1;
+
 /** One tools/call through the bridge; returns its text and whether it was an error. */
 const call = async (name: string) => {
   const r = (await handleRpc(
     { jsonrpc: "2.0", id: id++, method: "tools/call", params: { name, arguments: {} } },
     env,
   )) as Reply;
+
   return { text: r.result.content[0]?.text, isError: r.result.isError === true };
 };
 
@@ -52,57 +61,82 @@ const call = async (name: string) => {
 for (const name of ["bash", "subagent", "job_list"]) {
   assert.deepEqual(await call(name), { text: `ran ${name}`, isError: false }, name);
 }
+
 assert.equal((await call("prompt_session")).text, "prompted");
 
 // The session switches to plan after spawn: the next call reads the new mode.
 mode = "plan";
+
 ran.length = 0;
+
 for (const name of [
   "bash",
   "subagent",
   "prompt_session",
   "mcp__svelte__playground-link",
   "new_tool",
-])
+]) {
   assert.deepEqual(await call(name), { text: PLAN_REFUSAL, isError: true }, `${name} refused`);
+}
+
 assert.deepEqual(ran, [], "nothing refused reached a tool");
+
 assert.deepEqual(await call("job_list"), { text: "ran job_list", isError: false });
+
 assert.equal((await call("wait_session")).text, "waited");
 
 // dsh 0.2.2-rc.2 tools: reading the user's terminal is allowed, the office writers are not.
-for (const name of ["user_terminal_list", "user_terminal_read"])
+for (const name of ["user_terminal_list", "user_terminal_read"]) {
   assert.equal(planRefuses(name, "plan"), false, name);
-for (const name of ["office_convert", "office_recalculate", "office_render"])
+}
+
+for (const name of ["office_convert", "office_recalculate", "office_render"]) {
   assert.equal(planRefuses(name, "plan"), true, name);
+}
+
 // dsh 0.2.3 folds the two inspection tools into one; the tools that change the session's
 // directory there are refused like `working_directory` before them.
 assert.equal(planRefuses("cordis_inspect", "plan"), false, "cordis_inspect");
-for (const name of ["enter_worktree", "exit_worktree"])
+
+for (const name of ["enter_worktree", "exit_worktree"]) {
   assert.equal(planRefuses(name, "plan"), true, name);
+}
+
 // dsh 0.2.3's session and workspace listings only read metadata.
-for (const name of ["list_session", "list_workspace"])
+for (const name of ["list_session", "list_workspace"]) {
   assert.equal(planRefuses(name, "plan"), false, name);
+}
 
 // Out of plan again: bash runs.
 mode = "acceptEdits";
+
 assert.equal((await call("bash")).text, "ran bash");
+
 mode = undefined;
+
 assert.equal((await call("bash")).text, "ran bash", "an unknown mode gates nothing");
 
 assert.equal(planRefuses("run_code", "plan"), true, "code mode's program can call anything");
+
 assert.equal(planRefuses("bash", "bypassPermissions"), false);
 
 // statusMode reads the CLI's mode-change frame and the frame that opens each turn, nothing else.
 const status = (permissionMode: string) =>
   JSON.stringify({ type: "system", subtype: "status", status: null, permissionMode });
+
 assert.equal(statusMode(status("plan")), "plan");
+
 assert.equal(statusMode('{"type":"system","subtype":"init","permissionMode":"plan"}'), "plan");
+
 assert.equal(statusMode('{"type":"assistant","note":"init","permissionMode":"plan"}'), undefined);
+
 assert.equal(statusMode('{"type":"system","subtype":"status","status":"compacting"}'), undefined);
+
 assert.equal(statusMode('"permissionMode" "status" not json'), undefined);
 
 // A live process follows a mode the CLI reports on its own (EnterPlanMode, an approved plan).
 const stdout = new PassThrough();
+
 const proc = new ClaudeProcess({
   args: [],
   cwd: "/tmp",
@@ -123,20 +157,31 @@ const proc = new ClaudeProcess({
     terminate() {},
   }),
 });
+
 /** Writes one CLI stdout line and lets the readline handler see it. */
 const feed = async (line: string) => {
   stdout.write(`${line}\n`);
   await new Promise((r) => setTimeout(r, 10));
 };
+
 assert.equal(proc.liveMode, "default");
+
 await feed(status("plan"));
+
 assert.equal(proc.liveMode, "plan", "EnterPlanMode's status frame moves liveMode");
+
 await feed(status("default"));
+
 assert.equal(proc.liveMode, "default", "an approved plan moves it back");
+
 assert.equal(proc.spec.mode, "default", "the launch mode is left alone");
+
 // A process adopted after a dsh restart starts from its launch mode; the next turn's init frame
 // says what the CLI is really in, and the gate follows it.
 await feed(JSON.stringify({ type: "system", subtype: "init", tools: [], permissionMode: "plan" }));
+
 assert.equal(proc.liveMode, "plan", "the turn's init frame corrects a stale mode");
+
 console.log("plan-gate ok");
+
 process.exit(0);

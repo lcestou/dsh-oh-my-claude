@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
-import { type GroupInfo, pageSessions, type SessionData } from "./index.js";
+import { pageSessions } from "./index.js";
+import type { GroupInfo, SessionData } from "./index.js";
 
 const sess = (id: string, modifiedAt: number, over: Partial<SessionData> = {}): SessionData => ({
   id,
@@ -9,7 +10,7 @@ const sess = (id: string, modifiedAt: number, over: Partial<SessionData> = {}): 
   ...over,
 });
 
-const group = (key: string, sessions: SessionData[]): GroupInfo => ({
+const group = (key: string, sessions: Array<SessionData>): GroupInfo => ({
   key,
   name: key,
   ok: true,
@@ -30,6 +31,7 @@ const many = group(
     origin: "all",
     shown: {},
   });
+
   assert.equal(list.length, 10);
   assert.equal(list[0]?.s.id, "s24", "newest first");
   assert.equal(list[9]?.s.id, "s15");
@@ -45,6 +47,7 @@ const many = group(
     origin: "all",
     shown: { all: 20 },
   });
+
   assert.equal(list.length, 20);
   assert.equal(hidden.all, 5);
 }
@@ -57,6 +60,7 @@ const many = group(
     origin: "all",
     shown: { all: 100 },
   });
+
   assert.equal(list.length, 25);
   assert.equal(hidden.all, undefined);
 }
@@ -65,12 +69,14 @@ const many = group(
 {
   const a = group("local", [sess("a", 3)]);
   const b = group("box2", [sess("hi", 5), sess("lo", 1)]);
+
   const { list, matched } = pageSessions([a, b], {
     box: "all",
     cwd: "all",
     origin: "all",
     shown: {},
   });
+
   assert.deepEqual(
     list.map((r) => r.s.id),
     ["hi", "a", "lo"],
@@ -82,12 +88,14 @@ const many = group(
 // box filter drops other boxes entirely.
 {
   const other = group("box2", [sess("x", 5)]);
+
   const { list } = pageSessions([many, other], {
     box: "box2",
     cwd: "all",
     origin: "all",
     shown: {},
   });
+
   assert.equal(list.length, 1);
   assert.equal(list[0]?.s.id, "x");
 }
@@ -99,6 +107,7 @@ const many = group(
     sess("b", 2, { cwd: "/p/other" }),
     sess("c", 1, { cwd: "/p/app", dsh: { archived: true } }),
   ]);
+
   const byCwd = pageSessions([g], { box: "all", cwd: "/p/app", origin: "all", shown: {} });
   assert.equal(byCwd.matched.all, 2);
   assert.deepEqual(
@@ -121,12 +130,14 @@ const many = group(
     sshBox: true,
     sessions: [sess("r", 9)],
   };
+
   const { list } = pageSessions([many, nova], {
     box: "ssh:nova",
     cwd: "all",
     origin: "all",
     shown: {},
   });
+
   assert.equal(list.length, 1);
   assert.equal(list[0]?.s.id, "r");
   assert.equal(list[0]?.g.sshBox, true);
@@ -139,10 +150,12 @@ const many = group(
     sess("bb22", 2, { title: "Tooltip on the button", cwd: "/p/app" }),
     sess("cc33", 1, { cwd: "/srv/site", dsh: { archived: true } }),
   ]);
+
   const ids = (q: string, origin = "all") =>
     pageSessions([g], { box: "all", cwd: "all", origin, query: q, shown: {} }).list.map(
       (r) => r.s.id,
     );
+
   assert.deepEqual(ids("PILL cost"), ["aa11"], "words in any order, case folded");
   assert.deepEqual(ids("bb2"), ["bb22"], "an id fragment");
   assert.deepEqual(ids("srv"), ["cc33"], "a path fragment");
@@ -159,6 +172,7 @@ const many = group(
       sess("aa11", 3, { title: "Fix the cost pill", cwd: "/p/app" }),
       sess("bb22", 2, { title: "Tooltip on the button", cwd: "/p/app" }),
     ]);
+
     const { list } = pageSessions([g], { box: "all", cwd: "all", origin: "all", shown: {} });
     assert.deepEqual(
       list.map((r) => r.s.id),
@@ -174,6 +188,7 @@ const many = group(
       sess("bb22", 2, { title: "Tooltip on the button", cwd: "/p/app" }),
       sess("cc33", 1, { title: "Third row", cwd: "/p/app" }),
     ]);
+
     const { list } = pageSessions([g], {
       box: "all",
       cwd: "all",
@@ -181,6 +196,7 @@ const many = group(
       shown: {},
       deepIds: new Set(["aa11"]),
     });
+
     assert.deepEqual(
       list.map((r) => r.s.id),
       ["aa11"],
@@ -194,6 +210,7 @@ const many = group(
       sess("aa11", 3, { title: "Fix the cost pill", cwd: "/p/app" }),
       sess("bb22", 2, { cwd: "/p/app" }),
     ]);
+
     const { list } = pageSessions([g], {
       box: "all",
       cwd: "all",
@@ -201,6 +218,7 @@ const many = group(
       shown: {},
       deepIds: new Set<string>(),
     });
+
     assert.equal(list.length, 0, "an empty set matches no row, not every row");
   }
 
@@ -213,6 +231,7 @@ const many = group(
       sess("bb22", 2, { title: "Tooltip on the pill", cwd: "/p/app" }),
       sess("cc33", 1, { title: "Third row", cwd: "/p/app" }),
     ]);
+
     const { list } = pageSessions([g], {
       box: "all",
       cwd: "all",
@@ -221,6 +240,7 @@ const many = group(
       shown: {},
       deepIds: new Set(["aa11", "cc33"]),
     });
+
     assert.deepEqual(
       list.map((r) => r.s.id),
       ["aa11", "cc33"],

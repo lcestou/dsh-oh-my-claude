@@ -12,6 +12,7 @@ export const HINTS_EVENT = "omc-hints";
 /** One read of the store shared by every hook on the page: a Settings open mounts five readers and
  *  every cost pill two, so the fetch is memoised until a write dispatches the event. */
 let hintsOnce: Promise<Record<string, boolean | number>> | undefined;
+
 // A hint written from another tab or browser lands here as an event carrying the whole store;
 // hand it to every reader through the same event a local write dispatches, with no refetch.
 // Module-level: a hot reload loads a new module whose subscriber map starts empty, so nothing stacks.
@@ -19,6 +20,7 @@ subscribe("hints", (_session, data) => {
   hintsOnce = Promise.resolve(data);
   window.dispatchEvent(new Event(HINTS_EVENT));
 });
+
 /** Fetch and parse the box-wide hints store once, memoising the promise and retrying on failure
  *  rather than caching the empty result. */
 export const loadHints = (): Promise<Record<string, boolean | number>> =>
@@ -26,8 +28,10 @@ export const loadHints = (): Promise<Record<string, boolean | number>> =>
     .then((r) => readJson<Record<string, boolean | number>>(r))
     .catch(() => {
       hintsOnce = undefined; // a failed read is retried by the next reader, not cached
+
       return {};
     }));
+
 /** One box-wide hint and its setter. Undefined until the first load. The setter posts to the box,
  *  null clears the hint, and every other reader in this tab re-reads once it lands. */
 export function useHintValue(
@@ -36,17 +40,23 @@ export function useHintValue(
   const [value, setValue] = useState<boolean | number | undefined>(undefined);
   useEffect(() => {
     let live = true;
+
     const load = () =>
       loadHints().then((h) => {
-        if (live) setValue(h[key]);
+        if (live) {
+          setValue(h[key]);
+        }
       });
+
     void load();
     window.addEventListener(HINTS_EVENT, load);
+
     return () => {
       live = false;
       window.removeEventListener(HINTS_EVENT, load);
     };
   }, [key]);
+
   const set = (next: boolean | number | null) => {
     setValue(next === null ? undefined : next);
     void fetch(`${ROUTE}/hints`, {
@@ -58,6 +68,7 @@ export function useHintValue(
       window.dispatchEvent(new Event(HINTS_EVENT));
     });
   };
+
   return [value, set];
 }
 
@@ -83,6 +94,7 @@ export function writeHints(next: Record<string, boolean | number | null>): void 
 /** One boolean flag from the hints store; `false` clears the key. */
 export function useHintFlag(flag: string): [boolean, (on: boolean) => void] {
   const [value, set] = useHintValue(flag);
+
   return [value === true, (on) => set(on)];
 }
 

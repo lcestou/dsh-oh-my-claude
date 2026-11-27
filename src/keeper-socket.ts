@@ -25,11 +25,15 @@ export function privateSocketDir(
 ): string | undefined {
   const uid = process.getuid?.();
   const dir = join(runtime || tmp, `omc-${uid ?? "user"}`);
+
   try {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const st = lstatSync(dir);
-    if (!st.isDirectory() || (uid !== undefined && st.uid !== uid) || (st.mode & 0o077) !== 0)
+
+    if (!st.isDirectory() || (uid !== undefined && st.uid !== uid) || (st.mode & 0o077) !== 0) {
       return undefined;
+    }
+
     return dir;
   } catch {
     return undefined;
@@ -48,9 +52,18 @@ export function keeperSocketPath(
   max: number = SOCKET_PATH_MAX,
 ): string {
   const inDir = join(dir, "keeper.sock");
-  if (Buffer.byteLength(inDir) <= max) return inDir;
+
+  if (Buffer.byteLength(inDir) <= max) {
+    return inDir;
+  }
+
   const base = shortDir();
-  if (!base) return inDir;
+
+  if (!base) {
+    return inDir;
+  }
+
   const name = `k-${createHash("sha256").update(dir).digest("hex").slice(0, 24)}.sock`;
+
   return join(base, name);
 }

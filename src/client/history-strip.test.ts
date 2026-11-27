@@ -23,12 +23,16 @@ assert.deepEqual(
 
 // Names follow the live rows' words; an unmet kind keeps its API label.
 assert.equal(seriesLabel("session"), "5-hour");
+
 assert.equal(seriesLabel("weekly"), "Weekly");
+
 assert.equal(seriesLabel("model:Fable"), "Fable weekly");
+
 assert.equal(seriesLabel("label:Cowork"), "Cowork");
 
 // A partial window says "at least"; a whole one does not.
 assert.match(barText({ ...e, partial: true }), /at least 40%/);
+
 assert.doesNotMatch(barText(e), /at least/);
 
 // The end date follows dsh's language: with dsh on Chinese a window that ended yesterday names
@@ -43,6 +47,7 @@ assert.doesNotMatch(barText(e), /at least/);
       getSnapshot: () => ({ active: "zh", revision: 1 }),
     }),
   });
+
   const line = barText({ ...e, resetsAt: Date.now() - 86_400_000 });
   off();
   assert.match(line, /周|星期/, `a Chinese weekday, got ${line}`);

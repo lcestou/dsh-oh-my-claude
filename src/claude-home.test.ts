@@ -12,6 +12,7 @@ assert.deepEqual(
   { link: ["settings.json", "commands", ".credentials.json"], repair: [] },
   "an empty mirror links everything but projects",
 );
+
 assert.deepEqual(
   mirrorPlan(
     ["settings.json", ".credentials.json"],
@@ -24,22 +25,30 @@ assert.deepEqual(
 const tmp = tempDir("dsh-claude-home-");
 const real = join(tmp, "claude");
 const mirror = join(tmp, "mirror");
+
 mkdirSync(join(real, "projects"), { recursive: true });
+
 writeFileSync(join(real, "settings.json"), '{"a":1}\n', "utf8");
+
 writeFileSync(join(real, ".credentials.json"), "real token\n", "utf8");
 
-const log: string[] = [];
+const log: Array<string> = [];
+
 buildMirror(real, mirror, (level, msg) => log.push(`${level} ${msg}`));
 
 // The login and the settings are the real files, read through the link.
 assert.equal(readFileSync(join(mirror, "settings.json"), "utf8"), '{"a":1}\n');
+
 assert.ok(lstatSync(join(mirror, "settings.json")).isSymbolicLink(), "settings is a link");
+
 // Transcripts are the mirror's own directory: that is the whole point of it.
 assert.ok(lstatSync(join(mirror, "projects")).isDirectory(), "projects is a real directory");
+
 assert.ok(!lstatSync(join(mirror, "projects")).isSymbolicLink(), "projects is not linked back");
 
 // A second build over a mirror that already holds is a no-op, not a pile of errors.
 buildMirror(real, mirror, (level, msg) => log.push(`${level} ${msg}`));
+
 assert.deepEqual(readdirSync(mirror).toSorted(), [
   ".credentials.json",
   "projects",
@@ -51,11 +60,17 @@ assert.deepEqual(readdirSync(mirror).toSorted(), [
 // A write *through* the link lands on the real file, which is the happy path; the fork is the CLI
 // replacing the link itself, which is what a temp-file-plus-rename does.
 rmSync(join(mirror, ".credentials.json"));
+
 writeFileSync(join(mirror, ".credentials.json"), "refreshed token\n", "utf8");
+
 buildMirror(real, mirror, (level, msg) => log.push(`${level} ${msg}`));
+
 assert.equal(readFileSync(join(real, ".credentials.json"), "utf8"), "refreshed token\n");
+
 assert.equal(readFileSync(join(real, ".credentials.json.bak"), "utf8"), "real token\n");
+
 assert.ok(lstatSync(join(mirror, ".credentials.json")).isSymbolicLink(), "relinked after repair");
+
 assert.ok(
   log.some((l) => l.startsWith("info claude home mirror: .credentials.json had forked")),
   "the repair is logged, not silent",

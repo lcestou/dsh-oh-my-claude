@@ -23,25 +23,30 @@ function fakeChild() {
   const child = new EventEmitter() as any;
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  child.written = [] as string[];
+  child.written = [] as Array<string>;
   child.stdin = { write: (s: string) => child.written.push(s) };
   child.killed = false;
   child.kill = () => {
     child.killed = true;
   };
+
   return child;
 }
 
 /** A spawner that emits `firstLine` on stdout shortly after start and hands the child back. */
 function spawner(firstLine: string): { spawnFn: any; child: () => any } {
   let child: any;
+
   const spawnFn = (() => {
     child = fakeChild();
     setTimeout(() => child.stdout.emit("data", Buffer.from(firstLine)), 5);
+
     return child;
   }) as any;
+
   return { spawnFn, child: () => child };
 }
+
 const yes = async () => true;
 const no = async () => false;
 
@@ -84,6 +89,7 @@ const no = async () => false;
   const { spawnFn, child } = spawner(
     "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&state=abc\nPaste code here if prompted >",
   );
+
   const start = await startSshLogin("nova", spawnFn, 2000);
   assert.match(
     start.url ?? "",
@@ -95,10 +101,13 @@ const no = async () => false;
 
   // A clean code is typed; the outcome waits for the exit, then asks the box.
   let asked = 0;
+
   const verify = async () => {
     asked++;
+
     return true;
   };
+
   const submit = submitSshLoginCode("nova", "  thecode123  ", verify, 2000);
   await new Promise((r) => setTimeout(r, 650));
   assert.ok(child().written.includes("thecode123"));
@@ -139,6 +148,7 @@ const no = async () => false;
   const { spawnFn, child } = spawner(
     "https://claude.com/cai/oauth/authorize?code=true&state=s\nPaste code here if prompted >",
   );
+
   await startSshLogin("box0", spawnFn, 2000);
   assert.deepEqual(await pollSshLogin("box0", yes), { pending: true });
   child().stdout.emit("data", Buffer.from("\nLogin successful\n"));
@@ -158,7 +168,7 @@ const no = async () => false;
   assert.equal(res.done, false);
   assert.match(res.error ?? "", /Failed to exchange/);
   const failed = await pollSshLogin("box2", no);
-  assert.ok(!failed.pending && failed.done === false);
+  assert.ok(!failed.pending && !failed.done);
 }
 
 // A login that never prints a URL times out with the last line as the reason, not a hang.

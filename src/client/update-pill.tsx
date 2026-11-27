@@ -99,18 +99,24 @@ export function UpdatePill({
   useLocale();
   const openPlugins = usePluginsPage();
   const [said, setSaid] = useState<"" | "copied" | "blocked">("");
+
   const say = (what: "copied" | "blocked") => {
     setSaid(what);
     setTimeout(() => setSaid(""), 1500);
   };
+
   const copy = (text: string) => {
-    if (!navigator.clipboard) return say("blocked");
+    if (!navigator.clipboard) {
+      return say("blocked");
+    }
+
     navigator.clipboard.writeText(text).then(
       () => say("copied"),
       () => say("blocked"),
     );
   };
-  if (needsDsh || (!command && !openPlugins))
+
+  if (needsDsh || (!command && !openPlugins)) {
     return (
       <span
         style={{ ...pill(T.muted), display: "inline-flex", alignItems: "center" }}
@@ -127,6 +133,8 @@ export function UpdatePill({
           : t("update.available", { latest })}
       </span>
     );
+  }
+
   // The copy outcome of the split pill, announced: its visible change is only a glyph, which a
   // screen reader does not see change on its own.
   const status = (
@@ -145,7 +153,8 @@ export function UpdatePill({
       {said === "copied" ? t("update.commandCopied") : said === "blocked" ? t("copy.failed") : ""}
     </div>
   );
-  if (!openPlugins && command)
+
+  if (!openPlugins && command) {
     return (
       <button
         type="button"
@@ -163,6 +172,8 @@ export function UpdatePill({
             : t("update.available", { latest })}
       </button>
     );
+  }
+
   return (
     <span
       data-omc-update={latest}
@@ -212,17 +223,24 @@ export function UpdatePill({
 
 /** The status fields the pill and the star line read. */
 type PillStatus = { latest?: string; update?: string; needsDsh?: string; stars?: number };
+
 /** The status route's answer, shared for a moment: the heading and the Boxes card open together
  *  and would otherwise run the box's CLI probes twice. */
 let statusOnce: { at: number; p: Promise<PillStatus> } | undefined;
+
 /** Fetches the status route once and shares the promise for ten seconds, so the Settings heading
  *  and the Boxes card that open together do not hit it twice. */
 const loadStatus = (): Promise<PillStatus> => {
-  if (statusOnce && Date.now() - statusOnce.at < 10_000) return statusOnce.p;
+  if (statusOnce && Date.now() - statusOnce.at < 10_000) {
+    return statusOnce.p;
+  }
+
   const p = fetch(`${ROUTE}/status`)
     .then((r) => readJson<PillStatus>(r))
     .catch(() => ({}));
+
   statusOnce = { at: Date.now(), p };
+
   return p;
 };
 
@@ -237,16 +255,24 @@ export function PluginUpdateBadge({ onOpen }: { onOpen?: () => void }) {
   const [upd, setUpd] = useState<PillStatus | null>(null);
   useEffect(() => {
     let live = true;
+
     /** Read the offer and show or drop the pill; `fresh` skips the shared ten-second answer. */
     const load = (fresh: boolean) => {
-      if (fresh) statusOnce = undefined;
+      if (fresh) {
+        statusOnce = undefined;
+      }
+
       void loadStatus().then((s) => {
         // The server sends `latest` only with an offer: a command, the dsh it needs, or, on DSH
         // Desktop, which has no command, the release alone for the Plugins page to install.
-        if (live) setUpd(s.latest ? s : null);
+        if (live) {
+          setUpd(s.latest ? s : null);
+        }
       });
     };
+
     load(false);
+
     // The Update notice switch (`updateCheckOff`) decides on the server whether `/status` offers
     // anything, and it sits a few rows below this pill. Re-read when that one flag flips, from
     // this tab or another; HINTS_EVENT fires after the write lands, so the read sees the new value.
@@ -255,16 +281,23 @@ export function PluginUpdateBadge({ onOpen }: { onOpen?: () => void }) {
     const onHints = () =>
       void loadHints().then((h) => {
         const now = h.updateCheckOff === true;
-        if (switchOff !== undefined && now !== switchOff) load(true);
+
+        if (switchOff !== undefined && now !== switchOff) {
+          load(true);
+        }
+
         switchOff = now;
       });
+
     onHints();
     window.addEventListener(HINTS_EVENT, onHints);
+
     return () => {
       live = false;
       window.removeEventListener(HINTS_EVENT, onHints);
     };
   }, []);
+
   return upd?.latest ? (
     <UpdatePill latest={upd.latest} command={upd.update} needsDsh={upd.needsDsh} onOpen={onOpen} />
   ) : null;
@@ -279,12 +312,16 @@ export function StarNudge({ onDismiss }: { onDismiss: () => void }) {
   useEffect(() => {
     let live = true;
     void loadStatus().then((s) => {
-      if (live) setCount(s.stars);
+      if (live) {
+        setCount(s.stars);
+      }
     });
+
     return () => {
       live = false;
     };
   }, []);
+
   return (
     <div
       data-omc-star-nudge=""

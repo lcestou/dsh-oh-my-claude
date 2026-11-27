@@ -22,7 +22,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createServer, type Socket } from "node:net";
+import { createServer } from "node:net";
+import type { Socket } from "node:net";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { SOCKET_PATH_MAX } from "./keeper-socket.js";
@@ -31,7 +32,7 @@ const BUFFER_LINES = 20_000; // ~ a long tool-heavy turn; older lines drop with 
 
 interface KeeperSpec {
   command: string;
-  args: string[];
+  args: Array<string>;
   cwd: string;
   env: Record<string, string>;
   sessionId: string;
@@ -52,22 +53,29 @@ function main(dir: string) {
   const sockPath = spec.sock ?? join(dir, "keeper.sock");
   const infoPath = join(dir, "keeper.json");
   mkdirSync(dir, { recursive: true });
-  if (existsSync(sockPath)) unlinkSync(sockPath);
+
+  if (existsSync(sockPath)) {
+    unlinkSync(sockPath);
+  }
+
   process.on("SIGHUP", () => {}); // the launching terminal or service may hang up; we stay
   process.on("SIGTERM", () => {}); // only an explicit kill message ends Claude
 
   const logPath = join(dir, "keeper.log");
+
   const log = (line: string) => {
     try {
       appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`);
     } catch {}
   };
+
   // A socket path past sun_path (SOCKET_PATH_MAX: 107 on Linux, 103 on macOS) does not fail as
   // a length error: listen answers EADDRINUSE or EINVAL, and dsh reads the silence as "keeper did
   // not answer". Refuse before Claude is spawned, with the cause where it is looked for
   // (2026-09-18: a scratch DSH_OMC_STATE_DIR under a session scratchpad, 159 bytes). spawnKeeper
   // moves a too-deep socket to a short directory, so this is left for a box with none.
   const sockBytes = Buffer.byteLength(sockPath);
+
   if (sockBytes > SOCKET_PATH_MAX) {
     log(
       `socket path is ${sockBytes} bytes, over the ${SOCKET_PATH_MAX}-byte unix socket limit: ${sockPath}`,
@@ -84,13 +92,16 @@ function main(dir: string) {
   // healthy Claude killed as an orphan). So: log, and stay up as long as the child is up.
   process.on("uncaughtException", (e) => {
     log(`uncaughtException: ${e?.stack ?? e}`);
+
     if (exit) {
       endedBy = "keeper-crash";
+
       try {
         writeInfo();
       } catch {
         // the log line above is the record; never let the crash handler itself throw
       }
+
       process.exit(70);
     }
   });
@@ -102,17 +113,22 @@ function main(dir: string) {
   // would date the *record*, not the keeper. Boot sorts keeper dirs by this field and kills the
   // ones it does not adopt, so a keeper writing its exit could outrank a live one and get it killed.
   const startedAt = Date.now();
+
   const child = spawn(spec.command, spec.args, {
     cwd: spec.cwd,
     env: spec.env,
     stdio: ["pipe", "pipe", "pipe"],
   });
+
   // A `claude` that is not on the box's PATH emits `error`, never `exit`. With no listener the
   // throw would land in the uncaughtException handler above, which stays up while `exit` is unset,
   // leaving a keeper with no child still listening on its socket, taking prompts nothing reads, and
   // surviving every restart. Report it as the exit it is.
   child.on("error", (e: Error) => {
-    if (exit) return; // `close` can follow `error`; the first one to land owns the record
+    if (exit) {
+      return;
+    } // `close` can follow `error`; the first one to land owns the record
+
     exit = { code: -1, signal: null };
     endedBy ??= "child";
     log(`childSpawnError: ${e.message}`);
@@ -126,13 +142,14 @@ function main(dir: string) {
   let client: Socket | undefined;
   /** Whether the attached client acknowledges the stdout lines it uses. */
   let clientAcks = false;
-  const buffer: string[] = [];
+  const buffer: Array<string> = [];
   /** Stdout lines sent to an acknowledging client and not acknowledged yet, by number, in order. */
   const unacked = new Map<number, string>();
   let lastOut = 0;
   let dropped = 0;
   const attached = () => client !== undefined && !client.destroyed;
   let orphanTimer: ReturnType<typeof setTimeout> | undefined;
+
   /**
    * Nobody attached and Claude silent for `orphanMs`: the dsh that started this keeper is gone for
    * good (stopped, or the other app on a shared state dir), so end Claude rather than hold it
@@ -143,51 +160,82 @@ function main(dir: string) {
    * `orphanMs` while dsh is down: that turn is cut, and the next prompt resumes the transcript.
    */
   const endOrphan = () => {
-    if (attached() || exit) return;
+    if (attached() || exit) {
+      return;
+    }
+
     log(`orphan: nobody attached and no output for ${spec.orphanMs} ms, ending claude`);
     endedBy = "orphan";
     child.stdin.end();
     setTimeout(() => {
-      if (!exit) child.kill("SIGTERM");
+      if (!exit) {
+        child.kill("SIGTERM");
+      }
     }, 5000).unref();
     setTimeout(() => {
-      if (!exit) child.kill("SIGKILL");
+      if (!exit) {
+        child.kill("SIGKILL");
+      }
     }, 10_000).unref();
   };
+
   /** Restart the orphan wait; nothing while a dsh is attached, after Claude exited, or with no
    *  orphanMs (a spec from an older plugin). */
   const armOrphan = () => {
     clearTimeout(orphanTimer);
-    if (spec.orphanMs && !attached() && !exit) orphanTimer = setTimeout(endOrphan, spec.orphanMs);
+
+    if (spec.orphanMs && !attached() && !exit) {
+      orphanTimer = setTimeout(endOrphan, spec.orphanMs);
+    }
   };
+
   armOrphan();
 
   const send = (msg: object) => {
     const line = `${JSON.stringify(msg)}\n`;
+
     if (attached()) {
       client?.write(line);
+
       return;
     }
+
     if (buffer.length >= BUFFER_LINES) {
       buffer.shift();
       dropped++;
     }
+
     buffer.push(line);
   };
+
   // A stdout line goes out numbered. Detached, it waits in `unacked` like a sent one, so a replay
   // keeps one order; sent to a client that acknowledges, it stays until acknowledged.
   const sendOut = (text: string) => {
     const line = `${JSON.stringify({ t: "out", line: text, n: ++lastOut })}\n`;
-    if (attached()) client?.write(line);
-    else armOrphan();
-    if (attached() && !clientAcks) return;
+
+    if (attached()) {
+      client?.write(line);
+    } else {
+      armOrphan();
+    }
+
+    if (attached() && !clientAcks) {
+      return;
+    }
+
     if (unacked.size >= BUFFER_LINES) {
       const oldest = unacked.keys().next().value;
-      if (oldest !== undefined) unacked.delete(oldest);
+
+      if (oldest !== undefined) {
+        unacked.delete(oldest);
+      }
+
       dropped++;
     }
+
     unacked.set(lastOut, line);
   };
+
   const writeInfo = () =>
     writeFileSync(
       infoPath,
@@ -202,6 +250,7 @@ function main(dir: string) {
         endedBy,
       }),
     );
+
   log(`start pid=${process.pid} claudePid=${child.pid}`);
   writeInfo();
 
@@ -213,7 +262,10 @@ function main(dir: string) {
   // emits their remaining lines after it. dsh ends its stream on `t:"exit"`, so a turn whose final
   // `result` frame is still in the pipe would lose it and end as "claude exited 0: no output".
   child.on("close", (code, signal) => {
-    if (exit) return; // a spawn error already reported this child; do not report it twice
+    if (exit) {
+      return;
+    } // a spawn error already reported this child; do not report it twice
+
     exit = { code, signal };
     endedBy ??= "child";
     log(`childExit code=${code} signal=${signal}`);
@@ -225,7 +277,10 @@ function main(dir: string) {
 
   const server = createServer((sock) => {
     // One client at a time: a new dsh replaces the old (which is gone anyway after a restart).
-    if (client && !client.destroyed) client.destroy();
+    if (client && !client.destroyed) {
+      client.destroy();
+    }
+
     client = sock;
     clientAcks = false;
     clearTimeout(orphanTimer);
@@ -240,38 +295,61 @@ function main(dir: string) {
     });
     createInterface({ input: sock, crlfDelay: Infinity }).on("line", (raw) => {
       let msg: { t?: string; line?: string; acks?: boolean; n?: number };
+
       try {
         // SAFETY: the only client is this plugin's attachKeeper; fields are checked before use
         msg = JSON.parse(raw) as { t?: string; line?: string; acks?: boolean; n?: number };
       } catch {
         return;
       }
+
       if (msg.t === "hello") {
         clientAcks = msg.acks === true;
         sock.write(
           `${JSON.stringify({ t: "hello", pid: process.pid, claudePid: child.pid, buffered: buffer.length + unacked.size, dropped })}\n`,
         );
-        if (dropped > 0)
+
+        if (dropped > 0) {
           sock.write(
             `${JSON.stringify({ t: "err", line: `keeper: ${dropped} output lines dropped while detached` })}\n`,
           );
+        }
+
         // What no turn used yet (sent to the client before, or waiting while detached), then the
         // rest. A client without acks takes them as delivered.
-        for (const l of unacked.values()) sock.write(l);
-        if (!clientAcks) unacked.clear();
-        for (const l of buffer) sock.write(l);
+        for (const l of unacked.values()) {
+          sock.write(l);
+        }
+
+        if (!clientAcks) {
+          unacked.clear();
+        }
+
+        for (const l of buffer) {
+          sock.write(l);
+        }
+
         buffer.length = 0;
         dropped = 0;
-        if (exit) sock.write(`${JSON.stringify({ t: "exit", ...exit })}\n`);
+
+        if (exit) {
+          sock.write(`${JSON.stringify({ t: "exit", ...exit })}\n`);
+        }
       } else if (msg.t === "ack" && typeof msg.n === "number") {
-        if (client === sock) unacked.delete(msg.n);
+        if (client === sock) {
+          unacked.delete(msg.n);
+        }
       } else if (msg.t === "in" && typeof msg.line === "string") {
-        if (!exit) child.stdin.write(msg.line);
+        if (!exit) {
+          child.stdin.write(msg.line);
+        }
       } else if (msg.t === "kill") {
         log(`kill`);
+
         if (!exit) {
           endedBy = "client";
           child.kill("SIGTERM");
+
           // The same escalation the plain spawner does (process.ts): a claude inside an
           // uninterruptible tool ignores SIGTERM, and under a keeper nothing else would end it.
           const hard = setTimeout(() => {
@@ -280,13 +358,16 @@ function main(dir: string) {
               child.kill("SIGKILL");
             }
           }, 5000);
+
           hard.unref?.();
         }
       }
     });
   });
+
   server.on("error", (e) => {
     log(`server error: ${e.message}`);
+
     // Claude is already running, and with no socket nothing can ever reach it: it would sit there
     // until the orphan timer while dsh reports "keeper did not answer" (#328 on macOS).
     if (!server.listening) {
@@ -298,6 +379,7 @@ function main(dir: string) {
   server.listen(sockPath);
   process.on("exit", (code) => {
     log(`exit code=${code} claudeExit=${JSON.stringify(exit ?? null)} endedBy=${endedBy}`);
+
     try {
       unlinkSync(sockPath);
     } catch {}
@@ -305,8 +387,10 @@ function main(dir: string) {
 }
 
 const dir = process.argv[2];
+
 if (!dir) {
   process.stderr.write("usage: keeper.js <dir>\n");
   process.exit(2);
 }
+
 main(dir);

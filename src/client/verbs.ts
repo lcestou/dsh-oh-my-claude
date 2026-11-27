@@ -267,10 +267,13 @@ export const ZH_VERBS = [
  *  the CLI's 100 ms, which lands up to 60 ms off a frame boundary. */
 export function spinnerFrameAt(ms: number, frames: number): number {
   const eased = (1 - Math.cos((2 * Math.PI * ms) / 2000)) / 2;
+
   return Math.round(eased * (frames - 1));
 }
+
 /** The CLI's `Go`: no bracket for a turn under this age unless it has tokens, a word or a wait. */
 const BRACKET_AFTER_MS = 16_000;
+
 /** Whether the working line draws its bracket, the CLI's own gate (2.1.280,
  *  `_t=f||yt||It>0||V>Go||Boolean(v)`): tokens, a thinking word, a tool wait, or 16 s on the clock.
  *  `elapsedMs` below zero means no body yet, which is closed. */
@@ -282,18 +285,25 @@ export function bracketOpen(s: {
 }): boolean {
   return s.elapsedMs >= BRACKET_AFTER_MS || s.tokens > 0 || s.thinking || s.relay;
 }
+
 /** Pick a verb at random from the list using the provided random function. */
-export function pickVerb(list: readonly string[], random: () => number): string {
+export function pickVerb(list: ReadonlyArray<string>, random: () => number): string {
   // SAFETY: random() returns [0,1), so floor(random()*length) is always a valid index.
   return list[Math.floor(random() * list.length)]!;
 }
 
 /** Merge default verbs with a settings.json spinnerVerbs entry. */
 export function mergeVerbs(
-  defaults: readonly string[],
-  setting: { mode: "append" | "replace"; verbs: string[] } | undefined,
-): string[] {
-  if (!setting) return [...defaults];
-  if (setting.mode === "replace") return [...setting.verbs];
+  defaults: ReadonlyArray<string>,
+  setting: { mode: "append" | "replace"; verbs: Array<string> } | undefined,
+): Array<string> {
+  if (!setting) {
+    return [...defaults];
+  }
+
+  if (setting.mode === "replace") {
+    return [...setting.verbs];
+  }
+
   return [...defaults, ...setting.verbs];
 }

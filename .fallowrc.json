@@ -1,9 +1,10 @@
 {
   "$schema": "./node_modules/fallow/schema.json",
 
+  // `tools/oxlint/probe/` is deliberate slop that `tools/oxlint/layers.test.ts` lints on its own.
   // `lib/` is BUILD OUTPUT that happens to be committed (dsh loads it, so a plain
   // install has to have it). Reading it doubles every finding.
-  "ignorePatterns": ["lib/**"],
+  "ignorePatterns": ["lib/**", "tools/oxlint/probe/**"],
 
   // Entry points fallow cannot infer. `src/adapter.ts` is the plugin itself: dsh imports
   // `name`, `inject` and `apply` from it by name through the Cordis protocol, so nothing
@@ -12,7 +13,7 @@
   // design, not rot. Without these lines all ten scripts read as dead files.
   // Tests, spelled out: the `test` script used to name these two globs and fallow read
   // them from it; the script now finds tests recursively, so the roots are declared here.
-  "entry": ["src/adapter.ts", "src/test-dsh.ts", "tools/*.ts", "tools/playwright/*.ts", "tools/oxlint/anti-slop/index.ts", "src/**/*.test.ts"],
+  "entry": ["src/adapter.ts", "src/test-dsh.ts", "tools/*.ts", "tools/playwright/*.ts", "tools/oxlint/anti-slop/index.ts", "tools/oxlint/**/*.test.ts", "oxlint.config.ts", "src/**/*.test.ts"],
 
   // An export used only inside its own module is still a KEEP here. `tools/` imports
   // the plugin through `lib/server/*.js`, which is ignored above, so the tool-facing
@@ -29,6 +30,9 @@
   // `sessions.ts` tries `../package.json` and falls back to `../../package.json`. Only
   // one of the two resolves from any given location — that is the whole point.
   "ignoreUnresolvedImports": ["../../package.json"],
+
+  // oxlint loads `tsrs` by name to run the type-aware rules; nothing imports it.
+  "ignoreDependencies": ["tsrs"],
 
   "rules": {
     // `@oxlint/plugins` is imported ONLY by the anti-slop rules under `tools/oxlint/`,

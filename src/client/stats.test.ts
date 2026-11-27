@@ -5,14 +5,14 @@ import { priced } from "./cost.js";
 /** The smallest node the predicate reads: dsh's row, its children and its class. */
 function el(
   className: string,
-  children: {
+  children: Array<{
     className?: string;
     aria?: string;
     text?: string;
     pill?: boolean;
     ours?: boolean;
     stat?: boolean;
-  }[],
+  }>,
   text = "",
 ): HTMLElement {
   const node = {
@@ -23,10 +23,15 @@ function el(
     // Both row selectors start `:scope > span`, so the pill one is told apart by its button part;
     // answering either query with the separator made every row with a `_sep` look like a pill row.
     querySelector(selector: string) {
-      if (!selector.startsWith(":scope > span")) return null;
+      if (!selector.startsWith(":scope > span")) {
+        return null;
+      }
+
       // dsh 0.2.1's marked anchor is asked for by its attribute and nothing else.
-      if (selector.includes("[data-composer-stat]"))
+      if (selector.includes("[data-composer-stat]")) {
         return children.some((c) => c.stat === true) ? { textContent: "" } : null;
+      }
+
       if (selector.includes("button")) {
         // `ours` is the plugin's own composer button, which the pill selector excludes by its hook.
         const pill = children.find(
@@ -34,12 +39,16 @@ function el(
             c.pill === true &&
             !(c.ours === true && selector.includes(":not([data-omc-panel-trigger])")),
         );
+
         return pill ? { textContent: pill.text ?? "" } : null;
       }
+
       const match = children.find((c) => c.aria === "true" && (c.className ?? "").endsWith("_sep"));
+
       return match ? { textContent: match.text ?? "" } : null;
     },
   };
+
   // SAFETY: the predicate reads only these five members; a real DOM is not available under bun
   return node as unknown as HTMLElement;
 }
@@ -57,12 +66,16 @@ const groups = (sepClass: string, sepText: string, text = "") =>
 
 // The row is found by its shape, so a dsh in any other language still gets the cost line.
 assert.equal(isStatsRow(groups("-NDN2W_sep", "|")), true);
+
 // A build with another hash in front of the suffix is the same row.
 assert.equal(isStatsRow(groups("-ABC123_sep", "|")), true);
+
 // The three other dsh components that draw a `_sep` span leave it empty.
 assert.equal(isStatsRow(groups("o3BgMG_sep", "")), false);
+
 // No module class at all, and nothing that reads as the English row.
 assert.equal(isStatsRow(el("plain", [{ text: "hello" }, { text: "there" }])), false);
+
 // One group and therefore no separator yet: the English text is the last resort.
 assert.equal(
   isStatsRow(el("-NDN2W_root", [{ text: "3 turns" }, { text: "· 9 steps" }], "3 turns · 9 steps")),
@@ -74,18 +87,23 @@ assert.equal(
   isStatsRow(el("bOPqQW_root", [{ text: "2 turns 18 steps · 74 tok/s", pill: true }])),
   true,
 );
+
 // The composer toolbar holding the plugin's own button is the same shape, a span around a dialog
 // trigger; with no stats row on screen the cost pill was hooked in beside it.
 assert.equal(isStatsRow(el("", [{ text: "", pill: true, ours: true }])), false);
+
 // The footer that wraps the row holds no pill of its own; appending there is what put the readout
 // outside the row, behind a bar.
 assert.equal(isStatsRow(el("uV2eYG_dock", [{ text: "" }])), false);
+
 // dsh 0.2.1 in Compact: no row element and no button, only marked anchors in the dock's slot.
 assert.equal(isStatsRow(el("", [{ text: "109 tok/s", stat: true }])), true);
 
 const detached = groups("-NDN2W_sep", "|");
+
 // SAFETY: same fake node as above; the predicate refuses a row React has already dropped
 (detached as unknown as { isConnected: boolean }).isConnected = false;
+
 assert.equal(isStatsRow(detached), false);
 
 // The cost dialog's rows: sums across turns, the last turn's own figures, and the optional rows
@@ -102,6 +120,7 @@ const turn = (over: Partial<Parameters<typeof costDetails>[0][number]>) => ({
   cacheWrite: 0,
   ...over,
 });
+
 // A turn a router answered is counted, timed and tokened like any other and never priced: the
 // figure the CLI attached is Claude's rate for somebody else's model.
 {
@@ -120,6 +139,7 @@ const turn = (over: Partial<Parameters<typeof costDetails>[0][number]>) => ({
     "no routed turn, no extra row",
   );
 }
+
 assert.deepEqual(costDetails([turn({}), turn({ costUsd: 0.42, ttftMs: 840 })]), [
   ["Last turn", "$0.42"],
   ["Turns", "2"],
@@ -131,6 +151,7 @@ assert.deepEqual(costDetails([turn({}), turn({ costUsd: 0.42, ttftMs: 840 })]), 
   ["Cache hit", "90%"],
   ["First token", "840ms"],
 ]);
+
 assert.deepEqual(costDetails([turn({ cacheWrite: 2500, cacheRead: 0, ttftMs: 1500 })]), [
   ["Last turn", "$0.10"],
   ["Turns", "1"],
@@ -143,6 +164,7 @@ assert.deepEqual(costDetails([turn({ cacheWrite: 2500, cacheRead: 0, ttftMs: 150
   ["Cache hit", "0%"],
   ["First token", "1.5s"],
 ]);
+
 assert.deepEqual(costDetails([]).slice(0, 2), [
   ["Last turn", "$0.00"],
   ["Turns", "0"],

@@ -66,7 +66,7 @@ const boxLabel = (b: UpdateBox | undefined): string =>
  */
 export function ClaudeUpdateDetails() {
   useLocale();
-  const [boxes, setBoxes] = useState<UpdateBox[]>([LOCAL_BOX]);
+  const [boxes, setBoxes] = useState<Array<UpdateBox>>([LOCAL_BOX]);
   const [host, setHost] = useState("");
   const [upd, setUpd] = useState<UpdateReply | null>(null);
   const [channel, setChannel] = useState<string | undefined>(undefined);
@@ -80,11 +80,13 @@ export function ClaudeUpdateDetails() {
   useEffect(() => {
     const load = () =>
       fetch(`${ROUTE}/ssh-boxes`)
-        .then((r) => readJson<{ boxes?: UpdateBox[] }>(r))
+        .then((r) => readJson<{ boxes?: Array<UpdateBox> }>(r))
         .then((b) => setBoxes([LOCAL_BOX, ...(b.boxes ?? [])]))
         .catch(() => {});
+
     void load();
     window.addEventListener(BOXES_EVENT, load);
+
     return () => window.removeEventListener(BOXES_EVENT, load);
   }, []);
 
@@ -100,18 +102,24 @@ export function ClaudeUpdateDetails() {
     fetch(`${ROUTE}/claude-update?host=${encodeURIComponent(host)}`)
       .then((r) => readJson<UpdateReply>(r))
       .then((s) => live && setUpd(s))
-      .catch((e: Error) => live && setErr(e.message));
+      .catch((error: Error) => live && setErr(error.message));
+
     /** The channel as the box's settings.json holds it now. */
     const readChannel = () =>
       read(provider)
         .then((f) => {
-          if (!live) return;
+          if (!live) {
+            return;
+          }
+
           setChannel(readTunables(f.text).autoUpdatesChannel);
         })
         .catch(() => live && setChannel(undefined));
+
     void readChannel();
     // The settings editor on the same page writes the same file, so a channel set there shows here.
     window.addEventListener(SETTINGS_EVENT, readChannel);
+
     return () => {
       live = false;
       window.removeEventListener(SETTINGS_EVENT, readChannel);
@@ -122,15 +130,17 @@ export function ClaudeUpdateDetails() {
   const post = async (body: { auto?: boolean }) => {
     setBusy(true);
     setErr("");
+
     try {
       const r = await fetch(url(), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
+
       setUpd(await readJson<UpdateReply>(r));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -141,6 +151,7 @@ export function ClaudeUpdateDetails() {
     setBusy(true);
     setErr("");
     setCheckLine("");
+
     try {
       const s = await readJson<UpdateReply>(await fetch(url("&now=1")));
       setUpd(s);
@@ -152,8 +163,8 @@ export function ClaudeUpdateDetails() {
             })
           : t("updates.checkFailed"),
       );
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -164,10 +175,15 @@ export function ClaudeUpdateDetails() {
   const writeChannel = async (next: string | undefined) => {
     setBusy(true);
     setErr("");
+
     try {
       const fresh = await read(provider);
       const out = updateSettings(fresh.text, "autoUpdatesChannel", next);
-      if (out.error !== undefined) throw new Error(out.error);
+
+      if (out.error !== undefined) {
+        throw new Error(out.error);
+      }
+
       await readJson(
         await fetch(`${ROUTE}/settings${onBox(provider)}`, {
           method: "PUT",
@@ -179,14 +195,15 @@ export function ClaudeUpdateDetails() {
       window.dispatchEvent(new Event(SETTINGS_EVENT));
       // The updater reads the channel before each check; ask for one so the card follows.
       setUpd(await readJson<UpdateReply>(await fetch(url("&now=1"))));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
   };
 
   const history = (upd?.log ?? []).slice(-10).toReversed();
+
   const channelName =
     channel === "stable"
       ? t("updates.channelStable")
@@ -195,6 +212,7 @@ export function ClaudeUpdateDetails() {
         : channel === "latest"
           ? t("updates.channelLatest")
           : t("updates.channelDefault");
+
   const summary = [
     boxes.length > 1 ? boxLabel(box) : null,
     channelName,
@@ -203,6 +221,7 @@ export function ClaudeUpdateDetails() {
   ]
     .filter(Boolean)
     .join(" · ");
+
   return (
     <div
       data-omc-claude-update-details=""

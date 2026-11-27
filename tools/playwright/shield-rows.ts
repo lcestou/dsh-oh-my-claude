@@ -11,19 +11,31 @@ const name = process.env.PW_SESSION ?? "recipe";
 const b = await launch();
 const ctx = await b.newContext({ viewport: { width: 1400, height: 900 } });
 const p = await ctx.newPage();
+
 p.on("console", (m) => {
   const t = m.text();
-  if (/oh-my-claude/.test(t)) console.log("PAGE:", t.slice(0, 200));
+
+  if (/oh-my-claude/.test(t)) {
+    console.log("PAGE:", t.slice(0, 200));
+  }
 });
+
 await p.goto(dshUrl(token), { waitUntil: "networkidle" });
+
 await p.waitForTimeout(2500);
+
 const row = p.locator('[role="treeitem"]').filter({ hasText: name }).first();
+
 console.log("row count", await row.count());
+
 await row.click({ force: true });
+
 await p.waitForTimeout(4000);
+
 const shield = p
   .locator('button[aria-label^="Access mode"], button[aria-label^="Claude permission"]')
   .first();
+
 console.log(
   "shield count",
   await shield.count(),
@@ -32,18 +44,25 @@ console.log(
   "text",
   (await shield.textContent())?.trim(),
 );
+
 await shield.click();
+
 await p.waitForTimeout(1500);
+
 // The access rows: `menuitemradio` up to dsh 0.2.0-rc.1, plain `menuitem` from rc.2, so both
 // roles count. The number of rows is the number of access modes.
 const rows = p.locator('[role="menu"] [role^="menuitem"]');
 const items = await rows.allTextContents();
 const modes = items.length;
+
 console.log("access modes:", JSON.stringify(items.map((t) => t.trim())));
+
 console.log("menu html head:", (await p.locator('[role="menu"]').last().innerHTML()).slice(0, 700));
+
 console.log(
   modes > 0
     ? "VERDICT: access menu opened, " + modes + " modes"
     : "VERDICT: access menu did not open",
 );
+
 await b.close();

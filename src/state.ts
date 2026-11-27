@@ -17,8 +17,12 @@ export const CLAUDE_HOME = process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".cl
 /** Resolve a raw configDir value to an absolute path for this plugin instance.
  * Non-empty → expanded absolute path; empty → falls through to CLAUDE_HOME. */
 export function resolveClaudeHome(dir: string): string {
-  if (!dir) return CLAUDE_HOME;
+  if (!dir) {
+    return CLAUDE_HOME;
+  }
+
   const expanded = dir.startsWith("~") ? join(homedir(), dir.slice(1)) : dir;
+
   return isAbsolute(expanded) ? expanded : join(process.cwd(), expanded);
 }
 
@@ -29,7 +33,9 @@ export function resolveClaudeHome(dir: string): string {
 // 2026-09-08: a test session id in permission-modes.json, two days of test lines in resume.log).
 export const STATE_DIR =
   process.env.DSH_OMC_STATE_DIR || join(homedir(), ".local", "state", "dsh-oh-my-claude");
+
 const STATE_FILE = join(STATE_DIR, "sessions.json");
+
 /** Derive per-instance state dir from a provider id; default id uses the shared top-level path. */
 export function stateDir(providerId: string): string {
   return providerId === "claude-code" ? STATE_DIR : join(STATE_DIR, providerId);
@@ -37,6 +43,7 @@ export function stateDir(providerId: string): string {
 
 /** Sessions with a turn in flight. Survives a dsh restart so those sessions can be nudged back. */
 const BUSY_FILE = join(STATE_DIR, "busy.json");
+
 /** Plugin info logs never reach dsh's web.log; the resume path keeps its own trace file. */
 const RESUME_LOG = join(STATE_DIR, "resume.log");
 let busyChain = Promise.resolve();
@@ -47,13 +54,16 @@ let busyChain = Promise.resolve();
 const TRACE_MAX = 4 * 1024 * 1024;
 const TRACE_KEEP = 2 * 1024 * 1024;
 let traceAppends = 0;
+
 /** Append one line to the resume trace; best effort, never throws. */
 export async function trace(fileOrLine: string, maybeLine?: string): Promise<void> {
   const file = maybeLine === undefined ? RESUME_LOG : fileOrLine;
   const line = maybeLine ?? fileOrLine;
+
   try {
     await mkdir(dirname(file), { recursive: true });
     await appendFile(file, `${new Date().toISOString()} ${line}\n`);
+
     if (++traceAppends % 256 === 0 && (await stat(file)).size > TRACE_MAX) {
       const text = await readFile(file, "utf8");
       const cut = text.indexOf("\n", text.length - TRACE_KEEP);
@@ -69,12 +79,17 @@ export async function trace(fileOrLine: string, maybeLine?: string): Promise<voi
  *  file is nothing to keep. */
 async function keepUnreadable(file: string): Promise<void> {
   let text: string;
+
   try {
     text = await readFile(file, "utf8");
   } catch {
     return;
   }
-  if (text.trim() === "") return;
+
+  if (text.trim() === "") {
+    return;
+  }
+
   try {
     JSON.parse(text);
   } catch {
@@ -113,14 +128,24 @@ export async function writeJson(
 export function markBusy(id: string, on: boolean, path = BUSY_FILE): Promise<void> {
   busyChain = busyChain.then(
     async () => {
-      let ids: unknown[] = [];
+      let ids: Array<unknown> = [];
+
       try {
         ids = JSON.parse(await readFile(path, "utf8"));
       } catch {}
+
       const set = new Set(Array.isArray(ids) ? ids : []);
-      if (on ? set.has(id) : !set.has(id)) return;
-      if (on) set.add(id);
-      else set.delete(id);
+
+      if (on ? set.has(id) : !set.has(id)) {
+        return;
+      }
+
+      if (on) {
+        set.add(id);
+      } else {
+        set.delete(id);
+      }
+
       await writeJson(path, [...set]);
     },
     () => {},
@@ -129,45 +154,54 @@ export function markBusy(id: string, on: boolean, path = BUSY_FILE): Promise<voi
   // The chain itself never stays rejected: a write that failed would otherwise send the next
   // call down the rejection branch above, which does nothing, and that mark would be lost.
   busyChain = run.catch(() => {});
+
   return run;
 }
 
 /** Sessions whose turn the previous dsh process left unfinished; cleared on read. Queued behind
  *  `markBusy`'s writes: read and cleared on its own, it could empty the file between a mark's read
  *  and its write, or wipe a mark a turn had just made. */
-export function takeInterrupted(path = BUSY_FILE): Promise<string[]> {
+export function takeInterrupted(path = BUSY_FILE): Promise<Array<string>> {
   const run = busyChain.then(async () => {
-    let ids: unknown[] = [];
+    let ids: Array<unknown> = [];
+
     try {
       ids = JSON.parse(await readFile(path, "utf8"));
     } catch {
       return [];
     }
+
     await writeJson(path, []).catch(() => {});
+
     return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
   });
+
   busyChain = run.then(
     () => {},
     () => {},
   );
+
   return run;
 }
 
 /** The sessions the busy file lists now, left in place for the boot resume to take. Queued behind
  *  `markBusy` like `takeInterrupted`, so it never reads between a mark's read and write. */
-export function peekInterrupted(path = BUSY_FILE): Promise<string[]> {
+export function peekInterrupted(path = BUSY_FILE): Promise<Array<string>> {
   const run = busyChain.then(async () => {
     try {
       const ids: unknown = JSON.parse(await readFile(path, "utf8"));
+
       return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
     } catch {
       return [];
     }
   });
+
   busyChain = run.then(
     () => {},
     () => {},
   );
+
   return run;
 }
 
@@ -176,17 +210,27 @@ export function peekInterrupted(path = BUSY_FILE): Promise<string[]> {
  *  modelSelection projection), and a fork child carries its parent's spent picks, so a selection
  *  before the last header says nothing about what the session runs on. Read from the tail. */
 export function pendingSelection(
-  events: readonly { type: string; data?: unknown }[],
+  events: ReadonlyArray<{ type: string; data?: unknown }>,
 ): { provider: string; model: string | undefined } | undefined {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]!;
-    if (e.type === "request/header") return undefined;
-    if (e.type !== "model/selection" || typeof e.data !== "object" || e.data === null) continue;
+
+    if (e.type === "request/header") {
+      return undefined;
+    }
+
+    if (e.type !== "model/selection" || typeof e.data !== "object" || e.data === null) {
+      continue;
+    }
+
     // SAFETY: a non-null object; both fields read are checked for string before use
     const { provider, model } = e.data as { provider?: unknown; model?: unknown };
-    if (typeof provider === "string")
+
+    if (typeof provider === "string") {
       return { provider, model: typeof model === "string" ? model : undefined };
+    }
   }
+
   return undefined;
 }
 
@@ -200,9 +244,10 @@ const COMMANDS_FILE = (dir: string) => join(dir, "commands.json");
 
 /** The bridged slash-command names, or an empty list when the file is missing, unreadable or not
  *  an array. Never throws. */
-export async function loadCommandCatalog(dir: string): Promise<string[]> {
+export async function loadCommandCatalog(dir: string): Promise<Array<string>> {
   try {
     const parsed: unknown = JSON.parse(await readFile(COMMANDS_FILE(dir), "utf8"));
+
     return Array.isArray(parsed) ? parsed.filter((n) => typeof n === "string") : [];
   } catch {
     return [];
@@ -210,7 +255,7 @@ export async function loadCommandCatalog(dir: string): Promise<string[]> {
 }
 
 /** Remember the catalog; a write that fails leaves the menu to the next init frame, not an error. */
-export function saveCommandCatalog(dir: string, names: string[]): Promise<void> {
+export function saveCommandCatalog(dir: string, names: Array<string>): Promise<void> {
   return writeJson(COMMANDS_FILE(dir), names).catch(() => {});
 }
 
@@ -227,7 +272,11 @@ let holdsChain = Promise.resolve();
 export async function loadHolds(dir: string): Promise<Record<string, unknown>> {
   try {
     const parsed: unknown = JSON.parse(await readFile(HOLDS_FILE(dir), "utf8"));
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return {};
+    }
+
     // SAFETY: a plain object read from this module's own file; callers validate each value
     return parsed as Record<string, unknown>;
   } catch {
@@ -242,7 +291,9 @@ export function saveHold(dir: string, sessionId: string, record: unknown): Promi
     all[sessionId] = record;
     await writeJson(HOLDS_FILE(dir), all);
   });
+
   holdsChain = run.catch(() => {});
+
   return run;
 }
 
@@ -254,16 +305,28 @@ export function dropHold(dir: string, sessionId: string, name?: string): Promise
   const run = holdsChain.then(async () => {
     const all = await loadHolds(dir);
     const held = all[sessionId];
-    if (held === undefined) return;
-    if (name !== undefined) {
-      if (typeof held !== "object" || held === null) return;
-      // SAFETY: a non-null object from this module's own file; the one field read is checked
-      if ((held as { name?: unknown }).name !== name) return;
+
+    if (held === undefined) {
+      return;
     }
+
+    if (name !== undefined) {
+      if (typeof held !== "object" || held === null) {
+        return;
+      }
+
+      // SAFETY: a non-null object from this module's own file; the one field read is checked
+      if ((held as { name?: unknown }).name !== name) {
+        return;
+      }
+    }
+
     delete all[sessionId];
     await writeJson(HOLDS_FILE(dir), all);
   });
+
   holdsChain = run.catch(() => {});
+
   return run;
 }
 
@@ -275,11 +338,19 @@ let limitChain: Promise<void> = Promise.resolve();
  *  waits, and an entry whose value is not a number is dropped. Never throws. */
 export async function loadLimitWaits(dir: string): Promise<Map<string, number>> {
   const map = new Map<string, number>();
+
   try {
     const parsed: unknown = JSON.parse(await readFile(LIMIT_WAITS_FILE(dir), "utf8"));
-    if (typeof parsed === "object" && parsed !== null)
-      for (const [k, v] of Object.entries(parsed)) if (typeof v === "number") map.set(k, v);
+
+    if (typeof parsed === "object" && parsed !== null) {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === "number") {
+          map.set(k, v);
+        }
+      }
+    }
   } catch {}
+
   return map;
 }
 
@@ -287,16 +358,24 @@ export async function loadLimitWaits(dir: string): Promise<Map<string, number>> 
 export function saveLimitWait(dir: string, sessionId: string, resetAt: number | undefined) {
   const run = limitChain.then(async () => {
     const map = await loadLimitWaits(dir);
-    if (resetAt === undefined) map.delete(sessionId);
-    else map.set(sessionId, resetAt);
+
+    if (resetAt === undefined) {
+      map.delete(sessionId);
+    } else {
+      map.set(sessionId, resetAt);
+    }
+
     await writeJson(LIMIT_WAITS_FILE(dir), Object.fromEntries(map));
   });
+
   limitChain = run.catch(() => {});
+
   return run;
 }
 
 const AUX_DIR = join(STATE_DIR, "aux");
 let auxReady: Promise<string> | undefined;
+
 /** Scratch cwd for title and compaction one-shots, so their transcripts stay out of workspaces. */
 export const auxCwd = (): Promise<string> =>
   (auxReady ??= mkdir(AUX_DIR, { recursive: true }).then(() => AUX_DIR));
@@ -314,6 +393,7 @@ let startedChain: Promise<void> = Promise.resolve();
 export async function loadStarted(stateFile = STATE_FILE): Promise<Set<string>> {
   try {
     const ids: unknown = JSON.parse(await readFile(stateFile, "utf8"));
+
     return new Set(Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : []);
   } catch {
     return new Set<string>();
@@ -330,9 +410,17 @@ export function rememberStarted(id: string, keep = true, stateFile = STATE_FILE)
   startedChain = startedChain.then(
     async () => {
       const set = await loadStarted(stateFile);
-      if (keep ? set.has(id) : !set.has(id)) return;
-      if (keep) set.add(id);
-      else set.delete(id);
+
+      if (keep ? set.has(id) : !set.has(id)) {
+        return;
+      }
+
+      if (keep) {
+        set.add(id);
+      } else {
+        set.delete(id);
+      }
+
       try {
         await writeJson(stateFile, [...set]);
       } catch {
@@ -341,6 +429,7 @@ export function rememberStarted(id: string, keep = true, stateFile = STATE_FILE)
     },
     () => {},
   );
+
   return startedChain;
 }
 
@@ -354,7 +443,11 @@ export function rememberStarted(id: string, keep = true, stateFile = STATE_FILE)
  */
 export function keychainService(home: string, envDir = process.env.CLAUDE_CONFIG_DIR): string {
   const plain = "Claude Code-credentials";
-  if (!envDir && home === join(homedir(), ".claude")) return plain;
+
+  if (!envDir && home === join(homedir(), ".claude")) {
+    return plain;
+  }
+
   return `${plain}-${createHash("sha256").update(home.normalize("NFC")).digest("hex").slice(0, 8)}`;
 }
 
@@ -388,7 +481,7 @@ const keychainCredentials = (service: string): Promise<string | null> =>
         execFile(
           "security",
           ["find-generic-password", "-s", service, "-w"],
-          { timeout: 5_000, maxBuffer: 64 * 1024 },
+          { timeout: 5000, maxBuffer: 64 * 1024 },
           (err, stdout) => resolve(err ? null : stdout),
         );
       });
@@ -403,28 +496,42 @@ export async function authHeaders(
   keychain: (() => Promise<string | null>) | undefined = () =>
     keychainCredentials(keychainService(resolvePath(home))),
 ): Promise<Record<string, string> | null> {
-  if (process.env.ANTHROPIC_API_KEY) return { "x-api-key": process.env.ANTHROPIC_API_KEY };
+  if (process.env.ANTHROPIC_API_KEY) {
+    return { "x-api-key": process.env.ANTHROPIC_API_KEY };
+  }
+
   const fromFile = authHeadersFrom(
     await readFile(join(home, ".credentials.json"), "utf8").catch(() => null),
   );
-  if (fromFile || !keychain) return fromFile;
+
+  if (fromFile || !keychain) {
+    return fromFile;
+  }
+
   return authHeadersFrom(await keychain());
 }
 
 /** The same read from the text of a credentials file already in hand: a remote box's, fetched
  *  over ssh, decodes here the way this box's does. */
 export function authHeadersFrom(raw: string | null): Record<string, string> | null {
-  if (raw === null) return null;
+  if (raw === null) {
+    return null;
+  }
+
   try {
     const parsed: unknown = JSON.parse(raw);
+
     const oauth =
       typeof parsed === "object" && parsed !== null && "claudeAiOauth" in parsed
         ? parsed.claudeAiOauth
         : undefined;
+
     if (typeof oauth === "object" && oauth !== null && "accessToken" in oauth) {
       const token = oauth.accessToken;
+
       const expiresAt =
         "expiresAt" in oauth && typeof oauth.expiresAt === "number" ? oauth.expiresAt : 0;
+
       if (typeof token === "string" && token && expiresAt > Date.now()) {
         return { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" };
       }
@@ -432,6 +539,7 @@ export function authHeadersFrom(raw: string | null): Record<string, string> | nu
   } catch {
     /* no stored credential */
   }
+
   return null;
 }
 
@@ -441,19 +549,24 @@ export function authHeadersFrom(raw: string | null): Record<string, string> | nu
  */
 export async function noteBoot(file: string, now = Date.now()): Promise<number | undefined> {
   let previous: number | undefined;
+
   try {
     const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+
     if (
       typeof parsed === "object" &&
       parsed !== null &&
       "at" in parsed &&
       typeof parsed.at === "number"
-    )
+    ) {
       previous = parsed.at;
+    }
   } catch {}
+
   try {
     await writeJson(file, { at: now });
   } catch {}
+
   return previous === undefined ? undefined : now - previous;
 }
 
@@ -472,36 +585,65 @@ interface LooseEvent {
 export function hasPendingNotice(
   events: Iterable<LooseEvent>,
   plugin: string,
-  texts: readonly string[] = [],
+  texts: ReadonlyArray<string> = [],
 ): boolean {
   let pending = false;
+
   for (const e of events) {
     if (e.type === "turn/start") {
       pending = false;
       continue;
     }
-    if (e.type !== "agent/inbox/spliced") continue;
-    const d = e.data;
-    if (typeof d !== "object" || d === null || !("inserted" in d) || !Array.isArray(d.inserted))
+
+    if (e.type !== "agent/inbox/spliced") {
       continue;
+    }
+
+    const d = e.data;
+
+    if (typeof d !== "object" || d === null || !("inserted" in d) || !Array.isArray(d.inserted)) {
+      continue;
+    }
+
     const target = "target" in d ? d.target : undefined;
-    if (target !== "next-turn") continue;
+
+    if (target !== "next-turn") {
+      continue;
+    }
+
     for (const m of d.inserted) {
-      if (typeof m !== "object" || m === null) continue;
+      if (typeof m !== "object" || m === null) {
+        continue;
+      }
+
       const src = "source" in m ? m.source : undefined;
+
       // v3 logs wrap the plugin name in `{ kind: "plugin", plugin }`; v4 logs carry it in the kind.
       if (typeof src === "object" && src !== null) {
-        if ("plugin" in src && src.plugin === plugin) pending = true;
-        if ("kind" in src && src.kind === `plugin:${plugin}`) pending = true;
+        if ("plugin" in src && src.plugin === plugin) {
+          pending = true;
+        }
+
+        if ("kind" in src && src.kind === `plugin:${plugin}`) {
+          pending = true;
+        }
       }
+
       // Notices sent on the owner's behalf carry the user source; match them by their text.
       const content = "content" in m && Array.isArray(m.content) ? m.content : [];
+
       for (const block of content) {
-        if (typeof block !== "object" || block === null || !("text" in block)) continue;
-        if (typeof block.text === "string" && texts.includes(block.text)) pending = true;
+        if (typeof block !== "object" || block === null || !("text" in block)) {
+          continue;
+        }
+
+        if (typeof block.text === "string" && texts.includes(block.text)) {
+          pending = true;
+        }
       }
     }
   }
+
   return pending;
 }
 
@@ -514,7 +656,9 @@ export const PERMISSION_MODES = [
   "dontAsk",
   "bypassPermissions",
 ] as const;
+
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
+
 /** Narrow an unchecked string, from config or a request body, to a mode the CLI accepts.
  *  The match is exact and case-sensitive. */
 export const isPermissionMode = (v: string): v is PermissionMode =>
@@ -531,7 +675,7 @@ const PERMISSION_RANK = {
 } as const satisfies Record<PermissionMode, number>;
 
 /** Modes at or below the given ceiling, in table order. */
-export const modesUpTo = (ceiling: PermissionMode): PermissionMode[] =>
+export const modesUpTo = (ceiling: PermissionMode): Array<PermissionMode> =>
   PERMISSION_MODES.filter((m) => PERMISSION_RANK[m] <= PERMISSION_RANK[ceiling]);
 
 /** Per-session permission mode overrides. Keyed by dsh session id; null means unset. */
@@ -545,9 +689,11 @@ let turnsChain = Promise.resolve();
 /** Load the per-session permission mode overrides from disk. */
 export async function loadPermissionModes(dir: string): Promise<Map<string, string | null>> {
   const file = PERMISSION_MODES_FILE(dir);
+
   try {
     const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
     const map = new Map<string, string | null>();
+
     if (typeof parsed === "object" && parsed !== null) {
       for (const [k, v] of Object.entries(parsed)) {
         if (typeof v === "string" || v === null) {
@@ -555,6 +701,7 @@ export async function loadPermissionModes(dir: string): Promise<Map<string, stri
         }
       }
     }
+
     return map;
   } catch {
     return new Map();
@@ -570,33 +717,55 @@ export function savePermissionMode(
   const run = permissionModesChain.then(async () => {
     const file = PERMISSION_MODES_FILE(dir);
     const map = await loadPermissionModes(dir);
-    if (mode === null) map.delete(sessionId);
-    else map.set(sessionId, mode);
+
+    if (mode === null) {
+      map.delete(sessionId);
+    } else {
+      map.set(sessionId, mode);
+    }
+
     const obj: Record<string, string | null> = {};
-    for (const [k, v] of map) obj[k] = v;
+
+    for (const [k, v] of map) {
+      obj[k] = v;
+    }
+
     await writeJson(file, obj);
   });
+
   // The caller sees a failed write; the chain itself carries on for the next save.
   permissionModesChain = run.catch(() => {});
+
   return run;
 }
 
 /** Load the per-session turn cost records from disk. Drops entries with missing or non-numeric fields; missing apiMs/turns default to 0 for backward compat. */
-export async function loadTurnRecords(dir: string): Promise<Map<string, TurnRecord[]>> {
+export async function loadTurnRecords(dir: string): Promise<Map<string, Array<TurnRecord>>> {
   const file = TURNS_FILE(dir);
+
   try {
     const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
-    const map = new Map<string, TurnRecord[]>();
+    const map = new Map<string, Array<TurnRecord>>();
+
     if (typeof parsed === "object" && parsed !== null) {
       for (const [k, v] of Object.entries(parsed)) {
-        if (!Array.isArray(v)) continue;
-        const records: TurnRecord[] = [];
+        if (!Array.isArray(v)) {
+          continue;
+        }
+
+        const records: Array<TurnRecord> = [];
+
         for (const entry of v) {
-          if (typeof entry !== "object" || entry === null) continue;
+          if (typeof entry !== "object" || entry === null) {
+            continue;
+          }
+
           // SAFETY: a non-null object; every field is re-checked as a number below
           const r = entry as Record<string, unknown>;
+
           const num = (key: string): number | undefined =>
             typeof r[key] === "number" ? r[key] : undefined;
+
           const at = num("at");
           const costUsd = num("costUsd");
           const durationMs = num("durationMs");
@@ -604,6 +773,7 @@ export async function loadTurnRecords(dir: string): Promise<Map<string, TurnReco
           const output = num("output");
           const cacheRead = num("cacheRead");
           const cacheWrite = num("cacheWrite");
+
           if (
             at === undefined ||
             costUsd === undefined ||
@@ -612,8 +782,10 @@ export async function loadTurnRecords(dir: string): Promise<Map<string, TurnReco
             output === undefined ||
             cacheRead === undefined ||
             cacheWrite === undefined
-          )
+          ) {
             continue;
+          }
+
           // apiMs and turns were not always written; older files read as 0.
           const record: TurnRecord = {
             at,
@@ -626,23 +798,37 @@ export async function loadTurnRecords(dir: string): Promise<Map<string, TurnReco
             apiMs: num("apiMs") ?? 0,
             turns: num("turns") ?? 0,
           };
+
           // ttftMs is optional and absent from older files; carry it only when it was written.
           const ttftMs = num("ttftMs");
-          if (ttftMs !== undefined) record.ttftMs = ttftMs;
+
+          if (ttftMs !== undefined) {
+            record.ttftMs = ttftMs;
+          }
+
           const costTotal = num("costTotal");
           const apiTotal = num("apiTotal");
+
           if (costTotal !== undefined && apiTotal !== undefined) {
             record.costTotal = costTotal;
             record.apiTotal = apiTotal;
           }
+
           // The router a turn went through. Dropped here, a routed turn came back from a restart
           // as one of Claude's and its figure went back into the money.
-          if (typeof r.via === "string") record.via = r.via;
+          if (typeof r.via === "string") {
+            record.via = r.via;
+          }
+
           records.push(record);
         }
-        if (records.length > 0) map.set(k, records);
+
+        if (records.length > 0) {
+          map.set(k, records);
+        }
       }
     }
+
     return map;
   } catch {
     return new Map();
@@ -653,23 +839,28 @@ export async function loadTurnRecords(dir: string): Promise<Map<string, TurnReco
 export function saveTurnRecords(
   dir: string,
   sessionId: string,
-  records: TurnRecord[],
+  records: Array<TurnRecord>,
 ): Promise<void> {
   const run = turnsChain.then(async () => {
     const file = TURNS_FILE(dir);
-    let obj: Record<string, unknown[]> = {};
+    let obj: Record<string, Array<unknown>> = {};
+
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+
       // An array is an object too, and a key set on one is not written back: every record lost.
       if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
         // SAFETY: top-level JSON object with string keys maps to a record of arrays.
-        obj = parsed as Record<string, unknown[]>;
+        obj = parsed as Record<string, Array<unknown>>;
       }
     } catch {}
+
     obj[sessionId] = records;
     await writeJson(file, obj);
   });
+
   turnsChain = run.catch(() => {});
+
   return run;
 }
 
@@ -682,32 +873,68 @@ let asidesChain = Promise.resolve();
  * answer, and the process that would have delivered it is gone after a restart, so restoring a
  * forever-spinner would be a lie. Entries missing the required fields are skipped.
  */
-export async function loadAsides(dir: string): Promise<Map<string, AsideEntry[]>> {
+export async function loadAsides(dir: string): Promise<Map<string, Array<AsideEntry>>> {
   const file = ASIDES_FILE(dir);
+
   try {
     const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
-    const map = new Map<string, AsideEntry[]>();
+    const map = new Map<string, Array<AsideEntry>>();
+
     if (typeof parsed === "object" && parsed !== null) {
       for (const [k, v] of Object.entries(parsed)) {
-        if (!Array.isArray(v)) continue;
-        const entries: AsideEntry[] = [];
+        if (!Array.isArray(v)) {
+          continue;
+        }
+
+        const entries: Array<AsideEntry> = [];
+
         for (const raw of v) {
-          if (typeof raw !== "object" || raw === null) continue;
+          if (typeof raw !== "object" || raw === null) {
+            continue;
+          }
+
           // SAFETY: a non-null object; each field is checked for its type before use.
           const r = raw as Record<string, unknown>;
-          if (typeof r.id !== "string" || typeof r.question !== "string") continue;
-          if (typeof r.at !== "number") continue;
-          if (r.pending === true) continue;
+
+          if (typeof r.id !== "string" || typeof r.question !== "string") {
+            continue;
+          }
+
+          if (typeof r.at !== "number") {
+            continue;
+          }
+
+          if (r.pending === true) {
+            continue;
+          }
+
           const entry: AsideEntry = { id: r.id, question: r.question, pending: false, at: r.at };
-          if (typeof r.answer === "string") entry.answer = r.answer;
-          if (typeof r.error === "string") entry.error = r.error;
-          if (r.dismissed === true) entry.dismissed = true;
-          if (typeof r.quote === "string") entry.quote = r.quote;
+
+          if (typeof r.answer === "string") {
+            entry.answer = r.answer;
+          }
+
+          if (typeof r.error === "string") {
+            entry.error = r.error;
+          }
+
+          if (r.dismissed === true) {
+            entry.dismissed = true;
+          }
+
+          if (typeof r.quote === "string") {
+            entry.quote = r.quote;
+          }
+
           entries.push(entry);
         }
-        if (entries.length > 0) map.set(k, entries);
+
+        if (entries.length > 0) {
+          map.set(k, entries);
+        }
       }
     }
+
     return map;
   } catch {
     return new Map();
@@ -715,21 +942,30 @@ export async function loadAsides(dir: string): Promise<Map<string, AsideEntry[]>
 }
 
 /** Save one session's aside ring (already capped by the caller); serialized read-modify-write. */
-export function saveAsides(dir: string, sessionId: string, entries: AsideEntry[]): Promise<void> {
+export function saveAsides(
+  dir: string,
+  sessionId: string,
+  entries: Array<AsideEntry>,
+): Promise<void> {
   const run = asidesChain.then(async () => {
     const file = ASIDES_FILE(dir);
-    let obj: Record<string, unknown[]> = {};
+    let obj: Record<string, Array<unknown>> = {};
+
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+
       if (typeof parsed === "object" && parsed !== null) {
         // SAFETY: top-level JSON object with string keys maps to a record of arrays.
-        obj = parsed as Record<string, unknown[]>;
+        obj = parsed as Record<string, Array<unknown>>;
       }
     } catch {}
+
     obj[sessionId] = entries;
     await writeJson(file, obj);
   });
+
   asidesChain = run.catch(() => {});
+
   return run;
 }
 
@@ -777,25 +1013,46 @@ let repairsChain = Promise.resolve();
  *  on screen for a log nobody can find. */
 export async function loadSessionRepairs(dir: string): Promise<SessionRepairsFile> {
   const empty: SessionRepairsFile = { version: 1, lastSweepAt: 0, logs: {} };
+
   try {
     const parsed: unknown = JSON.parse(await readFile(SESSION_REPAIRS_FILE(dir), "utf8"));
-    if (typeof parsed !== "object" || parsed === null) return empty;
+
+    if (typeof parsed !== "object" || parsed === null) {
+      return empty;
+    }
+
     // SAFETY: a non-null object; each field is checked for its type before use.
     const r = parsed as Record<string, unknown>;
+
     const out: SessionRepairsFile = {
       version: 1,
       lastSweepAt: typeof r.lastSweepAt === "number" ? r.lastSweepAt : 0,
       logs: {},
     };
+
     if (typeof r.logs === "object" && r.logs !== null) {
       for (const [id, raw] of Object.entries(r.logs)) {
-        if (typeof raw !== "object" || raw === null) continue;
+        if (typeof raw !== "object" || raw === null) {
+          continue;
+        }
+
         // SAFETY: same check as above, one entry at a time.
         const e = raw as Record<string, unknown>;
-        if (typeof e.path !== "string" || typeof e.verdict !== "string") continue;
-        if (typeof e.at !== "number") continue;
-        if (!["fine", "healed", "unknown", "rolled-back", "owned", "reseeded"].includes(e.verdict))
+
+        if (typeof e.path !== "string" || typeof e.verdict !== "string") {
           continue;
+        }
+
+        if (typeof e.at !== "number") {
+          continue;
+        }
+
+        if (
+          !["fine", "healed", "unknown", "rolled-back", "owned", "reseeded"].includes(e.verdict)
+        ) {
+          continue;
+        }
+
         const rec: SessionRepairRecord = {
           path: e.path,
           mtimeMs: typeof e.mtimeMs === "number" ? e.mtimeMs : 0,
@@ -804,8 +1061,15 @@ export async function loadSessionRepairs(dir: string): Promise<SessionRepairsFil
           verdict: e.verdict as RepairVerdict,
           at: e.at,
         };
-        if (typeof e.reason === "string") rec.reason = e.reason;
-        if (typeof e.bak === "string") rec.bak = e.bak;
+
+        if (typeof e.reason === "string") {
+          rec.reason = e.reason;
+        }
+
+        if (typeof e.bak === "string") {
+          rec.bak = e.bak;
+        }
+
         if (typeof e.did === "object" && e.did !== null) {
           // SAFETY: a non-null object; the three counts are read with their own type checks.
           const d = e.did as Record<string, unknown>;
@@ -815,9 +1079,11 @@ export async function loadSessionRepairs(dir: string): Promise<SessionRepairsFil
             closedCalls: typeof d.closedCalls === "number" ? d.closedCalls : 0,
           };
         }
+
         out.logs[id] = rec;
       }
     }
+
     return out;
   } catch {
     return empty;
@@ -828,6 +1094,7 @@ export async function loadSessionRepairs(dir: string): Promise<SessionRepairsFil
 export function saveSessionRepairs(dir: string, next: SessionRepairsFile): Promise<void> {
   const run = repairsChain.then(() => writeJson(SESSION_REPAIRS_FILE(dir), next));
   repairsChain = run.catch(() => {});
+
   return run;
 }
 
@@ -839,7 +1106,9 @@ export function recordRepair(dir: string, id: string, record: SessionRepairRecor
     file.logs[id] = record;
     await writeJson(SESSION_REPAIRS_FILE(dir), file);
   });
+
   repairsChain = run.catch(() => {});
+
   return run;
 }
 
@@ -854,11 +1123,15 @@ export async function loadStarters(dir: string): Promise<Map<string, string>> {
   try {
     const parsed: unknown = JSON.parse(await readFile(STARTERS_FILE(dir), "utf8"));
     const map = new Map<string, string>();
+
     if (typeof parsed === "object" && parsed !== null) {
       for (const [k, v] of Object.entries(parsed)) {
-        if (typeof v === "string" && v.trim() !== "") map.set(k, v);
+        if (typeof v === "string" && v.trim() !== "") {
+          map.set(k, v);
+        }
       }
     }
+
     return map;
   } catch {
     return new Map();
@@ -870,18 +1143,27 @@ export function saveStarter(dir: string, key: string, text: string | undefined):
   const run = startersChain.then(async () => {
     const file = STARTERS_FILE(dir);
     let obj: Record<string, unknown> = {};
+
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+
       if (typeof parsed === "object" && parsed !== null) {
         // SAFETY: a top-level JSON object with string keys.
         obj = parsed as Record<string, unknown>;
       }
     } catch {}
-    if (text === undefined || text.trim() === "") delete obj[key];
-    else obj[key] = text;
+
+    if (text === undefined || text.trim() === "") {
+      delete obj[key];
+    } else {
+      obj[key] = text;
+    }
+
     await writeJson(file, obj);
   });
+
   startersChain = run.catch(() => {});
+
   return run;
 }
 
@@ -906,21 +1188,37 @@ export async function loadWorkspaceModels(dir: string): Promise<Map<string, Work
   try {
     const parsed: unknown = JSON.parse(await readFile(WORKSPACE_MODELS_FILE(dir), "utf8"));
     const map = new Map<string, WorkspaceModel>();
+
     if (typeof parsed === "object" && parsed !== null) {
       for (const [cwd, v] of Object.entries(parsed)) {
-        if (typeof v !== "object" || v === null) continue;
+        if (typeof v !== "object" || v === null) {
+          continue;
+        }
+
         // SAFETY: workspace-models.json rows have model (string) and at (number) fields.
         const row = v as Record<string, unknown>;
-        if (typeof row.model !== "string" || row.model.trim() === "") continue;
+
+        if (typeof row.model !== "string" || row.model.trim() === "") {
+          continue;
+        }
+
         const entry: WorkspaceModel = {
           model: row.model,
           at: typeof row.at === "number" && Number.isFinite(row.at) ? row.at : 0,
         };
-        if (typeof row.provider === "string" && row.provider !== "") entry.provider = row.provider;
-        if (typeof row.effort === "string" && row.effort !== "") entry.effort = row.effort;
+
+        if (typeof row.provider === "string" && row.provider !== "") {
+          entry.provider = row.provider;
+        }
+
+        if (typeof row.effort === "string" && row.effort !== "") {
+          entry.effort = row.effort;
+        }
+
         map.set(cwd, entry);
       }
     }
+
     return map;
   } catch {
     return new Map();
@@ -955,23 +1253,37 @@ export function saveWorkspaceModel(
   const run = workspaceModelsChain.then(async () => {
     const file = WORKSPACE_MODELS_FILE(dir);
     let obj: Record<string, unknown> = {};
+
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+
       if (typeof parsed === "object" && parsed !== null) {
         // SAFETY: a top-level JSON object with string keys.
         obj = parsed as Record<string, unknown>;
       }
     } catch {}
-    if (model === undefined || model.trim() === "") delete obj[cwd];
-    else {
+
+    if (model === undefined || model.trim() === "") {
+      delete obj[cwd];
+    } else {
       const row: WorkspaceModel = { model, at };
-      if (provider) row.provider = provider;
-      if (effort) row.effort = effort;
+
+      if (provider) {
+        row.provider = provider;
+      }
+
+      if (effort) {
+        row.effort = effort;
+      }
+
       obj[cwd] = row;
     }
+
     await writeJson(file, obj);
   });
+
   workspaceModelsChain = run.catch(() => {});
+
   return run;
 }
 
@@ -993,14 +1305,32 @@ const NEW_SESSION_DEFAULT_FILE = (d: string) => join(d, "new-session-default.jso
 export async function loadNewSessionDefault(dir: string): Promise<NewSessionDefault | undefined> {
   try {
     const parsed: unknown = JSON.parse(await readFile(NEW_SESSION_DEFAULT_FILE(dir), "utf8"));
-    if (typeof parsed !== "object" || parsed === null) return undefined;
+
+    if (typeof parsed !== "object" || parsed === null) {
+      return undefined;
+    }
+
     // SAFETY: a JSON object; every field is checked below before it is used.
     const row = parsed as Record<string, unknown>;
-    if (typeof row.provider !== "string" || !row.provider) return undefined;
-    if (typeof row.model !== "string" || !row.model.trim()) return undefined;
+
+    if (typeof row.provider !== "string" || !row.provider) {
+      return undefined;
+    }
+
+    if (typeof row.model !== "string" || !row.model.trim()) {
+      return undefined;
+    }
+
     const out: NewSessionDefault = { provider: row.provider, model: row.model };
-    if (typeof row.effort === "string" && row.effort) out.effort = row.effort;
-    if (row.all === true) out.all = true;
+
+    if (typeof row.effort === "string" && row.effort) {
+      out.effort = row.effort;
+    }
+
+    if (row.all === true) {
+      out.all = true;
+    }
+
     return out;
   } catch {
     return undefined;
@@ -1031,23 +1361,36 @@ export async function loadContextSizes(dir: string): Promise<Map<string, Workspa
   try {
     const parsed: unknown = JSON.parse(await readFile(CONTEXT_SIZES_FILE(dir), "utf8"));
     const map = new Map<string, WorkspaceContextSizes>();
+
     if (typeof parsed === "object" && parsed !== null) {
       for (const [cwd, v] of Object.entries(parsed)) {
-        if (typeof v !== "object" || v === null) continue;
+        if (typeof v !== "object" || v === null) {
+          continue;
+        }
+
         // SAFETY: context-sizes.json rows have sizes (object of numbers) and at (number) fields.
         const row = v as Record<string, unknown>;
-        if (typeof row.sizes !== "object" || row.sizes === null) continue;
+
+        if (typeof row.sizes !== "object" || row.sizes === null) {
+          continue;
+        }
+
         const sizes: Record<string, number> = {};
+
         // SAFETY: checked as a non-null object on the line above.
         for (const [key, n] of Object.entries(row.sizes as Record<string, unknown>)) {
-          if (typeof n === "number" && Number.isFinite(n)) sizes[key] = n;
+          if (typeof n === "number" && Number.isFinite(n)) {
+            sizes[key] = n;
+          }
         }
+
         map.set(cwd, {
           sizes,
           at: typeof row.at === "number" && Number.isFinite(row.at) ? row.at : 0,
         });
       }
     }
+
     return map;
   } catch {
     return new Map();
@@ -1067,21 +1410,28 @@ export function saveContextSizes(
   const run = contextSizesChain.then(async () => {
     const file = CONTEXT_SIZES_FILE(dir);
     let obj: Record<string, unknown> = {};
+
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
+
       if (typeof parsed === "object" && parsed !== null) {
         // SAFETY: a top-level JSON object with string keys.
         obj = parsed as Record<string, unknown>;
       }
     } catch {}
-    if (sizes === undefined) delete obj[cwd];
-    else {
+
+    if (sizes === undefined) {
+      delete obj[cwd];
+    } else {
       const before = (await loadContextSizes(dir)).get(cwd)?.sizes ?? {};
       obj[cwd] = { sizes: { ...before, ...sizes }, at };
     }
+
     await writeJson(file, obj);
   });
+
   contextSizesChain = run.catch(() => {});
+
   return run;
 }
 
@@ -1096,15 +1446,26 @@ const SECRET_NAME = /(^|_)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)(_|$)/i
  */
 export function buildRedactor(env: Record<string, string | undefined>): (s: string) => string {
   const secrets: Array<[string, string]> = [];
+
   for (const [name, value] of Object.entries(env)) {
-    if (typeof value !== "string" || value.length < 8 || !SECRET_NAME.test(name)) continue;
+    if (typeof value !== "string" || value.length < 8 || !SECRET_NAME.test(name)) {
+      continue;
+    }
+
     secrets.push([name, value]);
   }
+
   secrets.sort((a, b) => b[1].length - a[1].length); // longest first, so a prefix never masks part
+
   return (s: string) => {
     let out = s;
-    for (const [name, value] of secrets)
-      if (out.includes(value)) out = out.split(value).join(`[redacted:${name}]`);
+
+    for (const [name, value] of secrets) {
+      if (out.includes(value)) {
+        out = out.split(value).join(`[redacted:${name}]`);
+      }
+    }
+
     return out;
   };
 }
@@ -1117,11 +1478,13 @@ export const TOOL_MODE_FILE = (d: string) => join(d, "tool-mode.json");
 export async function loadToolMode(dir: string): Promise<ToolMode | undefined> {
   try {
     const parsed: unknown = JSON.parse(await readFile(TOOL_MODE_FILE(dir), "utf8"));
+
     // SAFETY: a top-level JSON object; the one key read is checked against its two values below.
     const mode =
       typeof parsed === "object" && parsed !== null
         ? (parsed as { mode?: unknown }).mode
         : undefined;
+
     return mode === "inline" || mode === "rows" ? mode : undefined;
   } catch {
     return undefined;
@@ -1153,6 +1516,7 @@ export type WatchRecord = {
  *  `saveWatch`. */
 export async function loadWatches(dir: string): Promise<Map<string, WatchRecord>> {
   await watchWrites.get(dir);
+
   return readWatches(dir);
 }
 
@@ -1166,9 +1530,14 @@ const watchWrites = new Map<string, Promise<void>>();
  *  this inside its own queue. A missing or corrupt file, or a malformed entry, reads as nothing. */
 async function readWatches(dir: string): Promise<Map<string, WatchRecord>> {
   const out = new Map<string, WatchRecord>();
+
   try {
     const parsed: unknown = JSON.parse(await readFile(WATCH_FILE(dir), "utf8"));
-    if (typeof parsed !== "object" || parsed === null) return out;
+
+    if (typeof parsed !== "object" || parsed === null) {
+      return out;
+    }
+
     for (const [id, v] of Object.entries(parsed)) {
       // SAFETY: each value is checked field by field before it is kept
       const r = v as {
@@ -1178,16 +1547,31 @@ async function readWatches(dir: string): Promise<Map<string, WatchRecord>> {
         provider?: unknown;
         claudeId?: unknown;
       };
-      if (typeof r?.path !== "string" || typeof r.seen !== "number") continue;
+
+      if (typeof r?.path !== "string" || typeof r.seen !== "number") {
+        continue;
+      }
+
       const record: WatchRecord = { path: r.path, seen: r.seen };
-      if (typeof r.host === "string") record.host = r.host;
-      if (typeof r.provider === "string") record.provider = r.provider;
-      if (typeof r.claudeId === "string") record.claudeId = r.claudeId;
+
+      if (typeof r.host === "string") {
+        record.host = r.host;
+      }
+
+      if (typeof r.provider === "string") {
+        record.provider = r.provider;
+      }
+
+      if (typeof r.claudeId === "string") {
+        record.claudeId = r.claudeId;
+      }
+
       out.set(id, record);
     }
   } catch {
     // no file yet, or unreadable: every watch starts from its own baseline
   }
+
   return out;
 }
 
@@ -1204,11 +1588,13 @@ export async function saveWatch(
     all.set(sessionId, record);
     await writeJson(WATCH_FILE(dir), Object.fromEntries(all));
   });
+
   // A failed save must not stall the ones behind it; its caller still sees the rejection.
   watchWrites.set(
     dir,
     next.catch(() => {}),
   );
+
   return next;
 }
 
@@ -1227,9 +1613,14 @@ export const TERMINAL_SYNC_FILE = (d: string) => join(d, "terminal-sync.json");
 export async function loadTerminalSync(dir: string): Promise<boolean | undefined> {
   try {
     const parsed: unknown = JSON.parse(await readFile(TERMINAL_SYNC_FILE(dir), "utf8"));
-    if (typeof parsed !== "object" || parsed === null) return undefined;
+
+    if (typeof parsed !== "object" || parsed === null) {
+      return undefined;
+    }
+
     // SAFETY: parsed is a non-null object; the one key read is compared, not trusted as a type.
     const enabled = (parsed as { enabled?: unknown }).enabled;
+
     return typeof enabled === "boolean" ? enabled : undefined;
   } catch {
     return undefined;

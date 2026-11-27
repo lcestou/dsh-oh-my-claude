@@ -9,8 +9,8 @@ import {
   defaultAccountDir,
   normalizeAccountDir,
   validateAccounts,
-  type AccountRules,
 } from "./accounts.js";
+import type { AccountRules } from "./accounts.js";
 import { sshBoxProviderId } from "./sessions.js";
 import { resolveClaudeHome } from "./state.js";
 
@@ -45,9 +45,12 @@ const rules = (over: Partial<AccountRules> = {}): AccountRules => ({
   assert.equal(normalizeAccountDir("~/a/../b"), undefined);
   assert.equal(normalizeAccountDir("~/a\nb"), undefined);
   assert.equal(normalizeAccountDir("~user/x"), undefined, "another user's home is not expanded");
+
   // The spawn resolves the saved form with resolveClaudeHome; both must give the same string.
-  for (const dir of ["~/.claude-work", "/srv/claude/work"])
+  for (const dir of ["~/.claude-work", "/srv/claude/work"]) {
     assert.equal(accountHome(dir, homedir()), resolveClaudeHome(dir));
+  }
+
   assert.equal(
     accountHome("~/.claude-work", "/home/u/"),
     "/home/u/.claude-work",
@@ -65,6 +68,7 @@ const rules = (over: Partial<AccountRules> = {}): AccountRules => ({
     ],
     rules(),
   );
+
   assert.deepEqual(v, {
     accounts: [
       { name: "Work", configDir: "~/.claude-work" },
@@ -81,8 +85,10 @@ const rules = (over: Partial<AccountRules> = {}): AccountRules => ({
       input.map((a) => ({ name: a.name, configDir: a.configDir ?? "" })),
       r,
     );
+
     return "refusal" in v ? v.refusal.key : "ok";
   };
+
   assert.equal(key([{ name: "" }]), "accountName");
   assert.equal(key([{ name: "x".repeat(41) }]), "accountName");
   assert.equal(key([{ name: "--" }]), "accountName");
@@ -112,4 +118,5 @@ const rules = (over: Partial<AccountRules> = {}): AccountRules => ({
     "accountsMax",
   );
 }
+
 console.log("accounts ok");

@@ -2,18 +2,14 @@
 // loopback are not this one's, so both halves of the question are asked there over ssh: which
 // routing variables are in force, and whether the address they name reaches Anthropic.
 import { execFile } from "node:child_process";
-import {
-  type FirstPartyProbe,
-  messagesUrl,
-  PROBE_TTL_MS,
-  ProbeBody,
-  readsAsAnthropic,
-} from "../first-party.js";
+import { messagesUrl, PROBE_TTL_MS, ProbeBody, readsAsAnthropic } from "../first-party.js";
+import type { FirstPartyProbe } from "../first-party.js";
 import { managedDir } from "../instructions.js";
 import { shq, sshArgs } from "../process.js";
 import { settingsEnvIn } from "../sessions.js";
 import { proxyBaseUrl } from "./catalog.js";
-import { type Route, type RouteEnv, routeEnvIn, routeOf, routeSignature } from "./routing.js";
+import { routeEnvIn, routeOf, routeSignature } from "./routing.js";
+import type { Route, RouteEnv } from "./routing.js";
 
 /** What one box answered. */
 export interface BoxRoute {
@@ -44,6 +40,7 @@ const sshRun: BoxRunner = (host, script) =>
   });
 
 const MARK = "<<omc-box-route>>";
+
 /** The variables read out of the far shell's environment: the ones that route the CLI or size its
  *  window. By name, so a key exported there never crosses the wire. */
 const SHELL_VARS =
@@ -70,22 +67,34 @@ export const boxProbeScript = (baseUrl: string): string =>
  */
 export function parseBoxEnv(out: string): Pick<BoxRoute, "env" | "ownWindow"> | undefined {
   const parts = out.split(`\n${MARK}\n`);
-  if (parts.length < 4) return undefined;
+
+  if (parts.length < 4) {
+    return undefined;
+  }
+
   const env: Record<string, string> = {};
+
   for (const line of (parts[0] ?? "").split("\n")) {
     const at = line.indexOf("=");
-    if (at > 0) env[line.slice(0, at)] = line.slice(at + 1);
+
+    if (at > 0) {
+      env[line.slice(0, at)] = line.slice(at + 1);
+    }
   }
+
   // The managed file outranks the user's, and both outrank the shell.
   const files = settingsEnvIn([
     { scope: "managed", text: parts[2] ?? "" },
     { scope: "user", text: parts[1] ?? "" },
   ]);
+
   Object.assign(env, files.env);
+
   const ownWindow =
     files.autoCompactWindow !== undefined ||
     env.CLAUDE_CODE_AUTO_COMPACT_WINDOW !== undefined ||
     env.CLAUDE_CODE_MAX_CONTEXT_TOKENS !== undefined;
+
   // Only the routing variables are kept: the settings file also holds the router's key.
   return { env: routeEnvIn(env), ownWindow };
 }
@@ -95,9 +104,13 @@ export function parseBoxEnv(out: string): Pick<BoxRoute, "env" | "ownWindow"> | 
  * (no `curl`, a refused connection, a timeout), which is "not asked" rather than "not Anthropic".
  */
 export function parseBoxProbe(out: string | undefined): FirstPartyProbe {
-  if (!out?.startsWith("HTTP/")) return undefined;
+  if (!out?.startsWith("HTTP/")) {
+    return undefined;
+  }
+
   let rest = out.replaceAll("\r\n", "\n");
   let requestId = "";
+
   // More than one block when the endpoint sent an interim status first.
   while (rest.startsWith("HTTP/")) {
     const end = rest.indexOf("\n\n");
@@ -105,6 +118,7 @@ export function parseBoxProbe(out: string | undefined): FirstPartyProbe {
     requestId = /^request-id:\s*(.*)$/im.exec(head)?.[1]?.trim() ?? requestId;
     rest = end === -1 ? "" : rest.slice(end + 2);
   }
+
   return readsAsAnthropic(probeBody(rest), requestId);
 }
 
@@ -124,9 +138,14 @@ export async function askBoxRoute(
   run: BoxRunner = sshRun,
 ): Promise<BoxRoute | undefined> {
   const read = parseBoxEnv((await run(host, boxEnvScript(host))) ?? "");
-  if (!read) return undefined;
+
+  if (!read) {
+    return undefined;
+  }
+
   const baseUrl = read.env.cloud ? undefined : proxyBaseUrl(read.env.baseUrl);
   const answer = baseUrl ? parseBoxProbe(await run(host, boxProbeScript(baseUrl))) : undefined;
+
   return { ...read, answer };
 }
 
@@ -148,15 +167,22 @@ const asking = new Map<string, Promise<BoxRoute | undefined>>();
 /** Ask `host` and keep the answer; callers arriving while it is asked share the one request. */
 function refreshBoxRoute(host: string, run: BoxRunner): Promise<BoxRoute | undefined> {
   const live = asking.get(host);
-  if (live) return live;
+
+  if (live) {
+    return live;
+  }
+
   const asked = askBoxRoute(host, run)
     .catch(() => undefined)
     .then((box) => {
       kept.set(host, { at: Date.now(), box });
+
       return box;
     })
     .finally(() => asking.delete(host));
+
   asking.set(host, asked);
+
   return asked;
 }
 
@@ -172,8 +198,15 @@ export async function boxRouteOf(
   now = Date.now(),
 ): Promise<BoxRoute | undefined> {
   const hit = kept.get(host);
-  if (!hit) return refreshBoxRoute(host, run);
-  if (now - hit.at >= PROBE_TTL_MS) void refreshBoxRoute(host, run);
+
+  if (!hit) {
+    return refreshBoxRoute(host, run);
+  }
+
+  if (now - hit.at >= PROBE_TTL_MS) {
+    void refreshBoxRoute(host, run);
+  }
+
   return hit.box;
 }
 
@@ -189,10 +222,17 @@ export function boxRouteKnown(
   now = Date.now(),
 ): BoxRoute | undefined {
   const hit = kept.get(host);
-  if (hit && now - hit.at < PROBE_TTL_MS) return hit.box;
+
+  if (hit && now - hit.at < PROBE_TTL_MS) {
+    return hit.box;
+  }
+
   void refreshBoxRoute(host, run).then((box) => {
-    if (signatureOf(box) !== signatureOf(hit?.box)) changed();
+    if (signatureOf(box) !== signatureOf(hit?.box)) {
+      changed();
+    }
   });
+
   return hit?.box;
 }
 

@@ -19,28 +19,39 @@ async function readScheme(colorScheme: "dark" | "light"): Promise<Reads> {
   // `load`, not `networkidle`: two event streams stay open on a fresh dsh and idle never comes.
   await p.goto(dshUrl(token), { waitUntil: "load" });
   await p.waitForTimeout(2500);
+
   // Expand the workspace (collapsed in a fresh profile), then open its first session row.
   const ws = p
     .locator('[role="treeitem"]')
     .filter({ hasText: new RegExp(`^${wsName}$`) })
     .first();
+
   if (await ws.count()) {
     await ws.click({ force: true });
     await p.waitForTimeout(1200);
   }
+
   const rows = p.locator('[role="treeitem"]');
   const n = await rows.count();
+
   for (let i = 0; i < n; i++) {
     const t = (await rows.nth(i).innerText()).trim();
+
     if (t !== wsName && t !== "") {
       await rows.nth(i).click({ force: true });
       break;
     }
   }
+
   await p.waitForTimeout(3000);
+
   const inChat = await p.evaluate(() => {
     const body = document.body;
-    if (!body.hasAttribute("data-omc-claude")) return { claude: "no" };
+
+    if (!body.hasAttribute("data-omc-claude")) {
+      return { claude: "no" };
+    }
+
     // Probes: the sheet's markdown rules match `[class*="_markdown"]`, so a synthetic host takes
     // them without needing a message that happens to contain a link, a quote and a rule.
     const host = document.createElement("div");
@@ -52,21 +63,29 @@ async function readScheme(colorScheme: "dark" | "light"): Promise<Reads> {
       '<a href="#">l</a><blockquote>q</blockquote><hr><input type="checkbox">' +
       '<div data-message-bubble><span data-slot="conversation.user.text.node"><span data-quote-preview>q</span></span></div>' +
       "<div data-composer-input><span data-composer-quote><span data-quote-preview>q</span></span></div>";
-    body.appendChild(host);
+    body.append(host);
     const missing = "missing";
+
     const css = (el: Element | null, prop: string) =>
       el ? getComputedStyle(el).getPropertyValue(prop).trim() : missing;
+
     const status = document.querySelector('[role="status"][aria-live="polite"]');
     const tab = document.querySelector('[role="tablist"] > [role="tab"][aria-selected="true"]');
     // dsh's send button: the primary button whose ancestry holds the composer box. Found the way
     // the plugin finds it, not by the plugin's own mark, which is gone in the off state.
     const box = document.querySelector("[contenteditable]");
+
     const send =
       Array.from(document.querySelectorAll<HTMLElement>('button[class*="_primary"]')).find((el) => {
-        for (let a = el.parentElement; a && a !== document.body; a = a.parentElement)
-          if (box && a.contains(box)) return true;
+        for (let a = el.parentElement; a && a !== document.body; a = a.parentElement) {
+          if (box && a.contains(box)) {
+            return true;
+          }
+        }
+
         return false;
       }) ?? null;
+
     const out = {
       claude: "yes",
       linkColor: css(host.querySelector("a"), "color"),
@@ -87,13 +106,17 @@ async function readScheme(colorScheme: "dark" | "light"): Promise<Reads> {
       sendFill: css(send, "background-color"),
       ongoingDot: css(document.querySelector('svg[data-state="ongoing"]'), "color"),
     };
+
     host.remove();
+
     return out;
   });
+
   const reads: Reads = {};
   Object.assign(reads, inChat);
   // The panel: open it from the composer button and read its surface and the spark's fill.
   const spark = p.locator('button[aria-label="Oh My Claude"]').first();
+
   if (await spark.count()) {
     await spark.click({ force: true });
     await p.waitForTimeout(800);
@@ -101,11 +124,14 @@ async function readScheme(colorScheme: "dark" | "light"): Promise<Reads> {
       reads,
       await p.evaluate(() => {
         const missing = "missing";
+
         const css = (el: Element | null, prop: string) =>
           el ? getComputedStyle(el).getPropertyValue(prop).trim() : missing;
+
         const panel = document.querySelector("[data-omc-panel]");
         const btn = document.querySelector('button[aria-label="Oh My Claude"]');
         const tabOn = panel?.querySelector('[role="tab"][aria-selected="true"]') ?? null;
+
         return {
           panelBg: css(panel, "background-color"),
           panelBorder: css(panel, "border-top-color"),
@@ -116,10 +142,14 @@ async function readScheme(colorScheme: "dark" | "light"): Promise<Reads> {
       }),
     );
   }
+
   await ctx.close();
+
   return reads;
 }
 
 const out = { dark: await readScheme("dark"), light: await readScheme("light") };
+
 console.log(JSON.stringify(out, null, 2));
+
 await b.close();

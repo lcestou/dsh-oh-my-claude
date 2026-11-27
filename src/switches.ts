@@ -71,17 +71,26 @@ export interface ClaudeMdState {
  * from here, so the environment is not consulted for one at all.
  */
 export function claudeMdDisabledBy(
-  scopes: readonly ScopeText[],
+  scopes: ReadonlyArray<ScopeText>,
   env: string | undefined,
   local: boolean,
 ): string | undefined {
   for (const { scope, text } of scopes) {
     const block = parseSettings(text).env;
-    if (!(block instanceof Object) || Array.isArray(block)) continue;
+
+    if (!(block instanceof Object) || Array.isArray(block)) {
+      continue;
+    }
+
     const value = block.CLAUDE_CODE_DISABLE_CLAUDE_MDS;
-    if (value === undefined) continue;
+
+    if (value === undefined) {
+      continue;
+    }
+
     return cliTrue(String(value)) ? scope : undefined;
   }
+
   return local && cliTrue(env) ? "env" : undefined;
 }
 
@@ -89,10 +98,9 @@ export function claudeMdDisabledBy(
 export const parseSettings = (text: string): Record<string, JsonValue> => {
   try {
     const value: JsonValue = JSON.parse(text);
+
     // SAFETY: JSON.parse answers a JsonValue; the guard leaves only the object arm of that union.
-    return value instanceof Object && !Array.isArray(value)
-      ? (value as Record<string, JsonValue>)
-      : {};
+    return value instanceof Object && !Array.isArray(value) ? value : {};
   } catch {
     // A file the CLI would refuse to start on says nothing about these keys; Diagnostics reports
     // the parse error separately.
@@ -106,7 +114,7 @@ export const parseSettings = (text: string): Record<string, JsonValue> => {
  * highest scope that names the key decides it, and a lower file naming it changes nothing.
  */
 export function featureSwitches(
-  scopes: readonly ScopeText[],
+  scopes: ReadonlyArray<ScopeText>,
   env: { CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING?: string },
   continueAfterLimit = true,
 ): FeatureSwitches {
@@ -116,10 +124,13 @@ export function featureSwitches(
     checkpointingDisabled: (env.CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING ?? "") !== "",
     usageLimit: { plugin: continueAfterLimit, cli: null },
   };
+
   let retentionSet = false;
+
   for (const { scope, text } of scopes) {
     const settings = parseSettings(text);
     const days = settings.cleanupPeriodDays;
+
     // The schema is a positive integer; anything else the CLI rejects, and the sweep falls back.
     if (
       !retentionSet &&
@@ -131,19 +142,29 @@ export function featureSwitches(
       out.retention = { days, scope };
       retentionSet = true;
     }
+
     const permissions = settings.permissions;
+
     if (
       out.bypassDisabled === undefined &&
       permissions instanceof Object &&
       !Array.isArray(permissions)
     ) {
       const disabled = permissions.disableBypassPermissionsMode;
+
       // The CLI's own check is `=== "disable"`, but a hand-written `true` means the same thing to
       // whoever wrote it, and warning on it costs nothing.
-      if (disabled === "disable" || disabled === true) out.bypassDisabled = { scope };
+      if (disabled === "disable" || disabled === true) {
+        out.bypassDisabled = { scope };
+      }
     }
+
     const auto = settings.autoContinueAtUsageLimit;
-    if (out.usageLimit.cli === null && (auto === true || auto === false)) out.usageLimit.cli = auto;
+
+    if (out.usageLimit.cli === null && (auto === true || auto === false)) {
+      out.usageLimit.cli = auto;
+    }
   }
+
   return out;
 }

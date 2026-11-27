@@ -1,13 +1,14 @@
 // Offline self-check: DSH_OMC_STATE_DIR=$(mktemp -d /tmp/omc-test.XXXXXX) bun src/events.test.ts.
 import assert from "node:assert/strict";
 import type { ServerResponse } from "node:http";
-import { EventHub, HEARTBEAT_MS, frame, hub, type OmcEvent } from "./events.js";
+import { EventHub, HEARTBEAT_MS, frame, hub } from "./events.js";
+import type { OmcEvent } from "./events.js";
 
 interface FakeRes {
   res: ServerResponse;
   status: number;
   headers: Record<string, string>;
-  chunks: string[];
+  chunks: Array<string>;
   ended: boolean;
   onClose: (() => void) | undefined;
   needDrain: boolean;
@@ -25,6 +26,7 @@ const fakeRes = (): FakeRes => {
     onClose: undefined,
     needDrain: false,
   };
+
   f.res = {
     writeHead: (s: number, h: Record<string, string>) => {
       f.status = s;
@@ -32,18 +34,22 @@ const fakeRes = (): FakeRes => {
     },
     write: (chunk: string) => {
       f.chunks.push(chunk);
+
       return true;
     },
     end: () => {
       f.ended = true;
     },
     on: (ev: string, cb: () => void) => {
-      if (ev === "close") f.onClose = cb;
+      if (ev === "close") {
+        f.onClose = cb;
+      }
     },
     get writableNeedDrain() {
       return f.needDrain;
     },
   } as unknown as ServerResponse;
+
   return f;
 };
 
@@ -60,10 +66,12 @@ const fakeRes = (): FakeRes => {
 {
   const h = new EventHub();
   const a = fakeRes();
-  const snap: OmcEvent[] = [
+
+  const snap: Array<OmcEvent> = [
     { kind: "awaiting", session: null, data: {} },
     { kind: "idle", session: "s1", data: { deadline: null, timeoutMs: 5 } },
   ];
+
   h.attach(a.res, "s1", snap);
   assert.equal(a.status, 200, "attach status");
   assert.equal(a.headers["content-type"], "text/event-stream", "attach content type");
@@ -125,28 +133,43 @@ const fakeRes = (): FakeRes => {
 // F. coalesce sends once per window with the newest builder; flush sends now and cancels
 const h = new EventHub();
 const a = fakeRes();
+
 h.attach(a.res, "s1", []);
+
 h.coalesce("s1", () => ({ kind: "live-turn", session: "s1", data: { tokens: 1 } }), 200);
+
 h.coalesce("s1", () => ({ kind: "live-turn", session: "s1", data: { tokens: 2 } }), 200);
+
 h.coalesce("s1", () => ({ kind: "live-turn", session: "s1", data: { tokens: 3 } }), 200);
+
 assert.equal(a.chunks.length, 1, "nothing goes out before the window ends");
+
 await new Promise((r) => setTimeout(r, 300));
+
 assert.equal(a.chunks.length, 2, "one frame after the window");
+
 assert.equal(
   a.chunks[1],
   'event: live-turn\ndata: {"session":"s1","data":{"tokens":3}}\n\n',
   "the newest builder wins",
 );
+
 h.coalesce("s1", () => ({ kind: "live-turn", session: "s1", data: { tokens: 4 } }), 200);
+
 h.flush("s1", { kind: "live-turn", session: "s1", data: {} });
+
 assert.equal(a.chunks.length, 3, "flush publishes at once");
+
 assert.equal(
   a.chunks[2],
   'event: live-turn\ndata: {"session":"s1","data":{}}\n\n',
   "flush frame text",
 );
+
 await new Promise((r) => setTimeout(r, 300));
+
 assert.equal(a.chunks.length, 3, "flush cancelled the pending coalesced frame");
+
 h.close();
 
 // G. close ends every response and empties the set

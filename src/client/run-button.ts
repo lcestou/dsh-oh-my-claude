@@ -1,7 +1,8 @@
 // The Run button dsh puts on a shell code block in a Claude session: the play glyph it appends and
 // the scan that puts it there. The composer it writes into belongs to the dock file, which owns it.
 import { t } from "./i18n.js";
-import { activeClaudeSession, type ClientCtx } from "./shared.js";
+import { activeClaudeSession } from "./shared.js";
+import type { ClientCtx } from "./shared.js";
 import { runDraft, SHELL_LANGS } from "./nudge.js";
 import { attachTip } from "./tooltip.js";
 import { onBodyMutation } from "./dom.js";
@@ -12,7 +13,8 @@ import { dockComposer } from "./dock.js";
 function playIcon(): SVGSVGElement {
   const ns = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(ns, "svg");
-  const attrs: [string, string][] = [
+
+  const attrs: Array<[string, string]> = [
     ["width", "14"],
     ["height", "14"],
     ["viewBox", "0 0 16 16"],
@@ -20,12 +22,17 @@ function playIcon(): SVGSVGElement {
     ["aria-hidden", "true"],
     ["stroke-width", "1"],
   ];
-  for (const [k, v] of attrs) svg.setAttribute(k, v);
+
+  for (const [k, v] of attrs) {
+    svg.setAttribute(k, v);
+  }
+
   const path = document.createElementNS(ns, "path");
   path.setAttribute("d", "M4.5 2.5v11l8.5-5.5z");
   path.setAttribute("stroke", "currentColor");
   path.setAttribute("stroke-linejoin", "round");
   svg.append(path);
+
   return svg;
 }
 
@@ -39,16 +46,27 @@ function playIcon(): SVGSVGElement {
  */
 export function watchRunButtons(ctx: ClientCtx) {
   onBodyMutation(() => {
-    if (!activeClaudeSession(ctx) || !dockComposer) return;
+    if (!activeClaudeSession(ctx) || !dockComposer) {
+      return;
+    }
+
     for (const block of document.querySelectorAll<HTMLElement>(
       ".md-code-block:not([data-omc-run-seen])",
     )) {
       const banner = block.querySelector<HTMLElement>("[data-code-block-banner]");
       const actions = banner?.querySelector("button")?.parentElement;
-      if (!banner || !actions) continue;
+
+      if (!banner || !actions) {
+        continue;
+      }
+
       block.setAttribute("data-omc-run-seen", "");
       const lang = banner.firstElementChild?.textContent?.trim().toLowerCase() ?? "";
-      if (!SHELL_LANGS.has(lang)) continue;
+
+      if (!SHELL_LANGS.has(lang)) {
+        continue;
+      }
+
       const button = document.createElement("button");
       button.type = "button";
       button.setAttribute("data-omc-run", "");
@@ -61,7 +79,11 @@ export function watchRunButtons(ctx: ClientCtx) {
       button.addEventListener("click", () => {
         const snippet = block.querySelector("pre")?.textContent?.trimEnd() ?? "";
         const composer = dockComposer;
-        if (!composer || snippet.trim() === "") return;
+
+        if (!composer || snippet.trim() === "") {
+          return;
+        }
+
         composer.setDraft(runDraft(lang, snippet));
         document.querySelector<HTMLElement>("[data-composer-input]")?.focus();
       });

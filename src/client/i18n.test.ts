@@ -7,11 +7,13 @@ import * as dshCommon from "./i18n/dsh-common.js";
 {
   const placeholders = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).toSorted();
   const borrowed = new Set(Object.keys(dshCommon.en));
-  for (const key of Object.keys(ZH) as (keyof typeof ZH)[]) {
+
+  for (const key of Object.keys(ZH) as Array<keyof typeof ZH>) {
     assert.ok(ZH[key]?.trim(), `zh missing ${key}`);
     assert.ok(EN[key].trim(), `en empty ${key}`);
     assert.deepEqual(placeholders(ZH[key]), placeholders(EN[key]), `placeholders differ: ${key}`);
   }
+
   assert.deepEqual(
     Object.keys(ZH).toSorted(),
     Object.keys(EN)

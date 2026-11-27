@@ -9,7 +9,7 @@ import type { Agent, PluginContext } from "../dsh.js";
 import { markBusy } from "../state.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
-import { ClaudeProcess } from "../process.js";
+import type { ClaudeProcess } from "../process.js";
 import {
   childrenContinuedText,
   finishedTasksText,
@@ -28,19 +28,21 @@ interface Sent {
 function world(
   options: {
     parentLive?: boolean;
-    childEvents?: unknown[];
+    childEvents?: Array<unknown>;
     subagents?: boolean;
     headers?: Record<string, { parentSession?: string; origin?: string }>;
   } = {},
 ) {
-  const sent: Sent[] = [];
+  const sent: Array<Sent> = [];
   const followups: Array<{ id: string; content: Array<{ text: string }> }> = [];
-  const resolved: string[] = [];
+  const resolved: Array<string> = [];
+
   const headers: Record<string, { parentSession?: string; origin?: string }> = {
     p1: {},
     c1: { parentSession: "p1", origin: "subagent" },
     ...options.headers,
   };
+
   const agent = (id: string) => ({
     id,
     status: "idle",
@@ -48,13 +50,22 @@ function world(
       followups.push({ id, content: m.content });
     },
   });
+
   const live = new Map<string, ReturnType<typeof agent>>();
-  if (options.parentLive) live.set("p1", agent("p1"));
+
+  if (options.parentLive) {
+    live.set("p1", agent("p1"));
+  }
+
   const services: Record<string, unknown> = {
     sessionQuery: {
       observeSession: async (id: string) => {
         const header = headers[id];
-        if (!header) throw new Error(`session "${id}" not found`);
+
+        if (!header) {
+          throw new Error(`session "${id}" not found`);
+        }
+
         return {
           header,
           events: id === "c1" ? (options.childEvents ?? []) : [],
@@ -63,7 +74,8 @@ function world(
       },
     },
   };
-  if (options.subagents !== false)
+
+  if (options.subagents !== false) {
     services.subagents = {
       sendMessage: async (
         sender: Agent,
@@ -73,9 +85,12 @@ function world(
       ) => {
         assert.ok(opts.signal instanceof AbortSignal, "a signal bounds the send");
         sent.push({ sender: String(sender.id), target, text: content.map((b) => b.text).join("") });
+
         return "m1";
       },
     };
+  }
+
   // SAFETY: partial fake; wake reads sessions, agents and get(sessionQuery | subagents)
   const ctx = {
     on() {},
@@ -83,6 +98,7 @@ function world(
     sessions: { get: () => undefined },
     agents: { get: (id: string) => live.get(id) },
   } as unknown as PluginContext;
+
   // The double-wake guard and the continued-children map are process-wide; each block starts clean.
   ClaudeCodeAdapter.wokeThroughParent.clear();
   ClaudeCodeAdapter.continuedChildren.clear();
@@ -91,15 +107,20 @@ function world(
     resolveAgent: async (id: string) => {
       resolved.push(id);
       const header = headers[id];
-      if (header?.origin === "subagent")
+
+      if (header?.origin === "subagent") {
         return { error: new Error(`session "${id}" is owned by subagent routing`) };
+      }
+
       const a = agent(id);
       live.set(id, a);
+
       // SAFETY: partial Agent; wake reads id, status and followup
       return { agent: a as unknown as Agent };
     },
     // SAFETY: the rest of the controller is not reached by a wake
   } as unknown as ClaudeCodeAdapter["sessionController"];
+
   return { adapter, sent, followups, resolved };
 }
 
@@ -136,11 +157,13 @@ function world(
   // The finished task is named beside the notice, in the same message through the parent.
   const w = world({ parentLive: true });
   w.adapter.noteTask("c1", "t1", { description: "Run the test suite", status: "running" });
+
   // SAFETY: partial fake; wake reads busy and the queued task notifications
   const proc = {
     busy: false,
     finishedTasks: () => [{ taskId: "t1", status: "completed", summary: "exit 0" }],
   } as unknown as ClaudeProcess;
+
   assert.equal(await w.adapter.wake("c1", proc, WAKE_TEXT), true);
   assert.equal(
     w.sent[0]?.text,
@@ -152,10 +175,12 @@ function world(
   // Two wakes in the same moment (an adopted keeper's drain and its idle result) send once, also
   // while the parent is still being loaded.
   const w = world();
+
   const both = await Promise.all([
     w.adapter.wake("c1", undefined, WAKE_TEXT),
     w.adapter.wake("c1", undefined, WAKE_TEXT),
   ]);
+
   assert.deepEqual(both, [true, true]);
   assert.equal(w.sent.length, 1, "one message through the parent");
 }
@@ -177,6 +202,7 @@ function world(
       ],
     },
   };
+
   const w = world({ childEvents: [pending] });
   assert.equal(await w.adapter.wake("c1", undefined, RESTART_TEXT), true);
   assert.equal(w.sent.length, 0, "nothing sent on top of the pending notice");
@@ -233,7 +259,9 @@ function world(
       { type: "text" as const, text: WAKE_TEXT },
     ],
   };
+
   assert.equal(wakeOnlyTurn([relayed]), true);
+
   const named = {
     ...relayed,
     content: [
@@ -241,10 +269,12 @@ function world(
       { type: "text" as const, text: finishedTasksText([{ name: "build", status: "failed" }]) },
     ],
   };
+
   assert.equal(wakeOnlyTurn([named]), true, "the line naming the task leaves it a wake");
   const prompt = { ...relayed, content: [{ type: "text" as const, text: "do more" }] };
   assert.equal(wakeOnlyTurn([prompt]), false, "a real message from the parent is a prompt");
 }
 
 console.log("wake-subagent ok");
+
 process.exit(0);

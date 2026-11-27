@@ -14,7 +14,6 @@ import {
   ROUTE,
   claudeProviderOf,
   boxQuery,
-  type ClientCtx,
   code,
   select,
   inputStyle,
@@ -24,10 +23,10 @@ import {
   loadBreakdown,
   parseSkillCosts,
   sortSkillCosts,
-  type SkillState,
-  type UsageBreakdownReply,
 } from "../shared.js";
-import { t, useLocale, type OmcKey } from "../i18n.js";
+import type { ClientCtx, SkillState, UsageBreakdownReply } from "../shared.js";
+import { t, useLocale } from "../i18n.js";
+import type { OmcKey } from "../i18n.js";
 import { ConfirmButton } from "../tune.js";
 import { SearchField } from "../search-field.js";
 import type { PluginRoster, PluginLoadError } from "../../plugins.js";
@@ -42,9 +41,13 @@ function MarketplaceAddForm({ act, busy }: { act: Act; busy: string }) {
   useLocale();
   const [source, setSource] = useState("");
   const [scope, setScope] = useState("user");
+
   const submit = async () => {
-    if (await act("/plugins/marketplace/add", { source, scope }, "mkt-add")) setSource("");
+    if (await act("/plugins/marketplace/add", { source, scope }, "mkt-add")) {
+      setSource("");
+    }
   };
+
   return (
     <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
       <input
@@ -110,8 +113,8 @@ export function PluginManagerBlock({
   onChanged,
 }: {
   roster: PluginRoster | null;
-  pluginErrors: PluginLoadError[];
-  pluginWarnings: PluginLoadError[];
+  pluginErrors: Array<PluginLoadError>;
+  pluginWarnings: Array<PluginLoadError>;
   sessionId: string;
   ctx: ClientCtx;
   onChanged: () => void;
@@ -120,9 +123,11 @@ export function PluginManagerBlock({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [applied, setApplied] = useState("");
+
   const act: Act = async (path, body, id) => {
     setBusy(id);
     setError("");
+
     try {
       const r = await readJson<{ ok: boolean; error?: string; live?: boolean }>(
         await fetch(`${ROUTE}${path}${boxQuery(ctx, sessionId)}`, {
@@ -131,22 +136,32 @@ export function PluginManagerBlock({
           body: JSON.stringify({ session: sessionId, ...body }),
         }),
       );
+
       if (!r.ok) {
         setError(r.error ?? t("panel.plugins.actionFailed"));
+
         return false;
       }
+
       setApplied(r.live === true ? t("panel.plugins.appliedLive") : t("panel.plugins.appliedNext"));
       onChanged();
+
       return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
+
       return false;
     } finally {
       setBusy("");
     }
   };
-  if (roster === null) return null;
+
+  if (roster === null) {
+    return null;
+  }
+
   const { plugins, marketplaces } = roster;
+
   const line: CSSProperties = {
     flex: 1,
     minWidth: 0,
@@ -155,7 +170,9 @@ export function PluginManagerBlock({
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   };
+
   const small: CSSProperties = { ...btn, flex: "none", padding: "0 6px", fontSize: 11 };
+
   return (
     <>
       <span style={sectionHead}>{t("panel.plugins.head")}</span>
@@ -269,10 +286,10 @@ const writable = (scope: string) => scope === "user" || scope === "project";
 /** The /skill-doctor cost columns, one source of truth for the table header and body. `numeric` is
  *  true for the four the CLI prints as magnitudes, so they line up right under each other. Column
  *  headers come from `panel.skills.col.<col>` at render so a language switch reaches them. */
-const costCols: {
+const costCols: Array<{
   col: "skill" | "source" | "context" | "tokens" | "uses" | "lastUsed";
   numeric: boolean;
-}[] = [
+}> = [
   { col: "skill", numeric: false },
   { col: "source", numeric: false },
   { col: "context", numeric: true },
@@ -307,8 +324,12 @@ const BEHAVIOUR_KEYS: Array<[RegExp, OmcKey]> = [
 const behaviourText = (line: string): string => {
   for (const [re, key] of BEHAVIOUR_KEYS) {
     const m = re.exec(line);
-    if (m) return t(key, { pct: m[1] ?? "", name: m[2] ?? "" });
+
+    if (m) {
+      return t(key, { pct: m[1] ?? "", name: m[2] ?? "" });
+    }
   }
+
   return line;
 };
 
@@ -323,15 +344,17 @@ const behaviourText = (line: string): string => {
 export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
-  const [skills, setSkills] = useState<SkillRow[] | null>(null);
+  const [skills, setSkills] = useState<Array<SkillRow> | null>(null);
   const [query, setQuery] = useState("");
   const [cost, setCost] = useState<SkillState>({ kind: "idle" });
   const [drivers, setDrivers] = useState<UsageBreakdownReply | null>(null);
   const [driversBusy, setDriversBusy] = useState(false);
+
   const [costSort, setCostSort] = useState<{
     col: "skill" | "source" | "context" | "tokens" | "uses" | "lastUsed";
     dir: "asc" | "desc";
   }>({ col: "tokens", dir: "desc" });
+
   const costAc = useRef<AbortController | null>(null);
   const [editing, setEditing] = useState<{ path: string; name: string } | null>(null);
   const [text, setText] = useState("");
@@ -346,6 +369,7 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
   const [newDesc, setNewDesc] = useState("");
   const provider = claudeProviderOf(ctx, sessionId);
   const onBox = provider === undefined ? "" : `provider=${encodeURIComponent(provider)}`;
+
   const q = [
     cwd ? `cwd=${encodeURIComponent(cwd)}` : "",
     `session=${encodeURIComponent(sessionId)}`,
@@ -353,25 +377,32 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
   ]
     .filter((p) => p !== "")
     .join("&");
+
   const mounted = useRef(true);
   useEffect(() => () => void (mounted.current = false), []);
+
   const refresh = useCallback(() => {
-    if (!cwd) return;
+    if (!cwd) {
+      return;
+    }
+
     fetch(`${ROUTE}/skills?${q}`)
-      .then((r) => readJson<{ skills?: SkillRow[] }>(r))
+      .then((r) => readJson<{ skills?: Array<SkillRow> }>(r))
       .then((b) => mounted.current && setSkills(b.skills ?? []))
       .catch(() => mounted.current && setSkills([]));
   }, [cwd, q]);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
   useEffect(() => () => costAc.current?.abort(), []);
+
   const loadCost = useCallback(() => {
     setCost({ kind: "loading" });
     costAc.current?.abort();
     const ac = new AbortController();
     costAc.current = ac;
-    const timer = setTimeout(() => ac.abort(), 25000);
+    const timer = setTimeout(() => ac.abort(), 25_000);
     void (async () => {
       const reply = await readJson<{
         ok?: boolean;
@@ -384,41 +415,54 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
           signal: ac.signal,
         }),
       );
-      if (mounted.current) setCost(skillStateFromReply(reply));
+
+      if (mounted.current) {
+        setCost(skillStateFromReply(reply));
+      }
     })()
-      .catch((e: Error) => mounted.current && setCost({ kind: "error", text: e.message }))
+      .catch((error: Error) => mounted.current && setCost({ kind: "error", text: error.message }))
       .finally(() => clearTimeout(timer));
   }, [sessionId]);
+
   const loadDrivers = (force = false) => {
     setDriversBusy(true);
     void loadBreakdown(undefined, force)
       .then(setDrivers)
-      .catch((e: Error) => setDrivers({ ok: false, error: e.message }))
+      .catch((error: Error) => setDrivers({ ok: false, error: error.message }))
       .finally(() => setDriversBusy(false));
   };
 
   const box = boxQuery(ctx, sessionId);
+
   const note = (live: boolean) =>
     setApplied(live ? t("panel.plugins.appliedLive") : t("panel.plugins.appliedNext"));
+
   const openEdit = async (path: string, name: string) => {
     setErr("");
+
     try {
       const body = await readJson<{ text: string; mtime?: number }>(
         await fetch(`${ROUTE}/skills/file?${q}&path=${encodeURIComponent(path)}`),
       );
+
       setEditing({ path, name });
       setText(body.text);
       setSaved(body.text);
       setMtime(body.mtime);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
     }
   };
+
   const save = async () => {
-    if (!editing) return;
+    if (!editing) {
+      return;
+    }
+
     setBusy("save");
     setErr("");
     setApplied("");
+
     try {
       const r = await readJson<{ mtime?: number; live?: boolean }>(
         await fetch(`${ROUTE}/skills/file${box}`, {
@@ -427,20 +471,23 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
           body: JSON.stringify({ session: sessionId, cwd, path: editing.path, text, mtime }),
         }),
       );
+
       setSaved(text);
       setMtime(r.mtime);
       note(r.live === true);
       refresh();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy("");
     }
   };
+
   const create = async () => {
     setBusy("create");
     setErr("");
     setApplied("");
+
     try {
       const r = await readJson<{ path: string; live?: boolean }>(
         await fetch(`${ROUTE}/skills/create${box}`, {
@@ -455,6 +502,7 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
           }),
         }),
       );
+
       note(r.live === true);
       const name = newName;
       setNewName("");
@@ -463,16 +511,18 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
       // Open the editor before dropping the form, so the list never flashes between the two.
       await openEdit(r.path, name);
       setCreating(false);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy("");
     }
   };
+
   const remove = async (s: SkillRow) => {
     setBusy(s.path);
     setErr("");
     setApplied("");
+
     try {
       const r = await readJson<{ live?: boolean }>(
         await fetch(`${ROUTE}/skills/remove${box}`, {
@@ -481,18 +531,21 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
           body: JSON.stringify({ session: sessionId, cwd, path: s.path }),
         }),
       );
+
       note(r.live === true);
       refresh();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy("");
     }
   };
+
   const reload = async () => {
     setBusy("reload");
     setErr("");
     setApplied("");
+
     try {
       const r = await readJson<{ live?: boolean }>(
         await fetch(`${ROUTE}/skills/reload${box}`, {
@@ -501,29 +554,41 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
           body: JSON.stringify({ session: sessionId }),
         }),
       );
+
       note(r.live === true);
       refresh();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy("");
     }
   };
 
-  if (skills === null) return null;
+  if (skills === null) {
+    return null;
+  }
 
   const nameOk = /^[a-z0-9][a-z0-9-]{0,63}$/.test(newName);
   const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+
   const match = (s: SkillRow) =>
     words.every((w) => `${s.name} ${s.scope} ${s.description}`.toLowerCase().includes(w));
+
   const groups = groupSkillsByScope(skills);
-  const sections: { key: "user" | "project" | "plugin"; label: string; rows: SkillRow[] }[] = [
+
+  const sections: Array<{
+    key: "user" | "project" | "plugin";
+    label: string;
+    rows: Array<SkillRow>;
+  }> = [
     { key: "user", label: t("panel.skills.userSkills"), rows: groups.user },
     { key: "project", label: t("panel.skills.projectSkills"), rows: groups.project },
     { key: "plugin", label: t("panel.skills.pluginSkills"), rows: groups.plugin },
   ];
+
   const anyMatch = skills.some(match);
   const small: CSSProperties = { ...btn, flex: "none", padding: "0 6px", fontSize: 11 };
+
   const rowNode = (s: SkillRow) => (
     <div
       key={s.path}
@@ -577,6 +642,7 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
 
   if (editing !== null) {
     const dirty = text !== saved;
+
     return (
       <div style={bodyFlow} data-omc-skills="">
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -604,7 +670,9 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
           autoFocus
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") save();
+            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+              save();
+            }
           }}
           style={{ ...code, minHeight: 300, resize: "vertical", whiteSpace: "pre-wrap" }}
         />
@@ -737,10 +805,15 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
       )}
       {sections.map((sec) => {
         const rows = sec.rows.filter(match);
-        if (rows.length === 0) return null;
+
+        if (rows.length === 0) {
+          return null;
+        }
+
         // Groups start folded so the tab reads as a short list of groups plus Skill costs; a search
         // opens them to show its matches, and a lone group opens since folding it hides everything.
         const open = query.trim() !== "" || sections.filter((x) => x.rows.length > 0).length === 1;
+
         return (
           <details key={sec.key} open={open} data-omc-skills-scope={sec.key}>
             <summary style={FOLD_HEAD}>
@@ -769,7 +842,9 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
         data-omc-skill-doctor-fold=""
         style={{ marginTop: 8 }}
         onToggle={(e) => {
-          if (e.currentTarget.open && cost.kind === "idle") loadCost();
+          if (e.currentTarget.open && cost.kind === "idle") {
+            loadCost();
+          }
         }}
       >
         <summary style={FOLD_HEAD}>{t("panel.skills.costs")}</summary>
@@ -803,7 +878,8 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
               )}
               {(() => {
                 const parsed = parseSkillCosts(cost.text);
-                if (!parsed || parsed.length === 0)
+
+                if (!parsed || parsed.length === 0) {
                   return (
                     <pre
                       data-omc-skill-doctor=""
@@ -813,6 +889,8 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
                       {cost.text}
                     </pre>
                   );
+                }
+
                 return (
                   <>
                     <div style={{ maxHeight: 320, overflow: "auto" }}>
@@ -878,10 +956,12 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
                                   color: T.muted,
                                   padding: "2px 6px",
                                 };
+
                                 if (c.numeric) {
                                   cellStyle.fontFamily = T.mono;
                                   cellStyle.textAlign = "right";
                                 }
+
                                 return (
                                   <td key={c.col} style={cellStyle}>
                                     {row[c.col]}
@@ -914,7 +994,9 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
       <details
         data-omc-usage-drivers=""
         onToggle={(e) => {
-          if (e.currentTarget.open && drivers === null) loadDrivers();
+          if (e.currentTarget.open && drivers === null) {
+            loadDrivers();
+          }
         }}
       >
         <summary style={FOLD_HEAD}>{t("panel.skills.driversHead")}</summary>
@@ -940,10 +1022,13 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
               {(() => {
                 const win =
                   drivers.windows.find((w) => w.label === "Last 7d") ?? drivers.windows[0];
-                if (!win)
+
+                if (!win) {
                   return (
                     <div style={{ ...meta, color: T.faint }}>{t("panel.skills.noActivity")}</div>
                   );
+                }
+
                 return (
                   <>
                     {/* `?? []` because this reply can come from a cache file written by an older
@@ -972,6 +1057,7 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
                           >
                             {(() => {
                               const key = DRIVER_GROUP_KEYS.get(g.label);
+
                               return key ? t(key) : g.label;
                             })()}
                           </div>
