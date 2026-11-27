@@ -6,6 +6,10 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-11-27
+
+dsh: runs on 0.2.2-alpha.2 through 0.2.3-alpha.2; built and tested on 0.2.3-alpha.2.
+
 ### Added
 
 - The plan usage popover shows how earlier windows ended: a strip of bars under each 5-hour and weekly window with the typical figure, recorded per login on the box. Point at, tap or arrow through a bar for its date.
