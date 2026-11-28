@@ -9,21 +9,25 @@ import { StringDecoder } from "node:string_decoder";
 
 /** How long a finished command's pipes get to drain before they are cut. */
 const DRAIN_MS = 300;
+
+import { GATE_MODES, TAIL_CHARS, decide, gateReason, testEnv } from "./test-gate.js";
+import type { RunExit, TestGateRun } from "./test-gate.js";
 import {
-  GATE_MODES,
-  TAIL_CHARS,
-  decide,
-  gateReason,
-  testEnv,
-  type RunExit,
-  type TestGateRun,
-} from "./test-gate.js";
-import { hookInputOf, readGateFile, readRunFile, writeJsonAtomic } from "./test-gate-files.js";
+  failureText,
+  hookInputOf,
+  readGateFile,
+  readRunFile,
+  writeJsonAtomic,
+} from "./test-gate-files.js";
 
 /** Reads all of stdin; the CLI writes the hook input there and closes it. */
 async function stdinText(): Promise<string> {
   let s = "";
-  for await (const chunk of process.stdin) s += String(chunk);
+
+  for await (const chunk of process.stdin) {
+    s += String(chunk);
+  }
+
   return s;
 }
 
@@ -44,34 +48,44 @@ function runCommand(
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
+
   let tail = "";
+
   /** Appends one stream's chunk through that stream's own decoder, so a character split across
    *  two chunks is joined rather than turned into U+FFFD. */
   const keeper = () => {
     const decoder = new StringDecoder("utf8");
+
     return (b: Buffer) => {
       tail = (tail + decoder.write(b)).slice(-TAIL_CHARS * 2);
     };
   };
+
   child.stdout.on("data", keeper());
   child.stderr.on("data", keeper());
   let timedOut = false;
   let stopped = false;
+
   const killGroup = () => {
     try {
-      if (child.pid) process.kill(-child.pid, "SIGKILL");
+      if (child.pid) {
+        process.kill(-child.pid, "SIGKILL");
+      }
     } catch {
       // already gone
     }
   };
+
   const timer = setTimeout(() => {
     timedOut = true;
     killGroup();
   }, timeoutSec * 1000);
+
   process.once("SIGTERM", () => {
     stopped = true;
     killGroup();
   });
+
   return new Promise((resolve) => {
     child.on("error", () => {
       clearTimeout(timer);
@@ -83,6 +97,7 @@ function runCommand(
       // Output written just before the exit can still be in the pipes: let both drain, but not
       // wait on them for good, since a background child the command left holds them open.
       let open = 2;
+
       /** Settles once both pipes have ended or the grace has run out, whichever is first. */
       const done = () => {
         clearTimeout(grace);
@@ -90,11 +105,16 @@ function runCommand(
         child.stderr.destroy();
         resolve({ code, timedOut, stopped, tail: tail.slice(-TAIL_CHARS) });
       };
+
       const grace = setTimeout(done, DRAIN_MS);
-      for (const pipe of [child.stdout, child.stderr])
+
+      for (const pipe of [child.stdout, child.stderr]) {
         pipe.once("end", () => {
-          if (--open === 0) done();
+          if (--open === 0) {
+            done();
+          }
         });
+      }
     });
   });
 }
@@ -108,19 +128,27 @@ async function main(
 ): Promise<string> {
   const { stopHookActive: active, permissionMode } = hookInputOf(await stdinText());
   const gate = (await readGateFile(gatePath))[cwd];
-  if (!gate?.enabled) return "";
+
+  if (!gate?.enabled) {
+    return "";
+  }
+
   const before = active ? ((await readRunFile(runPath))?.attempt ?? 0) : 0;
   const base = { command: gate.command, tries: gate.tries, startedAt: Date.now() };
+
   // A session that asks before commands: the gate would run repo content Claude may have edited
   // without asking, so it runs nothing and the card says why.
   if (!GATE_MODES.includes(permissionMode)) {
     await writeJsonAtomic(runPath, { ...base, state: "held", attempt: 0, tail: "" });
+
     return "";
   }
+
   await writeJsonAtomic(runPath, { ...base, state: "running", attempt: before, tail: "" });
   const limit = Math.min(gate.timeoutSec, Number.isFinite(capSec) ? capSec : gate.timeoutSec);
   const exit = await runCommand(gate.command, cwd, limit);
   const v = decide(before, active, exit, gate.tries);
+
   const run: TestGateRun = {
     ...base,
     state: v.state,
@@ -129,21 +157,32 @@ async function main(
     exitCode: exit.code,
     tail: exit.tail,
   };
+
   await writeJsonAtomic(runPath, run);
-  if (!v.block) return "";
+
+  if (!v.block) {
+    return "";
+  }
+
   const reason = gateReason(v.attempt, gate.tries, gate.command, exit.tail);
+
   return JSON.stringify({ decision: "block", reason });
 }
 
 const [gatePath, runPath, cwd, cap] = process.argv.slice(2);
+
 // Exits once the answer is written: a SIGTERM handler replaces node's own exit, and a stray
 // handle must never keep the hook alive past the CLI's cancel.
-if (gatePath && runPath && cwd)
-  main(gatePath, runPath, cwd, Number(cap))
-    .then((out) => {
-      if (out) process.stdout.write(out, () => process.exit(0));
-      else process.exit(0);
-    })
-    .catch((error: Error) => {
-      process.stderr.write(`test gate: ${error.message}\n`, () => process.exit(0));
-    });
+if (gatePath && runPath && cwd) {
+  try {
+    const out = await main(gatePath, runPath, cwd, Number(cap));
+
+    if (out) {
+      process.stdout.write(out, () => process.exit(0));
+    } else {
+      process.exit(0);
+    }
+  } catch (error) {
+    process.stderr.write(`test gate: ${failureText(error)}\n`, () => process.exit(0));
+  }
+}

@@ -2,18 +2,14 @@
 // list dropped. The SSH-box twin is ssh-boxes.ts; the two differ in what the instance runs on (this
 // box, under its own CLAUDE_CONFIG_DIR) and in what it inherits from the default mount (the dsh
 // tools bridge, which an SSH box cannot reach).
-import { type Account, boxProviderId } from "../accounts.js";
+import { boxProviderId } from "../accounts.js";
+import type { Account } from "../accounts.js";
 import type { PluginContext } from "../dsh.js";
 import { errorText } from "../process.js";
 import { ClaudeCodeAdapter } from "./class.js";
-import { Config } from "./config.js";
-import {
-  heldByOther,
-  probeLogin,
-  registerMount,
-  type SshBoxMount,
-  tagPluginMount,
-} from "./ssh-boxes.js";
+import type { Config } from "./config.js";
+import { heldByOther, probeLogin, registerMount, tagPluginMount } from "./ssh-boxes.js";
+import type { SshBoxMount } from "./ssh-boxes.js";
 import type { LocalMount } from "../routes/accounts.js";
 
 /** One mounted account: the same three handles an SSH box keeps. */
@@ -44,15 +40,19 @@ export interface SharedBridge {
 export function reconcileAccounts(
   ctx: PluginContext,
   base: Schemastery.TypeT<typeof Config>,
-  accounts: Account[],
+  accounts: Array<Account>,
   mounts: Map<string, AccountMount>,
   adapters: Map<string, ClaudeCodeAdapter>,
   bridge: SharedBridge,
   log: (level: string, msg: string) => void,
 ) {
   const desired = new Map(accounts.map((a) => [boxProviderId(a.name), a] as const));
+
   for (const [providerId, mount] of mounts) {
-    if (desired.has(providerId)) continue;
+    if (desired.has(providerId)) {
+      continue;
+    }
+
     mount.disposeAdapter();
     mount.disposeDirectory();
     mount.adapter.disposeProcesses();
@@ -60,12 +60,17 @@ export function reconcileAccounts(
     adapters.delete(providerId);
     log("info", `account ${providerId} withdrawn`);
   }
+
   for (const [providerId, account] of desired) {
-    if (mounts.has(providerId)) continue;
+    if (mounts.has(providerId)) {
+      continue;
+    }
+
     if (heldByOther(adapters, providerId)) {
       log("warn", `account "${account.name}" -> ${providerId} already mounted; skipped`);
       continue;
     }
+
     const adapter = new ClaudeCodeAdapter(ctx, {
       ...base,
       providerId,
@@ -74,12 +79,17 @@ export function reconcileAccounts(
       sshHost: "",
       ownTranscripts: false,
     });
+
     // The bridge is registered once, by the default mount; a session on this account's model is
     // relayed to this instance through ownerFor, so sharing it gives the account dsh's tools.
     adapter.mcp = bridge.mcp();
     adapter.mcpMounting = bridge.mounting();
     const registered = registerMount(ctx, adapter, log);
-    if (!registered) continue;
+
+    if (!registered) {
+      continue;
+    }
+
     const { disposeAdapter, disposeDirectory } = registered;
     tagPluginMount(adapter);
     probeLogin(adapter);
@@ -88,7 +98,9 @@ export function reconcileAccounts(
     log("info", `account "${account.name}" mounted as ${providerId} -> ${account.configDir}`);
     // A restart mounts the account again from the file; its keepers are still running Claude for
     // its sessions and are adopted here, the way the default mount adopts its own at apply.
-    void adapter.adoptKeepers().catch((e) => log("warn", `keeper adoption: ${errorText(e)}`));
+    void adapter
+      .adoptKeepers()
+      .catch((cause: unknown) => log("warn", `keeper adoption: ${errorText(cause)}`));
   }
 }
 
@@ -100,13 +112,15 @@ export function reconcileAccounts(
  * the next one still runs.
  */
 export function serialAccounts(
-  read: () => Promise<Account[]>,
-  apply: (accounts: Account[]) => void,
+  read: () => Promise<Array<Account>>,
+  apply: (accounts: Array<Account>) => void,
 ): () => Promise<void> {
   let chain: Promise<void> = Promise.resolve();
+
   return () => {
     const next = chain.then(async () => apply(await read()));
     chain = next.catch(() => {});
+
     return next;
   };
 }
@@ -114,14 +128,18 @@ export function serialAccounts(
 /** Every local mount but the default, for the accounts routes: plugin accounts and hand-written
  *  mounts alike, with the dir they hand the CLI. SSH boxes are not accounts and are left out; a
  *  hand-written mount on the default dir comes back with loginKey "" and the routes skip it. */
-export function localMountsOf(adapters: Iterable<ClaudeCodeAdapter>): LocalMount[] {
-  return [...adapters]
-    .filter((m) => m.providerId !== "claude-code" && !m.config.sshHost)
-    .map((m) => ({
-      provider: m.providerId,
-      name: m.displayName,
-      home: m.realClaudeHome,
-      loginKey: m.loginKey,
-      command: m.config.command,
-    }));
+export function localMountsOf(adapters: Iterable<ClaudeCodeAdapter>): Array<LocalMount> {
+  return [...adapters].flatMap((m) =>
+    m.providerId === "claude-code" || m.config.sshHost
+      ? []
+      : [
+          {
+            provider: m.providerId,
+            name: m.displayName,
+            home: m.realClaudeHome,
+            loginKey: m.loginKey,
+            command: m.config.command,
+          },
+        ],
+  );
 }

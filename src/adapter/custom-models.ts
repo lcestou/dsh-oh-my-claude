@@ -3,12 +3,13 @@
 // file under the plugin's state, so every browser and every profile sees the same list. The plugin
 // config's `customModels` is the other source of such rows; `withCustomModels` in catalog.ts turns
 // both into picker rows.
+import { fits } from "../schema-fits.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import z from "@deepseek-ai/schemastery";
 import type { JsonValue } from "../dsh.js";
 import { serverText } from "../locale.js";
-import { writeJson } from "../state.js";
+import { serialQueue, writeJson } from "../state.js";
 import { EFFORTS_ALL } from "./catalog.js";
 import type { CustomModel } from "./config.js";
 
@@ -28,19 +29,26 @@ const CustomModelList = z.array(
     efforts: z.array(z.string()),
   }),
 );
+
 const StoredLists = z.dict(CustomModelList);
 
 /** A request body's `models` as entries. Throws on anything that is not a list of entries: a
  *  string where a number goes, an entry with no id, and a body with no `models` at all, which
  *  would otherwise read as "clear this box's list". */
-export function parseCustomModels(value: JsonValue | undefined): CustomModel[] {
-  if (!Array.isArray(value)) throw new TypeError("models is not a list");
-  // SAFETY: the schema checks every field at run time; its parameter type describes valid input,
-  // which is exactly what is not known yet about a request body.
-  return CustomModelList(value as Parameters<typeof CustomModelList>[0]);
+export function parseCustomModels(value: JsonValue | undefined): Array<CustomModel> {
+  if (!Array.isArray(value)) {
+    throw new TypeError("models is not a list");
+  }
+
+  if (!fits(CustomModelList, value)) {
+    throw new TypeError("models has an entry of the wrong shape");
+  }
+
+  return CustomModelList(value);
 }
 
-let chain = Promise.resolve();
+/** The file's writes, one at a time. */
+const saves = serialQueue();
 
 /** An id `claude --model` can take as one argument: no whitespace, no leading dash (the CLI would
  *  read it as a flag), and not `default`, which is the picker's own row. */
@@ -53,46 +61,85 @@ const validId = (id: string): boolean =>
  * effort levels the CLI does not have are dropped rather than refused, so a level the CLI gains
  * later does not make an older plugin reject the whole list.
  */
-export function checkCustomModels(rows: readonly CustomModel[]): CustomModel[] | string {
-  if (rows.length > CUSTOM_MODELS_MAX)
+export function checkCustomModels(rows: ReadonlyArray<CustomModel>): Array<CustomModel> | string {
+  if (rows.length > CUSTOM_MODELS_MAX) {
     return serverText("customModelMany", { max: String(CUSTOM_MODELS_MAX) });
-  const out: CustomModel[] = [];
+  }
+
+  const out: Array<CustomModel> = [];
+
   for (const r of rows) {
     const model = r.model.trim();
-    if (!validId(model)) return serverText("customModelId");
-    if (out.some((m) => m.model === model)) return serverText("customModelTwice", { model });
+
+    if (!validId(model)) {
+      return serverText("customModelId");
+    }
+
+    if (out.some((m) => m.model === model)) {
+      return serverText("customModelTwice", { model });
+    }
+
     const entry: CustomModel = { model };
     const label = r.label?.trim() ?? "";
-    if (label.length > 100) return serverText("customModelName");
-    if (label !== "") entry.label = label;
+
+    if (label.length > 100) {
+      return serverText("customModelName");
+    }
+
+    if (label !== "") {
+      entry.label = label;
+    }
+
     const n = r.contextWindow;
+
     if (n !== undefined) {
-      if (!Number.isInteger(n) || n < 1000 || n > 10_000_000)
+      if (!Number.isInteger(n) || n < 1000 || n > 10_000_000) {
         return serverText("customModelWindow");
+      }
+
       entry.contextWindow = n;
     }
+
     const efforts = EFFORTS_ALL.filter((level) => r.efforts?.includes(level));
-    if (efforts.length > 0) entry.efforts = efforts;
+
+    if (efforts.length > 0) {
+      entry.efforts = efforts;
+    }
+
     out.push(entry);
   }
+
   return out;
 }
 
 /** Every mount's saved entries, by provider id. A file that is missing, unreadable or of another
  *  shape reads as no entries, and so does one mount's list that fails `checkCustomModels`: a bad
  *  file must not empty or break the picker. */
-export async function loadCustomModels(dir: string): Promise<Record<string, CustomModel[]>> {
-  let stored: Record<string, CustomModel[]>;
+export async function loadCustomModels(dir: string): Promise<Record<string, Array<CustomModel>>> {
+  let stored: Record<string, Array<CustomModel>>;
+
   try {
-    stored = StoredLists(JSON.parse(await readFile(CUSTOM_MODELS_FILE(dir), "utf8")));
+    const raw: unknown = JSON.parse(await readFile(CUSTOM_MODELS_FILE(dir), "utf8"));
+
+    if (!fits(StoredLists, raw)) {
+      return {};
+    }
+
+    stored = StoredLists(raw);
   } catch {
     return {};
   }
-  const out: Record<string, CustomModel[]> = {};
+
+  const out: Record<string, Array<CustomModel>> = {};
+
   for (const [provider, list] of Object.entries(stored)) {
     const rows = checkCustomModels(list);
-    if (Array.isArray(rows) && rows.length > 0) out[provider] = rows;
+
+    if (Array.isArray(rows) && rows.length > 0) {
+      out[provider] = rows;
+    }
   }
+
   return out;
 }
 
@@ -102,14 +149,17 @@ export async function loadCustomModels(dir: string): Promise<Record<string, Cust
 export function saveCustomModels(
   dir: string,
   provider: string,
-  models: CustomModel[],
+  models: Array<CustomModel>,
 ): Promise<void> {
-  const run = chain.then(async () => {
+  return saves(async () => {
     const all = await loadCustomModels(dir);
-    if (models.length > 0) all[provider] = models;
-    else delete all[provider];
+
+    if (models.length > 0) {
+      all[provider] = models;
+    } else {
+      delete all[provider];
+    }
+
     await writeJson(CUSTOM_MODELS_FILE(dir), all, { pretty: true });
   });
-  chain = run.catch(() => {});
-  return run;
 }

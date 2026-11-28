@@ -29,14 +29,19 @@ const SPEED_ROOTS = '[data-composer-stat="activity"], [data-session-stats-detail
  * first turn after a process relaunch stored the session's whole API time as its own, and a turn
  * that ran subagents in parallel adds their API time to tokens it does not count.
  */
-export const tokensPerSecond = (turns: readonly SpeedTurn[]): number | undefined => {
+export const tokensPerSecond = (turns: ReadonlyArray<SpeedTurn>): number | undefined => {
   let tokens = 0;
   let ms = 0;
+
   for (const t of turns) {
-    if (!(t.apiMs > 0) || !(t.output > 0) || t.apiMs > t.durationMs) continue;
+    if (!(t.apiMs > 0) || !(t.output > 0) || t.apiMs > t.durationMs) {
+      continue;
+    }
+
     tokens += t.output;
     ms += t.apiMs;
   }
+
   return ms > 0 ? tokens / (ms / 1000) : undefined;
 };
 
@@ -55,17 +60,28 @@ export const withSpeed = (text: string, tps: number): string =>
  * for an undefined `tps` or a page that shows no reading (dsh hides it until it has one).
  */
 export function paintSpeed(tps: number | undefined, root: ParentNode = document): void {
-  if (tps === undefined) return;
+  if (tps === undefined) {
+    return;
+  }
+
   for (const el of root.querySelectorAll(SPEED_ROOTS)) {
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const next = withSpeed(node.nodeValue ?? "", tps);
-      if (next !== node.nodeValue) node.nodeValue = next;
+
+      if (next !== node.nodeValue) {
+        node.nodeValue = next;
+      }
     }
+
     for (const labelled of el.querySelectorAll("[aria-label]")) {
       const label = labelled.getAttribute("aria-label") ?? "";
       const next = withSpeed(label, tps);
-      if (next !== label) labelled.setAttribute("aria-label", next);
+
+      if (next !== label) {
+        labelled.setAttribute("aria-label", next);
+      }
     }
   }
 }

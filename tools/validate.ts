@@ -40,15 +40,16 @@ import { readFileSync } from "node:fs";
 const ROOT = new URL("..", import.meta.url).pathname;
 
 const t0 = Date.now();
-const results: { name: string; ok: boolean; ms: number }[] = [];
+const results: Array<{ name: string; ok: boolean; ms: number }> = [];
 
 /** Run a command to completion with stdout and stderr merged; never throws. */
-function run(argv: string[]): Promise<{ code: number; out: string }> {
+function run(argv: Array<string>): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
     const child = spawn(argv[0] ?? "", argv.slice(1), {
       cwd: ROOT,
       stdio: ["ignore", "pipe", "pipe"],
     });
+
     let out = "";
     child.stdout.on("data", (b: Buffer) => (out += b.toString()));
     child.stderr.on("data", (b: Buffer) => (out += b.toString()));
@@ -57,13 +58,17 @@ function run(argv: string[]): Promise<{ code: number; out: string }> {
 }
 
 /** Run one step, record it, and show its output only when it fails. */
-async function step(name: string, ...argv: string[]): Promise<boolean> {
+async function step(name: string, ...argv: Array<string>): Promise<boolean> {
   const start = Date.now();
   const { code, out } = await run(argv);
   const ok = code === 0;
   results.push({ name, ok, ms: Date.now() - start });
+
   // Quiet on success, loud on failure — the point of a gate is the failure.
-  if (!ok) console.error(`\n─── ${name} FAILED ───\n${out.trim().slice(-4000)}\n`);
+  if (!ok) {
+    console.error(`\n─── ${name} FAILED ───\n${out.trim().slice(-4000)}\n`);
+  }
+
   return ok;
 }
 
@@ -74,6 +79,7 @@ await step("format", "bun", "run", "format");
 await Promise.all([
   step("lint", "bun", "run", "lint"),
   step("test", "bun", "run", "test"),
+  step("lint rules", "bun", "run", "test:rules"),
   step("dead code", "bun", "run", "deadcode"),
 ]);
 
@@ -81,6 +87,34 @@ await Promise.all([
 // the above passed, and the two are strictly ordered.
 if (results.every((r) => r.ok) && (await step("build", "bun", "run", "build"))) {
   await step("typecheck", "bun", "run", "typecheck");
+  checkClientRequires();
+}
+
+/**
+ * 4b. CLIENT REQUIRES. dsh loads `lib/client.js` against its own client module table, which serves
+ * React and dsh's `@deepseek-ai/dsh-client-*` packages and nothing else. A require of any other
+ * package passes the tests, the build and the typecheck, then fails in the browser with "missed the
+ * module table" and the plugin's client never loads: on 2026-11-27 `@deepseek-ai/dsh-brand` came in
+ * through `asSessionId` and took the whole client out. So the bundle's requires are read back here.
+ */
+function checkClientRequires(): void {
+  const start = Date.now();
+  const bundle = readFileSync(`${ROOT}lib/client.js`, "utf8");
+  const served = /^(react|react\/jsx-runtime|react-dom|@deepseek-ai\/dsh-client-[a-z-]+)$/;
+
+  const stray = [...bundle.matchAll(/require\("([^"]+)"\)/g)].flatMap((m) => {
+    const name = m[1] ?? "";
+
+    return served.test(name) ? [] : [name];
+  });
+
+  results.push({ name: "client requires", ok: stray.length === 0, ms: Date.now() - start });
+
+  if (stray.length > 0) {
+    console.error(
+      `\n─── lib/client.js requires what dsh's module table does not serve ───\n${[...new Set(stray)].join("\n")}\n`,
+    );
+  }
 }
 
 // 5. CONFLICT MARKERS, whole repo. `git grep` rather than `grep -r` so the search
@@ -100,9 +134,12 @@ if (results.every((r) => r.ok) && (await step("build", "bun", "run", "build"))) 
   // pathspec or a broken repository) means the search never ran, which must not read as clean.
   const found = code === 0;
   results.push({ name: "no conflict markers", ok: code === 1, ms: Date.now() - start });
-  if (found) console.error(`\n─── conflict markers ───\n${out.slice(0, 2000)}\n`);
-  else if (code !== 1)
+
+  if (found) {
+    console.error(`\n─── conflict markers ───\n${out.slice(0, 2000)}\n`);
+  } else if (code !== 1) {
     console.error(`\n─── conflict-marker search failed (exit ${code}) ───\n${out.slice(0, 500)}\n`);
+  }
 }
 
 // 6. NO EM DASHES IN PUBLISHED PROSE. The house style bans them in anything a person reads, and a
@@ -114,6 +151,7 @@ if (results.every((r) => r.ok) && (await step("build", "bun", "run", "build"))) 
 // more than a grep can do.
 {
   const start = Date.now();
+
   const { code, out } = await run([
     "git",
     "grep",
@@ -126,11 +164,15 @@ if (results.every((r) => r.ok) && (await step("build", "bun", "run", "build"))) 
     "CONTRIBUTING.md",
     "docs/",
   ]);
+
   const found = code === 0;
   results.push({ name: "no em dashes in docs", ok: code === 1, ms: Date.now() - start });
-  if (found) console.error(`\n─── em dashes in published prose ───\n${out.slice(0, 2000)}\n`);
-  else if (code !== 1)
+
+  if (found) {
+    console.error(`\n─── em dashes in published prose ───\n${out.slice(0, 2000)}\n`);
+  } else if (code !== 1) {
     console.error(`\n─── em dash search failed (exit ${code}) ───\n${out.slice(0, 500)}\n`);
+  }
 }
 
 // 7. THE ENTRIES STAY THIN. `src/adapter.ts` imports and mounts the server modules under
@@ -141,26 +183,39 @@ if (results.every((r) => r.ok) && (await step("build", "bun", "run", "build"))) 
 {
   const start = Date.now();
   const CEILING = 800;
-  const over: string[] = [];
+  const over: Array<string> = [];
+
   for (const file of ["src/adapter.ts", "src/client/index.tsx"]) {
     // Newlines, the way `wc -l` counts, so a file of exactly 800 lines ending in one passes.
     const lines = (readFileSync(file, "utf8").match(/\n/g) ?? []).length;
-    if (lines > CEILING) over.push(`${file}: ${lines} lines, ceiling ${CEILING}`);
+
+    if (lines > CEILING) {
+      over.push(`${file}: ${lines} lines, ceiling ${CEILING}`);
+    }
   }
+
   results.push({ name: "entries stay thin", ok: over.length === 0, ms: Date.now() - start });
-  if (over.length > 0)
+
+  if (over.length > 0) {
     console.error(
       `\n─── entry files over the ceiling ───\n${over.join("\n")}\nNew behaviour goes in a module under src/adapter/, src/routes/ or src/client/, imported from the entry.\n`,
     );
+  }
 }
 
 const pad = Math.max(...results.map((r) => r.name.length));
+
 console.log("");
-for (const r of results)
+
+for (const r of results) {
   console.log(`  ${r.ok ? "✔" : "✘"} ${r.name.padEnd(pad)}  ${(r.ms / 1000).toFixed(1)}s`);
+}
+
 const failed = results.filter((r) => !r.ok);
+
 console.log(
   `\n${failed.length ? `✘ ${failed.length} FAILED: ${failed.map((f) => f.name).join(", ")}` : "✔ all green"}` +
     `  ·  ${((Date.now() - t0) / 1000).toFixed(1)}s total\n`,
 );
+
 process.exit(failed.length ? 1 : 0);

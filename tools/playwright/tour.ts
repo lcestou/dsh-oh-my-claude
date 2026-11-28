@@ -9,24 +9,30 @@
 // is what makes the loop seamless. DSH_ORIGIN points the shoot at a scratch dsh, which is how a
 // throwaway session is kept out of the box's own sidebar.
 import { execFileSync } from "node:child_process";
-import { type Box, type Context, type Locator, type Page, dshUrl, launch } from "./pw.js";
+import { dshUrl, launch } from "./pw.js";
+import type { Box, Context, Locator, Page } from "./pw.js";
 
 const token = process.argv[2];
 const out = process.env.PW_OUT ?? "docs/media";
 const sessionName = process.env.PW_SESSION ?? "Getting started";
+
 // A session row only exists once its workspace is expanded, so name the workspace to click first.
 const workspaceName = process.env.PW_WORKSPACE ?? "";
+
 // The owner runs dsh dark; PW_LIGHT=1 shoots the light theme instead.
 const scheme = process.env.PW_LIGHT ? "light" : "dark";
 const b = await launch();
+
 /** Wait a fixed number of milliseconds after a navigation or click, the one delay the shots rely on
  *  to let the panel render.
  */
 const wait = (p: Page, ms: number) => p.waitForTimeout(ms);
+
 /** Select the workspace/session rows matching a text, so a session name can be opened by its
  *  treeitem label.
  */
 const rows = (p: Page, text: string) => p.locator('[role="treeitem"]').filter({ hasText: text });
+
 // Every crop below is measured off a real box. An unrendered locator answers null, and a crop built
 // from one either throws on `.x` or silently shoots the wrong rectangle; name the selector instead.
 /** Return a locator's bounding box, throwing when nothing rendered, so a crop built from a null box
@@ -34,9 +40,14 @@ const rows = (p: Page, text: string) => p.locator('[role="treeitem"]').filter({ 
  */
 const boxOf = async (loc: Locator, what: string): Promise<Box> => {
   const box = await loc.boundingBox();
-  if (!box) throw new Error(`no box for ${what}: nothing rendered to measure`);
+
+  if (!box) {
+    throw new Error(`no box for ${what}: nothing rendered to measure`);
+  }
+
   return box;
 };
+
 // Expand the workspace when one is named, then take the last row matching the session name: a
 // workspace and its session often carry the same text, and the workspace row is always first.
 /** Open the session row named for this run, expanding a named workspace first when the session text
@@ -44,27 +55,36 @@ const boxOf = async (loc: Locator, what: string): Promise<Box> => {
  */
 const pick = async (p: Page) => {
   const target = rows(p, sessionName);
+
   if (workspaceName) {
     for (let i = 0; i < 3 && (await target.count()) === 0; i++) {
       await rows(p, workspaceName).first().click({ force: true });
       await wait(p, 1500);
     }
   }
-  if ((await target.count()) === 0) throw new Error(`no session row matching ${sessionName}`);
+
+  if ((await target.count()) === 0) {
+    throw new Error(`no session row matching ${sessionName}`);
+  }
+
   // A workspace and its session can carry the same text and the workspace row is always first.
   await target.last().click({ force: true });
   await wait(p, 3500);
 };
+
 // The panel and dsh's context popover are translucent, so the chat behind them bleeds through
 // their rows and the shot reads as two layers of text. While either dialog is open the
 // conversation is hidden; the shield menu and the stats row, shot with nothing open, keep it.
 const HIDE_CHAT_BEHIND_PANEL =
   'body:has([role="dialog"]) [data-slot="conversation.view"]{visibility:hidden}';
+
 /** Hide the conversation behind the open panel for the rest of this page's shots. */
 const stage = (p: Page) => p.addStyleTag({ content: HIDE_CHAT_BEHIND_PANEL });
+
 // When the page behind a clip was created, which is also when its video starts; a clip's gif span
 // is measured from here.
 let pageOpenedAt = 0;
+
 /** Open a new page at dsh and drive it to a picked session, waiting for the network to idle so the
  *  panel is ready to shoot; also stamps `pageOpenedAt`, the clock a clip's gif span is cut on.
  */
@@ -75,8 +95,10 @@ const open = async (ctx: Context) => {
   await stage(p);
   await wait(p, 2500);
   await pick(p);
+
   return p;
 };
+
 /** Write a screenshot to the output directory under a name with a clip, logging the file so a
  *  failed write is visible in the run.
  */
@@ -84,6 +106,7 @@ const shot = async (p: Page, name: string, clip: Box) => {
   await p.screenshot({ path: `${out}/${name}.png`, clip });
   console.log("wrote", `${name}.png`);
 };
+
 // Crop to the panel plus the composer row under it. Reading the dialog's own box keeps the shot
 // right when the panel changes size, which a fixed 760px window did not.
 /** Compute the crop for a panel-plus-composer shot from real boxes, so the frame follows the
@@ -91,10 +114,12 @@ const shot = async (p: Page, name: string, clip: Box) => {
  */
 const composerClip = async (p: Page, h = 420, left = 60): Promise<Box> => {
   const button = await boxOf(p.locator('button[aria-label="Oh My Claude"]'), "the panel button");
+
   const dialog = await p
     .locator(panel())
     .boundingBox()
     .catch(() => null);
+
   const pad = 14;
   // Only two pixels above the panel: the rows over it are the conversation this box is running.
   const padTop = 2;
@@ -102,6 +127,7 @@ const composerClip = async (p: Page, h = 420, left = 60): Promise<Box> => {
   const bottom = button.y + button.height;
   const x0 = dialog ? Math.min(dialog.x, button.x - left) : button.x - left;
   const x1 = dialog ? Math.max(dialog.x + dialog.width, button.x + 700) : button.x + 700;
+
   return {
     x: Math.max(0, x0 - pad),
     y: Math.max(0, top - padTop),
@@ -109,13 +135,16 @@ const composerClip = async (p: Page, h = 420, left = 60): Promise<Box> => {
     height: bottom - top + pad + padTop,
   };
 };
+
 /** Return the selector for the plugin panel dialog, the single anchor every shot and tab targets.
  */
 const panel = () => '[role="dialog"][aria-label="Oh My Claude"]';
+
 /** Select a panel tab by its role and visible text, so a tab is clicked by what a reader sees, not
  *  a generated class.
  */
 const tab = (p: Page, name: string) => p.locator(`${panel()} [role="tab"]`, { hasText: name });
+
 // dsh's sidebar width handle overlays the panel at some widths, so every click here is forced past
 // the hit test rather than waiting 30s for an overlay that never moves.
 /** Force-click a locator past any sidebar overlay, so a click does not hang waiting for a hit test
@@ -132,11 +161,14 @@ const hit = async (loc: Locator) => {
  *  the page opened.
  */
 type Gif = { crop: Box; start: number; end: number };
+
 /** Milliseconds since the clip's page opened, the clock the gif span is cut on. */
 const since = () => Date.now() - pageOpenedAt;
+
 /** Whole pixels for ffmpeg's crop filter, which refuses fractions. */
 const px = (n: number) => Math.round(n);
-const clips: [string, (p: Page) => Promise<Gif | undefined>][] = [
+
+const clips: Array<[string, (p: Page) => Promise<Gif | undefined>]> = [
   [
     "panel-tabs",
     async (p) => {
@@ -149,10 +181,12 @@ const clips: [string, (p: Page) => Promise<Gif | undefined>][] = [
       await wait(p, 500);
       const start = since();
       await wait(p, 1000);
+
       for (const t of ["Rewind", "Changes", "Asides"]) {
         await hit(tab(p, t));
         await wait(p, 1600);
       }
+
       // The recording runs about a second behind this clock (measured 2026-10-13: a cut 300 ms
       // after a 1.6 s hold still showed the tab fading in), so the closing hold is long and the
       // cut lands on a settled frame that matches the first one.
@@ -161,6 +195,7 @@ const clips: [string, (p: Page) => Promise<Gif | undefined>][] = [
       const end = since() - 300;
       await p.keyboard.press("Escape");
       await wait(p, 600);
+
       return { crop, start, end };
     },
   ],
@@ -170,6 +205,7 @@ const clips: [string, (p: Page) => Promise<Gif | undefined>][] = [
       const s = p
         .locator('button[aria-label^="Claude permission"], button[aria-label^="Access mode"]')
         .first();
+
       await hit(s);
       await wait(p, 1200);
       const m = p.locator('[role="menu"]').last();
@@ -182,6 +218,7 @@ const clips: [string, (p: Page) => Promise<Gif | undefined>][] = [
     },
   ],
 ];
+
 for (const [name, drive] of clips) {
   // Record at the desktop size (the sidebar row must be reachable) and crop in ffmpeg afterwards.
   const ctx = await b.newContext({
@@ -189,13 +226,18 @@ for (const [name, drive] of clips) {
     colorScheme: scheme,
     recordVideo: { dir: `${out}/.video`, size: { width: 1400, height: 900 } },
   });
+
   const p = await open(ctx);
   const gif = await drive(p);
   const video = p.video();
   await ctx.close();
   const path = await video.path();
   console.log("clip", name, path);
-  if (!gif) continue;
+
+  if (!gif) {
+    continue;
+  }
+
   // The video is 1:1 with page pixels, so the crop measured on the page applies as is. Ten frames
   // a second and a diff palette keep a 640-wide clip of a few seconds under a megabyte.
   const c = gif.crop;
@@ -218,6 +260,7 @@ for (const [name, drive] of clips) {
   ]);
   console.log("wrote", `${name}.gif`);
 }
+
 // Desktop stills
 if (!process.env.PW_CLIPS_ONLY) {
   const ctx = await b.newContext({
@@ -225,6 +268,7 @@ if (!process.env.PW_CLIPS_ONLY) {
     deviceScaleFactor: 2,
     colorScheme: scheme,
   });
+
   const p = await open(ctx);
   await hit(p.locator('button[aria-label="Oh My Claude"]'));
   await wait(p, 1500);
@@ -236,21 +280,26 @@ if (!process.env.PW_CLIPS_ONLY) {
   await p.keyboard.press("Escape");
   await wait(p, 400);
   const pinned = p.locator('button[aria-label="Dismiss side question"]');
+
   if (await pinned.count()) {
     await hit(pinned.first());
     await wait(p, 600);
   }
+
   await hit(p.locator('button[aria-label="Oh My Claude"]'));
   await wait(p, 1500);
+
   for (const t of ["Memory", "Rewind", "Changes"]) {
     await hit(tab(p, t));
     await wait(p, 1500);
     await shot(p, `panel-${t.toLowerCase()}`, await composerClip(p));
   }
+
   // The MCP list is whatever servers this box has, so the shot is of the Add form instead.
   await hit(tab(p, "MCP"));
   await wait(p, 1500);
   const addServer = p.locator(`${panel()} button`, { hasText: /^Add server/ }).first();
+
   if (await addServer.count()) {
     await hit(addServer);
     await wait(p, 1200);
@@ -263,18 +312,25 @@ if (!process.env.PW_CLIPS_ONLY) {
     // Crop to the form alone: the server list under it belongs to whoever runs the tour. The row of
     // selects is wider than the panel reports, so the crop follows the widest control, not the panel.
     const top = await boxOf(p.locator(`${panel()} select`).first(), "the MCP form's first select");
+
     const add = await boxOf(
       p.locator(`${panel()} button`, { hasText: /^Add$/ }).first(),
       "the MCP Add button",
     );
+
     const box = await boxOf(p.locator(panel()), "the panel");
     let right = top.x + top.width;
+
     for (const f of await p
       .locator(`${panel()} select, ${panel()} input, ${panel()} textarea`)
       .all()) {
       const fb = await f.boundingBox();
-      if (fb) right = Math.max(right, fb.x + fb.width);
+
+      if (fb) {
+        right = Math.max(right, fb.x + fb.width);
+      }
     }
+
     // Never past the panel's own edge: what is beyond it is the conversation this box is running.
     right = Math.min(right + 24, box.x + box.width - 2);
     await shot(p, "panel-mcp", {
@@ -284,11 +340,14 @@ if (!process.env.PW_CLIPS_ONLY) {
       height: add.y + add.height - top.y + 32,
     });
   }
+
   await p.keyboard.press("Escape");
   await wait(p, 400);
+
   const shield = p
     .locator('button[aria-label^="Claude permission"], button[aria-label^="Access mode"]')
     .first();
+
   await hit(shield);
   await wait(p, 1200);
   // Frame the menu itself, not a fixed window above the composer: anything higher is the conversation.
@@ -307,38 +366,48 @@ if (!process.env.PW_CLIPS_ONLY) {
       height: bt.y + bt.height - y + 16,
     });
   }
+
   await p.keyboard.press("Escape");
   await wait(p, 300);
   // dsh 0.2.1 draws the footer stats in a dock marked `data-composer-dock`, which is also where
   // the plugin's cost pill lands. Its slot child has no box of its own (display: contents).
   const sb = await p.locator("[data-composer-dock]").first().boundingBox();
-  if (sb)
+
+  if (sb) {
     await shot(p, "cost-row", {
       x: sb.x - 10,
       y: sb.y - 40,
       width: Math.min(sb.width + 20, 1000),
       height: sb.height + 56,
     });
+  }
+
   // dsh's context ring: the only aria-haspopup button drawn as two concentric circles.
   const ring = p
     .locator('button[aria-haspopup="dialog"]:has(> svg > circle + circle[stroke-dasharray])')
     .first();
+
   if (await ring.count()) {
     await hit(ring);
     await wait(p, 2500);
     const d = p.locator('[role="dialog"]').last();
     const db = await d.boundingBox();
-    if (db)
+
+    if (db) {
       await shot(p, "context-usage", {
         x: db.x - 10,
         y: db.y + 46,
         width: db.width + 20,
         height: db.height - 46,
       });
+    }
+
     await p.keyboard.press("Escape");
   }
+
   await ctx.close();
 }
+
 // Phone stills
 if (!process.env.PW_CLIPS_ONLY) {
   const ctx = await b.newContext({
@@ -348,6 +417,7 @@ if (!process.env.PW_CLIPS_ONLY) {
     hasTouch: true,
     colorScheme: scheme,
   });
+
   const p = await ctx.newPage();
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
   await stage(p);
@@ -368,8 +438,10 @@ if (!process.env.PW_CLIPS_ONLY) {
     const y = Math.max(0, Math.round(d.y) - 12);
     await shot(p, "phone-panel", { x: 0, y, width: 390, height: 844 - y });
   }
+
   await p.keyboard.press("Escape");
   await wait(p, 300);
   await ctx.close();
 }
+
 await b.close();

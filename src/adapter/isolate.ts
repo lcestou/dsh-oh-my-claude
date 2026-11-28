@@ -62,25 +62,31 @@ export const ISOLATED_ENV = {
  * are at their defaults, so a spec on a default config keys exactly as it did before they existed.
  */
 export function engineDigest(config: {
-  builtinTools: readonly string[];
+  builtinTools: ReadonlyArray<string>;
   toolLoading: string;
   isolate: boolean;
   thinkingDisplay?: string;
 }): string | undefined {
   const { builtinTools, toolLoading, isolate } = config;
   const thinking = config.thinkingDisplay ?? "";
+
   const plain =
     builtinTools.length === 1 &&
     builtinTools[0] === "default" &&
     toolLoading === "claude" &&
     !isolate &&
     thinking === "";
-  if (plain) return undefined;
+
+  if (plain) {
+    return undefined;
+  }
+
   const text = JSON.stringify(
     thinking === ""
       ? [builtinTools, toolLoading, isolate]
       : [builtinTools, toolLoading, isolate, thinking],
   );
+
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 

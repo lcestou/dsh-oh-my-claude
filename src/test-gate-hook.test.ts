@@ -7,44 +7,62 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { JsonValue } from "./dsh.js";
+import { fieldsOf, parseJson } from "./test-context.js";
 
 const dir = mkdtempSync(join(tmpdir(), "omc-gate-hook-"));
 const gatePath = join(dir, "gate.json");
 const runPath = join(dir, "run.json");
 const hook = fileURLToPath(new URL("./test-gate-hook.ts", import.meta.url));
+
 /** Run the hook once with `command` saved for `dir` and the given hook input; answer its stdout,
  *  the run file's state and how long it took. */
-const stop = (command: string, input: object) => {
+const stop = (command: string, input: JsonValue) => {
   writeFileSync(
     gatePath,
     JSON.stringify({ [dir]: { enabled: true, command, tries: 2, timeoutSec: 20 } }),
   );
   const t0 = Date.now();
+
   const out = spawnSync(process.execPath, [hook, gatePath, runPath, dir, "60"], {
     input: JSON.stringify(input),
     encoding: "utf8",
     timeout: 15_000,
   });
-  // SAFETY: the hook writes the run file as JSON with a string `state`
-  const run = JSON.parse(readFileSync(runPath, "utf8")) as { state: string };
+
+  // The hook writes the run file as JSON with a string `state`.
+  const run = fieldsOf(parseJson(readFileSync(runPath, "utf8")), { state: "string" });
+
   return { stdout: out.stdout, state: run.state, ms: Date.now() - t0 };
 };
+
 const full = { permission_mode: "bypassPermissions", stop_hook_active: false };
 
 const bg = stop("sleep 30 & exit 0", full);
+
 assert.equal(bg.state, "passed");
+
 assert.ok(bg.ms < 5000, `a background child held the run for ${bg.ms} ms`);
+
 const failed = stop("echo broke; exit 1", full);
+
 assert.equal(failed.state, "fixing");
+
 assert.match(failed.stdout, /"decision":"block"/);
+
 assert.match(failed.stdout, /\[test gate 1\/2\]/);
+
 const held = stop("echo broke; exit 1", {
   permission_mode: "acceptEdits",
   stop_hook_active: false,
 });
+
 assert.deepEqual([held.state, held.stdout], ["held", ""], "acceptEdits runs nothing");
+
 // A command that writes a lot and exits at once: the last line it wrote is what Claude most needs,
 // and it must still be in the tail after the pipes drain.
 const burst = stop("seq 1 200000; echo LAST-LINE-MARK; exit 1", full);
+
 assert.match(burst.stdout, /LAST-LINE-MARK/, "the end of a fast failure's output is kept");
+
 console.log("test-gate hook ok");

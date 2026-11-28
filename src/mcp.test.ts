@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer } from "node:http";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "node:path";
 import {
   handleRpc,
@@ -16,62 +17,93 @@ import {
   waitSession,
 } from "./mcp.js";
 import { OWN_TOOL_NAMES } from "./mcp-config.js";
-import type { Agent } from "./dsh.js";
+import type { RpcEnv } from "./mcp.js";
+import { asSessionId } from "./dsh.js";
+import type {
+  Agent,
+  DshTool,
+  DshToolsRegistry,
+  JsonValue,
+  PluginContext,
+  SessionController,
+  ToolSchema,
+  WebServer,
+} from "./dsh.js";
 import { tempDir } from "./test-tmp.js";
+import {
+  fakeAgent,
+  fakePluginContext,
+  fakeSession,
+  fakeSessionController,
+  fakeWorkspace,
+  fieldsOf,
+  notFaked,
+  rowsOf,
+  rpcFirstText,
+  rpcReadOnly,
+  rpcResult,
+  rpcToolNames,
+  rpcTools,
+  rpcWireResult,
+} from "./test-context.js";
+import type { PluginContextOverrides } from "./test-context.js";
 
-const agent = { id: "a1" };
-// SAFETY: partial fake for tests
+const agent = fakeAgent({ id: asSessionId("a1") });
+
 const echo = {
   name: "subagent_local",
   description: "spawn",
   parameters: { type: "object", properties: { prompt: { type: "string" } }, required: ["prompt"] },
-  // SAFETY: cast to match tool shape
   output: {
-    render: (_a: unknown, r: { output?: string }) => [{ type: "text", text: `ran:${r.output}` }],
-  } as const,
-  execute: (args: Record<string, unknown>, exec: { agent?: unknown }) => {
-    assert.equal(exec.agent, agent, "tool sees the session agent");
-    return { output: (args.prompt as string) ?? "" };
+    render: (_a: Record<string, JsonValue>, r: JsonValue) => [
+      { type: "text", text: `ran:${fieldsOf(r, { output: "string?" }).output}` },
+    ],
   },
+  execute: async (args: Record<string, JsonValue>, exec: { agent: unknown }) => {
+    assert.equal(exec.agent, agent, "tool sees the session agent");
+
+    return { output: typeof args.prompt === "string" ? args.prompt : "" };
+  },
+} satisfies ToolSchema & DshTool;
+
+const tools: DshToolsRegistry = {
+  schemas: () => [echo, { name: "bash", description: "", parameters: {} }],
+  get: (name) => (name === echo.name ? echo : undefined),
 };
-// SAFETY: partial fake for tests
-const tools = {
-  schemas: (_scope: unknown) => [echo, { name: "bash", parameters: {} }],
-  get: (name: string, _scope: unknown) => (name === echo.name ? echo : undefined),
-};
-// SAFETY: cast to HandleRpcParams shape for test double
-const env = {
+
+const env: RpcEnv = {
   tools,
   agent,
   signal: new AbortController().signal,
   version: "t",
-} as unknown as Parameters<typeof handleRpc>[1];
+};
 
 assert.equal(await handleRpc({ jsonrpc: "2.0", method: "notifications/initialized" }, env), null);
-// SAFETY: initialize always returns a response
-const init = (await handleRpc(
-  { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
-  env,
-)) as { result: { serverInfo: { name: string } } } | null;
-assert.ok(init);
-assert.equal(init.result.serverInfo.name, "dsh");
-// SAFETY: tools/list always returns a response
-const list = (await handleRpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }, env)) as {
-  result: { tools: Array<{ name: string; inputSchema?: unknown }> };
-} | null;
-assert.ok(list);
+
+const init = await handleRpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, env);
+
+assert.equal(fieldsOf(rpcResult(init).serverInfo, { name: "string" }).name, "dsh");
+
+const list = await handleRpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }, env);
+
 assert.deepEqual(
-  list.result.tools.map((t) => t.name),
+  rpcToolNames(list),
   ["subagent_local", "bash"],
   "bash is bridged; only file tools remain hidden",
 );
+
 assert.ok(!HIDDEN.has("bash"), "bash is no longer hidden so dsh can register background jobs");
+
 assert.ok(HIDDEN.has("read") && HIDDEN.has("edit"), "file tools stay hidden");
-// SAFETY: tools array has at least one element for this test
-const firstTool = list.result.tools[0];
-assert.ok(firstTool);
-assert.deepEqual(firstTool.inputSchema, echo.parameters, "dsh schemas pass through untouched");
-const call = (await handleRpc(
+
+// The tools array has at least one element for this test.
+assert.deepEqual(
+  rpcTools(list)[0]?.inputSchema,
+  echo.parameters,
+  "dsh schemas pass through untouched",
+);
+
+const call = await handleRpc(
   {
     jsonrpc: "2.0",
     id: 3,
@@ -79,27 +111,37 @@ const call = (await handleRpc(
     params: { name: "subagent_local", arguments: { prompt: "hi" } },
   },
   env,
-)) as { result: { content: Array<{ type: string; text?: string }> } } | null;
-assert.ok(call);
-assert.deepEqual(call.result.content, [{ type: "text", text: "ran:hi" }]);
-const bad = (await handleRpc(
+);
+
+assert.deepEqual(rpcResult(call).content, [{ type: "text", text: "ran:hi" }]);
+
+const bad = await handleRpc(
   { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "no_such_tool" } },
   env,
-)) as { result: { isError?: boolean } } | null;
-assert.ok(bad);
-assert.equal(bad.result.isError, true, "unregistered tools still error");
-const opened: unknown[] = [];
-const env2 = { ...env, open: async (args: unknown) => (opened.push(args), "opened session s1") };
-const list2 = (await handleRpc({ jsonrpc: "2.0", id: 5, method: "tools/list" }, env2)) as {
-  result: { tools: Array<{ name: string }> };
-} | null;
-assert.ok(list2);
+);
+
+assert.equal(rpcResult(bad).isError, true, "unregistered tools still error");
+
+const opened: Array<unknown> = [];
+
+const env2: RpcEnv = {
+  ...env,
+  open: async (args) => {
+    opened.push(args);
+
+    return "opened session s1";
+  },
+};
+
+const list2 = await handleRpc({ jsonrpc: "2.0", id: 5, method: "tools/list" }, env2);
+
 assert.deepEqual(
-  list2.result.tools.map((t) => t.name),
+  rpcToolNames(list2),
   ["subagent_local", "bash", "open_session"],
   "open_session is offered when the host provides it",
 );
-const openCall = (await handleRpc(
+
+const openCall = await handleRpc(
   {
     jsonrpc: "2.0",
     id: 6,
@@ -107,15 +149,15 @@ const openCall = (await handleRpc(
     params: { name: "open_session", arguments: { prompt: "go" } },
   },
   env2,
-)) as { result: { content: Array<{ text?: string }> } } | null;
-assert.ok(openCall);
-// SAFETY: content[0] exists for open_session call
-const firstContent = openCall.result.content[0];
-assert.ok(firstContent);
-assert.equal(firstContent.text, "opened session s1");
+);
+
+assert.equal(rpcFirstText(openCall), "opened session s1");
+
 assert.deepEqual(opened, [{ prompt: "go" }]);
-const logged: unknown[][] = [];
-const boom = (await handleRpc(
+
+const logged: Array<Array<unknown>> = [];
+
+const boom = await handleRpc(
   {
     jsonrpc: "2.0",
     id: 7,
@@ -127,17 +169,19 @@ const boom = (await handleRpc(
     open: async () => {
       throw new Error("prompt refused");
     },
-    log: (...a: unknown[]) => logged.push(a),
+    log: (...a: Array<unknown>) => {
+      logged.push(a);
+    },
   },
-)) as { result: { isError?: boolean; content: Array<{ text?: string }> } } | null;
-assert.ok(boom);
-assert.equal(boom.result.isError, true, "open failure is an error reply, not a throw");
-// SAFETY: content[0] exists for error response
-const boomContent = boom.result.content[0];
-assert.ok(boomContent);
-assert.match(boomContent.text ?? "", /prompt refused/);
+);
+
+assert.equal(rpcResult(boom).isError, true, "open failure is an error reply, not a throw");
+
+assert.match(rpcFirstText(boom) ?? "", /prompt refused/);
+
 assert.equal(logged.length, 1, "failure is logged once");
-const relayed = (await handleRpc(
+
+const relayed = await handleRpc(
   {
     jsonrpc: "2.0",
     id: 8,
@@ -146,27 +190,27 @@ const relayed = (await handleRpc(
   },
   {
     ...env,
-    relay: async (name: string, args: unknown) => ({
+    relay: async (name, args) => ({
       text: `relayed ${name} ${JSON.stringify(args)}`,
     }),
   },
-)) as { result: { content: Array<{ text?: string }>; isError?: boolean } } | null;
-assert.ok(relayed);
-// SAFETY: content[0] exists for relayed call
-const relayedContent = relayed.result.content[0];
-assert.ok(relayedContent);
-assert.equal(relayedContent.text, 'relayed subagent_local {"a":1}');
-assert.equal(relayed.result.isError, undefined);
+);
+
+assert.equal(rpcFirstText(relayed), 'relayed subagent_local {"a":1}');
+
+assert.equal(rpcResult(relayed).isError, undefined);
+
 // Claude Code stamps each tools/call with the tool_use block it answers; the relay gets that id so
 // the adapter can mark exactly that block as drawn by dsh, and gets none from a CLI that sends none.
 {
   const seen: Array<string | undefined> = [];
-  const relay = async (
-    _name: string,
-    _args: unknown,
-    _signal: AbortSignal,
-    toolUseId: string | undefined,
-  ) => (seen.push(toolUseId), { text: "ran" });
+
+  const relay: RpcEnv["relay"] = async (_name, _args, _signal, toolUseId) => {
+    seen.push(toolUseId);
+
+    return { text: "ran" };
+  };
+
   await handleRpc(
     {
       jsonrpc: "2.0",
@@ -186,7 +230,8 @@ assert.equal(relayed.result.isError, undefined);
   );
   assert.deepEqual(seen, ["toolu_01abc", undefined], "the stamped tool_use id reaches the relay");
 }
-const fallback = (await handleRpc(
+
+const fallback = await handleRpc(
   {
     jsonrpc: "2.0",
     id: 9,
@@ -194,14 +239,13 @@ const fallback = (await handleRpc(
     params: { name: "subagent_local", arguments: {} },
   },
   { ...env, relay: async () => undefined },
-)) as { result: { content: Array<{ text?: string }>; isError?: boolean } } | null;
-assert.ok(fallback);
-assert.equal(fallback.result.isError, undefined, "no live turn: executed directly");
-// SAFETY: content[0] exists for fallback call
-const fallbackContent = fallback.result.content[0];
-assert.ok(fallbackContent);
-assert.notEqual(fallbackContent.text, undefined);
-const relayErr = (await handleRpc(
+);
+
+assert.equal(rpcResult(fallback).isError, undefined, "no live turn: executed directly");
+
+assert.notEqual(rpcFirstText(fallback), undefined);
+
+const relayErr = await handleRpc(
   {
     jsonrpc: "2.0",
     id: 10,
@@ -209,76 +253,75 @@ const relayErr = (await handleRpc(
     params: { name: "subagent_local", arguments: {} },
   },
   { ...env, relay: async () => ({ text: "boom", isError: true }) },
-)) as { result: { isError?: boolean } } | null;
-assert.ok(relayErr);
-assert.equal(relayErr.result.isError, true);
-const listed = (await handleRpc({ jsonrpc: "2.0", id: 11, method: "tools/list" }, env)) as {
-  result: { tools: Array<{ annotations?: { readOnlyHint?: boolean } }> };
-} | null;
-assert.ok(listed);
-assert.ok(
-  listed.result.tools.every((t) => t.annotations?.readOnlyHint === true),
-  "dsh tools are marked concurrency-safe for the CLI",
 );
+
+assert.equal(rpcResult(relayErr).isError, true);
+
+const listed = await handleRpc({ jsonrpc: "2.0", id: 11, method: "tools/list" }, env);
+
+assert.ok(rpcTools(listed).every(rpcReadOnly), "dsh tools are marked concurrency-safe for the CLI");
 
 // Under DSH Desktop the bridge serves new Claude processes from its own loopback listener, so the
 // browser-access gate Desktop puts on web server routes cannot 403 it. The web server route stays
 // registered as a fallback. A host without the gate keeps the web server route and starts nothing.
 const tmp = tempDir("omc-mcp-");
 const cleanups: Array<() => void> = [];
-const routes: Array<{ path: string; auth?: string }> = [];
-// SAFETY: minimal host double: only what registerMcpBridge reads
+const routes: Array<Parameters<WebServer["register"]>[0]> = [];
+
 /** A host double; `gated` adds the service DSH Desktop's launcher provides. `port` is the web
- *  server's, where nothing listens unless a test starts a server there. */
-const fakeHost = (gated: boolean, port = 43120) => ({
-  inject: (
-    _names: string[],
-    cb: (host: {
-      webServer: { port: number; register: (route: unknown) => () => void };
-      tools: typeof tools;
-      agents: { get: (_id: unknown) => typeof agent | undefined };
-      sessions: object;
-      sessionController: object;
-      workspaceRegistry: object;
-      get: (name: string) => object | undefined;
-      effect: (fn: () => () => void) => () => void;
-    }) => void,
-  ) => {
-    cb({
-      webServer: {
-        port,
-        register: (route: unknown) => {
-          // SAFETY: registerMcpBridge registers a WebServer route
-          routes.push(route as { path: string; auth?: string });
-          return () => {};
-        },
-      },
-      tools,
-      agents: { get: (_id: unknown) => agent },
-      sessions: {},
-      sessionController: {},
-      workspaceRegistry: {},
-      get: (name: string) =>
-        gated && name === "desktopBrowserAccess" ? { ordinaryBrowserEnabled: false } : undefined,
-      effect: (fn: () => () => void) => {
-        cleanups.push(fn());
+ *  server's, where nothing listens unless a test starts a server there. `extra` replaces members of
+ *  the injected host. */
+const fakeHost = (
+  gated: boolean,
+  port = 43_120,
+  extra: PluginContextOverrides = {},
+): PluginContext => {
+  const host = fakePluginContext({
+    webServer: {
+      port,
+      register: (route) => {
+        routes.push(route);
+
         return () => {};
       },
-    });
-  },
-});
+    },
+    tools,
+    agents: { get: () => agent },
+    sessionController: fakeSessionController(),
+    services: gated ? { desktopBrowserAccess: { ordinaryBrowserEnabled: false } } : {},
+    effect: (fn) => {
+      const dispose = fn();
+
+      if (dispose) {
+        cleanups.push(dispose);
+      }
+    },
+    ...extra,
+  });
+
+  return fakePluginContext({
+    inject: (_names, cb) => {
+      cb(host);
+    },
+  });
+};
+
 // Plain dsh web: no gate service, so the URL is the web server's and no listener or port file
 // appears. This is every install that is not Desktop, and it must not move.
 chmodSync(tmp, 0o755); // as a umask of 022 leaves a state dir the stores made
-// SAFETY: host double above carries the services registerMcpBridge needs
-const plain = await registerMcpBridge(fakeHost(false) as never, {
+
+const plain = await registerMcpBridge(fakeHost(false), {
   log: () => {},
   version: "t",
   keyFile: join(tmp, "mcp.key"),
 });
+
 assert.equal(plain.via, "webserver", "a host without the gate keeps the web server route");
+
 assert.equal(plain.base, "http://127.0.0.1:43120", "and the web server's own port");
+
 assert.equal(existsSync(join(tmp, "mcp-port")), false, "and starts no listener of its own");
+
 // dsh past 0.2.2-rc.5 (harness #8266) asks a login cookie of every route unless it says
 // otherwise. The CLI carries none, so the route opts out and the bridge key is what guards it.
 assert.equal(
@@ -286,68 +329,108 @@ assert.equal(
   "anonymous",
   "the bridge route asks dsh for no login cookie",
 );
+
 // The key's folder is the state dir, with tokens and keeper files in it: closed to other users.
-if (process.platform !== "win32")
+if (process.platform !== "win32") {
   assert.equal(statSync(tmp).mode & 0o777, 0o700, "the state dir is the owner's alone");
-for (const fn of cleanups) fn();
+}
+
+for (const fn of cleanups) {
+  fn();
+}
+
 cleanups.length = 0;
+
 const fakeCtx = fakeHost(true);
-// SAFETY: host double above carries the services registerMcpBridge needs
-const bridge = await registerMcpBridge(fakeCtx as never, {
+
+const bridge = await registerMcpBridge(fakeCtx, {
   log: () => {},
   version: "t",
   keyFile: join(tmp, "mcp.key"),
 });
+
 assert.equal(bridge.via, "loopback", "new processes are pointed at the loopback listener");
+
 assert.match(bridge.base, /^http:\/\/127\.0\.0\.1:\d+$/, "loopback base is a 127.0.0.1 URL");
+
 const remembered = Number.parseInt(readFileSync(join(tmp, "mcp-port"), "utf8").trim(), 10);
+
 assert.ok(Number.isInteger(remembered) && remembered > 0, "loopback port is remembered");
+
 const post = (path: string, body: unknown, key?: string) => {
   const headers: Record<string, string> = { "content-type": "application/json" };
-  if (key !== undefined) headers[KEY_HEADER] = key;
+
+  if (key !== undefined) {
+    headers[KEY_HEADER] = key;
+  }
+
   return fetch(`${bridge.base}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
 };
-// SAFETY: initialize always returns a response
-const loopInit = (await (
-  await post(
-    `${MCP_PATH}/s1`,
-    { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
-    bridge.key,
-  )
-).json()) as { result: { serverInfo: { name: string } } };
-assert.equal(loopInit.result.serverInfo.name, "dsh", "loopback answers without a gate");
-// SAFETY: tools/list always returns a response
-const loopList = (await (
-  await post(`${MCP_PATH}/s1`, { jsonrpc: "2.0", id: 2, method: "tools/list" }, bridge.key)
-).json()) as { result: { tools: Array<{ name: string }> } };
+
+const loopInit = rpcWireResult(
+  await (
+    await post(
+      `${MCP_PATH}/s1`,
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: {} },
+      bridge.key,
+    )
+  ).json(),
+);
+
+assert.equal(
+  fieldsOf(loopInit.serverInfo, { name: "string" }).name,
+  "dsh",
+  "loopback answers without a gate",
+);
+
+const loopList = rpcWireResult(
+  await (
+    await post(`${MCP_PATH}/s1`, { jsonrpc: "2.0", id: 2, method: "tools/list" }, bridge.key)
+  ).json(),
+);
+
 assert.ok(
-  loopList.result.tools.some((t) => t.name === "subagent_local"),
+  rowsOf(loopList.tools, { name: "string" }).some((t) => t.name === "subagent_local"),
   "loopback serves the session tools",
 );
+
 assert.equal(
   (await post(`${MCP_PATH}/s1`, { jsonrpc: "2.0", id: 3, method: "ping" }, "wrong-key")).status,
   403,
   "loopback still checks the bridge key",
 );
+
 assert.equal(
   (await post(`${MCP_PATH}/s1`, { jsonrpc: "2.0", id: 4, method: "ping" })).status,
   403,
   "loopback rejects a missing key",
 );
+
 // A second mount rebinds the remembered port once the first listener is gone.
-for (const fn of cleanups) fn();
+for (const fn of cleanups) {
+  fn();
+}
+
 cleanups.length = 0;
-// SAFETY: same host double shape as above
-const bridge2 = await registerMcpBridge(fakeCtx as never, {
+
+const bridge2 = await registerMcpBridge(fakeCtx, {
   log: () => {},
   version: "t",
   keyFile: join(tmp, "mcp.key"),
 });
+
 assert.equal(bridge2.via, "loopback");
+
 assert.equal(bridge2.base, bridge.base, "restart rebinds the remembered port");
+
 assert.equal(bridge2.key, bridge.key, "restart keeps the bridge key");
+
 assert.equal(bridge.key, plain.key, "one key whichever way the bridge is reached");
-for (const fn of cleanups) fn();
+
+for (const fn of cleanups) {
+  fn();
+}
+
 cleanups.length = 0;
 
 // Plain dsh web with another plugin gating every route in front of the plugin's own (dsh-remote's
@@ -358,18 +441,33 @@ cleanups.length = 0;
   /** A web server on an ephemeral port answering with `handle`; resolves its port. */
   const webAt = async (handle: (req: IncomingMessage, res: ServerResponse) => void) => {
     const server = createServer(handle);
-    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-    // SAFETY: a TCP listener reports AddressInfo
-    return { server, port: (server.address() as AddressInfo).port };
+
+    await new Promise<void>((r) => {
+      server.listen(0, "127.0.0.1", r);
+    });
+
+    const address = server.address();
+
+    assert.ok(
+      address !== null && typeof address === "object",
+      "a TCP listener reports AddressInfo",
+    );
+
+    return { server, port: address.port };
   };
+
   /** Polls `ok` until it holds or four seconds pass. */
   const until = async (ok: () => boolean) => {
-    for (let i = 0; i < 80 && !ok(); i++) await new Promise((r) => setTimeout(r, 50));
+    for (let i = 0; i < 80 && !ok(); i++) {
+      await sleep(50);
+    }
   };
+
   const busy = await webAt((_req, res) => {
     res.writeHead(503);
     res.end();
   });
+
   assert.equal(
     await probeRoute(`http://127.0.0.1:${busy.port}`, "k"),
     "unreachable",
@@ -379,22 +477,27 @@ cleanups.length = 0;
   const gateTmp = tempDir("omc-mcp-gate-");
   // Booting first (503), then gated: the probe keeps going past the 503 and acts on the 403.
   let asked = 0;
+
   const gate = await webAt((_req, res) => {
     asked++;
+
     if (asked === 1) {
       res.writeHead(503);
       res.end();
+
       return;
     }
+
     res.writeHead(403, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
   });
-  // SAFETY: host double above carries the services registerMcpBridge needs
-  const gatedBridge = await registerMcpBridge(fakeHost(false, gate.port) as never, {
+
+  const gatedBridge = await registerMcpBridge(fakeHost(false, gate.port), {
     log: () => {},
     version: "t",
     keyFile: join(gateTmp, "mcp.key"),
   });
+
   await until(() => gatedBridge.via === "loopback");
   assert.equal(
     gatedBridge.via,
@@ -403,42 +506,57 @@ cleanups.length = 0;
   );
   assert.equal(asked, 2, "after one retry past the 503");
   assert.notEqual(gatedBridge.base, `http://127.0.0.1:${gate.port}`, "off the gated port");
+
   const through = await fetch(`${gatedBridge.base}${MCP_PATH}/s1`, {
     method: "POST",
     headers: { "content-type": "application/json", [KEY_HEADER]: gatedBridge.key },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
   });
+
   assert.equal(through.status, 200, "and the loopback listener answers the CLI");
-  for (const fn of cleanups) fn();
+
+  for (const fn of cleanups) {
+    fn();
+  }
+
   cleanups.length = 0;
   gate.server.close();
 
   let probed = 0;
   const openTmp = tempDir("omc-mcp-open-");
+
   const web = await webAt((req, res) => {
     probed++;
-    // SAFETY: registerMcpBridge registers a WebServer route with its handler
-    const route = routes.at(-1) as unknown as {
-      handler: (q: IncomingMessage, s: ServerResponse) => Promise<void>;
-    };
+
+    // registerMcpBridge registered its WebServer route, handler and all, before any probe.
+    const route = routes.at(-1);
+
+    assert.ok(route, "the bridge registered its route");
+    // The handler answers through `res`; its promise carries nothing the test reads.
     void route.handler(req, res);
   });
-  // SAFETY: host double above carries the services registerMcpBridge needs
-  const openBridge = await registerMcpBridge(fakeHost(false, web.port) as never, {
+
+  const openBridge = await registerMcpBridge(fakeHost(false, web.port), {
     log: () => {},
     version: "t",
     keyFile: join(openTmp, "mcp.key"),
   });
+
   await until(() => probed > 0);
-  await new Promise((r) => setTimeout(r, 100));
+  await sleep(100);
   assert.equal(probed, 1, "the web server route was probed once");
   assert.equal(openBridge.via, "webserver", "a route the bridge answers keeps the web server");
   assert.equal(openBridge.base, `http://127.0.0.1:${web.port}`);
   assert.equal(existsSync(join(openTmp, "mcp-port")), false, "and starts no listener");
-  for (const fn of cleanups) fn();
+
+  for (const fn of cleanups) {
+    fn();
+  }
+
   cleanups.length = 0;
   web.server.close();
 }
+
 console.log("mcp ok");
 
 // Right after a restart, dsh has no agent for a session until its turn is continued, while the
@@ -446,53 +564,56 @@ console.log("mcp ok");
 // creates the agent instead of answering 404, which made the turn retry a few times and then
 // report its tools gone.
 {
-  let live: typeof agent | undefined;
+  let live: Agent | undefined;
   const listeners: Array<(payload: unknown) => void> = [];
-  const heldHost = {
-    ...fakeHost(true),
-    inject: (_names: string[], cb: (host: never) => void) =>
-      fakeHost(true).inject(_names, (host) =>
-        cb({
-          ...host,
-          agents: { get: (id: unknown) => (id === "held" && live ? live : undefined) },
-          on: (event: string, fn: (payload: unknown) => void, opts?: { global?: boolean }) => {
-            assert.equal(event, "agent/created");
-            assert.equal(opts?.global, true, "agents are created in their own scope");
-            listeners.push(fn);
-          },
-        } as never),
-      ),
-  };
-  // SAFETY: host double above carries the services registerMcpBridge needs
-  const held = await registerMcpBridge(heldHost as never, {
+
+  const heldHost = fakeHost(true, undefined, {
+    agents: { get: (id) => (id === "held" && live ? live : undefined) },
+    on: (event, fn, opts) => {
+      assert.equal(event, "agent/created");
+      assert.equal(opts?.global, true, "agents are created in their own scope");
+      listeners.push(fn);
+    },
+  });
+
+  const held = await registerMcpBridge(heldHost, {
     log: () => {},
     version: "t",
     keyFile: join(tmp, "mcp.key"),
     awaitsAgent: (sessionId) => sessionId !== "gone",
     agentWaitMs: 300,
   });
+
   const call = (sessionId: string, id: number) =>
     fetch(`${held.base}${MCP_PATH}/${sessionId}`, {
       method: "POST",
       headers: { "content-type": "application/json", [KEY_HEADER]: held.key },
       body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/list" }),
     });
+
   const gone = await call("gone", 1);
   assert.equal(gone.status, 404, "a session nobody brings back is refused at once");
   assert.equal(held.openCalls("gone"), 0, "a refused call leaves nothing counted open");
   const started = Date.now();
   const pending = call("held", 2);
-  await new Promise((r) => setTimeout(r, 50));
+  await sleep(50);
   assert.equal(held.openCalls("held"), 1, "a held call counts as open");
   live = agent;
-  for (const fn of listeners) fn({ agent: { id: "other" } });
-  for (const fn of listeners) fn({ agent: { id: "held" } });
+
+  for (const fn of listeners) {
+    fn({ agent: { id: "other" } });
+  }
+
+  for (const fn of listeners) {
+    fn({ agent: { id: "held" } });
+  }
+
   const answered = await pending;
   assert.equal(answered.status, 200, "the held call is served once dsh has the agent");
   assert.equal(held.openCalls("held"), 0, "and no longer counts once answered");
-  // SAFETY: tools/list always returns a response
-  const body = (await answered.json()) as { result: { tools: Array<{ name: string }> } };
-  assert.ok(body.result.tools.some((t) => t.name === "subagent_local"));
+  const body = rpcWireResult(await answered.json());
+
+  assert.ok(rowsOf(body.tools, { name: "string" }).some((t) => t.name === "subagent_local"));
   assert.ok(Date.now() - started >= 45, "it waited for the agent");
   live = undefined;
   const late = await call("held", 3);
@@ -502,13 +623,21 @@ console.log("mcp ok");
   assert.equal(again.status, 404, "once the wait ran out, later calls are refused too");
   assert.ok(Date.now() - quick < 150, "and at once, not after another wait");
   live = agent;
-  for (const fn of listeners) fn({ agent: { id: "held" } });
+
+  for (const fn of listeners) {
+    fn({ agent: { id: "held" } });
+  }
+
   assert.equal((await call("held", 5)).status, 200, "an agent created again serves its calls");
   live = undefined;
   const fresh = Date.now();
   assert.equal((await call("held", 6)).status, 404);
   assert.ok(Date.now() - fresh >= 250, "and its next missing agent is waited for again");
-  for (const fn of cleanups) fn();
+
+  for (const fn of cleanups) {
+    fn();
+  }
+
   cleanups.length = 0;
   console.log("mcp holds calls until the agent is back ok");
 }
@@ -516,28 +645,37 @@ console.log("mcp ok");
 // Code mode: when dsh offers the model only run_code, the bridge offers exactly that and refuses
 // direct calls to anything else, so Claude reaches every tool from a run_code program.
 {
-  const runCode = {
+  const runCode: ToolSchema = {
     name: "run_code",
     description: "Execute a TypeScript program",
     parameters: { type: "object" },
   };
-  const ptcAgent = { id: "a2", session: { requestHeader: () => ({ tools: [runCode] }) } };
-  const relayed: string[] = [];
-  // SAFETY: cast to HandleRpcParams shape for test double
-  const ptcEnv = {
+
+  /** An agent whose session's request header offers the model exactly `offered`. */
+  const offering = (id: string, offered: Array<ToolSchema>): Agent =>
+    fakeAgent({
+      id: asSessionId(id),
+      session: fakeSession({ requestHeader: () => ({ version: 0, tools: offered }) }),
+    });
+
+  const ptcAgent = offering("a2", [runCode]);
+  const relayed: Array<string> = [];
+
+  const ptcEnv: RpcEnv = {
     ...env,
     agent: ptcAgent,
-    relay: async (name: string) => (relayed.push(name), { text: "ran", isError: false }),
-  } as unknown as Parameters<typeof handleRpc>[1];
-  const ptcList = (await handleRpc({ jsonrpc: "2.0", id: 40, method: "tools/list" }, ptcEnv)) as {
-    result: { tools: Array<{ name: string }> };
+    relay: async (name) => {
+      relayed.push(name);
+
+      return { text: "ran", isError: false };
+    },
   };
-  assert.deepEqual(
-    ptcList.result.tools.map((t) => t.name),
-    ["run_code"],
-    "code mode offers only run_code",
-  );
-  const direct = (await handleRpc(
+
+  const ptcList = await handleRpc({ jsonrpc: "2.0", id: 40, method: "tools/list" }, ptcEnv);
+
+  assert.deepEqual(rpcToolNames(ptcList), ["run_code"], "code mode offers only run_code");
+
+  const direct = await handleRpc(
     {
       jsonrpc: "2.0",
       id: 41,
@@ -545,14 +683,16 @@ console.log("mcp ok");
       params: { name: "subagent_local", arguments: {} },
     },
     ptcEnv,
-  )) as { result?: { isError?: boolean; content: Array<{ text: string }> } };
-  assert.equal(direct.result?.isError, true);
+  );
+
+  assert.equal(rpcResult(direct).isError, true);
   assert.match(
-    direct.result?.content[0]?.text ?? "",
+    rpcFirstText(direct) ?? "",
     /only run_code is callable directly/,
     "direct calls are refused in code mode",
   );
-  const program = (await handleRpc(
+
+  const program = await handleRpc(
     {
       jsonrpc: "2.0",
       id: 42,
@@ -560,21 +700,19 @@ console.log("mcp ok");
       params: { name: "run_code", arguments: { code: "1" } },
     },
     ptcEnv,
-  )) as { result?: { content: Array<{ text: string }> } };
-  assert.equal(
-    program.result?.content[0]?.text,
-    "ran",
-    "run_code runs through the live turn's relay",
   );
+
+  assert.equal(rpcFirstText(program), "ran", "run_code runs through the live turn's relay");
   assert.deepEqual(relayed, ["run_code"]);
-  // SAFETY: cast to HandleRpcParams shape for test double
-  const noRelay = { ...env, agent: ptcAgent } as unknown as Parameters<typeof handleRpc>[1];
-  const idle = (await handleRpc(
+  const noRelay: RpcEnv = { ...env, agent: ptcAgent };
+
+  const idle = await handleRpc(
     { jsonrpc: "2.0", id: 43, method: "tools/call", params: { name: "run_code", arguments: {} } },
     noRelay,
-  )) as { result?: { isError?: boolean } };
+  );
+
   assert.equal(
-    idle.result?.isError,
+    rpcResult(idle).isError,
     true,
     "run_code without a live turn fails instead of running nothing",
   );
@@ -583,73 +721,97 @@ console.log("mcp ok");
     /run_code needs a live dsh turn/,
     "the failure says why, not unknown tool",
   );
+
   // The bridge's own tools are not dsh's, so code mode still offers them.
-  // SAFETY: cast to HandleRpcParams shape for test double
-  const withOpen = (await handleRpc({ jsonrpc: "2.0", id: 45, method: "tools/list" }, {
-    ...env,
-    agent: ptcAgent,
-    open: async () => "opened",
-    prompt: async () => "sent",
-    wait: async () => "waited",
-  } as unknown as Parameters<typeof handleRpc>[1])) as {
-    result: { tools: Array<{ name: string }> };
-  };
+  const withOpen = await handleRpc(
+    { jsonrpc: "2.0", id: 45, method: "tools/list" },
+    {
+      ...env,
+      agent: ptcAgent,
+      open: async () => "opened",
+      prompt: async () => "sent",
+      wait: async () => "waited",
+    },
+  );
+
   assert.deepEqual(
-    withOpen.result.tools.map((t) => t.name),
+    rpcToolNames(withOpen),
     ["run_code", "open_session", "prompt_session", "wait_session"],
     "code mode keeps the bridge's own tools",
   );
+
   // A header offering more than run_code is ordinary mode: the full bridged list comes back.
-  const nativeAgent = {
-    id: "a3",
-    session: { requestHeader: () => ({ tools: [runCode, { name: "bash", parameters: {} }] }) },
-  };
-  // SAFETY: cast to HandleRpcParams shape for test double
-  const nativeList = (await handleRpc({ jsonrpc: "2.0", id: 44, method: "tools/list" }, {
-    ...env,
-    agent: nativeAgent,
-  } as unknown as Parameters<typeof handleRpc>[1])) as {
-    result: { tools: Array<{ name: string }> };
-  };
-  assert.deepEqual(
-    nativeList.result.tools.map((t) => t.name),
-    ["subagent_local", "bash"],
+  const nativeAgent = offering("a3", [runCode, { name: "bash", description: "", parameters: {} }]);
+
+  const nativeList = await handleRpc(
+    { jsonrpc: "2.0", id: 44, method: "tools/list" },
+    { ...env, agent: nativeAgent },
   );
+
+  assert.deepEqual(rpcToolNames(nativeList), ["subagent_local", "bash"]);
 }
 
 // openSession: a provider and model go on the new session's own agent before the first prompt,
 // so its first turn already runs on that route and no box default changes; without both, none.
 {
-  const calls: string[] = [];
-  const selected: unknown[] = [];
-  const prompted: string[] = [];
-  const child = {
-    model: { select: (r: unknown) => void (calls.push("select"), selected.push(r)) },
-  };
-  // SAFETY: a stand-in for the three host services openSession reads; there is no selectModel,
-  // since that one would also save the pick as the box's default for new sessions
-  const host = {
+  const calls: Array<string> = [];
+  const selected: Array<unknown> = [];
+  const prompted: Array<string> = [];
+
+  const child = fakeAgent({
+    model: {
+      select: (r) => {
+        calls.push("select");
+        selected.push(r);
+      },
+      current: notFaked("model.current"),
+    },
+  });
+
+  // A stand-in for the three host services openSession reads; there is no selectModel, since that
+  // one would also save the pick as the box's default for new sessions.
+  const { sessions, workspaceRegistry } = fakePluginContext({
     sessions: { get: () => undefined },
     workspaceRegistry: {
-      list: () => [{ id: "w1", path: "/p" }],
+      list: () => [fakeWorkspace("w1", { path: "/p" })],
       archiveSession: async () => void calls.push("archive"),
     },
-    sessionController: {
-      create: async () => (calls.push("create"), { sessionId: "n1" }),
-      resolveAgent: async () => ({ agent: child }),
-      prompt: async (p: { content: { text: string }[] }) =>
-        void (calls.push("prompt"), prompted.push(p.content[0]?.text ?? "")),
+  });
+
+  const controller = {
+    create: async () => {
+      calls.push("create");
+
+      return { sessionId: asSessionId("n1") };
     },
-  } as unknown as Parameters<typeof openSession>[0];
-  // SAFETY: an agent whose session header names the workspace path
-  const caller = { id: "a", session: { id: "s", header: { cwd: "/p" } } } as unknown as Agent;
+    resolveAgent: async () => ({ agent: child }),
+    prompt: async (p: { content: Array<{ text: string }> }) => {
+      calls.push("prompt");
+      prompted.push(p.content[0]?.text ?? "");
+    },
+  } satisfies Partial<SessionController>;
+
+  const host: Parameters<typeof openSession>[0] = {
+    sessions,
+    workspaceRegistry,
+    sessionController: fakeSessionController(controller),
+  };
+
+  // An agent whose session header names the workspace path.
+  const caller = fakeAgent({
+    id: asSessionId("a"),
+    session: fakeSession({ header: { id: asSessionId("s"), cwd: "/p" } }),
+  });
+
   const signal = new AbortController().signal;
+
   const text = await openSession(
     host,
     caller,
     { prompt: "go", provider: "claude-code", model: "claude-haiku-5-5" },
     signal,
   );
+
   assert.equal(text, "opened session n1 in workspace w1");
   assert.deepEqual(calls, ["create", "select", "prompt"], "route set before the first prompt");
   assert.deepEqual(selected, [{ provider: "claude-code", model: "claude-haiku-5-5" }]);
@@ -671,9 +833,12 @@ console.log("mcp ok");
     { provider: "openai-codex", model: "gpt-6.1-sol", reasoningEffort: "high" },
   ]);
   calls.length = 0;
+
   // A call with no prompt (another tool's arguments) opens nothing instead of a session saying "undefined".
-  for (const args of [{ query: "select:mcp__dsh__open_session" }, { prompt: "  " }])
+  for (const args of [{ query: "select:mcp__dsh__open_session" }, { prompt: "  " }]) {
     await assert.rejects(openSession(host, caller, args, signal), /non-empty prompt/);
+  }
+
   assert.deepEqual(calls, [], "nothing created without a prompt");
   calls.length = 0;
   await openSession(host, caller, { prompt: "go", reasoningEffort: "high" }, signal);
@@ -683,11 +848,16 @@ console.log("mcp ok");
   assert.deepEqual(calls, ["create", "prompt"], "a model without a provider sets no route");
   // A session the controller cannot resolve is reported, never prompted on dsh's default route.
   calls.length = 0;
-  // SAFETY: the same stand-in with a controller that cannot resolve the new session
-  const lost = {
+
+  // The same stand-in with a controller that cannot resolve the new session.
+  const lost: Parameters<typeof openSession>[0] = {
     ...host,
-    sessionController: { ...host.sessionController, resolveAgent: async () => ({ error: "gone" }) },
-  } as unknown as Parameters<typeof openSession>[0];
+    sessionController: fakeSessionController({
+      ...controller,
+      resolveAgent: async () => ({ error: "gone" }),
+    }),
+  };
+
   await assert.rejects(
     openSession(lost, caller, { prompt: "go", provider: "p", model: "m" }, signal),
     /gone/,
@@ -699,11 +869,16 @@ console.log("mcp ok");
   );
   // An agent with no model route is reported too, instead of opening on dsh's default model.
   calls.length = 0;
-  // SAFETY: the same stand-in with an agent that carries no model route
-  const bare = {
+
+  // The same stand-in with an agent that carries no model route.
+  const bare: Parameters<typeof openSession>[0] = {
     ...host,
-    sessionController: { ...host.sessionController, resolveAgent: async () => ({ agent: {} }) },
-  } as unknown as Parameters<typeof openSession>[0];
+    sessionController: fakeSessionController({
+      ...controller,
+      resolveAgent: async () => ({ agent: fakeAgent() }),
+    }),
+  };
+
   await assert.rejects(
     openSession(bare, caller, { prompt: "go", provider: "p", model: "m" }, signal),
     /has no agent to select p\/m on/,
@@ -715,35 +890,38 @@ console.log("mcp ok");
 // prompt_session and wait_session (#255): offered only when the host provides them, after
 // open_session, and also in code mode, since they are the bridge's own.
 {
-  // SAFETY: cast to HandleRpcParams shape for test double
-  const own = {
+  const own: RpcEnv = {
     ...env,
     open: async () => "opened",
-    prompt: async (a: unknown) => `prompted ${JSON.stringify(a)}`,
+    prompt: async (a) => `prompted ${JSON.stringify(a)}`,
     wait: async () => "waited",
-  } as unknown as Parameters<typeof handleRpc>[1];
-  // SAFETY: tools/list always returns a response
-  const listed = (await handleRpc({ jsonrpc: "2.0", id: 60, method: "tools/list" }, own)) as {
-    result: { tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }> };
   };
-  assert.deepEqual(
-    listed.result.tools.map((t) => t.name),
-    ["subagent_local", "bash", "open_session", "prompt_session", "wait_session"],
-  );
+
+  const listed = await handleRpc({ jsonrpc: "2.0", id: 60, method: "tools/list" }, own);
+
+  assert.deepEqual(rpcToolNames(listed), [
+    "subagent_local",
+    "bash",
+    "open_session",
+    "prompt_session",
+    "wait_session",
+  ]);
   assert.deepEqual(
     // Everything listed after the two dsh tools is the bridge's own, so a tool added to one list
     // and not the other fails here in either direction.
-    listed.result.tools.map((t) => t.name).slice(2),
+    rpcToolNames(listed).slice(2),
     [...OWN_TOOL_NAMES],
     "the names the translator keeps out of relay matching are the bridge's own tools",
   );
   assert.deepEqual(
-    listed.result.tools.filter((t) => !t.annotations.readOnlyHint).map((t) => t.name),
+    rpcTools(listed)
+      .filter((t) => !rpcReadOnly(t))
+      .map((t) => fieldsOf(t, { name: "string" }).name),
     ["prompt_session"],
     "only prompt_session runs alone, so a batched wait_session cannot read ahead of it",
   );
-  // SAFETY: tools/call always returns a response
-  const sent = (await handleRpc(
+
+  const sent = await handleRpc(
     {
       jsonrpc: "2.0",
       id: 61,
@@ -751,22 +929,27 @@ console.log("mcp ok");
       params: { name: "prompt_session", arguments: { sessionId: "s2", prompt: "redo step 2" } },
     },
     own,
-  )) as { result: { content: Array<{ text: string }> } };
-  assert.equal(sent.result.content[0]?.text, 'prompted {"sessionId":"s2","prompt":"redo step 2"}');
+  );
+
+  assert.equal(rpcFirstText(sent), 'prompted {"sessionId":"s2","prompt":"redo step 2"}');
+
   // Without the host functions the tools are neither listed nor callable.
-  // SAFETY: tools/call always returns a response
-  const absent = (await handleRpc(
+  const absent = await handleRpc(
     { jsonrpc: "2.0", id: 62, method: "tools/call", params: { name: "wait_session" } },
     env,
-  )) as { result: { isError?: boolean } };
-  assert.equal(absent.result.isError, true);
+  );
 
-  const calls: string[] = [];
-  let waited: unknown;
+  assert.equal(rpcResult(absent).isError, true);
+
+  const calls: Array<string> = [];
+  // Every request the stand-in's wait received, newest last.
+  const waits: Array<Parameters<SessionController["wait"]>[0]> = [];
+
   /** One assistant message record as dsh's wait returns it. */
-  const record = (seq: number, content: unknown[]) => ({
+  const record = (seq: number, content: Array<JsonValue>) => ({
     event: { type: "assistant/message", seq, data: { message: { content } } },
   });
+
   // newest first, as dsh returns them; the block shapes are dsh's own, where thinking is a
   // `reasoning` block that carries `text` like a text block does
   let records = [
@@ -781,32 +964,45 @@ console.log("mcp ok");
     record(43, [{ type: "tool-call", toolName: "bash" }]),
     record(42, [{ type: "text", text: "on it" }]),
   ];
+
   let truncated = false;
-  // SAFETY: a stand-in for the controller methods the two tools read
-  const host = {
-    sessionController: {
+
+  // A stand-in for the controller methods the two tools read.
+  const host: Parameters<typeof promptSession>[0] = {
+    sessionController: fakeSessionController({
       // dsh's state read is what refuses an unknown id; promptSession resolves nothing itself.
-      state: async (r: { sessionId: string }) => {
-        if (r.sessionId === "gone") throw new Error('session "gone" not found');
+      state: async (r) => {
+        if (r.sessionId === "gone") {
+          throw new Error('session "gone" not found');
+        }
+
         calls.push("state");
-        return { cursor: 41 };
+
+        return { cursor: 41, running: false, queue: [], pendingInput: [] };
       },
-      prompt: async (r: { mode: string; content: Array<{ text: string }> }) =>
-        void calls.push(`prompt ${r.mode} ${r.content[0]?.text}`),
-      wait: async (r: unknown) => {
-        waited = r;
+      prompt: async (r) => void calls.push(`prompt ${r.mode} ${r.content[0]?.text}`),
+      wait: async (r) => {
+        waits.push(r);
+
         return {
           reason: "idle",
           state: { cursor: 47, running: false, queue: [], pendingInput: [] },
           output: { truncated, records },
         };
       },
-    },
-  } as unknown as Parameters<typeof promptSession>[0];
+    }),
+    llm: fakePluginContext().llm,
+  };
+
   const from =
     "[Sent by the agent in dsh session s1 through prompt_session, not typed by the user.]";
-  // SAFETY: the calling agent's session is s1
-  const caller = { id: "a", session: { id: "s1" } } as unknown as Agent;
+
+  // The calling agent's session is s1.
+  const caller = fakeAgent({
+    id: asSessionId("a"),
+    session: fakeSession({ header: { id: asSessionId("s1") } }),
+  });
+
   const signal = new AbortController().signal;
   assert.equal(
     await promptSession(host, caller, { sessionId: "s2", prompt: "redo step 2" }, signal),
@@ -837,7 +1033,12 @@ console.log("mcp ok");
   assert.deepEqual(calls, [], "a refused call never prompts");
 
   const text = await waitSession(host, caller, { sessionId: "s2", afterSeq: 41 }, signal);
-  assert.deepEqual(waited, { sessionId: "s2", timeoutMs: 30_000, maxMessages: 50, afterSeq: 41 });
+  assert.deepEqual(waits.at(-1), {
+    sessionId: "s2",
+    timeoutMs: 30_000,
+    maxMessages: 50,
+    afterSeq: 41,
+  });
   assert.equal(
     text,
     [
@@ -849,7 +1050,7 @@ console.log("mcp ok");
   );
   await waitSession(host, caller, { sessionId: "s2", timeoutSeconds: 9999 }, signal);
   assert.deepEqual(
-    waited,
+    waits.at(-1),
     { sessionId: "s2", timeoutMs: 240_000, maxMessages: 50 },
     "timeout clamped, no cursor",
   );
@@ -859,17 +1060,20 @@ console.log("mcp ok");
   );
   // A cursor of the wrong type is refused: run without it, the wait returned the session's old
   // replies as if they answered the message just sent.
-  waited = undefined;
-  for (const afterSeq of ["41", 41.5, -2, true])
+  waits.length = 0;
+
+  for (const afterSeq of ["41", 41.5, -2, true]) {
     await assert.rejects(
       waitSession(host, caller, { sessionId: "s2", afterSeq }, signal),
       /afterSeq must be an integer/,
     );
+  }
+
   await assert.rejects(
     waitSession(host, caller, { sessionId: "s2", timeoutSeconds: "60" }, signal),
     /timeoutSeconds must be a number/,
   );
-  assert.equal(waited, undefined, "a refused wait never reaches dsh");
+  assert.equal(waits.at(-1), undefined, "a refused wait never reaches dsh");
   await waitSession(
     host,
     caller,
@@ -877,16 +1081,15 @@ console.log("mcp ok");
     signal,
   );
   assert.deepEqual(
-    waited,
+    waits.at(-1),
     { sessionId: "s2", timeoutMs: 30_000, maxMessages: 50 },
     "null reads as not given",
   );
   await waitSession(host, caller, { sessionId: "s2", afterSeq: -0 }, signal);
-  // SAFETY: the stand-in recorded the request waitSession built
-  assert.ok(Object.is((waited as { afterSeq: number }).afterSeq, 0), "-0 goes to dsh as 0");
+  // The stand-in recorded the request waitSession built.
+  assert.ok(Object.is(waits.at(-1)?.afterSeq, 0), "-0 goes to dsh as 0");
   await waitSession(host, caller, { sessionId: "s2", afterSeq: -1 }, signal);
-  // SAFETY: as above
-  assert.equal((waited as { afterSeq: number }).afterSeq, -1, "-1 is dsh's own 'from the start'");
+  assert.equal(waits.at(-1)?.afterSeq, -1, "-1 is dsh's own 'from the start'");
 
   // The output is bounded: the newest replies are kept up to the budget, the oldest kept one is
   // cut short, and a line says older ones were left out.
@@ -923,18 +1126,18 @@ console.log("mcp ok");
 
   // Through the bridge, a failed call of the bridge's own answers with the message alone. Only a
   // failure that is not the caller's argument reaches the log, with its stack.
-  const logLines: string[] = [];
-  // SAFETY: cast to HandleRpcParams shape for test double
-  const live = {
+  const logLines: Array<string> = [];
+
+  const live: RpcEnv = {
     ...env,
-    prompt: (a: Record<string, never>) => promptSession(host, caller, a, signal),
-    log: (_level: string, line: string) => void logLines.push(line),
-  } as unknown as Parameters<typeof handleRpc>[1];
+    prompt: (a) => promptSession(host, caller, a, signal),
+    log: (_level, line) => void logLines.push(line),
+  };
+
   /** The result of a prompt_session call through handleRpc. */
   const callPrompt = async (args: Record<string, string>) =>
-    // SAFETY: tools/call always returns a response
-    (
-      (await handleRpc(
+    rpcResult(
+      await handleRpc(
         {
           jsonrpc: "2.0",
           id: 63,
@@ -942,18 +1145,19 @@ console.log("mcp ok");
           params: { name: "prompt_session", arguments: args },
         },
         live,
-      )) as { result: { isError?: boolean; content: Array<{ text: string }> } }
-    ).result;
+      ),
+    );
+
   const refused = await callPrompt({ sessionId: "s2", prompt: " " });
   assert.deepEqual(
-    [refused.isError, refused.content[0]?.text],
+    [refused.isError, rowsOf(refused.content, { text: "string" })[0]?.text],
     [true, "prompt_session needs a non-empty prompt"],
     "a refused argument answers with its message, no stack",
   );
   assert.deepEqual(logLines, [], "and is not logged");
   const unknown = await callPrompt({ sessionId: "gone", prompt: "x" });
   assert.deepEqual(
-    [unknown.isError, unknown.content[0]?.text],
+    [unknown.isError, rowsOf(unknown.content, { text: "string" })[0]?.text],
     [true, 'session "gone" not found'],
     "dsh's own error answers with its message too",
   );
@@ -966,50 +1170,79 @@ console.log("mcp ok");
 // and before the message, filled from the current route where the call leaves a part out, and only
 // once dsh's checks pass. A refused route selects nothing and sends nothing.
 {
-  const calls: string[] = [];
-  const selected: unknown[] = [];
+  const calls: Array<string> = [];
+  const selected: Array<unknown> = [];
+
   type Route = { provider: string; model: string; reasoningEffort?: string };
+
   let current: Route | undefined;
+
   // The fake follows its own select, as dsh's projection does, so each call sees the last one's route.
-  const target = {
+  const target = fakeAgent({
     model: {
-      select: (r: Route) => void (calls.push("select"), selected.push(r), (current = r)),
+      select: (r) => {
+        calls.push("select");
+        selected.push(r);
+        current = r;
+      },
       current: () => current,
     },
-  };
-  // SAFETY: a stand-in for the controller and llm methods prompt_session reads
-  const host = {
-    sessionController: {
-      state: async () => (calls.push("state"), { cursor: 41 }),
-      resolveAgent: async () => (calls.push("resolve"), { agent: target }),
-      prompt: async () => void calls.push("prompt"),
-    },
-    llm: {
-      listProviders: () => [{ id: "openai-codex" }, { id: "claude-code" }],
-      listModels: async (p: string) =>
-        p === "openai-codex"
-          ? [{ id: "gpt-a" }, { id: "gpt-b" }, { id: "gpt-broken" }]
-          : [{ id: "claude-opus-5-5" }],
-      resolveCallConfig: async (c: Route) => {
-        if (c.model === "gpt-b" && c.reasoningEffort === "xhigh")
-          throw Object.assign(
-            new Error('model "gpt-b" does not support reasoning effort "xhigh"'),
-            {
-              code: "UNSUPPORTED_REASONING_EFFORT",
-            },
-          );
-        if (c.model === "gpt-broken")
-          throw Object.assign(new Error("adapter down"), { code: "PROVIDER_ERROR" });
-        return c;
+  });
+
+  // A stand-in for the controller and llm methods prompt_session reads.
+  const host: Parameters<typeof promptSession>[0] = {
+    sessionController: fakeSessionController({
+      state: async () => {
+        calls.push("state");
+
+        return { cursor: 41, running: false, queue: [], pendingInput: [] };
       },
-    },
-  } as unknown as Parameters<typeof promptSession>[0];
-  // SAFETY: the calling agent's session is s1
-  const caller = { id: "a", session: { id: "s1" } } as unknown as Agent;
+      resolveAgent: async () => {
+        calls.push("resolve");
+
+        return { agent: target };
+      },
+      prompt: async () => void calls.push("prompt"),
+    }),
+    llm: fakePluginContext({
+      llm: {
+        listProviders: () => [{ id: "openai-codex" }, { id: "claude-code" }],
+        listModels: async (p) =>
+          p === "openai-codex"
+            ? [{ id: "gpt-a" }, { id: "gpt-b" }, { id: "gpt-broken" }]
+            : [{ id: "claude-opus-5-5" }],
+        resolveCallConfig: async (c) => {
+          if (c.model === "gpt-b" && c.reasoningEffort === "xhigh") {
+            throw Object.assign(
+              new Error('model "gpt-b" does not support reasoning effort "xhigh"'),
+              {
+                code: "UNSUPPORTED_REASONING_EFFORT",
+              },
+            );
+          }
+
+          if (c.model === "gpt-broken") {
+            throw Object.assign(new Error("adapter down"), { code: "PROVIDER_ERROR" });
+          }
+
+          return c;
+        },
+      },
+    }).llm,
+  };
+
+  // The calling agent's session is s1.
+  const caller = fakeAgent({
+    id: asSessionId("a"),
+    session: fakeSession({ header: { id: asSessionId("s1") } }),
+  });
+
   const signal = new AbortController().signal;
+
   /** One prompt_session call into s2 with the route arguments given. */
   const send = (route: Record<string, string>) =>
     promptSession(host, caller, { sessionId: "s2", prompt: "next step", ...route }, signal);
+
   const line = (on: string) => `sent to session s2 (queue) on ${on}; afterSeq 41`;
 
   current = { provider: "openai-codex", model: "gpt-a", reasoningEffort: "medium" };
@@ -1095,19 +1328,20 @@ console.log("mcp ok");
   );
   // Through the bridge: the caller's mistake is answered without a log line, any other failure is
   // logged as well.
-  const logged: string[] = [];
+  const logged: Array<string> = [];
   current = { provider: "openai-codex", model: "gpt-a" };
-  // SAFETY: the shared test env with this host's prompt_session and a log that records
-  const rpc = {
+
+  // The shared test env with this host's prompt_session and a log that records.
+  const rpc: RpcEnv = {
     ...env,
-    prompt: (a: Record<string, never>) => promptSession(host, caller, a, signal),
-    log: (_level: string, msg: string) => void logged.push(msg),
-  } as unknown as Parameters<typeof handleRpc>[1];
+    prompt: (a) => promptSession(host, caller, a, signal),
+    log: (_level, msg) => void logged.push(msg),
+  };
+
   /** One tools/call of prompt_session into s2 through handleRpc; answers whether it failed. */
   const call = async (model: string) =>
-    // SAFETY: tools/call always returns a response
-    (
-      (await handleRpc(
+    rpcResult(
+      await handleRpc(
         {
           jsonrpc: "2.0",
           id: 90,
@@ -1115,8 +1349,9 @@ console.log("mcp ok");
           params: { name: "prompt_session", arguments: { sessionId: "s2", prompt: "x", model } },
         },
         rpc,
-      )) as { result: { isError?: boolean } }
-    ).result.isError === true;
+      ),
+    ).isError === true;
+
   assert.equal(await call("gpt-z"), true);
   assert.deepEqual(logged, [], "an unknown model is the caller's mistake: no log line");
   assert.equal(await call("gpt-broken"), true);
@@ -1126,6 +1361,9 @@ console.log("mcp ok");
 
 // The bridge key: only the exact key passes; a near miss, a repeated header or none is refused.
 assert.equal(keyMatches("k3y-abc", "k3y-abc"), true);
-for (const h of ["k3y-abd", "k3y-ab", "k3y-abcd", "", undefined, ["k3y-abc", "k3y-abc"]])
+
+for (const h of ["k3y-abd", "k3y-ab", "k3y-abcd", "", undefined, ["k3y-abc", "k3y-abc"]]) {
   assert.equal(keyMatches(h, "k3y-abc"), false, JSON.stringify(h));
+}
+
 console.log("bridge-key ok");

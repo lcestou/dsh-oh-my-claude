@@ -17,12 +17,13 @@ import {
   activeClaudeSession,
   claudeProviderOf,
   hasRunTurn,
-  type ClientCtx,
   pill,
   maskEmail,
   resumeCommand,
   saveBlob,
+  errorText,
 } from "../shared.js";
+import type { ClientCtx } from "../shared.js";
 import { checkContract, contractMisses, contractSummary } from "../contract.js";
 import { UpdatePill } from "../update-pill.js";
 import { ReportBlock } from "../report.js";
@@ -31,6 +32,7 @@ import { noticesOn, setNoticesOn } from "../notices.js";
 import type { PermissionRules, HooksListing } from "../../process.js";
 import type { PermissionsReply } from "./access.js";
 import { shortPath, useFold } from "./shared.js";
+import { subscribe } from "../events.js";
 import type { McpReply } from "./mcp.js";
 import { NOT_RUNNING, mcpStatusLabel } from "./mcp.js";
 import { SessionRepairsNotice, useFeatureSwitches } from "./restore.js";
@@ -64,13 +66,15 @@ interface DiagnosticsReply {
   configFiles: Array<{ scope: string; path: string; exists: boolean; parseError?: string }>;
   session?: { claudeId: string; cwd: string };
   /** Effort levels the Models API reports that the plugin does not offer yet. */
-  unknownEfforts?: Array<{ level: string; models: string[] }>;
+  unknownEfforts?: Array<{ level: string; models: Array<string> }>;
 }
+
 type DiagnosticsError = { ok: false; error: string };
+
 /** The slice of a turn record this tab reads: when the turn ran, and the calls a rule refused. */
 interface DeniedTurn {
   at: number;
-  denials?: string[];
+  denials?: Array<string>;
 }
 
 /**
@@ -84,19 +88,28 @@ function SessionNotices() {
   const [on, setOn] = useState(noticesOn);
   const supported = "Notification" in window;
   const [permission, setPermission] = useState(supported ? Notification.permission : "denied");
+
   const write = (next: boolean) => {
     setNoticesOn(next);
     setOn(next);
   };
+
   const enable = () => {
-    if (!supported) return;
-    if (Notification.permission === "default")
-      void Notification.requestPermission().then((p) => {
+    if (!supported) {
+      return;
+    }
+
+    if (Notification.permission === "default") {
+      void (async () => {
+        const p = await Notification.requestPermission();
         setPermission(p);
         write(p === "granted");
-      });
-    else write(true);
+      })();
+    } else {
+      write(true);
+    }
   };
+
   const state = !supported
     ? t("panel.notices.noApi")
     : permission === "denied"
@@ -104,6 +117,7 @@ function SessionNotices() {
       : on
         ? t("panel.notices.on")
         : t("panel.notices.off");
+
   return (
     <>
       <span style={sectionHead}>{t("panel.notices.head")}</span>
@@ -145,14 +159,23 @@ function ReadoutState({
   reply: PermissionsReply | null;
 }) {
   useLocale();
-  if (!running)
+
+  if (!running) {
     return (
       <span style={{ ...meta, padding: "2px 0", fontSize: 12 }}>
         {t("panel.readout.notRunning")}
       </span>
     );
-  if (error !== "") return <span style={errText}>{error}</span>;
-  if (reply === null) return <span style={stateText}>{t("loading")}</span>;
+  }
+
+  if (error !== "") {
+    return <span style={errText}>{error}</span>;
+  }
+
+  if (reply === null) {
+    return <span style={stateText}>{t("loading")}</span>;
+  }
+
   return null;
 }
 
@@ -174,10 +197,12 @@ const ruleBehaviorLabel = (behavior: string): string =>
  */
 function RulesList({ rules }: { rules: PermissionRules["rules"] }) {
   const { shown, allShown, button } = useFold(rules.length);
+
   // Deny first, then ask, then allow. Within each group the CLI's own order is preserved.
   const visible = allShown
     ? rules
     : [...rules].toSorted((a, b) => ruleRank(a.behavior) - ruleRank(b.behavior)).slice(0, shown);
+
   return (
     <div>
       {visible.map((r, i) => (
@@ -210,6 +235,7 @@ function RulesList({ rules }: { rules: PermissionRules["rules"] }) {
 function HooksList({ hooks }: { hooks: HooksListing["hooks"] }) {
   const { shown, button } = useFold(hooks.length);
   const visible = hooks.slice(0, shown);
+
   return (
     <div>
       {visible.map((h, i) => (
@@ -247,20 +273,24 @@ interface HookRun {
 /** The hook run log: newest first, each row the event and hook name, its outcome and exit code,
  *  and when it ran. A row with output opens on a click to show it; the terminal shows a hook's
  *  result once and drops it, this keeps the last hundred. */
-function HookRunsList({ runs }: { runs: HookRun[] }) {
+function HookRunsList({ runs }: { runs: Array<HookRun> }) {
   const newestFirst = runs.toReversed();
   const { shown, button } = useFold(newestFirst.length);
   // Keyed by the run, not its position: the list is read again as turns end, and a new run at
   // the top would otherwise move the opened row's index onto its neighbour.
   const [open, setOpen] = useState<string | null>(null);
+
   return (
     <div>
       {newestFirst.slice(0, shown).map((run) => {
         const key = `${run.at}:${run.name}`;
+
         const failed =
           run.outcome !== "success" || (run.exitCode !== undefined && run.exitCode !== 0);
+
         const tail =
           run.exitCode !== undefined && run.exitCode !== 0 ? `exit ${run.exitCode}` : run.outcome;
+
         const row = (
           <>
             <span style={{ flex: "none", fontFamily: T.mono, fontSize: 11 }}>{run.event}</span>
@@ -281,6 +311,7 @@ function HookRunsList({ runs }: { runs: HookRun[] }) {
             <span style={{ ...meta, flex: "none" }}>{ago(run.at)}</span>
           </>
         );
+
         const rowStyle = {
           display: "flex",
           alignItems: "center",
@@ -288,6 +319,7 @@ function HookRunsList({ runs }: { runs: HookRun[] }) {
           padding: "3px 0",
           fontSize: 12,
         };
+
         return (
           <div key={key} data-omc-hook-run={run.name}>
             {run.output ? (
@@ -354,83 +386,121 @@ export function DiagnosticsBody({
   // session nobody has prompted yet has none, so the tab says so instead of asking and waiting on a
   // refusal.
   const started = running && hasRunTurn(ctx, sessionId);
-  const [data, setData] = useState<DiagnosticsReply | DiagnosticsError | null>(null);
-  const [mcp, setMcp] = useState<McpReply | null>(null);
+  const [reply, setReply] = useState<DiagnosticsReply | DiagnosticsError | null>(null);
+
+  // A session dsh reports no directory for has nothing to read settings from; say that rather
+  // than leaving the tab on "Loading…" for a fetch that will never be made.
+  const data: DiagnosticsReply | DiagnosticsError | null = cwd
+    ? reply
+    : { ok: false, error: t("panel.diag.noWorkdir") };
+
+  const [mcpReply, setMcp] = useState<McpReply | null>(null);
+  // A session nobody has prompted yet has no process to ask about its servers.
+  const mcp = running && !hasRunTurn(ctx, sessionId) ? NOT_RUNNING : mcpReply;
   const [reconnecting, setReconnecting] = useState<string | null>(null);
-  const [audit, setAudit] = useState<DeniedTurn[] | null>(null);
+  const [audit, setAudit] = useState<Array<DeniedTurn> | null>(null);
   const [auditError, setAuditError] = useState("");
   const [permissions, setPermissions] = useState<PermissionsReply | null>(null);
   const [permissionsError, setPermissionsError] = useState("");
-  const [hookRuns, setHookRuns] = useState<HookRun[]>([]);
+  const [hookRuns, setHookRuns] = useState<Array<HookRun>>([]);
   const [doctorOutput, setDoctorOutput] = useState<string | null>(null);
   const [doctorError, setDoctorError] = useState("");
   const [doctorBusy, setDoctorBusy] = useState(false);
   const switches = useFeatureSwitches(cwd);
 
+  /** Reads the session's MCP servers from its process. Never rejects: a failure is the reply. */
   const loadMcp = useCallback(
     () =>
-      !hasRunTurn(ctx, sessionId)
-        ? Promise.resolve(setMcp(NOT_RUNNING))
-        : fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
-            .then((r) => readJson<McpReply>(r))
-            .then(setMcp)
-            .catch((e: Error) => setMcp({ ok: false, error: e.message })),
+      fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
+        .then((r) => readJson<McpReply>(r))
+        .then(setMcp)
+        .catch((cause: unknown) => setMcp({ ok: false, error: errorText(cause) })),
     [sessionId],
   );
 
   useEffect(() => {
     // The route asks the running process; with none there is nothing to be not-connected about.
-    if (!running) return;
-    void loadMcp();
-  }, [running, loadMcp]);
+    if (started) {
+      void loadMcp();
+    }
+  }, [started, loadMcp]);
 
   useEffect(() => {
     let live = true;
     fetch(`${ROUTE}/turns?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => readJson<{ turns?: DeniedTurn[] }>(r))
-      .then((b) => {
-        // Newest first, and only the turns that had a call refused.
-        if (live) setAudit((b.turns ?? []).filter((turn) => turn.denials?.length).toReversed());
-      })
+      .then((r) => readJson<{ turns?: Array<DeniedTurn> }>(r))
+      // Newest first, and only the turns that had a call refused.
+      .then(
+        (b) =>
+          live && setAudit((b.turns ?? []).filter((turn) => turn.denials?.length).toReversed()),
+      )
       // An error is not an empty audit: say which one it was.
-      .catch((e: Error) => live && setAuditError(e.message));
+      .catch((cause: unknown) => live && setAuditError(errorText(cause)));
+
     return () => {
       live = false;
     };
   }, [sessionId]);
 
+  // Clear both first: the error is read before the reply, so a failure left over from the previous
+  // process would outlive the read that replaced it. Done during render, the moment a read is due.
+  const permissionsKey = started ? sessionId : null;
+  const [permissionsFor, setPermissionsFor] = useState<string | null>(null);
+
+  if (permissionsFor !== permissionsKey) {
+    setPermissionsFor(permissionsKey);
+
+    if (permissionsKey !== null) {
+      setPermissions(null);
+      setPermissionsError("");
+    }
+  }
+
   useEffect(() => {
-    if (!started) return;
     let live = true;
-    // Clear both first: the error is read before the reply, so a failure left over from the previous
-    // process would outlive the read that replaced it.
-    setPermissions(null);
-    setPermissionsError("");
-    fetch(`${ROUTE}/permissions?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => readJson<PermissionsReply>(r))
-      .then((b) => live && setPermissions(b))
-      .catch((e: Error) => live && setPermissionsError(e.message));
+
+    if (started) {
+      fetch(`${ROUTE}/permissions?session=${encodeURIComponent(sessionId)}`)
+        .then((r) => readJson<PermissionsReply>(r))
+        .then((b) => live && setPermissions(b))
+        .catch((cause: unknown) => live && setPermissionsError(errorText(cause)));
+    }
+
     return () => {
       live = false;
     };
-  }, [running, sessionId]);
+  }, [started, sessionId]);
 
   // The hook log is the adapter's memory, not the CLI's answer, so a session that has only spawned
   // (its SessionStart hooks ran) already has rows; read it with the tab and again as turns end.
   useEffect(() => {
-    if (!running) return;
     let live = true;
-    fetch(`${ROUTE}/hook-runs?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => readJson<{ ok: true; runs: HookRun[] }>(r))
-      .then((b) => live && setHookRuns(b.runs))
-      .catch(() => {});
+
+    const read = () => {
+      fetch(`${ROUTE}/hook-runs?session=${encodeURIComponent(sessionId)}`)
+        .then((r) => readJson<{ ok: true; runs: Array<HookRun> }>(r))
+        .then((b) => live && setHookRuns(b.runs))
+        .catch(() => {});
+    };
+
+    if (running) {
+      read();
+    }
+
+    // A turn's record lands on the event stream as it ends.
+    const off = running
+      ? subscribe("turns", (session) => session === sessionId && read())
+      : undefined;
+
     return () => {
       live = false;
+      off?.();
     };
-  }, [running, started, sessionId]);
+  }, [running, sessionId]);
 
   const reconnect = async (serverName: string) => {
     setReconnecting(serverName);
+
     try {
       await fetch(`${ROUTE}/mcp-servers/reconnect`, {
         method: "POST",
@@ -444,22 +514,21 @@ export function DiagnosticsBody({
   };
 
   useEffect(() => {
-    // A session dsh reports no directory for has nothing to read settings from; say that rather
-    // than leaving the tab on "Loading…" for a fetch that will never be made.
-    if (!cwd) {
-      setData({ ok: false, error: t("panel.diag.noWorkdir") });
-      return;
-    }
     let live = true;
     // The session's own mount, so a session on a box is diagnosed on that box, not on this one.
     const provider = claudeProviderOf(ctx, sessionId);
     const on = provider ? `&provider=${encodeURIComponent(provider)}` : "";
-    fetch(
-      `${ROUTE}/diagnostics?cwd=${encodeURIComponent(cwd)}${on}&session=${encodeURIComponent(sessionId)}`,
-    )
-      .then((r) => readJson<DiagnosticsReply | DiagnosticsError>(r))
-      .then((b) => live && setData(b))
-      .catch((e: Error) => live && setData({ ok: false, error: e.message }));
+
+    // No directory: `data` above says so instead of a read.
+    if (cwd) {
+      fetch(
+        `${ROUTE}/diagnostics?cwd=${encodeURIComponent(cwd)}${on}&session=${encodeURIComponent(sessionId)}`,
+      )
+        .then((r) => readJson<DiagnosticsReply | DiagnosticsError>(r))
+        .then((b) => live && setReply(b))
+        .catch((cause: unknown) => live && setReply({ ok: false, error: errorText(cause) }));
+    }
+
     return () => {
       live = false;
     };
@@ -468,42 +537,57 @@ export function DiagnosticsBody({
   const doctorProvider = claudeProviderOf(ctx, sessionId);
   const doctorQuery = doctorProvider ? `?provider=${encodeURIComponent(doctorProvider)}` : "";
 
+  /** Runs `claude doctor` on the session's box. Never rejects: a failure is the doctor's error. */
   const runDoctor = async () => {
     setDoctorBusy(true);
     setDoctorError("");
+
     try {
       const r = await readJson<{ out?: string; error?: string }>(
         await fetch(`${ROUTE}/diagnostics/doctor${doctorQuery}`, { method: "POST" }),
       );
+
       if (r.error) {
         setDoctorError(r.error);
       } else {
         setDoctorOutput(r.out ?? "");
       }
-    } catch (e) {
-      setDoctorError(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setDoctorError(error instanceof Error ? error.message : String(error));
     } finally {
       setDoctorBusy(false);
     }
   };
 
   const [rowNote, setRowNote] = useState("");
+
   const exportMd = async () => {
-    if (!data || !data.ok || !data.session) return;
+    if (!data || !data.ok || !data.session) {
+      return;
+    }
+
     setRowNote("");
     const q = new URLSearchParams({ id: data.session.claudeId, cwd: data.session.cwd });
-    if (doctorProvider) q.set("provider", doctorProvider);
+
+    if (doctorProvider) {
+      q.set("provider", doctorProvider);
+    }
+
     try {
       await saveBlob(
         `${ROUTE}/transcript.md?${q}`,
         `claude-${data.session.claudeId.slice(0, 8)}.md`,
       );
-    } catch (e) {
-      setRowNote(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setRowNote(error instanceof Error ? error.message : String(error));
     }
   };
+
   const copyResume = async () => {
-    if (!data || !data.ok || !data.session) return;
+    if (!data || !data.ok || !data.session) {
+      return;
+    }
+
     try {
       await navigator.clipboard.writeText(resumeCommand(data.session.claudeId, data.session.cwd));
       setRowNote("Copied");
@@ -513,7 +597,10 @@ export function DiagnosticsBody({
     }
   };
 
-  if (!cwd) return null;
+  if (!cwd) {
+    return null;
+  }
+
   // What this plugin assumes about dsh's own markup, checked against the page as it stands. Every
   // dsh upgrade that has broken this plugin did it silently: a selector matched nothing and a
   // feature stopped without a word. This turns that into a line worth reading after an upgrade.
@@ -521,6 +608,7 @@ export function DiagnosticsBody({
   // open, which is true of a new session that renders none of this markup yet.
   const contract = checkContract(document);
   const missing = contractMisses(contract);
+
   return (
     <div style={bodyFlow}>
       <div
@@ -821,6 +909,7 @@ export function DiagnosticsBody({
                             : t("panel.diag.workspaceDirsOther", {
                                 n: permissions.directories.length,
                               });
+
                         return permissions.directories.length <= 3
                           ? t("panel.diag.dirsWithPaths", {
                               dirs,
@@ -867,7 +956,7 @@ export function DiagnosticsBody({
             <button
               type="button"
               style={doctorOutput ? btn : btnPrimary}
-              onClick={runDoctor}
+              onClick={() => void runDoctor()}
               disabled={doctorBusy}
             >
               {doctorBusy ? t("panel.diag.running") : t("panel.diag.runDoctor")}

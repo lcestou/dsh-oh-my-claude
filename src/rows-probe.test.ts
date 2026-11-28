@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { probeRawToolRows, rawRowsLog } from "./rows-probe.js";
 import { tempDir } from "./test-tmp.js";
+import { fieldsOf, objectOf } from "./test-context.js";
 
 {
   const { header, rows } = rawRowsLog();
@@ -27,10 +28,13 @@ import { tempDir } from "./test-tmp.js";
   );
   const announce = rows.findIndex((r) => r.type === "assistant/message");
   const call = rows.findIndex((r) => r.type === "tool/call");
+
   const settled = rows.findIndex(
     (r) =>
-      r.type === "assistant/message" && (r.data as { message: { id: string } }).message.id === "m",
+      r.type === "assistant/message" &&
+      fieldsOf(objectOf(r.data).message, { id: "string?" }).id === "m",
   );
+
   assert(announce < call, "the announcement sits ahead of the call, which is what dsh 0.1.7 loads");
   assert(call < settled, "the call sits ahead of the settled text message, as rows mode writes it");
 }
@@ -55,6 +59,7 @@ import { tempDir } from "./test-tmp.js";
     "export const sessionFormatCatalog = { currentVersion: 4 };",
   );
   const probe = fileURLToPath(new URL("./rows-probe.ts", import.meta.url));
+
   const out = spawnSync(
     "node",
     [
@@ -66,6 +71,7 @@ import { tempDir } from "./test-tmp.js";
     ],
     { encoding: "utf8" },
   );
+
   assert.equal(out.stdout.trim(), "4", `Node read the catalog through a # folder: ${out.stderr}`);
   await rm(dirname(root), { recursive: true, force: true });
 }

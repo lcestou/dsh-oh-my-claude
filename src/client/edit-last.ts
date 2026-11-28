@@ -7,7 +7,8 @@
 import { useEffect, useRef } from "react";
 import { useHintFlag } from "./hints.js";
 import { REWOUND_EVENT } from "./recall.js";
-import { inOwnComposer, isClaudeSession, type ClientCtx } from "./shared.js";
+import { inOwnComposer, isClaudeSession } from "./shared.js";
+import type { ClientCtx } from "./shared.js";
 
 /** Fired on `window` to open the plugin's panel on a tab, from code that has no panel of its own.
  *  `rewindLatest` asks the Rewind tab to pick the newest prompt itself, preview and all. */
@@ -19,8 +20,8 @@ export interface OpenPanelDetail {
   rewindLatest?: boolean;
 }
 
-/** The `OPEN_PANEL_EVENT` itself, typed: a listener checks `instanceof` and reads `detail`
- *  without parsing, since only this module's callers construct one. */
+/** The `OPEN_PANEL_EVENT` itself, typed: a listener checks it with `isOpenPanelEvent` and reads
+ *  `detail` without parsing, since only this module's callers construct one. */
 export class OpenPanelEvent extends Event {
   /** Non-bubbling, not cancelable: fired on `window`, which is where the panel listens. */
   constructor(readonly detail: OpenPanelDetail) {
@@ -41,6 +42,15 @@ export class RewoundEvent extends Event {
   }
 }
 
+/** True for an `OpenPanelEvent`: the event's name and the `detail` only that class carries. */
+export const isOpenPanelEvent = (e: Event): e is OpenPanelEvent =>
+  e.type === OPEN_PANEL_EVENT && "detail" in e;
+
+/** True for a `RewoundEvent`, as against the plain `Event` of the same name that carries no
+ *  session or text. */
+export const isRewoundEvent = (e: Event): e is RewoundEvent =>
+  e.type === REWOUND_EVENT && "sessionId" in e && "text" in e;
+
 /** How close two Escapes must land to count as one gesture when dsh does not say: the same
  *  half second dsh's own stop sequence defaults to. */
 export const ESC_GAP_MS = 500;
@@ -50,7 +60,10 @@ export const ESC_GAP_MS = 500;
  * the time to remember for the next press (nothing after a firing, so a third press starts over).
  */
 export function escapeStep(lastAt: number | null, now: number, gapMs: number) {
-  if (lastAt !== null && now - lastAt <= gapMs) return { fire: true, lastAt: null };
+  if (lastAt !== null && now - lastAt <= gapMs) {
+    return { fire: true, lastAt: null };
+  }
+
   return { fire: false, lastAt: now };
 }
 
@@ -77,20 +90,28 @@ export function useEditLastPrompt({
 }): void {
   const [off] = useHintFlag("editLastOff");
   const lastAt = useRef<number | null>(null);
+  // The newest of each, for the listeners below, which stay mounted across renders.
   const draftRef = useRef(draft);
-  draftRef.current = draft;
   const runningRef = useRef(running);
-  runningRef.current = running;
   const setRef = useRef(setDraft);
-  setRef.current = setDraft;
+
   useEffect(() => {
-    if (off) return;
+    draftRef.current = draft;
+    runningRef.current = running;
+    setRef.current = setDraft;
+  }, [draft, running, setDraft]);
+
+  useEffect(() => {
     // Read per press, so a changed dsh interval holds without a remount.
-    const gap = () =>
-      ctx.get?.<{ stopSequenceMs?: number }>("shortcuts")?.stopSequenceMs ?? ESC_GAP_MS;
+    const gap = () => ctx.get?.("shortcuts")?.stopSequenceMs ?? ESC_GAP_MS;
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape") {
+        return;
+      }
+
       const inBox = inOwnComposer(e.target, sessionId);
+
       if (
         e.altKey ||
         e.ctrlKey ||
@@ -104,21 +125,38 @@ export function useEditLastPrompt({
         !isClaudeSession(ctx, sessionId)
       ) {
         lastAt.current = null;
+
         return;
       }
+
       const step = escapeStep(lastAt.current, performance.now(), gap());
       lastAt.current = step.lastAt;
-      if (!step.fire) return;
+
+      if (!step.fire) {
+        return;
+      }
+
       e.preventDefault();
       e.stopPropagation();
       window.dispatchEvent(new OpenPanelEvent({ tab: "Rewind", rewindLatest: true }));
     };
+
     const onRewound = (e: Event) => {
-      if (!(e instanceof RewoundEvent) || e.sessionId !== sessionId || e.text === undefined) return;
-      if (draftRef.current.trim() === "") setRef.current?.(e.text);
+      if (!isRewoundEvent(e) || e.sessionId !== sessionId || e.text === undefined) {
+        return;
+      }
+
+      if (draftRef.current.trim() === "") {
+        setRef.current?.(e.text);
+      }
     };
-    document.addEventListener("keydown", onKey, true);
-    window.addEventListener(REWOUND_EVENT, onRewound);
+
+    // Off with the hint: nothing listens, and removing what was never added is a no-op.
+    if (!off) {
+      document.addEventListener("keydown", onKey, true);
+      window.addEventListener(REWOUND_EVENT, onRewound);
+    }
+
     return () => {
       document.removeEventListener("keydown", onKey, true);
       window.removeEventListener(REWOUND_EVENT, onRewound);

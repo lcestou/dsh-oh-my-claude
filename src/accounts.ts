@@ -19,8 +19,8 @@ export const ACCOUNTS_MAX = 20;
 export function boxSlug(name: string): string {
   return name
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "");
 }
 
 /** The provider id an SSH box or an account mounts under. The two share one namespace on purpose:
@@ -35,6 +35,7 @@ export function boxProviderId(name: string): string {
  *  letter or digit. */
 export function defaultAccountDir(name: string): string {
   const slug = boxSlug(name);
+
   return slug ? `~/.claude-${slug}` : "";
 }
 
@@ -45,14 +46,26 @@ export function defaultAccountDir(name: string): string {
  */
 export function normalizeAccountDir(dir: string): string | undefined {
   const trimmed = dir.trim();
-  if (trimmed.length > 200 || [...trimmed].some((ch) => ch.charCodeAt(0) < 32)) return undefined;
+
+  if (trimmed.length > 200 || trimmed.split("").some((ch) => ch < " ")) {
+    return undefined;
+  }
+
   const tilde = trimmed === "~" || trimmed.startsWith("~/");
-  if (!tilde && !trimmed.startsWith("/")) return undefined;
+
+  if (!tilde && !trimmed.startsWith("/")) {
+    return undefined;
+  }
+
   const parts = trimmed
     .slice(tilde ? 1 : 0)
     .split("/")
     .filter(Boolean);
-  if (parts.some((p) => p === "." || p === "..")) return undefined;
+
+  if (parts.some((p) => p === "." || p === "..")) {
+    return undefined;
+  }
+
   return `${tilde ? "~" : ""}/${parts.join("/")}`.replace(/^~\/$/, "~");
 }
 
@@ -61,6 +74,7 @@ export function normalizeAccountDir(dir: string): string | undefined {
 export function accountHome(dir: string, home: string): string {
   // `join(homedir(), …)` in resolveClaudeHome drops a trailing slash on $HOME; so does this.
   const h = home.replace(/\/+$/, "") || "/";
+
   return dir === "~" ? h : dir.startsWith("~/") ? `${h === "/" ? "" : h}${dir.slice(1)}` : dir;
 }
 
@@ -97,33 +111,57 @@ export interface AccountRefusal {
  * wrong: two spellings of one folder through a symlink count as two folders.
  */
 export function validateAccounts(
-  input: readonly Account[],
+  input: ReadonlyArray<Account>,
   rules: AccountRules,
-): { accounts: Account[] } | { refusal: AccountRefusal } {
-  if (input.length > ACCOUNTS_MAX)
+): { accounts: Array<Account> } | { refusal: AccountRefusal } {
+  if (input.length > ACCOUNTS_MAX) {
     return { refusal: { key: "accountsMax", params: { n: String(ACCOUNTS_MAX) } } };
-  const accounts: Account[] = [];
+  }
+
+  const accounts: Array<Account> = [];
   const ids = new Map(rules.takenIds);
   const homes = new Map(rules.takenHomes);
+
   for (const row of input) {
     const name = row.name.trim();
-    if (!name || name.length > 40 || !boxSlug(name)) return { refusal: { key: "accountName" } };
+
+    if (!name || name.length > 40 || !boxSlug(name)) {
+      return { refusal: { key: "accountName" } };
+    }
+
     const id = boxProviderId(name);
-    if (ids.has(id)) return { refusal: { key: "accountTaken", params: { name } } };
+
+    if (ids.has(id)) {
+      return { refusal: { key: "accountTaken", params: { name } } };
+    }
+
     const typed = row.configDir.trim() || defaultAccountDir(name);
     const configDir = normalizeAccountDir(typed);
-    if (configDir === undefined) return { refusal: { key: "accountDir", params: { dir: typed } } };
+
+    if (configDir === undefined) {
+      return { refusal: { key: "accountDir", params: { dir: typed } } };
+    }
+
     const abs = accountHome(configDir, rules.home);
-    if (abs === rules.home || abs === "/")
+
+    if (abs === rules.home || abs === "/") {
       return { refusal: { key: "accountDirHome", params: { dir: configDir } } };
-    if (abs === rules.defaultHome)
+    }
+
+    if (abs === rules.defaultHome) {
       return { refusal: { key: "accountDirDefault", params: { dir: configDir } } };
+    }
+
     const holder = homes.get(abs);
-    if (holder !== undefined)
+
+    if (holder !== undefined) {
       return { refusal: { key: "accountDirTaken", params: { dir: configDir, name: holder } } };
+    }
+
     ids.set(id, name);
     homes.set(abs, name);
     accounts.push({ name, configDir });
   }
+
   return { accounts };
 }

@@ -14,14 +14,10 @@ import {
   openSessionId,
   readJson,
   select,
-  type ClientCtx,
 } from "./shared.js";
-import {
-  TIMEOUT_DEFAULT_SEC,
-  TRIES_DEFAULT,
-  TRIES_MAX,
-  type TestGateConfig,
-} from "../test-gate.js";
+import type { ClientCtx } from "./shared.js";
+import { TIMEOUT_DEFAULT_SEC, TRIES_DEFAULT, TRIES_MAX } from "../test-gate.js";
+import type { TestGateConfig } from "../test-gate.js";
 
 /** `GET /test-gate`: the saved gate, a guess from the project files, and whether the workspace is
  *  on this box (the only place the hook can run). */
@@ -51,53 +47,78 @@ export function TestGateRow({ ctx }: { ctx: ClientCtx }) {
   const [timeoutSec, setTimeoutSec] = useState(TIMEOUT_DEFAULT_SEC);
   const [note, setNote] = useState("");
   useEffect(() => {
-    if (!cwd) return;
     let live = true;
-    const read = () =>
-      fetch(`${ROUTE}/test-gate?cwd=${encodeURIComponent(cwd)}`)
+
+    /** Puts the workspace's gate in the form. */
+    const show = (r: GateReply) => {
+      setReply(r);
+      setCommand(r.config?.command || r.suggested || "");
+      setTries(r.config?.tries ?? TRIES_DEFAULT);
+      setTimeoutSec(r.config?.timeoutSec ?? TIMEOUT_DEFAULT_SEC);
+    };
+
+    /** Reads the gate for `dir`; a failed read leaves the form as it is. */
+    const read = (dir: string) => {
+      fetch(`${ROUTE}/test-gate?cwd=${encodeURIComponent(dir)}`)
         .then((r) => readJson<GateReply>(r))
-        .then((r) => {
-          if (!live) return;
-          setReply(r);
-          setCommand(r.config?.command || r.suggested || "");
-          setTries(r.config?.tries ?? TRIES_DEFAULT);
-          setTimeoutSec(r.config?.timeoutSec ?? TIMEOUT_DEFAULT_SEC);
-        })
+        .then((r) => live && show(r))
         .catch(() => {});
-    void read();
-    const off = subscribe("test-gate-config", (_s, d) => {
-      if (d.cwd === cwd) void read();
-    });
+    };
+
+    // A session with no workspace has no gate to read or follow.
+    if (cwd) {
+      read(cwd);
+    }
+
+    const off = cwd
+      ? subscribe("test-gate-config", (_s, d) => d.cwd === cwd && read(cwd))
+      : undefined;
+
     return () => {
       live = false;
-      off();
+      off?.();
     };
   }, [cwd]);
   const saved = reply?.config ?? null;
   const shown = saved?.enabled === true || editing;
+
   const save = async (config: TestGateConfig) => {
     setNote("");
+
     try {
       const r = await fetch(`${ROUTE}/test-gate`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ cwd, config }),
       }).then((x) => readJson<{ config?: TestGateConfig; error?: string }>(x));
-      if (r.error) throw new Error(r.error);
+
+      if (r.error) {
+        throw new Error(r.error);
+      }
+
       setEditing(false);
       setNote(t("testGate.saved"));
     } catch {
       setNote(t("testGate.saveFailed"));
     }
   };
+
   const flip = (next: boolean) => {
     if (!next) {
       setEditing(false);
-      if (saved?.enabled) void save({ ...saved, enabled: false });
-    } else if (saved?.command) void save({ ...saved, enabled: true });
-    else setEditing(true);
+
+      if (saved?.enabled) {
+        void save({ ...saved, enabled: false });
+      }
+    } else if (saved?.command) {
+      void save({ ...saved, enabled: true });
+    } else {
+      setEditing(true);
+    }
   };
+
   const blocked = !cwd || reply?.local === false;
+
   return (
     <div data-omc-test-gate-row="" style={{ fontSize: 13, marginBottom: 12 }}>
       <div

@@ -3,7 +3,7 @@
 import { isNewer } from "../update.js";
 import { t, useLocale, activeLocale } from "./i18n.js";
 import { BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT, SETTINGS_EVENT } from "./picker.js";
-import { SCOPE_LABELS, SETTINGS_SCOPES, overrideNote } from "./settings.js";
+import { SCOPE_LABELS, SETTINGS_SCOPES, isSettingsScope, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
 import { LiveNote } from "./live-note.js";
 import { useViewRead } from "./view-read.js";
@@ -15,7 +15,6 @@ import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ACCENT,
-  type ClientCtx,
   ROUTE,
   T,
   btn,
@@ -29,15 +28,14 @@ import {
   readJson,
   row,
   select,
+  errorText,
+  isJsonObject,
+  parseJson,
 } from "./shared.js";
-
-type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
-
-type JsonObject = { [key: string]: Json };
+import type { ClientCtx, Json, JsonObject } from "./shared.js";
 
 /** JSON.parse hands back one of six shapes; this tells the plain object apart. */
-export const isObj = (v: Json | undefined): v is JsonObject =>
-  v instanceof Object && !Array.isArray(v);
+export const isObj = (v: Json | undefined): v is JsonObject => isJsonObject(v);
 
 /** Counts items in a parsed value: array length, object keys, or 0 when v is neither. */
 const count = (v: Json | undefined): number =>
@@ -80,6 +78,7 @@ export function Chevron({ open }: { open: boolean }) {
 /** Collapsible card: title, a one-line summary that stays visible when closed, optional actions. */
 export function Card({ id, title, summary, actions, open, onToggle, children }: CardProps) {
   useLocale();
+
   // dsh's own plugin-settings card (ui-settings-plugins, 2026-09-13): name over description on the
   // left, chevron on the right that turns when open, the body under a hairline. Measurements and
   // tokens copied rather than the class borrowed, since dsh's class names change per build.
@@ -157,16 +156,31 @@ export function Card({ id, title, summary, actions, open, onToggle, children }: 
   );
 }
 
+/** A settings value as one line: a string, number or boolean as itself, an object or array as its
+ *  JSON, so a hand-edited value of the wrong kind reads as what the file holds. */
+const jsonText = (v: Json): string =>
+  isObj(v) || Array.isArray(v) ? JSON.stringify(v) : String(v);
+
 /** Facts worth a glance before opening the editor. */
 export function summarize(settings: JsonObject | undefined): Array<[string, string]> {
-  if (!settings) return [];
+  if (!settings) {
+    return [];
+  }
+
   const out: Array<[string, string]> = [];
-  if (settings.model) out.push(["model", String(settings.model)]);
+
+  if (settings.model) {
+    out.push(["model", jsonText(settings.model)]);
+  }
+
   const hooksObj = settings.hooks;
+
   if (isObj(hooksObj)) {
     const events = Object.keys(hooksObj);
+
     const hooks = events.reduce<number>((n, e) => {
       const groups = hooksObj[e];
+
       return (
         n +
         (Array.isArray(groups)
@@ -177,6 +191,7 @@ export function summarize(settings: JsonObject | undefined): Array<[string, stri
           : 0)
       );
     }, 0);
+
     out.push([
       "hooks",
       t(events.length === 1 ? "main.summary.hooksOnOne" : "main.summary.hooksOnOther", {
@@ -185,24 +200,40 @@ export function summarize(settings: JsonObject | undefined): Array<[string, stri
       }),
     ]);
   }
+
   const p = settings.permissions;
+
   if (isObj(p)) {
-    const parts = ["allow", "ask", "deny"]
-      .filter((k) => count(p[k]) > 0)
-      .map((k) => `${count(p[k])} ${k}`);
-    if (p.defaultMode) parts.unshift(String(p.defaultMode));
-    if (parts.length) out.push(["permissions", parts.join(" · ")]);
+    const parts = ["allow", "ask", "deny"].flatMap((k) =>
+      count(p[k]) > 0 ? [`${count(p[k])} ${k}`] : [],
+    );
+
+    if (p.defaultMode) {
+      parts.unshift(jsonText(p.defaultMode));
+    }
+
+    if (parts.length) {
+      out.push(["permissions", parts.join(" · ")]);
+    }
   }
-  if (count(settings.env) > 0)
+
+  if (count(settings.env) > 0) {
     out.push([
       "env",
       t(count(settings.env) === 1 ? "main.summary.varsOne" : "main.summary.varsOther", {
         n: count(settings.env),
       }),
     ]);
-  if (count(settings.enabledPlugins) > 0)
+  }
+
+  if (count(settings.enabledPlugins) > 0) {
     out.push(["plugins", t("main.summary.enabled", { n: count(settings.enabledPlugins) })]);
-  if (settings.statusLine) out.push(["statusLine", t("main.summary.set")]);
+  }
+
+  if (settings.statusLine) {
+    out.push(["statusLine", t("main.summary.set")]);
+  }
+
   return out;
 }
 
@@ -270,7 +301,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
   useLocale();
   const [scope, setScope] = useState<SettingsScope>("user");
   const [cwd, setCwd] = useState<string | null>(null);
-  const [scopes, setScopes] = useState<SettingsScopeInfo[]>([]);
+  const [scopes, setScopes] = useState<Array<SettingsScopeInfo>>([]);
   const [file, setFile] = useState<SettingsFile | null>(null);
   const [text, setText] = useState("");
   const [editing, setEditing] = useState(false);
@@ -282,113 +313,177 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
   // only produce a rejected save. Read every render: the snapshot fills in as sessions load, and
   // this store has no subscribe to wait on.
   const byId = ctx?.sessions.list.getSnapshot()?.byId ?? {};
+
   const cwdOptions = [
     ...new Set(Object.values(byId).flatMap((s) => (s.cwd ? [s.cwd] : []))),
   ].toSorted();
+
   const projectCwd = cwd ?? cwdOptions[0] ?? null;
 
   const settingsUrl = box
     ? `${ROUTE}/boxes/settings?url=${encodeURIComponent(box.url)}`
     : `${ROUTE}/settings`;
+
   const scopesUrl = projectCwd
     ? `${ROUTE}/settings/scopes?cwd=${encodeURIComponent(projectCwd)}`
     : `${ROUTE}/settings/scopes`;
 
-  const show = (loaded: SettingsFile) => {
+  /** Puts a freshly read file on screen and leaves edit mode. Only state setters inside. */
+  const show = useCallback((loaded: SettingsFile) => {
     setFile(loaded);
     setText(loaded.text);
     setEditing(false);
     setSaved("");
-  };
+  }, []);
 
   // Newest read wins: two quick scope changes can answer out of order, and the older answer
   // showed the previous scope's file under the new scope's tab.
   const loadSeq = useRef(0);
-  const load = () => {
+  const isBox = box !== undefined;
+
+  /** Reads the file on show. Sets state only as the answer lands, so the effect below can start
+   *  it; whoever calls it marks the editor busy first. */
+  const readFile = useCallback(() => {
     const seq = ++loadSeq.current;
     const current = () => seq === loadSeq.current;
-    setBusy(true);
-    setError("");
+
     // A box answers one file and knows nothing of scopes; everything else reads every scope at
     // once, so the editor can show one and say which keys another file overrides.
-    const done = box
-      ? fetch(settingsUrl)
-          .then((r) => readJson<SettingsFile>(r))
-          .then((f) => current() && show(f))
-      : fetch(scopesUrl)
-          .then((r) => readJson<{ scopes?: SettingsScopeInfo[] }>(r))
-          .then((b) => {
-            if (!current()) return;
-            const all = b.scopes ?? [];
-            setScopes(all);
-            const wanted =
-              all.find((s) => s.scope === scope) ?? all.find((s) => s.scope === "user");
-            if (wanted) show(wanted);
-          });
-    done
-      .catch((e: Error) => current() && setError(e.message))
+    /** The read for whichever kind of editor this is; rejects on a failed request. */
+    const read = async () => {
+      if (isBox) {
+        const f = await readJson<SettingsFile>(await fetch(settingsUrl));
+
+        if (current()) {
+          show(f);
+        }
+
+        return;
+      }
+
+      const b = await readJson<{ scopes?: Array<SettingsScopeInfo> }>(await fetch(scopesUrl));
+
+      if (!current()) {
+        return;
+      }
+
+      const all = b.scopes ?? [];
+      setScopes(all);
+
+      const wanted = all.find((s) => s.scope === scope) ?? all.find((s) => s.scope === "user");
+
+      if (wanted) {
+        show(wanted);
+      }
+    };
+
+    read()
+      .catch((cause: unknown) => current() && setError(errorText(cause)))
       .finally(() => current() && setBusy(false));
-  };
-  useEffect(load, [settingsUrl, scopesUrl, scope]);
+  }, [isBox, settingsUrl, scopesUrl, scope, show]);
+
+  /** Reload: busy, error cleared, the file read again. */
+  const load = useCallback(() => {
+    setBusy(true);
+    setError("");
+    readFile();
+  }, [readFile]);
+
+  // A different file to show (another box, scope or project) marks the editor busy during render,
+  // as Reload does, and the effect reads it.
+  const fileKey = `${settingsUrl}\n${scopesUrl}\n${scope}`;
+  const [readKey, setReadKey] = useState<string | null>(null);
+
+  if (readKey !== fileKey) {
+    setReadKey(fileKey);
+    setBusy(true);
+    setError("");
+  }
+
+  useEffect(readFile, [readFile]);
   // Another control on the page wrote a settings file (the Claude updates channel, the Tune tab):
   // show the new text, unless an edit is open, which would lose what was typed. The editor's own
   // save skips this, so its "Saved at" line stays up.
   const ownSave = useRef(false);
   useEffect(() => {
-    if (editing) return;
     const again = () => {
-      if (!ownSave.current) load();
+      if (!editing && !ownSave.current) {
+        load();
+      }
     };
+
     window.addEventListener(SETTINGS_EVENT, again);
+
     return () => window.removeEventListener(SETTINGS_EVENT, again);
-  });
+  }, [editing, load]);
 
   const parsed = useMemo<{ value?: JsonObject; error?: string }>(() => {
     try {
-      const value: Json = JSON.parse(text);
-      if (!isObj(value)) return { error: t("main.settings.mustBeObject") };
+      const value = parseJson(text);
+
+      if (!isObj(value)) {
+        return { error: t("main.settings.mustBeObject") };
+      }
+
       return { value };
-    } catch (e) {
-      return { error: e instanceof Error ? e.message : String(e) };
+    } catch (error_) {
+      return { error: error_ instanceof Error ? error_.message : String(error_) };
     }
   }, [text]);
+
   const dirty = file !== null && text !== file.text;
   const canSave = dirty && !parsed.error && !busy;
 
   const save = () => {
-    if (!canSave) return;
+    if (!canSave) {
+      return;
+    }
+
     setBusy(true);
     setError("");
     const body: SettingsWrite = box ? { text } : { text, scope };
-    if (!box && projectCwd !== null) body.cwd = projectCwd;
+
+    if (!box && projectCwd !== null) {
+      body.cwd = projectCwd;
+    }
+
     // The file as this tab last read it. The CLI writes settings.json itself on a plugin
     // install or a /model pick. A save that ignored that would put the whole file back without it.
-    if (file?.mtime !== undefined) body.mtime = file.mtime;
-    fetch(settingsUrl, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    })
-      .then((r) => readJson<{ mtime?: number; backup?: string }>(r))
-      .then((b) => {
-        setFile((f) => ({ ...f, text, exists: true, mtime: b.mtime }));
-        setEditing(false);
-        setSaved(
-          t("main.settings.saved", {
-            time: new Date(b.mtime ?? 0).toLocaleTimeString(activeLocale()),
-            backup: b.backup ?? "?",
-          }),
-        );
-        // A read another control's write started before this save would answer with the file as
-        // it was; counting the save as newer drops that answer.
-        loadSeq.current++;
-        ownSave.current = true;
-        window.dispatchEvent(new Event(SETTINGS_EVENT));
-        ownSave.current = false;
-      })
-      .catch((e: Error) => setError(e.message))
+    if (file?.mtime !== undefined) {
+      body.mtime = file.mtime;
+    }
+
+    /** The PUT and what a taken save puts on screen; rejects on a refusal. */
+    const write = async () => {
+      const b = await readJson<{ mtime?: number; backup?: string }>(
+        await fetch(settingsUrl, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+
+      setFile((f) => ({ ...f, text, exists: true, mtime: b.mtime }));
+      setEditing(false);
+      setSaved(
+        t("main.settings.saved", {
+          time: new Date(b.mtime ?? 0).toLocaleTimeString(activeLocale()),
+          backup: b.backup ?? "?",
+        }),
+      );
+      // A read another control's write started before this save would answer with the file as
+      // it was; counting the save as newer drops that answer.
+      loadSeq.current++;
+      ownSave.current = true;
+      window.dispatchEvent(new Event(SETTINGS_EVENT));
+      ownSave.current = false;
+    };
+
+    write()
+      .catch((cause: unknown) => setError(errorText(cause)))
       .finally(() => setBusy(false));
   };
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
       e.preventDefault();
@@ -400,6 +495,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
   const readOnly = !box && scope === "managed";
 
   const facts = summarize(parsed.value);
+
   const summary = file
     ? facts.length
       ? facts.map(([k, v]) => `${k} ${v}`).join(" · ")
@@ -407,6 +503,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
         ? t("main.settings.empty")
         : t("main.settings.notCreated")
     : "";
+
   const actions = editing ? (
     <>
       <button
@@ -450,6 +547,7 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
       </button>
     </>
   ) : null;
+
   return (
     <Card
       id="dsh-oh-my-claude-settings"
@@ -474,8 +572,11 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
               id="dsh-oh-my-claude-scope"
               value={scope}
               onChange={(e) => {
-                // SAFETY: the options are the scope names themselves, so the value is one of them.
-                setScope(e.target.value as SettingsScope);
+                const picked = e.target.value;
+
+                if (isSettingsScope(picked)) {
+                  setScope(picked);
+                }
               }}
               disabled={busy || editing}
               style={{
@@ -583,37 +684,45 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
  * reason: it answers with the list before that save.
  */
 export function useBoxList() {
-  const [boxes, setShown] = useState<BoxData[]>([]);
+  const [boxes, setShown] = useState<Array<BoxData>>([]);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
+
   const wrote = useViewRead("boxes", (fresh) => {
-    fetch(`${ROUTE}/boxes`)
-      .then((r) => readJson<{ boxes?: BoxData[] }>(r))
-      .then((b) => {
-        if (!fresh()) return;
-        setError("");
-        setLoaded(true);
-        setShown(b.boxes ?? []);
-      })
-      .catch((e: Error) => {
-        if (fresh()) setError(e.message);
-      });
+    // Never rejects: a failed read only sets the error line.
+    void (async () => {
+      try {
+        const b = await readJson<{ boxes?: Array<BoxData> }>(await fetch(`${ROUTE}/boxes`));
+
+        if (fresh()) {
+          setError("");
+          setLoaded(true);
+          setShown(b.boxes ?? []);
+        }
+      } catch (error_) {
+        if (fresh()) {
+          setError(errorText(error_));
+        }
+      }
+    })();
   });
+
   /** The card's setter: a saved list counts as newer than any read already in flight. */
   const setBoxes = useCallback(
-    (next: React.SetStateAction<BoxData[]>) => {
+    (next: React.SetStateAction<Array<BoxData>>) => {
       wrote();
       setShown(next);
     },
     [wrote],
   );
+
   return { boxes, setBoxes, error, loaded };
 }
 
 interface BoxesProps {
   ctx: ClientCtx;
-  boxes: BoxData[];
-  setBoxes: React.Dispatch<React.SetStateAction<BoxData[]>>;
+  boxes: Array<BoxData>;
+  setBoxes: React.Dispatch<React.SetStateAction<Array<BoxData>>>;
   /** False until the saved list has been read once. A save before that would be built on an empty
    *  list and replace every saved box, so the card refuses it. */
   loaded: boolean;
@@ -687,7 +796,7 @@ export function BoxRow({
    *  none for a row that has no state of its own. */
   tone: "ok" | "err" | "faint" | "none";
   /** The status line's items, left to right; a string item joins with a middle dot. */
-  facts: ReactNode[];
+  facts: Array<ReactNode>;
   /** A line under the facts: a reach hint, an install hint. */
   note?: ReactNode;
   actions?: ReactNode;
@@ -697,6 +806,7 @@ export function BoxRow({
   // The actions sit centred on the two-line block (title, status), not hung from its top line; a
   // row with a note or an open login form below keeps them at the top, beside the part they act on.
   const tall = Boolean(note || children);
+
   return (
     <div
       data-testid={testId}
@@ -852,59 +962,104 @@ const SSH_LOGIN: LoginRoutes = { base: "ssh-boxes/login", field: "host" };
 
 const DSH_LOGIN: LoginRoutes = { base: "boxes/login", field: "url" };
 
+/** POSTs one login step (`start`, `poll`, `code`) for `host` to the login routes given. */
+const postLogin = (
+  routes: LoginRoutes,
+  route: string,
+  host: string,
+  extra: Record<string, string> = {},
+) =>
+  fetch(`${ROUTE}/${routes.base}/${route}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ [routes.field]: host, ...extra }),
+  });
+
 /** Login state for one box plus the start and submit handlers; each step POSTs to a login route. */
 export function useLoginFlow(onDone: (host: string) => void, routes: LoginRoutes = SSH_LOGIN) {
   const [login, setLogin] = useState<LoginFlow | null>(null);
-  const post = (route: string, host: string, extra: Record<string, string> = {}) =>
-    fetch(`${ROUTE}/${routes.base}/${route}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ [routes.field]: host, ...extra }),
-    });
+
+  const post = (route: string, host: string, extra?: Record<string, string>) =>
+    postLogin(routes, route, host, extra);
+
+  // Callers pass a fresh arrow each render; the poll below reads the newest one through this ref
+  // rather than restarting its 2s timer on every render.
+  const onDoneRef = useRef(onDone);
+
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
+
   const startLogin = (host: string) => {
     setLogin({ host, code: "", busy: true });
     post("start", host)
       .then((r) => readJson<{ url?: string; error?: string }>(r))
       .then((b) => setLogin({ host, code: "", url: b.url, error: b.error }))
-      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
+      .catch((cause: unknown) => setLogin({ host, code: "", error: errorText(cause) }));
   };
+
   // While the link is up, ask every 2s whether setup-token finished by itself (it does when the
   // box already has a login: no browser, no code). Paused during a submit, stopped on an error.
   const pollKey = login && login.url && !login.busy && !login.error ? login.host : null;
   useEffect(() => {
-    if (pollKey === null) return;
-    const host = pollKey;
     let live = true;
-    const tick = () =>
-      post("poll", host)
-        .then((r) => readJson<{ pending?: boolean; done?: boolean; error?: string }>(r))
-        .then((b) => {
-          if (!live || b.pending) return;
-          if (b.done) {
-            setLogin(null);
-            onDone(host);
-          } else setLogin((cur) => (cur && cur.host === host ? { ...cur, error: b.error } : cur));
-        })
-        .catch(() => {});
-    const timer = setInterval(tick, 2000);
+
+    /** One poll of `host`; never rejects, since a failed poll is simply asked again next tick. */
+    const tick = async (host: string) => {
+      try {
+        const b = await readJson<{ pending?: boolean; done?: boolean; error?: string }>(
+          await postLogin(routes, "poll", host),
+        );
+
+        if (!live || b.pending) {
+          return;
+        }
+
+        if (b.done) {
+          setLogin(null);
+          onDoneRef.current(host);
+        } else {
+          setLogin((cur) => (cur && cur.host === host ? { ...cur, error: b.error } : cur));
+        }
+      } catch {
+        // the next tick asks again
+      }
+    };
+
+    const timer = pollKey === null ? undefined : setInterval(() => void tick(pollKey), 2000);
+
     return () => {
       live = false;
       clearInterval(timer);
     };
-  }, [pollKey]);
+  }, [pollKey, routes]);
+
   const submitLogin = () => {
-    if (!login) return;
+    if (!login) {
+      return;
+    }
+
     const host = login.host;
     setLogin({ ...login, busy: true, error: undefined });
-    post("code", host, { code: login.code })
-      .then((r) => readJson<{ done?: boolean; loggedIn?: boolean; error?: string }>(r))
-      .then((b) => {
-        if (b.error) return setLogin({ host, code: "", error: b.error });
-        setLogin(null);
-        onDone(host);
-      })
-      .catch((e: Error) => setLogin({ host, code: "", error: e.message }));
+    // Never rejects: a refusal or a failed request shows as the login's error.
+    void (async () => {
+      try {
+        const b = await readJson<{ done?: boolean; loggedIn?: boolean; error?: string }>(
+          await post("code", host, { code: login.code }),
+        );
+
+        if (b.error) {
+          setLogin({ host, code: "", error: b.error });
+        } else {
+          setLogin(null);
+          onDone(host);
+        }
+      } catch (error_) {
+        setLogin({ host, code: "", error: errorText(error_) });
+      }
+    })();
   };
+
   return { login, setLogin, startLogin, submitLogin };
 }
 
@@ -919,6 +1074,7 @@ export function LoginSteps({
   submit: () => void;
 }) {
   useLocale();
+
   return (
     <div style={{ ...meta, marginTop: 6, whiteSpace: "normal", overflowWrap: "anywhere" }}>
       {login.busy && !login.url && <span>{t("main.login.starting")}</span>}
@@ -966,7 +1122,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
   const [tick, setTick] = useState(0);
   const [probe, setProbe] = useState<Record<string, ProbeEntry>>({});
   const [self, setSelf] = useState<{ plugin?: string } | null>(null);
-  const [ssh, setSsh] = useState<SshBoxData[]>([]);
+  const [ssh, setSsh] = useState<Array<SshBoxData>>([]);
   const [sshProbe, setSshProbe] = useState<Record<string, SshProbeEntry>>({});
   const [kind, setKind] = useState<BoxKind>("ssh");
   /** The add form is folded behind one button once a box exists; a first visit sees it open. */
@@ -978,48 +1134,67 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
   // The two tunnels a box can sit behind, read from this node: a tailnet peer or a WireGuard peer
   // is a pick, not a hostname typed, and the tailnet is joined from here when it is not yet.
   const [ts, setTs] = useState<TailscaleStatusRow | null>(null);
+
   const [wg, setWg] = useState<{
     installed: boolean;
-    peers: WireguardPeerRow[];
+    peers: Array<WireguardPeerRow>;
     error?: string;
   } | null>(null);
+
   const [pickedPeer, setPickedPeer] = useState<TailscalePeerRow | null>(null);
+
   const [tsLogin, setTsLogin] = useState<{ url?: string; error?: string; busy?: boolean } | null>(
     null,
   );
+
   // Headscale users point the client at their own server, and a pre-auth key skips the browser.
   const [tsServer, setTsServer] = useState({ loginServer: "", authKey: "" });
+
   const loadNets = useCallback(() => {
     fetch(`${ROUTE}/tailscale/status`)
       .then((r) => readJson<TailscaleStatusRow>(r))
       .then(setTs)
       .catch(() => {});
     fetch(`${ROUTE}/wireguard/status`)
-      .then((r) => readJson<{ installed: boolean; peers: WireguardPeerRow[]; error?: string }>(r))
+      .then((r) =>
+        readJson<{ installed: boolean; peers: Array<WireguardPeerRow>; error?: string }>(r),
+      )
       .then(setWg)
       .catch(() => {});
   }, []);
+
   useEffect(loadNets, [loadNets]);
   // While an approval link is out, look every 3 s for the tailnet to come up; stop once it has.
   useEffect(() => {
-    if (!tsLogin?.url || ts?.loggedIn) return;
-    const timer = setInterval(loadNets, 3000);
+    const timer = !tsLogin?.url || ts?.loggedIn ? undefined : setInterval(loadNets, 3000);
+
     return () => clearInterval(timer);
   }, [tsLogin?.url, ts?.loggedIn, loadNets]);
+
   const joinTailnet = () => {
     setTsLogin({ busy: true });
-    fetch(`${ROUTE}/tailscale/login`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(tsServer),
-    })
-      .then((r) => readJson<{ url?: string; joined?: boolean; error?: string }>(r))
-      .then((b) => {
+    // Never rejects: a failed join shows as the login's error.
+    void (async () => {
+      try {
+        const b = await readJson<{ url?: string; joined?: boolean; error?: string }>(
+          await fetch(`${ROUTE}/tailscale/login`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(tsServer),
+          }),
+        );
+
         setTsLogin({ url: b.url, error: b.error });
-        if (b.joined) loadNets();
-      })
-      .catch((e: Error) => setTsLogin({ error: e.message }));
+
+        if (b.joined) {
+          loadNets();
+        }
+      } catch (error_) {
+        setTsLogin({ error: errorText(error_) });
+      }
+    })();
   };
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [openSettingsUrl, setOpenSettingsUrl] = useState<string | null>(null);
@@ -1027,57 +1202,56 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
   // Each box's colour, picked or automatic; the swatches show only once there are two boxes to
   // tell apart.
   const { colours } = useBoxColours();
+
   /** The swatch for one box, or nothing while This box is the only one. */
   const swatchFor = (provider: string, name: string) =>
     colours.size > 1 ? (
       <BoxColourSwatch provider={provider} name={name} colour={colours.get(provider)} />
     ) : undefined;
-  const [rws, setRws] = useState<RemoteWs[]>([]);
-  const { login, setLogin, startLogin, submitLogin } = useLoginFlow(() => refresh());
-  const dsh = useLoginFlow(() => refresh(), DSH_LOGIN);
-  const logoutDsh = (target: string) => {
-    setBusy(true);
-    fetch(`${ROUTE}/boxes/login/logout`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url: target }),
-    })
-      .then(() => refresh())
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setBusy(false));
-  };
+
+  const [rws, setRws] = useState<Array<RemoteWs>>([]);
 
   /** This box's own row. Read on mount and again after every login change here: the row used to
    *  keep its old pills and its Log out button until the page was reloaded, which read as the
    *  click having done nothing. */
-  const loadMe = () =>
-    fetch(`${ROUTE}/status`)
-      .then((r) => readJson<RuntimeStatus | null>(r))
-      .then(setMe)
-      .catch(() => {});
-  /** The remote-workspace rows. Only state setters inside, so an effect may keep the first one. */
-  const loadRws = () => {
+  const loadMe = useCallback(
+    () =>
+      fetch(`${ROUTE}/status`)
+        .then((r) => readJson<RuntimeStatus | null>(r))
+        .then(setMe)
+        .catch(() => {}),
+    [],
+  );
+
+  /** The remote-workspace rows. Only state setters inside, so it keeps one identity for good. */
+  const loadRws = useCallback(() => {
     fetch(`${ROUTE}/remote-workspaces`)
-      .then((r) => readJson<{ workspaces?: RemoteWs[] }>(r))
+      .then((r) => readJson<{ workspaces?: Array<RemoteWs> }>(r))
       .then((b) => setRws(b.workspaces ?? []))
       .catch(() => {});
-  };
+  }, []);
+
   /** The saved SSH boxes. Read on mount and again on BOXES_EVENT, which a save here, in another
    *  tab or in another browser raises: a tab that kept an old list would PUT it back on its next add
    *  and drop the box the other tab saved. */
-  const loadSsh = () =>
-    fetch(`${ROUTE}/ssh-boxes`)
-      .then((r) => readJson<{ boxes?: SshBoxData[] }>(r))
-      .then((b) => setSsh(b.boxes ?? []))
-      .catch((e: Error) => setError(e.message));
+  const loadSsh = useCallback(
+    () =>
+      fetch(`${ROUTE}/ssh-boxes`)
+        .then((r) => readJson<{ boxes?: Array<SshBoxData> }>(r))
+        .then((b) => setSsh(b.boxes ?? []))
+        .catch((cause: unknown) => setError(errorText(cause))),
+    [],
+  );
+
   useEffect(() => {
     void loadSsh();
     void loadMe();
     loadRws();
     const onBoxes = () => void loadSsh();
     window.addEventListener(BOXES_EVENT, onBoxes);
+
     return () => window.removeEventListener(BOXES_EVENT, onBoxes);
-  }, []);
+  }, [loadSsh, loadMe, loadRws]);
   // The rows follow dsh's own workspace list, which changes on an add from the picker, a trash in
   // the sidebar and a box removal alike (the store carries every registry change, dsh's own or this
   // plugin's route). It also publishes a frame per drag-reorder and per archive, so the ids are
@@ -1086,102 +1260,189 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
   // its POST has answered.
   useEffect(() => {
     let ids = "";
+
     const onStore = () => {
       const next = (ctx.workspaces.list.getSnapshot()?.items ?? [])
         .map((w) => w.workspaceId)
         .toSorted()
         .join("|");
-      if (next === ids) return;
+
+      if (next === ids) {
+        return;
+      }
+
       ids = next;
       loadRws();
     };
+
     const off = ctx.workspaces.list.subscribe(onStore);
     window.addEventListener(RW_EVENT, loadRws);
+
     return () => {
       off();
       window.removeEventListener(RW_EVENT, loadRws);
     };
-  }, [ctx]);
+  }, [ctx, loadRws]);
 
+  const hasBoxes = boxes.length > 0;
+  const hasSsh = ssh.length > 0;
+
+  /** Every read the card's Refresh stands for. Sets state only as the answers land, so the box-set
+   *  effect below can start it; `refresh` and the render-time block mark the card busy first. */
+  const probeAll = useCallback(() => {
+    /** The dsh boxes' reachability and this box's plugin version. */
+    const probeBoxes = async () => {
+      const b = await readJson<{ self?: { plugin?: string }; boxes?: Array<ProbeEntry> }>(
+        await fetch(`${ROUTE}/boxes/status`),
+      );
+
+      setSelf(b.self ?? null);
+      setProbe(Object.fromEntries((b.boxes ?? []).map((entry) => [entry.url, entry])));
+    };
+
+    const jobs: Array<Promise<unknown>> = [loadMe()];
+
+    if (hasBoxes) {
+      jobs.push(probeBoxes());
+    }
+
+    if (hasSsh) {
+      jobs.push(
+        fetch(`${ROUTE}/ssh-boxes/status`)
+          .then((r) => readJson<{ boxes?: Array<SshProbeEntry> }>(r))
+          .then((b) => setSshProbe(Object.fromEntries((b.boxes ?? []).map((e) => [e.host, e])))),
+      );
+    }
+
+    loadNets();
+    Promise.all(jobs)
+      .catch((cause: unknown) => setError(errorText(cause)))
+      .finally(() => setBusy(false));
+  }, [hasBoxes, hasSsh, loadMe, loadNets]);
+
+  /** The card's Refresh: busy, error cleared, the account rows told to re-read (`tick`), then every
+   *  read again. */
   const refresh = () => {
     setBusy(true);
     setError("");
     setTick((n) => n + 1);
-    const jobs: Promise<unknown>[] = [loadMe()];
-    if (boxes.length)
-      jobs.push(
-        fetch(`${ROUTE}/boxes/status`)
-          .then((r) => readJson<{ self?: { plugin?: string }; boxes?: ProbeEntry[] }>(r))
-          .then((b) => {
-            setSelf(b.self ?? null);
-            setProbe(Object.fromEntries((b.boxes ?? []).map((entry) => [entry.url, entry])));
-          }),
-      );
-    if (ssh.length)
-      jobs.push(
-        fetch(`${ROUTE}/ssh-boxes/status`)
-          .then((r) => readJson<{ boxes?: SshProbeEntry[] }>(r))
-          .then((b) => setSshProbe(Object.fromEntries((b.boxes ?? []).map((e) => [e.host, e])))),
-      );
-    loadNets();
-    Promise.all(jobs)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setBusy(false));
+    probeAll();
   };
-  useEffect(refresh, [boxes.map((b) => b.url).join("|"), ssh.map((b) => b.host).join("|")]);
 
-  const saveDsh = (next: BoxData[]) => {
-    if (!loaded) {
-      setError(t("main.boxes.notRead"));
-      return Promise.resolve();
-    }
+  // Probed again whenever the set of boxes changes, not only its size: a box swapped for another
+  // has a status of its own to show. The change is marked during render, as a Refresh click marks
+  // it, and the effect starts the reads.
+  const boxUrls = boxes.map((b) => b.url).join("|");
+  const sshHosts = ssh.map((b) => b.host).join("|");
+  const boxSet = `${boxUrls}\n${sshHosts}`;
+  const [probedSet, setProbedSet] = useState<string | null>(null);
+
+  if (probedSet !== boxSet) {
+    setProbedSet(boxSet);
     setBusy(true);
     setError("");
+    setTick((n) => n + 1);
+  }
+
+  useEffect(probeAll, [probeAll, boxSet]);
+
+  const { login, setLogin, startLogin, submitLogin } = useLoginFlow(refresh);
+  const dsh = useLoginFlow(refresh, DSH_LOGIN);
+
+  const logoutDsh = (target: string) => {
+    setBusy(true);
+    fetch(`${ROUTE}/boxes/login/logout`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: target }),
+    })
+      .then(() => refresh())
+      .catch((cause: unknown) => setError(errorText(cause)))
+      .finally(() => setBusy(false));
+  };
+
+  const saveDsh = (next: Array<BoxData>) => {
+    if (!loaded) {
+      setError(t("main.boxes.notRead"));
+
+      return Promise.resolve();
+    }
+
+    setBusy(true);
+    setError("");
+
     return fetch(`${ROUTE}/boxes`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ boxes: next }),
     })
-      .then((r) => readJson<{ boxes?: BoxData[] }>(r))
+      .then((r) => readJson<{ boxes?: Array<BoxData> }>(r))
       .then((b) => setBoxes(b.boxes ?? []))
-      .catch((e: Error) => setError(e.message))
+      .catch((cause: unknown) => setError(errorText(cause)))
       .finally(() => setBusy(false));
   };
-  const saveSsh = (next: SshBoxData[]) => {
+
+  /** PUTs the SSH box list and shows what the server kept. Never rejects: a failure is the card's
+   *  error line. */
+  const saveSsh = async (next: Array<SshBoxData>) => {
     setBusy(true);
     setError("");
-    return fetch(`${ROUTE}/ssh-boxes`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ boxes: next }),
-    })
-      .then((r) => readJson<{ boxes?: SshBoxData[] }>(r))
-      .then((b) => {
-        setSsh(b.boxes ?? []);
-        window.dispatchEvent(new Event(BOXES_EVENT));
-      })
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setBusy(false));
+
+    try {
+      const b = await readJson<{ boxes?: Array<SshBoxData> }>(
+        await fetch(`${ROUTE}/ssh-boxes`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ boxes: next }),
+        }),
+      );
+
+      setSsh(b.boxes ?? []);
+      window.dispatchEvent(new Event(BOXES_EVENT));
+    } catch (error_) {
+      setError(errorText(error_));
+    } finally {
+      setBusy(false);
+    }
   };
+
   const clear = () => setDraft({ name: "", url: "", token: "", host: "" });
+
   const add = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!draft.name.trim()) return;
+
+    if (!draft.name.trim()) {
+      return;
+    }
+
     if (kind !== "dsh") {
-      if (!draft.host.trim()) return;
+      if (!draft.host.trim()) {
+        return;
+      }
+
       const box: SshBoxData = { name: draft.name.trim(), host: draft.host.trim() };
-      if (kind !== "ssh") box.via = kind;
-      saveSsh([...ssh, box]).then(clear);
+
+      if (kind !== "ssh") {
+        box.via = kind;
+      }
+
+      // The draft clears either way; a refused save shows in the error line (saveSsh never rejects).
+      void saveSsh([...ssh, box]).then(clear);
     } else {
-      if (!draft.url.trim()) return;
-      saveDsh([
+      if (!draft.url.trim()) {
+        return;
+      }
+
+      void saveDsh([
         ...boxes,
         { name: draft.name.trim(), url: draft.url.trim(), token: draft.token },
       ]).then(clear);
     }
   };
-  const removeDsh = (url: string) => saveDsh(boxes.filter((b) => b.url !== url));
-  const removeSsh = (host: string) => saveSsh(ssh.filter((b) => b.host !== host));
+
+  // Both saves catch their own failure into the error line, so nothing is left to await here.
+  const removeDsh = (url: string) => void saveDsh(boxes.filter((b) => b.url !== url));
+  const removeSsh = (host: string) => void saveSsh(ssh.filter((b) => b.host !== host));
 
   const logout = (host: string) => {
     setBusy(true);
@@ -1191,9 +1452,10 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
       body: JSON.stringify({ host }),
     })
       .then(() => refresh())
-      .catch((e: Error) => setError(e.message))
+      .catch((cause: unknown) => setError(errorText(cause)))
       .finally(() => setBusy(false));
   };
+
   const removeRw = (path: string) => {
     setBusy(true);
     setError("");
@@ -1202,16 +1464,18 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ path }),
     })
-      .then((r) => readJson<{ workspaces?: RemoteWs[] }>(r))
+      .then((r) => readJson<{ workspaces?: Array<RemoteWs> }>(r))
       .then((b) => setRws(b.workspaces ?? []))
-      .catch((e: Error) => setError(e.message))
+      .catch((cause: unknown) => setError(errorText(cause)))
       .finally(() => setBusy(false));
   };
 
   const total = boxes.length + ssh.length;
+
   const reachable =
     boxes.filter((b) => probe[b.url]?.ok).length +
     ssh.filter((b) => sshProbe[b.host]?.status?.binary).length;
+
   const summary =
     total === 0
       ? t("main.boxes.noneSaved")
@@ -1219,6 +1483,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
           total,
           status: busy ? t("main.sessions.checking") : t("main.boxes.reachable", { n: reachable }),
         });
+
   const seg = (k: BoxKind, label: string) => (
     <button
       type="button"
@@ -1239,6 +1504,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
       {label}
     </button>
   );
+
   return (
     <Card
       id="dsh-oh-my-claude-boxes"
@@ -1343,7 +1609,8 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
         const st = sshProbe[b.host]?.status;
         const down = st?.reach && st.reach.stage !== "ok";
         const up = st && !st.error && st.binary;
-        const facts: ReactNode[] = !st
+
+        const facts: Array<ReactNode> = !st
           ? [busy ? t("main.sessions.checking") : t("main.sessions.unchecked")]
           : down
             ? [
@@ -1359,19 +1626,25 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
                     ? maskEmail(st.email ?? t("main.boxes.loggedIn"))
                     : bad(t("main.boxes.notLoggedIn")),
                 ];
-        if (st && up && !st.loggedIn && (st.running ?? 0) > 0)
+
+        if (st && up && !st.loggedIn && (st.running ?? 0) > 0) {
           facts.push(
             t(
               st.running === 1 ? "main.boxes.stillAnsweringOne" : "main.boxes.stillAnsweringOther",
               { n: st.running ?? 0 },
             ),
           );
+        }
+
         // Said before the click: Remove on a box takes the workspaces pinned to it as well.
         const onIt = rws.filter((w) => w.host === b.host).length;
-        if (onIt > 0)
+
+        if (onIt > 0) {
           facts.push(
             t(onIt === 1 ? "main.boxes.wsOnItOne" : "main.boxes.wsOnItOther", { n: onIt }),
           );
+        }
+
         return (
           <BoxRow
             key={`ssh:${b.host}`}
@@ -1438,7 +1711,8 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
         const ok = st?.ok;
         const r = ok ? st.status : undefined;
         const skew = r?.plugin && self && r.plugin !== self.plugin;
-        const facts: ReactNode[] = !st
+
+        const facts: Array<ReactNode> = !st
           ? [busy ? t("main.sessions.checking") : t("main.sessions.unchecked")]
           : !ok
             ? [bad(st.error ?? t("main.sessions.unreachable"))]
@@ -1455,6 +1729,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
                   </span>,
                 ]
               : [];
+
         return (
           <BoxRow
             key={`dsh:${b.url}`}
@@ -1518,7 +1793,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
           <SettingsEditor
             open
             onToggle={() => setOpenSettingsUrl(null)}
-            box={boxes.find((b) => b.url === openSettingsUrl)!}
+            box={boxes.find((b) => b.url === openSettingsUrl)}
           />
         </div>
       )}
@@ -1566,8 +1841,10 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
                     onChange={(e) => {
                       const peer = ts.peers.find((p) => p.host === e.target.value) ?? null;
                       setPickedPeer(peer);
-                      if (peer)
+
+                      if (peer) {
                         setDraft({ ...draft, name: draft.name || peer.name, host: peer.host });
+                      }
                     }}
                   >
                     <option value="">{t("main.boxes.pickPeer")}</option>
@@ -1606,7 +1883,10 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
                     }
                     onChange={(e) => {
                       const peer = wg.peers.find((p) => p.host === e.target.value);
-                      if (peer) setDraft({ ...draft, host: peer.host });
+
+                      if (peer) {
+                        setDraft({ ...draft, host: peer.host });
+                      }
                     }}
                   >
                     <option value="">{t("main.boxes.pickPeer")}</option>
@@ -1873,7 +2153,7 @@ interface TailscaleStatusRow {
   state: string;
   loggedIn: boolean;
   self?: { name: string; host: string; ip: string };
-  peers: TailscalePeerRow[];
+  peers: Array<TailscalePeerRow>;
   error?: string;
 }
 
@@ -1881,7 +2161,7 @@ interface TailscaleStatusRow {
 interface WireguardPeerRow {
   iface: string;
   host: string;
-  allowedIps: string[];
+  allowedIps: Array<string>;
   endpoint: string;
   handshakeAge: number | null;
 }
@@ -1989,53 +2269,70 @@ function BoxUpdateButton({
       .then((r) => readJson<BoxUpdateState>(r))
       .then((s) => live && setState(s))
       .catch(() => {});
+
     return () => {
       live = false;
     };
   }, [url]);
   useEffect(() => {
-    if (phase !== "busy") return;
     let live = true;
     const startedAt = Date.now();
+
     const tick = async () => {
       try {
         const s = await readJson<BoxUpdateState>(await fetch(url));
-        if (!live) return;
+
+        if (!live) {
+          return;
+        }
+
         if (s.busy) {
           if (Date.now() - startedAt > 200_000) {
             setNote(t("main.update.noAnswer200"));
             setPhase("failed");
           }
+
           return;
         }
-        const last = s.log[s.log.length - 1];
+
+        const last = s.log.at(-1);
         setState(s);
         setNote(last?.note ?? "");
         setPhase(!last ? "failed" : last.ok ? "done" : last.to !== null ? "declined" : "failed");
-        if (last?.ok) onDone();
+
+        if (last?.ok) {
+          onDone();
+        }
       } catch {
         // a missed poll is retried on the next tick
       }
     };
-    const id = setInterval(() => void tick(), 3000);
+
+    // Polled only while an update runs; tick never rejects.
+    const id = phase === "busy" ? setInterval(() => void tick(), 3000) : undefined;
+
     return () => {
       live = false;
       clearInterval(id);
     };
   }, [phase, url, onDone]);
-  if (!state || !state.latest || !state.installed || !isNewer(state.installed, state.latest))
+
+  if (!state || !state.latest || !state.installed || !isNewer(state.installed, state.latest)) {
     return null;
+  }
+
   const run = () => {
     setPhase("busy");
     void fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ run: true }),
-    }).catch((e: Error) => {
-      setNote(e.message);
+    }).catch((cause: unknown) => {
+      setNote(errorText(cause));
       setPhase("failed");
     });
   };
+
   const text =
     phase === "busy"
       ? t("main.update.updating")
@@ -2046,6 +2343,7 @@ function BoxUpdateButton({
           : phase === "failed"
             ? t("main.update.retry")
             : t("main.update.updateTo", { v: state.latest });
+
   return (
     <button
       type="button"

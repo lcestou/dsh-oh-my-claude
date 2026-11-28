@@ -5,6 +5,7 @@ import type { ESTree, SourceCode } from "@oxlint/plugins";
 /** The node a declaration's leading comments attach to: the export wrapping it when there is one. */
 function commentOwner(node: ESTree.Node): ESTree.Node {
   const parent = node.parent;
+
   return parent?.type === "ExportNamedDeclaration" || parent?.type === "ExportDefaultDeclaration"
     ? parent
     : node;
@@ -26,7 +27,10 @@ function hasDocComment(sourceCode: SourceCode, node: ESTree.Node): boolean {
 
 /** A top-level `const` whose value is a function, which is a function by another spelling. */
 function isFunctionConst(node: ESTree.VariableDeclaration): boolean {
-  if (!isTopLevel(node)) return false;
+  if (!isTopLevel(node)) {
+    return false;
+  }
+
   return node.declarations.some(
     (d) => d.init?.type === "ArrowFunctionExpression" || d.init?.type === "FunctionExpression",
   );
@@ -55,21 +59,32 @@ export const requireDocCommentRule = defineRule({
   },
   createOnce(context) {
     const check = (node: ESTree.Node) => {
-      if (!hasDocComment(context.sourceCode, node)) context.report({ node, messageId: "missing" });
+      if (!hasDocComment(context.sourceCode, node)) {
+        context.report({ node, messageId: "missing" });
+      }
     };
+
     return {
       FunctionDeclaration(node) {
-        if (node.id && isTopLevel(node)) check(node);
+        if (node.id && isTopLevel(node)) {
+          check(node);
+        }
       },
       ClassDeclaration(node) {
-        if (node.id) check(node);
+        if (node.id) {
+          check(node);
+        }
       },
       MethodDefinition(node) {
         // An optional method declared without a body is a type, not a function to document.
-        if (node.value.body !== null) check(node);
+        if (node.value.body !== null) {
+          check(node);
+        }
       },
       VariableDeclaration(node) {
-        if (isFunctionConst(node)) check(node);
+        if (isFunctionConst(node)) {
+          check(node);
+        }
       },
     };
   },

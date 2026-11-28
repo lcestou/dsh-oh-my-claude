@@ -9,7 +9,8 @@
 // Point PLAYWRIGHT_ROOT at any project with Playwright installed; arg 1 is the dsh launch token,
 // arg 2 a directory for the screenshots, arg 3 (or PW_WORKSPACE) the workspace holding a Claude
 // session.
-import { dshUrl, launch, type JsonDoc } from "./pw.js";
+import { dshUrl, launch } from "./pw.js";
+import type { JsonDoc } from "./pw.js";
 
 const [token, out = "/tmp/pw"] = process.argv.slice(2);
 const wsName = process.argv[4] ?? process.env.PW_WORKSPACE;
@@ -26,7 +27,7 @@ for (const box of [
   const p = await ctx.newPage();
   let posted = 0;
   let startedAt = 0;
-  const bodies: string[] = [];
+  const bodies: Array<string> = [];
   await p.route("**/dsh-oh-my-claude/side-questions?*", async (route) => {
     const r = await route.fetch();
     const real = await r.json();
@@ -50,44 +51,58 @@ for (const box of [
       busy: false,
       log: [],
     };
+
     if (route.request().method() === "POST") {
       posted++;
       bodies.push(route.request().postData() ?? "");
+
       return route.fulfill({ json: { ...state, busy: true } });
     }
+
     // The first GET after the click still sees the run; the next one sees it finished.
     const done = posted > 0 && Date.now() - startedAt > 2000;
+
+    const to = box.mode === "declined" ? "2.1.273" : "2.1.274";
+
     const entry: JsonDoc =
       box.mode === "declined"
         ? {
             at: Date.now(),
             from: "2.1.273",
-            to: "2.1.273",
+            to,
             by: "button",
             ok: false,
             note: "Claude is up to date!",
           }
-        : { at: Date.now(), from: "2.1.273", to: "2.1.274", by: "button", ok: true };
+        : { at: Date.now(), from: "2.1.273", to, by: "button", ok: true };
+
     await route.fulfill({
       json: done
-        ? { ...state, installed: String(entry.to), busy: false, log: [entry] }
+        ? { ...state, installed: to, busy: false, log: [entry] }
         : { ...state, busy: posted > 0 },
     });
   });
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
   await p.waitForTimeout(2500);
+
   // Open a session in the named workspace (or the first), so the composer dock mounts.
   const ws = (
     wsName
       ? p.locator('[role="treeitem"]').filter({ hasText: new RegExp(`^${wsName}$`) })
       : p.locator('[role="treeitem"]')
   ).first();
+
   if (await ws.count()) {
     await ws.click({ force: true });
     await p.waitForTimeout(1200);
   }
+
   const row = p.locator('[role="treeitem"]').nth(1);
-  if (await row.count()) await row.click({ force: true });
+
+  if (await row.count()) {
+    await row.click({ force: true });
+  }
+
   await p.waitForTimeout(4000);
   const card = p.locator('[data-omc-update-card="2.1.274"]');
   const shown = await card.count();
@@ -96,6 +111,7 @@ for (const box of [
   let doneText = "";
   let doneLabel = "";
   let gone = 0;
+
   if (shown && box.mode === "dismiss") {
     await p.locator('[aria-label="Dismiss until the next release"]').first().click();
     // Past one more poll: the rewrite keeps naming the release, and the card must stay down.
@@ -116,7 +132,9 @@ for (const box of [
       path: `${out}/claude-update-card-${box.label}-${box.mode}.png`,
     });
   }
+
   const idleOk = shown === 1 && /Claude Code 2\.1\.274 is out/.test(idle) && box.expect.test(idle);
+
   const ok =
     box.mode === "dismiss"
       ? idleOk && gone === 1 && bodies.includes('{"skip":"2.1.274"}')
@@ -130,12 +148,19 @@ for (const box of [
           /Updated/.test(doneLabel) &&
           new RegExp(`Updated ${box.label} to 2\\.1\\.274`).test(doneText) &&
           bodies.includes('{"run":true}');
+
   console.log(
     `${ok ? "PASS" : "FAIL"} mode=${box.mode} box=${box.label} card=${shown} idle=${JSON.stringify(idle.split("\n")[0])} busy=${JSON.stringify(busyLabel)} done=${JSON.stringify(doneLabel)} gone=${gone} posts=${JSON.stringify(bodies)} text=${JSON.stringify(doneText.split("\n")[0])}`,
   );
-  if (!ok) failed = true;
+
+  if (!ok) {
+    failed = true;
+  }
+
   await p.unrouteAll({ behavior: "ignoreErrors" });
   await ctx.close();
 }
+
 await b.close();
+
 process.exit(failed ? 1 : 0);

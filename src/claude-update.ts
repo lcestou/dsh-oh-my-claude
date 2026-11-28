@@ -5,9 +5,11 @@
 // `claude update` there when asked, or on its own when the box's switch is on. One record per box
 // under `claude-updates.json` in the plugin's state dir keeps the two choices and the history.
 
+import { isRec } from "./decode.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { isNewer, parse } from "./update.js";
+import { serialQueue } from "./state.js";
 
 /** The CLI's three release channels; `latest` is its default for an absent key. */
 export type Channel = "latest" | "stable" | "rc";
@@ -36,11 +38,8 @@ export interface ClaudeUpdates {
    *  beside `skipped`, so a fold made in one session or tab holds in every other on this box. */
   folded?: string;
   /** Newest last; at most 50 kept. */
-  log: ClaudeUpdateEntry[];
+  log: Array<ClaudeUpdateEntry>;
 }
-
-/** The file: one record per box, keyed "this-box" or the ssh host. */
-export type ClaudeUpdatesFile = Record<string, ClaudeUpdates>;
 
 /** What the routes answer: the box, the two versions, why checks are off, and the record. */
 export interface ClaudeUpdateState {
@@ -55,7 +54,7 @@ export interface ClaudeUpdateState {
   auto: boolean;
   skipped?: string;
   folded?: string;
-  log: ClaudeUpdateEntry[];
+  log: Array<ClaudeUpdateEntry>;
 }
 
 /** What the card above the composer needs: only when a release after `installed` is out. */
@@ -68,7 +67,11 @@ export interface ClaudeUpdateCard {
   folded: boolean;
 }
 
-export type Exec = (args: string[], timeoutMs: number) => Promise<{ out: string; error?: string }>;
+export type Exec = (
+  args: Array<string>,
+  timeoutMs: number,
+) => Promise<{ out: string; error?: string }>;
+
 type FetchFn = (url: string, init: { signal: AbortSignal }) => Promise<Response>;
 
 /** The pointer the CLI's own updater reads: a plain-text version per channel. */
@@ -91,20 +94,31 @@ export async function latestClaude(
   timeoutMs = 2500,
 ): Promise<string | undefined> {
   const hit = latestCache.get(channel);
-  if (hit && now - hit.at < hit.ttl) return hit.value;
+
+  if (hit && now - hit.at < hit.ttl) {
+    return hit.value;
+  }
+
   let value: string | undefined;
+
   try {
     const r = await fetchFn(`${CHANNEL_BASE}/${channel}`, {
       signal: AbortSignal.timeout(timeoutMs),
     });
+
     if (r.ok) {
       const v = (await r.text()).trim();
-      if (parse(v)) value = v;
+
+      if (parse(v)) {
+        value = v;
+      }
     }
   } catch {
     // offline, blocked, or slow: no card this time
   }
+
   latestCache.set(channel, { at: now, ttl: value ? TTL_OK : TTL_FAIL, value });
+
   return value;
 }
 
@@ -120,27 +134,40 @@ export function forgetLatestClaude(): void {
 export async function installedClaude(exec: Exec): Promise<string | null> {
   const r = await exec(["--version"], 8000);
   const m = /^\d+\.\d+\.\d+/.exec(r.out.trim());
+
   return m?.[0] ?? null;
 }
 
 /** A parsed JSON document when it is a plain object, else undefined. */
 const jsonObject = (text: string | undefined): Record<string, unknown> | undefined => {
-  if (text === undefined) return undefined;
+  if (text === undefined) {
+    return undefined;
+  }
+
   let value: unknown;
+
   try {
     value = JSON.parse(text);
   } catch {
     return undefined;
   }
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+
+  if (!isRec(value)) {
+    return undefined;
+  }
+
   // SAFETY: a non-null, non-array object parsed from JSON has only string keys.
-  return value as Record<string, unknown>;
+  return value;
 };
 
 /** The user's release channel from settings, or `"latest"` when there is no key or it is unrecognised. */
 export function channelFrom(settingsText: string | undefined): Channel {
   const c = jsonObject(settingsText)?.autoUpdatesChannel;
-  if (c === "latest" || c === "stable" || c === "rc") return c;
+
+  if (c === "latest" || c === "stable" || c === "rc") {
+    return c;
+  }
+
   return "latest";
 }
 
@@ -150,6 +177,7 @@ const ON_VALUES = new Set(["1", "true", "yes", "on"]);
 /** Check whether a single env string is an affirmative disable value. */
 const isOn = (v: string | undefined): boolean =>
   v !== undefined && ON_VALUES.has(v.trim().toLowerCase());
+
 /** A settings `env` value when it is a string; the file may hold anything. */
 const asString = (v: unknown) => (typeof v === "string" ? v : undefined);
 
@@ -161,14 +189,31 @@ export function offBy(
   env: NodeJS.ProcessEnv,
   settingsText: string | undefined,
 ): "DISABLE_AUTOUPDATER" | "DISABLE_UPDATES" | undefined {
-  if (isOn(env.DISABLE_UPDATES)) return "DISABLE_UPDATES";
-  if (isOn(env.DISABLE_AUTOUPDATER)) return "DISABLE_AUTOUPDATER";
+  if (isOn(env.DISABLE_UPDATES)) {
+    return "DISABLE_UPDATES";
+  }
+
+  if (isOn(env.DISABLE_AUTOUPDATER)) {
+    return "DISABLE_AUTOUPDATER";
+  }
+
   const rawEnv = jsonObject(settingsText)?.env;
-  if (typeof rawEnv !== "object" || rawEnv === null || Array.isArray(rawEnv)) return undefined;
+
+  if (!isRec(rawEnv)) {
+    return undefined;
+  }
+
   // SAFETY: a non-null, non-array object from JSON; each value is re-checked by `asString`.
-  const nested = rawEnv as Record<string, unknown>;
-  if (isOn(asString(nested.DISABLE_UPDATES))) return "DISABLE_UPDATES";
-  if (isOn(asString(nested.DISABLE_AUTOUPDATER))) return "DISABLE_AUTOUPDATER";
+  const nested = rawEnv;
+
+  if (isOn(asString(nested.DISABLE_UPDATES))) {
+    return "DISABLE_UPDATES";
+  }
+
+  if (isOn(asString(nested.DISABLE_AUTOUPDATER))) {
+    return "DISABLE_AUTOUPDATER";
+  }
+
   return undefined;
 }
 
@@ -178,31 +223,49 @@ export function offBy(
  */
 export function lastLine(out: string, error: string | undefined): string | undefined {
   const lines = [out, error ?? ""].flatMap((s) => s.split("\n"));
+
   for (let i = lines.length - 1; i >= 0; i--) {
     const t = (lines[i] ?? "").trim();
-    if (t.length > 0) return t.slice(0, 200);
+
+    if (t.length > 0) {
+      return t.slice(0, 200);
+    }
   }
+
   return undefined;
 }
 
-/** A log entry as it may appear in untrusted JSON. */
-type RawEntry = {
-  at?: unknown;
-  by?: unknown;
-  ok?: unknown;
-  from?: unknown;
-  to?: unknown;
-  note?: unknown;
-};
+/** True when `e`, a log entry as it may appear in untrusted JSON, has the shape of a
+ *  ClaudeUpdateEntry; used to filter bad history rows. */
+const isValidEntry = (e: unknown): e is ClaudeUpdateEntry => {
+  if (!isRec(e)) {
+    return false;
+  }
 
-/** True when `e` has the shape of a ClaudeUpdateEntry; used to filter bad history rows. */
-const isValidEntry = (e: RawEntry): e is ClaudeUpdateEntry => {
-  if (typeof e.at !== "number" || !Number.isFinite(e.at)) return false;
-  if (e.by !== "button" && e.by !== "auto") return false;
-  if (typeof e.ok !== "boolean") return false;
-  if (e.from !== null && typeof e.from !== "string") return false;
-  if (e.to !== null && typeof e.to !== "string") return false;
-  if (e.note !== undefined && typeof e.note !== "string") return false;
+  if (typeof e.at !== "number" || !Number.isFinite(e.at)) {
+    return false;
+  }
+
+  if (e.by !== "button" && e.by !== "auto") {
+    return false;
+  }
+
+  if (typeof e.ok !== "boolean") {
+    return false;
+  }
+
+  if (e.from !== null && typeof e.from !== "string") {
+    return false;
+  }
+
+  if (e.to !== null && typeof e.to !== "string") {
+    return false;
+  }
+
+  if (e.note !== undefined && typeof e.note !== "string") {
+    return false;
+  }
+
   return true;
 };
 
@@ -217,21 +280,40 @@ const readFileMap = async (dir: string): Promise<Record<string, unknown> | undef
  */
 export async function readUpdates(dir: string, key: string): Promise<ClaudeUpdates> {
   const rec = (await readFileMap(dir))?.[key];
-  if (typeof rec !== "object" || rec === null || Array.isArray(rec)) return { log: [] };
+
+  if (!isRec(rec)) {
+    return { log: [] };
+  }
+
   // SAFETY: a non-null, non-array object from JSON; every field is checked before use below.
-  const raw = rec as Record<string, unknown>;
-  if (!Array.isArray(raw.log)) return { log: [] };
+  const raw = rec;
+
+  if (!Array.isArray(raw.log)) {
+    return { log: [] };
+  }
+
   const result: ClaudeUpdates = {
-    // SAFETY: `isValidEntry` checked every field of `e`; the filter keeps only those that passed.
-    log: raw.log.filter((e): e is ClaudeUpdateEntry => isValidEntry(e as RawEntry)),
+    // `isValidEntry` checks every field; the filter keeps only the entries that pass.
+    log: raw.log.filter(isValidEntry),
   };
-  if (raw.auto === true) result.auto = true;
-  if (typeof raw.skipped === "string" && parse(raw.skipped)) result.skipped = raw.skipped;
-  if (typeof raw.folded === "string" && parse(raw.folded)) result.folded = raw.folded;
+
+  if (raw.auto === true) {
+    result.auto = true;
+  }
+
+  if (typeof raw.skipped === "string" && parse(raw.skipped)) {
+    result.skipped = raw.skipped;
+  }
+
+  if (typeof raw.folded === "string" && parse(raw.folded)) {
+    result.folded = raw.folded;
+  }
+
   return result;
 }
 
-let updatesChain = Promise.resolve();
+/** The file's writes, one at a time. */
+const updates = serialQueue();
 
 /**
  * Persist one box's record under `dir/claude-updates.json`, serialised against other writers by a
@@ -240,27 +322,39 @@ let updatesChain = Promise.resolve();
  * `recursive: true` when it does not exist yet.
  */
 export function writeUpdates(dir: string, key: string, data: ClaudeUpdates): Promise<void> {
-  // The caller sees a failed write; the chain does not, or one full disk would fail every write
-  // after it (the `holdsChain` idiom in state.ts).
-  const write = updatesChain.then(async () => {
-    const file: ClaudeUpdatesFile = {};
+  // The caller sees a failed write; the queue does not, or one full disk would fail every write
+  // after it (`serialQueue` in state.ts).
+  return updates(async () => {
+    // Other boxes' records ride along as they were read.
+    const file: Record<string, unknown> = {};
+
     // Other boxes' records are carried across unread; `readUpdates` checks a record when it is
     // asked for, so a malformed one costs its own box, not the file.
     for (const [k, v] of Object.entries((await readFileMap(dir)) ?? {})) {
-      if (typeof v !== "object" || v === null || Array.isArray(v)) continue;
-      // SAFETY: a non-null, non-array object from the plugin's own file; re-checked on read.
-      file[k] = v as ClaudeUpdates;
+      // A plain object from the plugin's own file; re-checked on read.
+      if (isRec(v)) {
+        file[k] = v;
+      }
     }
+
     const rec: ClaudeUpdates = { log: data.log.slice(-50) };
-    if (data.auto) rec.auto = true;
-    if (data.skipped !== undefined) rec.skipped = data.skipped;
-    if (data.folded !== undefined) rec.folded = data.folded;
+
+    if (data.auto) {
+      rec.auto = true;
+    }
+
+    if (data.skipped !== undefined) {
+      rec.skipped = data.skipped;
+    }
+
+    if (data.folded !== undefined) {
+      rec.folded = data.folded;
+    }
+
     file[key] = rec;
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "claude-updates.json"), JSON.stringify(file, null, 2) + "\n");
   });
-  updatesChain = write.catch(() => {});
-  return write;
 }
 
 /** True when `state` has a newer release available and neither disable knob is on. */
@@ -276,11 +370,20 @@ export function newer(state: ClaudeUpdateState | undefined): boolean {
 
 /** A card to show the user when a newer release is out and auto-update is off and not dismissed. */
 export function cardFor(state: ClaudeUpdateState | undefined): ClaudeUpdateCard | null {
-  if (state === undefined || !newer(state)) return null;
-  if (state.skipped === state.latest || state.auto) return null;
+  if (state === undefined || !newer(state)) {
+    return null;
+  }
+
+  if (state.skipped === state.latest || state.auto) {
+    return null;
+  }
+
   // `newer` proved `installed` and `latest`; TypeScript cannot see through the call, so read
   // them again with the same checks rather than assert.
-  if (state.installed === null || state.latest === undefined) return null;
+  if (state.installed === null || state.latest === undefined) {
+    return null;
+  }
+
   return {
     host: state.host,
     label: state.label,
@@ -351,9 +454,19 @@ export class ClaudeUpdater {
   /** The four fields the file keeps, out of the state. */
   private record(): ClaudeUpdates {
     const rec: ClaudeUpdates = { log: this.stateValue.log };
-    if (this.stateValue.auto) rec.auto = true;
-    if (this.stateValue.skipped !== undefined) rec.skipped = this.stateValue.skipped;
-    if (this.stateValue.folded !== undefined) rec.folded = this.stateValue.folded;
+
+    if (this.stateValue.auto) {
+      rec.auto = true;
+    }
+
+    if (this.stateValue.skipped !== undefined) {
+      rec.skipped = this.stateValue.skipped;
+    }
+
+    if (this.stateValue.folded !== undefined) {
+      rec.folded = this.stateValue.folded;
+    }
+
     return rec;
   }
 
@@ -370,9 +483,11 @@ export class ClaudeUpdater {
   /** Refresh installed, channel, off and latest. Never installs. */
   async check(): Promise<ClaudeUpdateState> {
     await this.loadPromise;
+
     const settings = this.opts.settingsPath
       ? await this.opts.readSettings?.(this.opts.settingsPath)
       : undefined;
+
     const off = offBy(this.opts.env, settings);
     const channel = channelFrom(settings);
     const installed = await installedClaude(this.opts.exec);
@@ -385,18 +500,23 @@ export class ClaudeUpdater {
       off,
       checkedAt: this.tick(),
     };
+
     return this.state();
   }
 
   /** Run `claude update` on the box; a second caller while one runs gets the same promise. */
   runUpdate(by: "button" | "auto"): Promise<ClaudeUpdateEntry> {
-    if (this.running) return this.running;
+    if (this.running) {
+      return this.running;
+    }
+
     // `busy` flips before the first await: the POST route answers `state()` right after calling
     // this, and the card's first GET must not read the previous entry as this run's outcome.
     this.stateValue = { ...this.stateValue, busy: true };
     this.running = this.runOnce(by).finally(() => {
       this.running = undefined;
     });
+
     return this.running;
   }
 
@@ -405,6 +525,7 @@ export class ClaudeUpdater {
    *  again. */
   private async runOnce(by: "button" | "auto"): Promise<ClaudeUpdateEntry> {
     await this.loadPromise;
+
     try {
       const from = this.stateValue.installed;
       const r = await this.opts.exec(["update"], 180_000);
@@ -413,15 +534,26 @@ export class ClaudeUpdater {
       const ok = to !== null && from !== null && isNewer(from, to);
       const note = lastLine(r.out, r.error);
       const entry: ClaudeUpdateEntry = { at: this.tick(), from, to, by, ok };
-      if (note !== undefined) entry.note = note;
+
+      if (note !== undefined) {
+        entry.note = note;
+      }
+
       const next = { ...this.stateValue, log: [...this.stateValue.log, entry], installed: to };
+
       // The CLI declined, was capped, or is on a slower channel than the pointer: do not offer
       // this release again; the entry's note says why in the CLI's words.
-      if (!ok && next.latest !== undefined && (to === null || isNewer(to, next.latest)))
+      if (!ok && next.latest !== undefined && (to === null || isNewer(to, next.latest))) {
         next.skipped = next.latest;
+      }
+
       this.stateValue = next;
       await writeUpdates(this.opts.dir, this.key, this.record());
-      if (ok) this.opts.onUpdated?.(this.opts.host);
+
+      if (ok) {
+        this.opts.onUpdated?.(this.opts.host);
+      }
+
       return entry;
     } finally {
       this.stateValue = { ...this.stateValue, busy: false };
@@ -433,15 +565,21 @@ export class ClaudeUpdater {
     await this.loadPromise;
     this.stateValue = { ...this.stateValue, auto: on };
     await writeUpdates(this.opts.dir, this.key, this.record());
+
     return this.state();
   }
 
   /** Dismiss the card for `version`; refuse when it is not a parseable version. */
   async skip(version: string): Promise<ClaudeUpdateState> {
     await this.loadPromise;
-    if (parse(version) === undefined) return this.state();
+
+    if (parse(version) === undefined) {
+      return this.state();
+    }
+
     this.stateValue = { ...this.stateValue, skipped: version };
     await writeUpdates(this.opts.dir, this.key, this.record());
+
     return this.state();
   }
 
@@ -449,9 +587,14 @@ export class ClaudeUpdater {
    *  does not parse changes nothing. */
   async fold(version: string | null): Promise<ClaudeUpdateState> {
     await this.loadPromise;
-    if (version !== null && parse(version) === undefined) return this.state();
+
+    if (version !== null && parse(version) === undefined) {
+      return this.state();
+    }
+
     this.stateValue = { ...this.stateValue, folded: version ?? undefined };
     await writeUpdates(this.opts.dir, this.key, this.record());
+
     return this.state();
   }
 }

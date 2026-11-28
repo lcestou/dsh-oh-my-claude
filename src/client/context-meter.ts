@@ -1,6 +1,7 @@
 // Readers and renderers for the plan usage and context breakdowns. The entry keeps one
 // import line for what it still uses; the helpers it calls through stay at their owners.
-import { t, onLocaleSwitch, type OmcKey, activeLocale } from "./i18n.js";
+import { t, onLocaleSwitch, activeLocale } from "./i18n.js";
+import type { OmcKey } from "./i18n.js";
 import {
   ROUTE,
   readJson,
@@ -13,15 +14,20 @@ import {
   isRingRoot,
   RING_ARC,
   maskEmail,
-  type ClientCtx,
+  errorText,
 } from "./shared.js";
-import { type LimitLevel, limitFor, loginEndSoon } from "./limits.js";
+import type { ClientCtx } from "./shared.js";
+import { limitFor, loginEndSoon } from "./limits.js";
+import type { LimitLevel } from "./limits.js";
 import { paceOf, WINDOW_MS } from "./pace.js";
-import { seriesOf, type UsageHistory } from "../usage-history.js";
+import { seriesOf } from "../usage-history.js";
+import type { UsageHistory } from "../usage-history.js";
 import { absentSeries, historyStrip, seriesLabel } from "./history-strip.js";
 import { sparkNode } from "./spark.js";
 import { HINTS_EVENT, loadHints } from "./hints.js";
 import { onBodyMutation, changedElements } from "./dom.js";
+import { isElement, isHTMLElement } from "./dom-guards.js";
+
 /** The model a session has picked in dsh's selector, or undefined when dsh has not bound the
  *  session yet (its model directory throws until then). */
 export const sessionModelOf = (ctx: ClientCtx, sessionId: string): string | undefined => {
@@ -40,6 +46,7 @@ export interface UsageWindow {
   model?: string;
   kind?: "session" | "weekly";
 }
+
 export interface UsageCredits {
   enabled: boolean;
   capped: boolean;
@@ -48,11 +55,12 @@ export interface UsageCredits {
   canPurchase: boolean;
   note?: string;
 }
+
 export type UsageReply =
   | {
       ok: true;
       fetchedAt: number;
-      windows: UsageWindow[];
+      windows: Array<UsageWindow>;
       credits?: UsageCredits;
       host?: string;
       email?: string | null;
@@ -66,11 +74,16 @@ export type UsageReply =
       history?: UsageHistory;
     }
   | { ok: false; error: string; windows?: undefined; host?: string; email?: string | null };
+
 /** "m*****@example.com on <host>" or whichever half is known; the usage is this box's login. */
 export const whose = (r: UsageReply): string => {
   const email = r.email ? maskEmail(r.email) : "";
   const host = r.host ?? "";
-  if (email && host) return t("main.usage.whoOn", { email, host });
+
+  if (email && host) {
+    return t("main.usage.whoOn", { email, host });
+  }
+
   return email || host;
 };
 
@@ -79,11 +92,16 @@ export const whose = (r: UsageReply): string => {
  *  turn. A line of its own under the account: beside it, the one-line caption cut the date off. */
 export const loginEndNote = (r: UsageReply): string => {
   const ends = r.ok ? loginEndSoon(r.loginEndsAt) : undefined;
-  if (ends === undefined) return "";
+
+  if (ends === undefined) {
+    return "";
+  }
+
   const date = new Date(ends).toLocaleDateString(activeLocale(), {
     month: "short",
     day: "numeric",
   });
+
   return t(ends <= Date.now() ? "main.usage.loginEnded" : "main.usage.loginEnds", { date });
 };
 
@@ -91,23 +109,41 @@ export const loginEndNote = (r: UsageReply): string => {
  *  pace caps two days out, and a bare "8:40 PM" read as tonight (seen 2026-10-22). */
 const capClock = (at: number): string => {
   const format: Intl.DateTimeFormatOptions = { hour: "numeric", minute: "2-digit" };
-  if (at - Date.now() >= 86_400_000) format.weekday = "short";
+
+  if (at - Date.now() >= 86_400_000) {
+    format.weekday = "short";
+  }
+
   return new Date(at).toLocaleString(activeLocale(), format);
 };
+
 /** "in 2 h 10 min" inside a day, else weekday and time. The minutes are rounded before they are
  *  split into hours, so 2 h 59 min 40 s reads "3 h 0 min", never "2 h 60 min". */
 export const resetText = (at: number | null): string => {
-  if (at === null) return "";
+  if (at === null) {
+    return "";
+  }
+
   const ms = at - Date.now();
-  if (ms <= 0) return t("main.usage.resetsNow");
+
+  if (ms <= 0) {
+    return t("main.usage.resetsNow");
+  }
+
   if (ms < 86_400_000) {
     const minutes = Math.round(ms / 60_000);
+
     // Under half a minute left rounds to 0: say "now" rather than "in 0 min".
-    if (minutes === 0) return t("main.usage.resetsNow");
+    if (minutes === 0) {
+      return t("main.usage.resetsNow");
+    }
+
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
+
     return h ? t("main.usage.resetsInH", { h, m }) : t("main.usage.resetsInM", { m });
   }
+
   return t("main.usage.resetsAt", {
     when: new Date(at).toLocaleString(activeLocale(), {
       weekday: "short",
@@ -120,6 +156,7 @@ export const resetText = (at: number | null): string => {
 // Per provider: two plugin instances are two accounts, so two answers.
 export const usageCache = new Map<string, { at: number; reply: UsageReply }>();
 const usageInFlight = new Map<string, Promise<UsageReply>>();
+
 /** Fetches a provider's usage, remembered in this tab for a minute, and shared between callers that
  *  ask while a fetch is out. Never forced: the route answers from its own cache (which survives a
  *  restart and backs off a rate limit), and the endpoint behind it is the account's, shared with
@@ -127,21 +164,29 @@ const usageInFlight = new Map<string, Promise<UsageReply>>();
 export const loadUsage = (provider?: string): Promise<UsageReply> => {
   const key = provider ?? "";
   const hit = usageCache.get(key);
-  if (hit && Date.now() - hit.at < 60_000) return Promise.resolve(hit.reply);
+
+  if (hit && Date.now() - hit.at < 60_000) {
+    return Promise.resolve(hit.reply);
+  }
+
   let pending = usageInFlight.get(key);
+
   if (!pending) {
     const url = provider
       ? `${ROUTE}/usage?provider=${encodeURIComponent(provider)}`
       : `${ROUTE}/usage`;
+
     pending = fetch(url)
       .then((r) => readJson<UsageReply>(r))
       .then((reply) => {
         usageCache.set(key, { at: Date.now(), reply });
+
         return reply;
       })
       .finally(() => usageInFlight.delete(key));
     usageInFlight.set(key, pending);
   }
+
   return pending;
 };
 
@@ -149,9 +194,13 @@ export const loadUsage = (provider?: string): Promise<UsageReply> => {
  *  reply. Figures from before today carry their date too: the memo survives restarts, so they can
  *  be days old. */
 export const staleNote = (r: UsageReply): string => {
-  if (!r.ok || !r.stale) return "";
+  if (!r.ok || !r.stale) {
+    return "";
+  }
+
   const at = new Date(r.fetchedAt);
   const sameDay = at.toDateString() === new Date().toDateString();
+
   return t("main.usage.stale", {
     time: sameDay
       ? at.toLocaleTimeString(activeLocale(), { hour: "numeric", minute: "2-digit" })
@@ -181,26 +230,37 @@ export type ContextReply =
       followsNext?: true;
     }
   | { ok: false; error: string };
+
 // The breakdown is re-read whenever dsh re-renders the meter's dialog, which is on every repaint of
 // the percentage while a turn runs. The promise is cached, not its answer, so the frames that arrive
 // before the first one lands share it instead of each opening a request of their own.
 export const contextCache = new Map<string, { at: number; reply: Promise<ContextReply> }>();
+
 /** Fetches a session's context breakdown, cached 10 s, returning an error when the fetch fails. */
 export const loadContext = (sessionId: string): Promise<ContextReply> => {
   const hit = contextCache.get(sessionId);
-  if (hit && Date.now() - hit.at < 10_000) return hit.reply;
+
+  if (hit && Date.now() - hit.at < 10_000) {
+    return hit.reply;
+  }
+
   const reply = (async (): Promise<ContextReply> => {
     try {
-      const r = await fetch(`${ROUTE}/context?session=${encodeURIComponent(sessionId)}`);
-      // SAFETY: the body is our own JSON route; both shapes carry `ok`
-      return (await r.json()) as ContextReply;
-    } catch (e) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      // The route answers 200 with `ok: false` when there is no live process; a refusal it sends
+      // with an error status arrives here as the thrown error text.
+      return await readJson<ContextReply>(
+        await fetch(`${ROUTE}/context?session=${encodeURIComponent(sessionId)}`),
+      );
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   })();
+
   contextCache.set(sessionId, { at: Date.now(), reply });
+
   return reply;
 };
+
 /** Formats a token count the way the CLI does: `1.2M`, `12.3k` or plain. */
 export const kTokens = (n: number) =>
   n >= 1_000_000
@@ -208,6 +268,7 @@ export const kTokens = (n: number) =>
     : n >= 1000
       ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`
       : String(n);
+
 /**
  * Rows worth a line: the ones whose tokens are the conversation. The CLI's `kind` is the authority.
  * It says so in the field's own description, "classify on this, never on the English name". And
@@ -219,6 +280,7 @@ export const isUsedRow = (c: { name: string; deferred: boolean; kind?: string })
   c.kind !== undefined
     ? c.kind === "used"
     : !c.deferred && c.name !== "Free space" && !/buffer$/i.test(c.name);
+
 /**
  * A colour per breakdown row, by position. dsh's own meter paints three bands and names them in a
  * legend; this keeps that shape over the CLI's categories, which are more numerous and vary with
@@ -249,24 +311,30 @@ const CATEGORY_KEYS = new Map<string, OmcKey>([
   ["Skills", "main.usage.catSkills"],
   ["Messages", "main.usage.catMessages"],
 ]);
+
 /** A context category's name in the reader's language, or the CLI's own name when it is new. */
 const categoryName = (cliName: string): string => {
   const key = CATEGORY_KEYS.get(cliName);
+
   return key ? t(key) : cliName;
 };
 
 /** The meter's own readout, over the CLI's categories: a filled bar and one legend row each. */
 function renderContext(el: HTMLElement, reply: ContextReply) {
   el.replaceChildren();
+
   if (!reply.ok) {
     el.textContent = t("main.usage.contextBreakdownErr", { error: reply.error });
+
     return;
   }
+
   const rows = reply.categories.filter((c) => c.tokens > 0 && isUsedRow(c));
   const head = document.createElement("div");
   head.style.cssText = `display:flex;justify-content:space-between;gap:12px;color:${T.text}`;
   const headLabel = document.createElement("span");
   headLabel.textContent = t("main.usage.contextUsed", { pct: Math.round(reply.percentage) });
+
   // The model whose window that percentage is against, so a session that switched models says so
   // rather than leaving the reader to assume the one they picked first.
   if (reply.model) {
@@ -275,6 +343,7 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
     on.textContent = ` · ${reply.model}`;
     headLabel.append(on);
   }
+
   const headValue = document.createElement("span");
   headValue.style.cssText = `font-variant-numeric:tabular-nums;color:${T.faint};white-space:nowrap`;
   headValue.textContent = `${kTokens(reply.totalTokens)} / ${kTokens(reply.maxTokens)}`;
@@ -282,6 +351,7 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
   // The CLI's window is a guess here, and it says so: name the switch rather than show a second
   // figure the CLI does not act on.
   const note = reply.assumedBehind ? document.createElement("div") : null;
+
   if (note) {
     note.setAttribute("data-omc-context-assumed", "");
     note.setAttribute("role", "note");
@@ -293,6 +363,7 @@ function renderContext(el: HTMLElement, reply: ContextReply) {
           host: reply.assumedBehind ?? "",
         });
   }
+
   // The bar spans the whole window, so the empty tail is the room left. Segments are sized against
   // `maxTokens` rather than against each other, which is what makes the filled part read as the
   // percentage above it.
@@ -341,6 +412,7 @@ const extLink = (text: string, href: string): HTMLAnchorElement => {
   a.target = "_blank";
   a.rel = "noreferrer noopener";
   a.style.color = T.brand;
+
   return a;
 };
 
@@ -349,10 +421,13 @@ const extLink = (text: string, href: string): HTMLAnchorElement => {
 const appendNote = (el: HTMLElement, note: string) => {
   const m = /\[([^\]]+)\]\(([^)]+)\)/.exec(note);
   const [whole, text, href] = m ?? [];
+
   if (!m || !whole || !text || !href) {
     el.append(note);
+
     return;
   }
+
   el.append(note.slice(0, m.index));
   el.append(href.startsWith("https://") ? extLink(text, href) : text);
   el.append(note.slice(m.index + whole.length));
@@ -384,17 +459,27 @@ function creditsRow(c: UsageCredits): HTMLElement {
   value.textContent = `${capped ? t("main.usage.limitReached") : c.enabled ? t("main.usage.on") : t("main.usage.off")}${amount}`;
   value.style.cssText = `font-variant-numeric:tabular-nums;font-weight:600;color:${capped ? T.err : T.text}`;
   creditsLine.append(label, value);
+
   // No caption at all when the API neither explains credits nor lets this account buy them.
   if (c.note || c.canPurchase) {
     const caption = document.createElement("span");
     caption.style.cssText = `grid-column:1 / -1;color:${T.faint};font-size:11px;line-height:16px`;
-    if (c.note) appendNote(caption, creditsNote(c.note));
+
+    if (c.note) {
+      appendNote(caption, creditsNote(c.note));
+    }
+
     if (c.canPurchase) {
-      if (c.note) caption.append(" ");
+      if (c.note) {
+        caption.append(" ");
+      }
+
       caption.append(extLink(t("main.usage.buyCredits"), "https://claude.ai/settings/usage"));
     }
+
     creditsLine.append(caption);
   }
+
   return creditsLine;
 }
 
@@ -413,15 +498,19 @@ export const windowLabel = (w: UsageWindow): string =>
  *  text when the reply is not ok. */
 function renderUsage(block: HTMLElement, reply: UsageReply) {
   block.replaceChildren();
+
   if (!reply.ok) {
     const p = document.createElement("div");
     p.textContent = t("main.usage.usageErr", { error: reply.error });
     p.style.color = T.faint;
     block.append(p);
+
     return;
   }
+
   // Series a live row drew its strip under, so a strip whose window is absent now still shows below.
   const drawn = new Set<string>();
+
   for (const w of reply.windows) {
     // Label and reset on the left, percent on the right, a thin bar under both: the same shape
     // dsh draws for the context meter below, so the two sections read as one panel.
@@ -459,6 +548,7 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     // A model-scoped window ("Fable weekly") is a weekly window too.
     const kind = w.kind ?? (w.model ? "weekly" : undefined);
     const pace = kind ? paceOf(pct, w.resetsAt, WINDOW_MS[kind]) : undefined;
+
     if (pace) {
       const paceLine = document.createElement("span");
       paceLine.setAttribute("data-omc-usage-pace", pace.kind);
@@ -469,16 +559,26 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
       paceLine.style.cssText = `grid-column:1 / -1;color:${pace.kind === "cap" ? T.warn : T.faint};font-size:11px;line-height:16px`;
       usageRow.append(paceLine);
     }
+
     drawn.add(seriesOf(w));
     const strip = historyStrip(windowLabel(w), reply.history?.[seriesOf(w)] ?? []);
-    if (strip) usageRow.append(strip);
+
+    if (strip) {
+      usageRow.append(strip);
+    }
+
     block.append(usageRow);
   }
+
   // A series with ended windows and no live row (the 5-hour window while idle, a model row the API
   // dropped): its name alone, then its strip, after the live rows.
   for (const series of absentSeries(reply.history ?? {}, drawn)) {
     const strip = historyStrip(seriesLabel(series), reply.history?.[series] ?? []);
-    if (!strip) continue;
+
+    if (!strip) {
+      continue;
+    }
+
     const row = document.createElement("div");
     row.setAttribute("data-omc-usage-history-row", series);
     row.style.cssText = "display:grid;padding:3px 0";
@@ -488,9 +588,11 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     row.append(name, strip);
     block.append(row);
   }
+
   // Recording has begun and no window has ended since: one line, so the space under the bars reads
   // as "nothing yet" rather than as broken. A server older than the history sends none.
   const series = Object.values(reply.history ?? {});
+
   if (series.length > 0 && series.every((list) => list.length === 0)) {
     const p = document.createElement("div");
     p.setAttribute("data-omc-usage-history-empty", "");
@@ -498,15 +600,21 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
     p.style.cssText = `color:${T.quiet};font-size:11px;line-height:16px;padding-top:3px`;
     block.append(p);
   }
+
   if (reply.windows.length === 0) {
     const p = document.createElement("div");
     p.textContent = t("main.usage.noLimits");
     p.style.color = T.faint;
     block.append(p);
   }
+
   // Last, whether or not any window was reported: a user with no limits still plans around credits.
-  if (reply.credits) block.append(creditsRow(reply.credits));
+  if (reply.credits) {
+    block.append(creditsRow(reply.credits));
+  }
+
   const stale = staleNote(reply);
+
   if (stale) {
     const p = document.createElement("div");
     p.textContent = stale;
@@ -541,11 +649,16 @@ function renderUsage(block: HTMLElement, reply: UsageReply) {
  */
 function hideNativeContext(host: HTMLElement, ours: HTMLElement) {
   for (const node of Array.from(host.childNodes)) {
-    if (node === ours) continue;
-    if (node instanceof HTMLElement) {
+    if (node === ours) {
+      continue;
+    }
+
+    if (isHTMLElement(node)) {
       node.hidden = true;
       node.style.setProperty("display", "none", "important");
-    } else node.remove();
+    } else {
+      node.remove();
+    }
   }
 }
 
@@ -560,14 +673,25 @@ export function watchContextMeter(ctx: ClientCtx) {
   // percentage, so a readout hidden a moment ago can be back beside a block that never left.
   const HID = "data-dsh-oh-my-claude-replaced";
   const ours = (host: HTMLElement) => host.querySelector<HTMLElement>(`:scope > [${MARK}]`);
+
   const rehide = (host: HTMLElement, block: HTMLElement) => {
-    if (block.hasAttribute(HID)) hideNativeContext(host, block);
+    if (block.hasAttribute(HID)) {
+      hideNativeContext(host, block);
+    }
   };
+
   const attach = (panel: HTMLElement) => {
     const already = ours(panel);
-    if (already) return rehide(panel, already);
+
+    if (already) {
+      return rehide(panel, already);
+    }
+
     // Only sessions on a Claude mount: a local-model session's meter stays dsh's own.
-    if (!activeClaudeSession(ctx)) return;
+    if (!activeClaudeSession(ctx)) {
+      return;
+    }
+
     const block = document.createElement("div");
     block.setAttribute(MARK, "1");
     block.style.cssText = `border-bottom:1px solid ${T.border};margin-bottom:10px;padding-bottom:8px;font-size:13px;line-height:20px`;
@@ -599,16 +723,23 @@ export function watchContextMeter(ctx: ClientCtx) {
     panel.prepend(block);
     const sid = activeClaudeSession(ctx);
     const provider = activeClaudeProvider(ctx);
-    if (sid)
-      loadContext(sid).then((reply) => {
+
+    if (sid) {
+      void (async () => {
+        const reply = await loadContext(sid);
+
         renderContext(breakdown, reply);
+
         // dsh's own readout of the same window sits below this block and measures a different
         // thing: its count of the session surface it holds, which has never seen the system prompt,
         // the tool schemas or the files the CLI read, and keeps counting turns the CLI compacted
         // away. Two bars disagreeing by tens of thousands of tokens is worse than one, so the
         // CLI's own answer replaces it, and only when there is an answer, so a session with no
         // live process still gets dsh's estimate rather than nothing.
-        if (!reply.ok) return;
+        if (!reply.ok) {
+          return;
+        }
+
         block.setAttribute(HID, "1");
         hideNativeContext(panel, block);
         // The rule under this block divided it from dsh's readout. With that readout gone it is the
@@ -616,30 +747,52 @@ export function watchContextMeter(ctx: ClientCtx) {
         block.style.borderBottom = "none";
         block.style.paddingBottom = "0";
         block.style.marginBottom = "0";
-      });
+      })();
+    }
+
     // Read once per open: the popover is rebuilt each time it opens, and while it is on screen
     // nothing else changes these figures or the history (a new reading lands on the next open).
-    loadUsage(provider).then(
-      (reply) => {
-        const who = whose(reply);
-        if (who) {
-          caption.textContent = who;
-          caption.title = who;
-        } else caption.remove();
-        loginEnds.textContent = loginEndNote(reply);
-        loginEnds.hidden = loginEnds.textContent === "";
-        renderUsage(rows, reply);
-      },
-      (e: Error) => renderUsage(rows, { ok: false, error: e.message }),
-    );
+    // Never rejects: a failed read is the rows' error line.
+    void (async () => {
+      let reply: Awaited<ReturnType<typeof loadUsage>>;
+
+      try {
+        reply = await loadUsage(provider);
+      } catch (error) {
+        renderUsage(rows, { ok: false, error: errorText(error) });
+
+        return;
+      }
+
+      const who = whose(reply);
+
+      if (who) {
+        caption.textContent = who;
+        caption.title = who;
+      } else {
+        caption.remove();
+      }
+
+      loginEnds.textContent = loginEndNote(reply);
+      loginEnds.hidden = loginEnds.textContent === "";
+      renderUsage(rows, reply);
+    })();
   };
+
   // The hover tooltip can sit between the button and the dialog at insertion time, so the
   // dialog is matched through its parent rather than as the button's next sibling.
   // The hover bubble (`role=tooltip`, see `isRingTip`) gets one compact line on top.
   const bubble = (tip: HTMLElement) => {
     const already = ours(tip);
-    if (already) return rehide(tip, already);
-    if (!activeClaudeSession(ctx)) return;
+
+    if (already) {
+      return rehide(tip, already);
+    }
+
+    if (!activeClaudeSession(ctx)) {
+      return;
+    }
+
     const block = document.createElement("div");
     block.setAttribute(MARK, "1");
     // Bounded, and allowed to wrap. The line this fills reads "Claude 5-hour 13% · weekly 68% ·
@@ -663,33 +816,50 @@ export function watchContextMeter(ctx: ClientCtx) {
     ctxLine.style.cssText = `color:${T.faint};margin-left:18px`;
     block.append(line, ctxLine);
     tip.prepend(block);
-    loadUsage(activeClaudeProvider(ctx)).then(
-      (reply) => {
-        const who = reply.host ? ` (${reply.host})` : "";
-        if (!reply.ok) {
-          text.textContent = t("main.usage.usageErr", { error: reply.error });
-          return;
-        }
-        const windows = reply.windows
-          .map((w) => `${windowLabel(w).toLowerCase()} ${Math.round(w.usedPercent)}%`)
-          .join(" · ");
-        const summary = windows
-          ? t("main.usage.bubbleWindows", { windows, who })
-          : t("main.usage.bubbleNoLimits", { who });
-        const stale = staleNote(reply);
-        text.textContent = stale ? `${summary} · ${stale}` : summary;
-      },
-      (e: Error) => {
-        text.textContent = t("main.usage.usageErr", { error: e.message });
-      },
-    );
+    // Never rejects: a failed read is the bubble's error line.
+    void (async () => {
+      let reply: Awaited<ReturnType<typeof loadUsage>>;
+
+      try {
+        reply = await loadUsage(activeClaudeProvider(ctx));
+      } catch (error) {
+        text.textContent = t("main.usage.usageErr", { error: errorText(error) });
+
+        return;
+      }
+
+      const who = reply.host ? ` (${reply.host})` : "";
+
+      if (!reply.ok) {
+        text.textContent = t("main.usage.usageErr", { error: reply.error });
+
+        return;
+      }
+
+      const windows = reply.windows
+        .map((w) => `${windowLabel(w).toLowerCase()} ${Math.round(w.usedPercent)}%`)
+        .join(" · ");
+
+      const summary = windows
+        ? t("main.usage.bubbleWindows", { windows, who })
+        : t("main.usage.bubbleNoLimits", { who });
+
+      const stale = staleNote(reply);
+      text.textContent = stale ? `${summary} · ${stale}` : summary;
+    })();
+
     const sid = activeClaudeSession(ctx);
-    if (sid)
-      loadContext(sid).then((reply) => {
+
+    if (sid) {
+      void (async () => {
+        const reply = await loadContext(sid);
+
         if (!reply.ok) {
           ctxLine.remove();
+
           return;
         }
+
         ctxLine.textContent = t("main.usage.contextUsedTokens", {
           pct: Math.round(reply.percentage),
           used: kTokens(reply.totalTokens),
@@ -697,8 +867,10 @@ export function watchContextMeter(ctx: ClientCtx) {
         });
         block.setAttribute(HID, "1");
         hideNativeContext(tip, block);
-      });
+      })();
+    }
   };
+
   // The ring's filled arc, its geometry, the occupancy last read for it, and when that was asked for.
   const ARC = `:scope > ${RING_ARC}`;
   let arc: SVGCircleElement | undefined;
@@ -710,13 +882,16 @@ export function watchContextMeter(ctx: ClientCtx) {
   let ringLevel: LimitLevel | undefined;
   let ringLimitAsked = 0;
   let ringModel: string | undefined;
+
   // Flipping a warning switch rereads at the next paint rather than a minute later. Removed with
   // the module: a hot reload of the client used to leave one more listener behind each time.
   const onHints = () => {
     ringLimitAsked = 0;
   };
+
   window.addEventListener(HINTS_EVENT, onHints);
   whenContextGone(() => window.removeEventListener(HINTS_EVENT, onHints));
+
   /**
    * Fill the ring from the CLI's own occupancy.
    *
@@ -737,9 +912,16 @@ export function watchContextMeter(ctx: ClientCtx) {
    * went away is an element that is no longer connected.
    */
   const paintRing = () => {
-    if (arc?.isConnected !== true) return;
+    if (arc?.isConnected !== true) {
+      return;
+    }
+
     const sid = activeClaudeSession(ctx);
-    if (sid === undefined) return;
+
+    if (sid === undefined) {
+      return;
+    }
+
     if (sid !== ringSession) {
       ringSession = sid;
       ringPercent = undefined;
@@ -747,54 +929,86 @@ export function watchContextMeter(ctx: ClientCtx) {
       ringLevel = undefined;
       ringLimitAsked = 0;
     }
+
     // A reached or near plan limit tints the arc, on a slower clock than the fill: usage is cached
     // for a minute by the route. A model switch rereads at once from that cache, since it changes
     // which limits count; picking a model redraws dsh's picker, so a paint follows it.
     const model = sessionModelOf(ctx, sid);
+
     if (model !== ringModel) {
       ringModel = model;
       ringLimitAsked = 0;
     }
+
     if (Date.now() - ringLimitAsked > 60_000) {
       ringLimitAsked = Date.now();
-      void Promise.all([loadHints(), loadUsage(activeClaudeProvider(ctx))]).then(
-        ([hints, usage]) => {
-          const off = hints.limitWarningsOff === true || hints.limitRingOff === true;
-          ringLevel = off ? undefined : limitFor(usage, sessionModelOf(ctx, sid))?.level;
-          paintRing();
-        },
-      );
+      void (async () => {
+        const [hints, usage] = await Promise.all([
+          loadHints(),
+          loadUsage(activeClaudeProvider(ctx)),
+        ]);
+
+        const off = hints.limitWarningsOff === true || hints.limitRingOff === true;
+        ringLevel = off ? undefined : limitFor(usage, sessionModelOf(ctx, sid))?.level;
+        paintRing();
+      })();
     }
+
     const stroke = ringLevel === "critical" ? T.err : ringLevel === "warning" ? T.warn : "";
-    if (arc.style.stroke !== stroke) arc.style.stroke = stroke;
+
+    if (arc.style.stroke !== stroke) {
+      arc.style.stroke = stroke;
+    }
+
     // dsh repaints the arc by rewriting an attribute, which the body observer does not watch, and a
     // ring already pinned at 100% stops changing altogether, so neither dsh's repaints nor ours can
     // be the thing that keeps this current. It is re-asked on a clock instead, off the same
     // ten-second cache the popover reads.
-    if (Date.now() - ringAsked > 5_000) {
+    if (Date.now() - ringAsked > 5000) {
       ringAsked = Date.now();
-      void loadContext(sid).then((reply) => {
-        if (!reply.ok) return;
+      void (async () => {
+        const reply = await loadContext(sid);
+
+        if (!reply.ok) {
+          return;
+        }
+
         ringPercent = Math.min(100, Math.max(0, reply.percentage));
         paintRing();
-      });
+      })();
     }
-    if (ringPercent === undefined) return;
+
+    if (ringPercent === undefined) {
+      return;
+    }
+
     const dash = `${(arcLength * ringPercent) / 100} ${arcLength}`;
-    if (arc.getAttribute("stroke-dasharray") !== dash) arc.setAttribute("stroke-dasharray", dash);
+
+    if (arc.getAttribute("stroke-dasharray") !== dash) {
+      arc.setAttribute("stroke-dasharray", dash);
+    }
+
     // The button's label is the same reading spoken aloud, so it moves with the arc.
     const label = t("main.ring.used", { pct: Math.round(ringPercent) });
     const button = arc.closest("button");
-    if (button?.getAttribute("aria-label") !== label) button?.setAttribute("aria-label", label);
+
+    if (button?.getAttribute("aria-label") !== label) {
+      button?.setAttribute("aria-label", label);
+    }
+
     // dsh also writes its own number as text inside the button, from the same pressure figure
     // that pins the arc at 100%. On a phone that text sits beside the ring, so it read 100% next
     // to an arc at 58% (owner, 2026-09-18). Same rewrite; a span whose text is not a bare
     // percentage is not dsh's number and is left alone.
     const pct = `${Math.round(ringPercent)}%`;
-    for (const span of button?.querySelectorAll("span") ?? [])
-      if (/^\d{1,3}%$/.test(span.textContent ?? "") && span.textContent !== pct)
+
+    for (const span of button?.querySelectorAll("span") ?? []) {
+      if (/^\d{1,3}%$/.test(span.textContent ?? "") && span.textContent !== pct) {
         span.textContent = pct;
+      }
+    }
   };
+
   /**
    * The meter's open panel when dsh renders it away from the ring.
    *
@@ -810,16 +1024,32 @@ export function watchContextMeter(ctx: ClientCtx) {
    */
   const portalPanel = (): HTMLElement | null => {
     const trigger = arc?.closest("button");
-    if (!trigger || trigger.getAttribute("aria-expanded") !== "true") return null;
-    const label = trigger.getAttribute("aria-label");
-    if (!label) return null;
-    for (const panel of document.querySelectorAll<HTMLElement>('[role="dialog"]')) {
-      if (panel.contains(trigger)) continue; // the ring sits inside no panel of its own
-      const own = panel.getAttribute("aria-label");
-      if (own && own !== label && label.includes(own)) return panel;
+
+    if (!trigger || trigger.getAttribute("aria-expanded") !== "true") {
+      return null;
     }
+
+    const label = trigger.getAttribute("aria-label");
+
+    if (!label) {
+      return null;
+    }
+
+    for (const panel of document.querySelectorAll<HTMLElement>('[role="dialog"]')) {
+      if (panel.contains(trigger)) {
+        continue;
+      } // the ring sits inside no panel of its own
+
+      const own = panel.getAttribute("aria-label");
+
+      if (own && own !== label && label.includes(own)) {
+        return panel;
+      }
+    }
+
     return null;
   };
+
   /**
    * The ring's hover bubble. From dsh 0.2.2-alpha.3 it is portaled to `<body>` and holds no link
    * back to the ring (no id, no `aria-describedby`), so a portaled bubble is the ring's when it
@@ -829,13 +1059,24 @@ export function watchContextMeter(ctx: ClientCtx) {
    * the scan after dsh places it (measured on 0.2.2-rc.1, 2026-11-05: the line shows every time).
    */
   const isRingTip = (tip: HTMLElement) => {
-    if (isRingRoot(tip.parentElement)) return true;
+    if (isRingRoot(tip.parentElement)) {
+      return true;
+    }
+
     const ring = arc?.closest("button");
-    if (tip.parentElement !== document.body || !tip.hasAttribute("data-portal")) return false;
-    if (ring?.matches(":hover, :focus-visible") !== true) return false;
+
+    if (tip.parentElement !== document.body || !tip.hasAttribute("data-portal")) {
+      return false;
+    }
+
+    if (ring?.matches(":hover, :focus-visible") !== true) {
+      return false;
+    }
+
     const box = tip.getBoundingClientRect();
     const r = ring.getBoundingClientRect();
     const near = 24;
+
     return (
       box.left < r.right + near &&
       box.right > r.left - near &&
@@ -843,42 +1084,75 @@ export function watchContextMeter(ctx: ClientCtx) {
       box.bottom > r.top - near
     );
   };
+
   const scan = (root: ParentNode) => {
     // Looked for only until it is found. The ring outlives every burst that follows, and this query
     // would otherwise run over each of them for an element already in hand.
     if (arc?.isConnected !== true) {
       arc = undefined;
+
       for (const el of root.querySelectorAll<HTMLElement>('button[aria-haspopup="dialog"]')) {
         const host = el.parentElement;
         const found = host && isRingRoot(host) ? host.querySelector<SVGCircleElement>(ARC) : null;
         const radius = Number(found?.getAttribute("r"));
-        if (!found || !Number.isFinite(radius) || radius <= 0) continue;
+
+        if (!found || !Number.isFinite(radius) || radius <= 0) {
+          continue;
+        }
+
         arc = found;
         arcLength = 2 * Math.PI * radius;
         break;
       }
     }
-    for (const el of root.querySelectorAll<HTMLElement>('[role="dialog"]'))
-      if (isRingRoot(el.parentElement)) attach(el);
-    for (const el of root.querySelectorAll<HTMLElement>('[role="tooltip"]'))
-      if (isRingTip(el)) bubble(el);
-    // A re-render adds nodes inside the dialog, not the dialog itself, so climb to it as well.
-    if (root instanceof Element) {
-      const dialog = root.closest<HTMLElement>('[role="dialog"]');
-      if (dialog && isRingRoot(dialog.parentElement)) attach(dialog);
-      const tip = root.closest<HTMLElement>('[role="tooltip"]');
-      if (tip && isRingTip(tip)) bubble(tip);
+
+    for (const el of root.querySelectorAll<HTMLElement>('[role="dialog"]')) {
+      if (isRingRoot(el.parentElement)) {
+        attach(el);
+      }
     }
+
+    for (const el of root.querySelectorAll<HTMLElement>('[role="tooltip"]')) {
+      if (isRingTip(el)) {
+        bubble(el);
+      }
+    }
+
+    // A re-render adds nodes inside the dialog, not the dialog itself, so climb to it as well.
+    if (isElement(root)) {
+      const dialog = root.closest<HTMLElement>('[role="dialog"]');
+
+      if (dialog && isRingRoot(dialog.parentElement)) {
+        attach(dialog);
+      }
+
+      const tip = root.closest<HTMLElement>('[role="tooltip"]');
+
+      if (tip && isRingTip(tip)) {
+        bubble(tip);
+      }
+    }
+
     const portal = portalPanel();
-    if (portal) attach(portal);
+
+    if (portal) {
+      attach(portal);
+    }
   };
+
   // Scoped to the burst: the ring's dialog and tooltip are rare nodes, and the body-wide pair of
   // attribute queries this used to run every dirty frame cost 0.4 ms on a 30k-node conversation,
   // paid on every frame of every streaming turn to find, almost always, nothing.
   // The per-frame scan: re-check changed elements and repaint the ring.
   onBodyMutation((records) => {
-    if (records === undefined) scan(document.body);
-    else for (const node of changedElements(records)) scan(node);
+    if (records === undefined) {
+      scan(document.body);
+    } else {
+      for (const node of changedElements(records)) {
+        scan(node);
+      }
+    }
+
     paintRing();
   });
   scan(document.body);
@@ -888,7 +1162,10 @@ export function watchContextMeter(ctx: ClientCtx) {
   // once, and the ring's label follows on the next repaint.
   whenContextGone(
     onLocaleSwitch(() => {
-      for (const el of document.querySelectorAll(`[${MARK}]`)) el.remove();
+      for (const el of document.querySelectorAll(`[${MARK}]`)) {
+        el.remove();
+      }
+
       scan(document.body);
       paintRing();
     }),

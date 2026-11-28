@@ -3,7 +3,8 @@
 // ported dialog's pure helpers: crumb display, draft reading and the row filter.
 import assert from "node:assert/strict";
 import { ancestry, baseName } from "./picker.js";
-import { displayCrumbs, readDraft, visibleEntries, type Listing } from "./browser.js";
+import { displayCrumbs, readDraft, visibleEntries } from "./browser.js";
+import type { Listing } from "./browser.js";
 
 // A remote level's ancestry: root first, named by its own path, then one crumb per segment.
 {
@@ -25,16 +26,19 @@ import { displayCrumbs, readDraft, visibleEntries, type Listing } from "./browse
     crumbs: ancestry("/home/me/Projects"),
     entries: [],
   };
+
   assert.deepEqual(
     displayCrumbs(under, "Home").map((c) => c.name),
     ["Home", "Projects"],
   );
+
   const outside: Listing = {
     path: "/srv/app",
     home: "/root",
     crumbs: ancestry("/srv/app"),
     entries: [],
   };
+
   assert.deepEqual(
     displayCrumbs(outside, "Home").map((c) => c.name),
     ["/", "srv", "app"],
@@ -50,6 +54,7 @@ import { displayCrumbs, readDraft, visibleEntries, type Listing } from "./browse
     crumbs: ancestry("/home/me"),
     entries: [],
   };
+
   assert.deepEqual(readDraft(level, "/home/me/Pro", null), { directory: "/home/me/", tail: "Pro" });
   assert.deepEqual(readDraft(level, "/usr/lo", null), { directory: "/usr/", tail: null });
   assert.deepEqual(readDraft(level, "nope", null), { directory: null, tail: null });
@@ -68,6 +73,7 @@ import { displayCrumbs, readDraft, visibleEntries, type Listing } from "./browse
     { name: "app", path: "/p/app", hidden: false },
     { name: "lib", path: "/p/lib", hidden: false },
   ];
+
   const names = (r: typeof rows) => r.map((e) => e.name);
   assert.deepEqual(names(visibleEntries(rows, null, false, null)), ["app", "lib"]);
   assert.deepEqual(names(visibleEntries(rows, null, true, null)), [".git", "app", "lib"]);

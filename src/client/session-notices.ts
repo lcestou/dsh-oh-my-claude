@@ -9,8 +9,8 @@ import {
   openSessionId,
   whenContextGone,
   guard,
-  type ClientCtx,
 } from "./shared.js";
+import type { ClientCtx } from "./shared.js";
 import { livingModelId } from "../model-ids.js";
 import type { FallbackRecord } from "../translator.js";
 import { newestWins, pollEvery, streamUp, subscribe } from "./events.js";
@@ -25,9 +25,8 @@ import {
   recapOnIn,
   recapAwayIn,
   RECAP_QUESTION,
-  type AwaitingRow,
-  type NoticeSnapshot,
 } from "./notices.js";
+import type { AwaitingRow, NoticeSnapshot } from "./notices.js";
 import { HINTS_EVENT, loadHints } from "./hints.js";
 
 /**
@@ -58,22 +57,33 @@ export function watchSessionNotices(ctx: ClientCtx) {
   // person is already reading. Same rule `prev` above follows for `newlyWaiting`.
   let prevAwaiting: Record<string, AwaitingRow> | null = null;
   let lastRead = 0;
+
   /** Diff one awaiting map (from the stream or the fallback read) against the last one and
    *  announce every Claude session that newly holds a prompt. The first map after a page load
    *  (`prevAwaiting === null`) is a baseline and fires nothing, whichever way it arrived. */
   const onSnapshot = (nextAwaiting: Record<string, AwaitingRow>) => {
     const snap = ctx.sessions.list.getSnapshot();
+
     for (const id of newlyAwaiting(prevAwaiting, nextAwaiting, openSessionId(ctx))) {
-      if (!isClaudeSession(ctx, id)) continue;
+      if (!isClaudeSession(ctx, id)) {
+        continue;
+      }
+
       const prompt = nextAwaiting[id];
+
       // noUncheckedIndexedAccess makes this read `AwaitingRow | undefined`; a missing row is
       // not a transition to announce, so skip it rather than pass undefined to `notifyAwaiting`.
-      if (!prompt) continue;
+      if (!prompt) {
+        continue;
+      }
+
       waiting.add(id);
       notifyAwaiting(ctx, id, snap?.byId[id]?.displayTitle ?? id, prompt);
     }
+
     prevAwaiting = nextAwaiting;
   };
+
   // A fallback read sent before a prompt was answered can land after the event that cleared it,
   // and its older map would announce the same prompt a second time.
   const order = newestWins();
@@ -98,35 +108,48 @@ export function watchSessionNotices(ctx: ClientCtx) {
   // directory, which can settle without a list write, so that is asked each tick of the few
   // running ids only.
   let lastSnap: unknown;
-  let runningIds: string[] = [];
+  let runningIds: Array<string> = [];
+
   const tick = () => {
     const snap = ctx.sessions.list.getSnapshot();
-    if (!snap) return;
+
+    if (!snap) {
+      return;
+    }
+
     const current = openSessionId(ctx);
-    let stopped: string[] = [];
+    let stopped: Array<string> = [];
+
     if (snap !== lastSnap) {
       lastSnap = snap;
       // Copy the compared fields into fresh rows, so `prev` never shares a row object with the
       // snapshot it is compared against.
       const byId: NoticeSnapshot["byId"] = {};
-      for (const [id, s] of Object.entries(snap.byId))
+
+      for (const [id, s] of Object.entries(snap.byId)) {
         byId[id] = { running: s.running, completed: s.completed, displayTitle: s.displayTitle };
+      }
+
       const next: NoticeSnapshot = { byId, current };
       stopped = newlyWaiting(prev, next).filter((id) => isClaudeSession(ctx, id));
+
       for (const id of stopped) {
         waiting.add(id);
         void announceStop(ctx, id, snap.byId[id]?.displayTitle ?? id, seenFallback);
       }
+
       prev = next;
       runningIds = Object.entries(snap.byId)
         .filter(([, s]) => s.running === true)
         .map(([id]) => id);
     }
+
     // A session waiting on a permission prompt keeps its stream open, so it still reads as running
     // and `newlyWaiting` never sees it stop. Poll the adapter's own map instead, and only while a
     // Claude session is running: a running dsh session cannot hold a Claude prompt, and an idle box
     // should make no requests.
     const anyClaudeRunning = runningIds.some((id) => isClaudeSession(ctx, id));
+
     // A hidden tab keeps its bookkeeping but makes no request: this was the one unconditional
     // one-a-second poll a background tab still paid.
     if (anyClaudeRunning && !document.hidden) {
@@ -137,9 +160,7 @@ export function watchSessionNotices(ctx: ClientCtx) {
         const fresh = order.ask();
         void fetch(`${ROUTE}/awaiting`)
           .then((r) => readJson<{ sessions?: Record<string, AwaitingRow> }>(r))
-          .then((body) => {
-            if (fresh()) onSnapshot(body.sessions ?? {});
-          })
+          .then((body) => fresh() && onSnapshot(body.sessions ?? {}))
           .catch(() => {
             // A failed poll says nothing. The next tick asks again; a prompt is not urgent enough
             // to report a network error over.
@@ -151,6 +172,7 @@ export function watchSessionNotices(ctx: ClientCtx) {
       // while the tab is hidden still fires, which is what a background notice is for.
       prevAwaiting = null;
     }
+
     // Return recap: a session that stopped working while it was not the one on screen is asked for
     // one line when it is opened. Off by default; the switch is in Settings, under Oh My Claude.
     // `recapNext` clears the id as it fires, so a return asks once and a second open of the
@@ -167,7 +189,9 @@ export function watchSessionNotices(ctx: ClientCtx) {
       Date.now(),
       recapAwayIn(hints.recapAwayMs),
     );
+
     recapPending = step.pending;
+
     // Three reasons not to spend the call, all of them the CLI's own: the switch is off, there is
     // half a prompt in the composer so the person is already saying what they want, or the session
     // picked up a new turn while the tick was deciding and the recap would describe stale work.
@@ -190,12 +214,23 @@ export function watchSessionNotices(ctx: ClientCtx) {
         // touched when there is no live process, so there is nothing to clean up here either.
       });
     }
+
     // Reading it clears it: the open session, and everything else once the tab is looked at again.
-    if (current !== undefined) waiting.delete(current);
-    if (!document.hidden) waiting.clear();
+    if (current !== undefined) {
+      waiting.delete(current);
+    }
+
+    if (!document.hidden) {
+      waiting.clear();
+    }
+
     const wanted = markTitle(document.title, waiting.size);
-    if (wanted !== document.title) document.title = wanted;
+
+    if (wanted !== document.title) {
+      document.title = wanted;
+    }
   };
+
   tick(); // take the baseline now, so the first interval already has something to compare against
   const beat = setInterval(guard(tick), 1000);
   whenContextGone(() => clearInterval(beat));
@@ -206,7 +241,10 @@ export function watchSessionNotices(ctx: ClientCtx) {
 function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
   // Permission is only ever asked for from the panel's own toggle, so an ungranted browser is the
   // normal case here and the title mark carries it alone.
-  if (!noticesOn() || !("Notification" in window) || Notification.permission !== "granted") return;
+  if (!noticesOn() || !("Notification" in window) || Notification.permission !== "granted") {
+    return;
+  }
+
   // `tag` per session: a session that finishes twice replaces its own notice rather than stacking.
   const note = new Notification(title, { body: t("main.notice.waiting"), tag: `omc-${id}` });
   note.addEventListener("click", () => {
@@ -221,7 +259,10 @@ function notifyWaiting(ctx: ClientCtx, id: string, title: string) {
 function notifyAwaiting(ctx: ClientCtx, id: string, title: string, prompt: AwaitingRow) {
   // Permission is only ever asked for from the panel's own toggle, so an ungranted browser is the
   // normal case here and the title mark carries it alone.
-  if (!noticesOn() || !("Notification" in window) || Notification.permission !== "granted") return;
+  if (!noticesOn() || !("Notification" in window) || Notification.permission !== "granted") {
+    return;
+  }
+
   // A tag of its own per prompt: two tabs watching the same prompt collapse to one visible notice,
   // and a session that asks twice replaces its own rather than stacking.
   const note = new Notification(title, { body: awaitingBody(prompt.kind), tag: `omc-await-${id}` });
@@ -246,8 +287,10 @@ async function announceStop(
   seen: Record<string, number>,
 ) {
   let rec: FallbackRecord | null = null;
+
   try {
     const r = await fetch(`${ROUTE}/side-questions?session=${encodeURIComponent(id)}`);
+
     if (r.ok) {
       const body = await readJson<{ fallback?: FallbackRecord | null }>(r);
       rec = body.fallback ?? null;
@@ -255,26 +298,45 @@ async function announceStop(
   } catch {
     rec = null;
   }
+
   if (rec && rec.at > (seen[id] ?? 0) && Date.now() - rec.at < FRESH_MS) {
     seen[id] = rec.at;
     movePickerToFallback(ctx, id, rec);
     notifyFallback(ctx, id, title, rec);
+
     return;
   }
+
   notifyWaiting(ctx, id, title);
 }
 
 /** The notice body: the CLI's own sentence when it sent one, else a plain line that names the model
  *  that answered and the safeguard category. Verified against every case in the plan. */
 function fallbackNoticeBody(rec: FallbackRecord): string {
-  if (rec.content) return rec.content;
+  if (rec.content) {
+    return rec.content;
+  }
+
   const cat = rec.category ?? t("main.fallback.safety");
   const from = rec.from || t("main.fallback.pickedModel");
   const to = rec.to || t("main.fallback.anotherModel");
-  if (rec.kind === "model_refusal_no_fallback") return t("main.fallback.blocked", { from, cat });
-  if ((rec.scope ?? "session") === "local") return t("main.fallback.subtask", { to, cat, from });
-  if (rec.direction === "sticky") return t("main.fallback.sticky", { to, cat, from });
-  if (rec.direction === "revert") return t("main.fallback.revert", { to, cat, from });
+
+  if (rec.kind === "model_refusal_no_fallback") {
+    return t("main.fallback.blocked", { from, cat });
+  }
+
+  if ((rec.scope ?? "session") === "local") {
+    return t("main.fallback.subtask", { to, cat, from });
+  }
+
+  if (rec.direction === "sticky") {
+    return t("main.fallback.sticky", { to, cat, from });
+  }
+
+  if (rec.direction === "revert") {
+    return t("main.fallback.revert", { to, cat, from });
+  }
+
   return t("main.fallback.oneMessage", { to, cat, from });
 }
 
@@ -282,11 +344,15 @@ function fallbackNoticeBody(rec: FallbackRecord): string {
  *  notifyWaiting, so an ungranted browser gets the title mark alone. */
 function notifyFallback(ctx: ClientCtx, id: string, title: string, rec: FallbackRecord) {
   // Same guard as notifyWaiting: an ungranted browser gets the title mark alone.
-  if (!noticesOn() || !("Notification" in window) || Notification.permission !== "granted") return;
+  if (!noticesOn() || !("Notification" in window) || Notification.permission !== "granted") {
+    return;
+  }
+
   const note = new Notification(title, {
     body: fallbackNoticeBody(rec),
     tag: `omc-fallback-${id}`,
   });
+
   note.addEventListener("click", () => {
     window.focus();
     openSession(ctx, id);
@@ -305,21 +371,38 @@ function movePickerToFallback(ctx: ClientCtx, sessionId: string, rec: FallbackRe
     rec.direction !== "sticky" ||
     (rec.scope ?? "session") !== "session" ||
     !rec.to
-  )
+  ) {
     return;
+  }
+
   let dir: ReturnType<ClientCtx["modelDirectories"]["directoryFor"]>;
+
   try {
     dir = ctx.modelDirectories.directoryFor(sessionId);
   } catch {
     return; // unbound in this tab
   }
+
   const snap = dir.store.getSnapshot();
   const cur = snap.current;
-  if (!cur?.provider.startsWith("claude-code")) return;
+
+  if (!cur?.provider.startsWith("claude-code")) {
+    return;
+  }
+
   const offered = snap.groups?.find((g) => g.id === cur.provider)?.models.map((m) => m.id);
-  if (!offered || offered.length === 0) return;
-  if (ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) return;
+
+  if (!offered || offered.length === 0) {
+    return;
+  }
+
+  if (ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) {
+    return;
+  }
+
   const living = livingModelId(rec.to, offered);
-  if (living && dir.select)
+
+  if (living && dir.select) {
     void dir.select({ provider: cur.provider, model: living }).catch(() => {});
+  }
 }

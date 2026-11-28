@@ -2,10 +2,12 @@
 // files followed as the hook script writes them (one watcher for the whole plugin, each change read
 // back and handed to the adapter to publish). Kept apart from `test-gate-files.ts` because it names
 // the hook script, which imports that module.
-import { watch, mkdirSync, type FSWatcher } from "node:fs";
+import { watch, mkdirSync } from "node:fs";
+import type { FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SESSION_ID, runCapSec, stopHookSettings, type TestGateRun } from "../test-gate.js";
+import { SESSION_ID, runCapSec, stopHookSettings } from "../test-gate.js";
+import type { TestGateRun } from "../test-gate.js";
 import { gatePathIn, readGateFile, readRunFile, runDirIn } from "../test-gate-files.js";
 
 /** The built hook script, one level up in `lib/server/`. Only a path: under the test runner it
@@ -23,9 +25,16 @@ export async function gateHookFor(
   session: string | undefined,
   idleMs: number,
 ): Promise<ReturnType<typeof stopHookSettings> | undefined> {
-  if (process.platform === "win32" || !session || !SESSION_ID.test(session)) return undefined;
+  if (process.platform === "win32" || !session || !SESSION_ID.test(session)) {
+    return undefined;
+  }
+
   const gate = (await readGateFile(gatePathIn(stateDir)))[cwd];
-  if (!gate?.enabled) return undefined;
+
+  if (!gate?.enabled) {
+    return undefined;
+  }
+
   return stopHookSettings(
     process.execPath,
     HOOK_SCRIPT,
@@ -49,28 +58,45 @@ export function watchRuns(
 ): () => void {
   mkdirSync(dir, { recursive: true });
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** Read one settled run file and hand it on; a file that is gone or torn reads as nothing. */
+  const deliver = async (name: string) => {
+    const run = await readRunFile(join(dir, name));
+
+    if (run) {
+      onRun(name.slice(0, -".json".length), run);
+    }
+  };
+
   const w: FSWatcher = watch(dir, { persistent: false }, (_event, name) => {
-    if (name === null || !name.endsWith(".json")) return;
+    if (name === null || !name.endsWith(".json")) {
+      return;
+    }
+
     clearTimeout(timers.get(name));
     timers.set(
       name,
       setTimeout(() => {
         timers.delete(name);
-        void readRunFile(join(dir, name)).then((run) => {
-          if (run) onRun(name.slice(0, -".json".length), run);
-        });
+        // Fire and forget: the timer has nothing to hand the result to.
+        void deliver(name);
       }, 50),
     );
   });
+
   return () => {
     w.close();
-    for (const t of timers.values()) clearTimeout(t);
+
+    for (const t of timers.values()) {
+      clearTimeout(t);
+    }
   };
 }
 
 /** The one watcher this process runs, started when the routes mount, so a hook still running
  *  under a keeper across a dsh-web restart is heard. */
 let running: (() => void) | undefined;
+
 /** Start `watchRuns` once per process; later calls are no-ops, whichever adapter makes them. */
 export function ensureRunWatch(
   dir: string,

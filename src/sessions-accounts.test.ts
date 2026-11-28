@@ -7,27 +7,27 @@ import { join } from "node:path";
 import type { Account } from "./accounts.js";
 import { probeRuntime, registerSessionRoutes } from "./sessions.js";
 import { tempDir } from "./test-tmp.js";
+import type { JsonValue } from "./dsh.js";
+import { EventHub } from "./events.js";
+import { fakeRouteHost, notFaked, objectOf, parseJson, serveRoutes } from "./test-context.js";
 
 const tmp = tempDir("omc-sess-acct-");
-let handler: ((req: unknown, res: unknown) => Promise<void>) | undefined;
-// SAFETY: partial fake of the plugin context; the registration reads these services only
-const ctx = {
-  inject: (_deps: string[], cb: (host: unknown) => void) =>
-    cb({
-      webServer: {
-        register: (r: { handler: typeof handler }) => {
-          handler = r.handler;
-          return () => {};
-        },
-      },
-      connection: { requestRejection: () => undefined },
-      sessions: { get: () => undefined },
-      sessionPersistence: { list: async () => [] },
-      effect: (fn: () => void) => fn(),
-    }),
-} as never;
-const published: string[] = [];
-const changed: Account[][] = [];
+
+// The registration reads the host's web server, connection, store and persistence only.
+let routes = fakeRouteHost();
+const { ctx } = routes;
+
+const published: Array<string> = [];
+
+// A hub that records each event's kind instead of sending it anywhere.
+const hub = new EventHub();
+
+hub.publish = (e) => {
+  published.push(e.kind);
+};
+
+const changed: Array<Array<Account>> = [];
+
 registerSessionRoutes(ctx, {
   log: () => {},
   projectDir: () => [join(tmp, "claude", "projects")],
@@ -38,8 +38,18 @@ registerSessionRoutes(ctx, {
   sshBoxesPath: join(tmp, "ssh-boxes.json"),
   instanceFor: () => undefined,
   instanceForHost: () => undefined,
-  // SAFETY: the accounts routes and the ssh-boxes PUT only publish on the hub
-  events: { hub: { publish: (e: { kind: string }) => published.push(e.kind) } } as never,
+  // The accounts routes and the ssh-boxes PUT only publish on the hub.
+  events: {
+    hub,
+    snapshot: notFaked("events.snapshot"),
+    replies: {
+      liveTurn: notFaked("replies.liveTurn"),
+      turns: notFaked("replies.turns"),
+      asides: notFaked("replies.asides"),
+      idle: notFaked("replies.idle"),
+      permissionMode: notFaked("replies.permissionMode"),
+    },
+  },
   accounts: {
     path: join(tmp, "accounts.json"),
     onChange: (a) => {
@@ -49,43 +59,37 @@ registerSessionRoutes(ctx, {
     mounted: () => new Set(),
   },
 });
+
 /** One request through the registered dispatch: status and parsed body. */
-const respond = async (method: string, url: string, body?: object) => {
-  let status = 0;
-  const out: Buffer[] = [];
-  const res = {
-    writeHead: (s: number) => {
-      status = s;
-    },
-    end: (b: Buffer | string) => out.push(Buffer.from(b)),
-  };
-  const req = {
-    method,
-    url,
-    on: (ev: string, cb: (c?: Buffer) => void) => {
-      if (ev === "data" && body !== undefined) cb(Buffer.from(JSON.stringify(body)));
-      if (ev === "end") cb();
-    },
-    destroy: () => {},
-  };
-  await handler?.(req, res);
-  return { status, body: JSON.parse(Buffer.concat(out).toString("utf8")) };
+const respond = async (method: string, url: string, body?: JsonValue) => {
+  const { send } = await serveRoutes(routes.handler);
+  const answer = await send(method, url, body === undefined ? undefined : JSON.stringify(body));
+
+  return { status: answer.status, body: objectOf(parseJson(answer.text)) };
 };
 
 let r = await respond("POST", "/dsh-oh-my-claude/accounts", { name: "Work", configDir: "" });
+
 assert.equal(r.status, 200, "the dispatch reaches the accounts group");
+
 assert.deepEqual(changed.at(-1), [{ name: "Work", configDir: "~/.claude-work" }]);
+
 assert.deepEqual(JSON.parse(readFileSync(join(tmp, "accounts.json"), "utf8")), changed.at(-1));
+
 assert.ok(published.includes("boxes"), "every tab is told");
 
 r = await respond("PUT", "/dsh-oh-my-claude/ssh-boxes", {
   boxes: [{ name: "work", host: "nova" }],
 });
+
 assert.equal(r.status, 400, "an SSH box cannot take an account's name");
+
 r = await respond("PUT", "/dsh-oh-my-claude/ssh-boxes", {
   boxes: [{ name: "Nova", host: "nova" }],
 });
+
 assert.equal(r.status, 200);
+
 assert.equal(
   published.filter((k) => k === "boxes").length,
   2,
@@ -95,7 +99,7 @@ assert.equal(
 // The status route reads an account's own live count, through the loginKey instanceFor carries.
 // Registered again without an ssh-box file, so the read stays offline (no npm check).
 {
-  const counted: string[] = [];
+  const counted: Array<string> = [];
   registerSessionRoutes(ctx, {
     log: () => {},
     projectDir: () => [join(tmp, "claude", "projects")],
@@ -111,6 +115,7 @@ assert.equal(
     instanceForHost: () => undefined,
     liveCount: (key) => {
       counted.push(key);
+
       return key === "dir:/w" ? 3 : 1;
     },
   });
@@ -120,6 +125,7 @@ assert.equal(
   assert.equal(own.body.running, 1, "This box keeps its own count");
   assert.deepEqual(counted, ["dir:/w", ""]);
 }
+
 // The runtime probe asks `claude auth status` under the mount's own config dir. A stand-in CLI
 // reports logged in only when it sees that dir, as the real one reads its login from it.
 {
@@ -133,6 +139,7 @@ assert.equal(
   const st = await probeRuntime(join(dir, "acct"), cli, "");
   assert.equal(st.loggedIn, true, "the status probe runs under the mount's config dir");
 }
+
 // Plugin and MCP writes from an account's session run under the account's config dir: the panel
 // reads that dir back, so a write to This box's dir would change the wrong login and look like a
 // no-op. A stand-in CLI records the dir it saw for each verb.
@@ -144,23 +151,11 @@ assert.equal(
   chmodSync(cli, 0o755);
   const project = join(dir, "project");
   mkdirSync(project);
-  // SAFETY: partial fake of the plugin context, as above, with one session open in a directory
-  const withSession = {
-    inject: (_deps: string[], cb: (host: unknown) => void) =>
-      cb({
-        webServer: {
-          register: (r: { handler: typeof handler }) => {
-            handler = r.handler;
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [{ id: "s1", cwd: project }] },
-        effect: (fn: () => void) => fn(),
-      }),
-  } as never;
-  registerSessionRoutes(withSession, {
+
+  // As above, with one session open in a directory; `respond` reaches this registration now.
+  routes = fakeRouteHost({ persisted: [{ id: "s1", cwd: project }] });
+
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     projectDir: () => [join(tmp, "claude", "projects")],
     projectsDir: [join(tmp, "claude", "projects")],
@@ -173,7 +168,8 @@ assert.equal(
     instanceForHost: () => undefined,
   });
   const q = "?provider=claude-code-work";
-  const posts: [string, object][] = [
+
+  const posts: Array<[string, JsonValue]> = [
     ["/plugins/toggle", { key: "a@m", scope: "user", enable: false }],
     ["/plugins/uninstall", { key: "a@m", scope: "user" }],
     ["/plugins/marketplace/add", { source: "owner/repo", scope: "user" }],
@@ -184,10 +180,12 @@ assert.equal(
     ],
     ["/mcp-servers/remove", { name: "x", session: "s1" }],
   ];
+
   for (const [path, body] of posts) {
     const r = await respond("POST", `/dsh-oh-my-claude${path}${q}`, body);
     assert.equal(r.status, 200, `${path}: ${JSON.stringify(r.body)}`);
   }
+
   assert.deepEqual(
     readFileSync(seen, "utf8").trim().split("\n"),
     [
@@ -201,4 +199,5 @@ assert.equal(
     "every plugin and MCP write runs the account's CLI under the account's config dir",
   );
 }
+
 console.log("sessions accounts ok");

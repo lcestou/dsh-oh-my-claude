@@ -1,28 +1,34 @@
 import type { Spawner, SubprocessHandle, CliModel } from "../process.js";
-import { type PluginLoadError } from "../plugins.js";
-import { LlmAdapter, type GenerateOptions, type LlmResolvedModelInfo, type StreamChunk } from "@deepseek-ai/dsh-llm";
-import { type ContextSource } from "../context-sources.js";
-import { type PickerRow } from "../sessions.js";
-import { type OmcEvent } from "../events.js";
+import type { PluginLoadError } from "../plugins.js";
+import { LlmAdapter } from "@deepseek-ai/dsh-llm";
+import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk } from "@deepseek-ai/dsh-llm";
+import type { ContextSource } from "../context-sources.js";
+import type { PickerRow } from "../sessions.js";
+import type { OmcEvent } from "../events.js";
 import { readUsage } from "../usage.js";
-import { type McpBridge } from "../mcp.js";
-import { type ClaudeEvent, ClaudeProcess } from "../process.js";
+import type { McpBridge } from "../mcp.js";
+import { ClaudeProcess } from "../process.js";
+import type { ClaudeEvent } from "../process.js";
 import type { Agent, ImageAttachmentRef, JsonValue, PluginContext, SessionController, SubprocessRuntime } from "../dsh.js";
-import { type ToolMode, type ToolModeInfo } from "../rows-probe.js";
-import { type SpawnModeInfo, type SpawnSetting } from "./spawn-mode.js";
-import { type FsBox } from "../remote-fs.js";
-import { sshRunner, type HoldRecord } from "../hold.js";
-import { type HealHost } from "../session-heal.js";
-import { Translator, type FallbackRecord, type SuggestionRow, type LiveTask, type LiveTaskPatch, type HookRun } from "../translator.js";
+import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
+import type { SpawnModeInfo, SpawnSetting } from "./spawn-mode.js";
+import type { FsBox } from "../remote-fs.js";
+import { sshRunner } from "../hold.js";
+import type { HoldRecord } from "../hold.js";
+import type { HealHost } from "../session-heal.js";
+import { Translator } from "../translator.js";
+import type { FallbackRecord, SuggestionRow, LiveTask, LiveTaskPatch, HookRun } from "../translator.js";
 import type { FinishReason } from "@deepseek-ai/dsh-llm";
 import type { ClaudeProcessSpec, RelayResult, TurnPrep } from "../process.js";
-import { Config, type CustomModel } from "./config.js";
-import { type Route } from "./routing.js";
-import { type AsideEntry, type AsidesReply, type AwaitingRow, Continuation, ControlRequestEvent, type ControlReply, type ContextUsageReply, type Decision, type HeldSteer, type HoldReply, type IdleReply, type LoginNeed, type LiveTurnReply, type McpAuthReply, type McpStatusReply, type PermissionModeInfo, type PermissionModeReply, type PermissionModeState, type PermissionReadoutReply, type RewindReply, type SessionOptions, type SkillDoctorReply, type SteerCardState, type SteerEditReply, type WorkspaceDiffReply } from "./types.js";
-import { type MirrorQueue, type StreamState, type TranscriptWatch } from "./transcript-watch.js";
-import { type LoadedImage, type LooseMessage, type NativeCopies } from "./prompt.js";
+import type { Config } from "./config.js";
+import type { CustomModel } from "./config.js";
+import type { Route } from "./routing.js";
+import type { Continuation, ControlledProcess, ControlRequestEvent } from "./types.js";
+import type { AsideEntry, AsidesReply, AwaitingRow, ControlReply, ContextUsageReply, Decision, HeldSteer, HoldReply, IdleReply, LoginNeed, LiveTurnReply, McpAuthReply, McpStatusReply, PermissionModeInfo, PermissionModeReply, PermissionModeState, PermissionReadoutReply, RewindReply, SessionOptions, SkillDoctorReply, SteerCardState, SteerEditReply, WorkspaceDiffReply } from "./types.js";
+import type { MirrorQueue, StreamState, TranscriptWatch } from "./transcript-watch.js";
+import type { LoadedImage, LooseMessage, NativeCopies } from "./prompt.js";
 import { CommandRows } from "./lane.js";
-import { type IdleTarget, type LiveTurn, type ResultFrame, type TurnRecord, type TurnsReply, type UltracodeState } from "./turn.js";
+import type { IdleTarget, LiveTurn, ResultFrame, TurnRecord, TurnsReply, UltracodeState } from "./turn.js";
 /** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
 export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** The context `apply` mounted this instance with. Read it through `ctx`. */
@@ -46,9 +52,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  the boot nudge leaves them to that dsh. */
     foreignSessions: Set<string>;
     /** dsh's permission preset service, when mounted: the shield's current preset per session. */
-    permissionPresets?: {
-        current: (session: object) => string;
-    };
+    permissionPresets?: PluginContext["permissionPresets"];
     processes: Map<string, ClaudeProcess>;
     /** Per session, the timer that continues the task once its usage limit resets. */
     limitTimers: Map<string, ReturnType<typeof setTimeout>>;
@@ -82,7 +86,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     readonly temporary: Set<string>;
     /** Per-session turn accounting buffer (last 50 turns); keyed by dsh sessionId. Lives on
      *  globalThis so the route registered at boot reads what a hot-reloaded adapter fills. */
-    readonly turnBuffer: Map<string, TurnRecord[]>;
+    readonly turnBuffer: Map<string, Array<TurnRecord>>;
     /** Settles once the stored turn records are in `turnBuffer`, or could not be read. */
     private readonly turnsLoaded;
     /** What the running turn has done so far, per session, for the status row: output tokens across
@@ -140,7 +144,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Tool activity as the Settings switch set it; undefined = the config's `toolsInline`. Loaded from
      *  disk on construct, written through on every set, and read fresh at the start of each turn. */
     toolMode: ToolMode | undefined;
-    cliModels: CliModel[];
+    cliModels: Array<CliModel>;
     claudeHome: string;
     /** `~/.claude` itself, which stays the box's login and settings even when transcripts move. */
     realClaudeHome: string;
@@ -152,10 +156,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     stateDir: string;
     /** Attach the mounted context and config, then load every persisted store (permission modes, tool modes, terminal sync, turn records, asides, starters and limit waits) so a resumed adapter reads as it left off. */
     constructor(ctx: PluginContext, config: Schemastery.TypeT<typeof Config>);
+    /** Put the stored turn records back, merged under any a live turn already wrote, then repair
+     *  once per state directory the costs stored as a session's running total. Rejects when the
+     *  records cannot be read; the constructor's catch keeps the empty buffer. */
+    private restoreTurns;
     /** dsh's handle for this instance's route. `replace` re-reads `providerInfo`, which is how a
      *  name change reaches the picker without a restart. */
     registration?: {
-        replace: (providers: string[]) => void;
+        replace: (providers: Array<string>) => void;
     };
     private loggedOut;
     /** "(not logged in)" after the provider name while the box's claude has no login: dsh copies the
@@ -272,14 +280,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     private pickerSettings;
     /** The models someone added for this mount in Settings; one small file read per listing, like
      *  the hide switches, so a row added in one browser is in every picker at its next listing. */
-    savedCustomModels(): Promise<CustomModel[]>;
+    savedCustomModels(): Promise<Array<CustomModel>>;
     /**
      * Replace the Settings list of added models for the mount `provider` names, then tell dsh the
      * picker changed. The answer is the list as stored, or `error` with the sentence to show (an id
      * the CLI could not take, a duplicate, no such mount), in which case nothing was written.
      */
-    setCustomModels(provider: string, models: readonly CustomModel[]): Promise<{
-        models: CustomModel[];
+    setCustomModels(provider: string, models: ReadonlyArray<CustomModel>): Promise<{
+        models: Array<CustomModel>;
     } | {
         error: string;
     }>;
@@ -293,7 +301,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * provider id, so each box has its own list and every browser sees the same one). One small
      * file read per listing.
      */
-    hiddenModelIds(): Promise<string[]>;
+    hiddenModelIds(): Promise<Array<string>>;
     /**
      * The Settings card's Models block: one entry per mount, this box and every ssh box, each with
      * its provider id (the switches' key), its host (null for this box) and its `pickerModels`.
@@ -303,8 +311,8 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         provider: string;
         host: string | null;
         name: string | null;
-        models: PickerRow[];
-        custom: CustomModel[];
+        models: Array<PickerRow>;
+        custom: Array<CustomModel>;
         route: Route;
     }>>;
     /**
@@ -323,7 +331,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * Anthropic, or one of Claude's own while a router has renamed the aliases. Default is left
      * out, since it is never hidden.
      */
-    pickerModels(): Promise<PickerRow[]>;
+    pickerModels(): Promise<Array<PickerRow>>;
     /** After a `result` frame: remember a login failure for the card, and name the box's providers
      *  logged out so the picker stops offering them; a turn that succeeded clears both. */
     noteTurnLogin(sessionId: string, result: ResultFrame): void;
@@ -418,7 +426,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** `host` is the box the turn runs on, when it is not this PC: the saved copy the note names has
      *  to be on that box, so it is copied there, and an image that would not copy gets no note (it
      *  still rides inline) rather than one naming a path that box's claude cannot read. */
-    loadImages(refs: ImageAttachmentRef[], signal: AbortSignal | undefined, host?: string, capMs?: number): Promise<LoadedImage[]>;
+    loadImages(refs: Array<ImageAttachmentRef>, signal: AbortSignal | undefined, host?: string, capMs?: number): Promise<Array<LoadedImage>>;
     /** A dsh fork of a Claude session becomes a Claude fork: the parent's transcript is copied under
      *  the new id, cut at the forked turn. True when a copy was made. */
     forkTranscript(options: GenerateOptions, cwd: string, id: string): Promise<boolean>;
@@ -428,7 +436,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * forced over it) is moved aside first, never deleted. True when a seed was written; false when
      * the log has no reply yet or the write failed, and the turn then starts the old way.
      */
-    seedTranscript(messages: LooseMessage[], cwd: string, id: string, version: string | undefined, o: {
+    seedTranscript(messages: Array<LooseMessage>, cwd: string, id: string, version: string | undefined, o: {
         drops?: ReadonlySet<ContextSource>;
         copies?: NativeCopies;
         developer?: boolean;
@@ -639,7 +647,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * handler hands the line to Claude as the next prompt, where the CLI expands the skill or
      * custom command the way the terminal does; dsh keeps its own command of the same name.
      */
-    bridgeCommands(names: string[], agent: Agent | undefined): void;
+    bridgeCommands(names: Array<string>, agent: Agent | undefined): void;
     /** The effective mode for a session and the stored override, for the header chip. */
     /**
      * The session's dsh access mode right now: the shield's current preset from dsh's own service
@@ -688,14 +696,14 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * ponytail: the keeper's spec.json keeps the old spec; a reattach after a dsh restart sees a key
      * mismatch and respawns with the new flags, which is correct, only one spawn later than ideal.
      */
-    retarget(proc: ClaudeProcess, spec: ClaudeProcessSpec): Promise<boolean>;
+    retarget(proc: ControlledProcess, spec: ClaudeProcessSpec): Promise<boolean>;
     /** Hand a `control_response` to whoever sent the request; true when someone was waiting. */
     resolveControl(event: ClaudeEvent): boolean;
     /**
      * Send one control request and wait for its answer. The process hands `control_response` lines
      * to `resolveControl` as they arrive, so this works between turns as well as inside one.
      */
-    control(proc: ClaudeProcess, request: Record<string, JsonValue>, timeoutMs?: number): Promise<ControlReply>;
+    control(proc: ControlledProcess, request: Record<string, JsonValue>, timeoutMs?: number): Promise<ControlReply>;
     /** What the steer card shows: typed steers still in the CLI's queue, oldest first, and the ones
      *  taken back for an edit. A call from the card's own read (`touch`, the default) re-arms every
      *  hold's timer, so a hold nobody reads (a closed tab) goes back to Claude unchanged after
@@ -715,7 +723,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * left in the CLI's queue the park flag drops, or the next tool result would end the step on an
      * empty inbox.
      */
-    holdSteers(sessionId: string, ids: string[]): Promise<HoldReply>;
+    holdSteers(sessionId: string, ids: Array<string>): Promise<HoldReply>;
     /**
      * End a hold. `restore` puts every held message back as it was, `drop` discards them, and a text
      * sends one message in their place (the first one's identity, the new words, and every file and
@@ -757,7 +765,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * inside it is declined. Switch only once such a turn can be adopted into a dsh turn as it
      * starts.
      */
-    sendSteerNow(sessionId: string, ids: string[]): Promise<SteerEditReply>;
+    sendSteerNow(sessionId: string, ids: Array<string>): Promise<SteerEditReply>;
     /**
      * Rewind a session to one of its user prompts: `rewind_files` (dry run first, from the UI) puts
      * the working tree back, then `rewind_conversation` drops Claude's context after that prompt.
@@ -878,9 +886,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** One finished hook into the session's log, dropping the oldest past `HOOK_RUNS_KEPT`. */
     noteHookRun(sessionId: string, run: HookRun): void;
     /** The session's kept hook runs, oldest first. Empty for a session this adapter never ran. */
-    hookRunsFor(sessionId: string): HookRun[];
+    hookRunsFor(sessionId: string): Array<HookRun>;
     /** The session's live tasks, oldest first, for the Tasks tab. Empty without a process. */
-    liveTasksFor(sessionId: string): LiveTask[];
+    liveTasksFor(sessionId: string): Array<LiveTask>;
     /** Ask the CLI to stop one task. The reply is the CLI's: an error for a task it no longer has.
      *  On success the row goes at once: the `killed` and `stopped` frames that follow reach the
      *  translator only inside a turn, and a Stop clicked between turns would otherwise show a row
@@ -897,9 +905,9 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
         error?: string;
     }>;
     /** The plugin load errors this session's last init frame reported, for the panel. */
-    pluginErrorsFor(sessionId: string): PluginLoadError[];
+    pluginErrorsFor(sessionId: string): Array<PluginLoadError>;
     /** The plugin warnings this session's last init frame reported, for the panel. */
-    pluginWarningsFor(sessionId: string): PluginLoadError[];
+    pluginWarningsFor(sessionId: string): Array<PluginLoadError>;
     /** The open prompts, keyed by dsh session id, for the browser's background notices. */
     awaitingSnapshot(): Record<string, AwaitingRow>;
     /** The open prompts across every mount, which is what `/awaiting` and the `awaiting` event
@@ -935,7 +943,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      *  and for the open session its live turn, asides, idle deadline, turn records and permission
      *  mode. Hints are not here: the tab reads them on mount already. A reconnect gets the same
      *  snapshot in place of a replay, since every kind is a current value. */
-    snapshot(sessionId: string | null): OmcEvent[];
+    snapshot(sessionId: string | null): Array<OmcEvent>;
     /** The tab-wide awaiting map to every stream, merged over every mount: a prompt opened or
      *  answered anywhere. A mount publishing only its own map would make a tab forget the root's
      *  prompts on the next box event. */
@@ -1151,7 +1159,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * does not have to come back and poke each one. Sessions with a live (adopted) process are a
      * hot reload, not a restart, and are left alone.
      */
-    resumeInterrupted(path?: string): Promise<string[] | undefined>;
+    resumeInterrupted(path?: string): Promise<string[]>;
     /** Node's spawn, or dsh's subprocess seam when configured and mounted. */
     /** Where a session's keeper lives: one directory per provider id and dsh session. */
     keeperDir(sessionId: string): string;
@@ -1175,7 +1183,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
      * restart reattaches from, so it is written before the first byte is read; a failed start ends the
      * handle through its stderr and exit, as a local spawn error would.
      */
-    holdOn(host: string, cwd: string, sessionId: string, spec: ClaudeProcessSpec, command: string, args: string[]): SubprocessHandle;
+    holdOn(host: string, cwd: string, sessionId: string, spec: ClaudeProcessSpec, command: string, args: Array<string>): SubprocessHandle;
     /** Attach to a hold and keep its record's offset current (at most once a second). */
     attachHold(run: ReturnType<typeof sshRunner>, record: HoldRecord): SubprocessHandle;
     /**
@@ -1518,7 +1526,7 @@ export declare class ClaudeCodeAdapter extends LlmAdapter {
     /** Send `texts` to a subagent's session as a message from its parent, one text block each,
      *  loading the parent first when dsh had dropped it. False, with the reason noted, when it could
      *  not be sent. */
-    sendThroughParent(sessionId: string, parentId: string, texts: readonly string[], note: (line: string) => Promise<void>): Promise<boolean>;
+    sendThroughParent(sessionId: string, parentId: string, texts: ReadonlyArray<string>, note: (line: string) => Promise<void>): Promise<boolean>;
     /** Offer a dsh tool call from the MCP bridge to the session's live turn. Undefined when no turn
      *  can take it (idle process, a relay already pending); the bridge then executes it directly. */
     relay(sessionId: string, toolName: string, args: Record<string, JsonValue>, signal: AbortSignal, toolUseId?: string): Promise<RelayResult> | undefined;

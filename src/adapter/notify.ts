@@ -18,6 +18,7 @@ export type NotifyEvent = "finished" | "approval" | "question" | "plan" | "test"
 
 /** The delay used when the hints store holds none. */
 export const NOTIFY_DELAY_MS = 60_000;
+
 /** The delays Settings offers; anything else in the store reads as the default. */
 export const NOTIFY_DELAY_CHOICES = [0, 30_000, 60_000, 300_000] as const;
 
@@ -46,6 +47,7 @@ export interface DeliveryReport {
 
 /** The longest session title a notice carries; a push body must stay under 4 KB encrypted. */
 const TITLE_MAX = 120;
+
 /** No push or webhook call may hold a notice longer than this. */
 const SEND_TIMEOUT_MS = 10_000;
 
@@ -68,9 +70,14 @@ export function noteFor(
           : event === "plan"
             ? serverText("notifyPlan")
             : serverText("notifyTest");
+
   const named = title?.trim() || (event === "test" ? "Oh My Claude" : serverText("notifyUntitled"));
   const note: Note = { event, session, title: named.slice(0, TITLE_MAX), message };
-  if (tool !== undefined) note.tool = tool;
+
+  if (tool !== undefined) {
+    note.tool = tool;
+  }
+
   return note;
 }
 
@@ -86,7 +93,7 @@ export const clickUrl = (openUrl: string | null, session: string | null): string
 /** The push `Topic` header: a later notice for the same session replaces one the phone has not
  *  fetched yet. RFC 8030 allows 32 base64url characters. */
 const topicOf = (session: string | null): string =>
-  session === null ? "omc-test" : session.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || "omc";
+  session === null ? "omc-test" : session.replaceAll(/[^A-Za-z0-9_-]/g, "").slice(0, 32) || "omc";
 
 /** POST `note` to the webhook as JSON; resolves `ok`, or the failure as text (after one `warn`
  *  line). Never rejects. */
@@ -98,9 +105,14 @@ async function sendWebhook(
   fetchImpl: typeof fetch,
 ): Promise<string> {
   const headers = new Headers({ "content-type": "application/json" });
+
   // ntfy opens `click` on a tap; other receivers ignore an unknown header.
-  if (click !== null) headers.set("click", click);
+  if (click !== null) {
+    headers.set("click", click);
+  }
+
   let outcome: string;
+
   try {
     const res = await fetchImpl(url, {
       method: "POST",
@@ -108,11 +120,16 @@ async function sendWebhook(
       body: JSON.stringify({ source: "dsh-oh-my-claude", ...note, click, at: Date.now() }),
       signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
     });
+
     outcome = res.ok ? "ok" : `HTTP ${res.status}`;
-  } catch (e) {
-    outcome = errorText(e);
+  } catch (error) {
+    outcome = errorText(error);
   }
-  if (outcome !== "ok") log("warn", `phone notice: webhook failed: ${outcome}`);
+
+  if (outcome !== "ok") {
+    log("warn", `phone notice: webhook failed: ${outcome}`);
+  }
+
   return outcome;
 }
 
@@ -133,19 +150,26 @@ export async function deliver(
   const report: DeliveryReport = { webhook: "none", sent: 0, failed: 0, removed: 0 };
   const config = await readNotifyConfig(dir);
   const click = clickUrl(config.openUrl, note.session);
+
   const webhook =
     config.webhookUrl === null
       ? Promise.resolve("none")
       : sendWebhook(config.webhookUrl, note, click, log, fetchImpl);
+
   const devices = await readDevices(dir);
+
   if (devices.length === 0) {
     report.webhook = await webhook;
+
     return report;
   }
+
   const keys = await vapidKeys(dir);
+
   const payload = Buffer.from(
     JSON.stringify({ title: note.title, body: note.message, session: note.session }),
   );
+
   const gone = new Set<string>();
   await Promise.all(
     devices.map(async (d) => {
@@ -164,24 +188,30 @@ export async function deliver(
           signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
           redirect: "manual",
         });
-        if (res.ok) report.sent++;
-        else if (res.status === 404 || res.status === 410) gone.add(deviceId(d.endpoint));
-        else {
+
+        if (res.ok) {
+          report.sent++;
+        } else if (res.status === 404 || res.status === 410) {
+          gone.add(deviceId(d.endpoint));
+        } else {
           report.failed++;
           log("warn", `phone notice: push to ${new URL(d.endpoint).host} answered ${res.status}`);
         }
-      } catch (e) {
+      } catch (error) {
         report.failed++;
-        log("warn", `phone notice: push failed: ${errorText(e)}`);
+        log("warn", `phone notice: push failed: ${errorText(error)}`);
       }
     }),
   );
+
   if (gone.size > 0) {
     await removeDevices(dir, gone);
     report.removed = gone.size;
     hub.publish({ kind: "notify", session: null, data: {} });
   }
+
   report.webhook = await webhook;
+
   return report;
 }
 
@@ -230,40 +260,54 @@ export class Notifier {
   /** Bump and return the session's generation, dropping any pending timer. */
   private bump(sessionId: string): number {
     const t = this.timers.get(sessionId);
-    if (t !== undefined) clearTimeout(t);
+
+    if (t !== undefined) {
+      clearTimeout(t);
+    }
+
     this.timers.delete(sessionId);
     const next = (this.gen.get(sessionId) ?? 0) + 1;
     this.gen.set(sessionId, next);
+
     return next;
   }
 
   /** Drop the session's pending notice, if any. Cheap enough to call on every prompt. */
   cancel(sessionId: string): void {
-    if (this.timers.has(sessionId) || this.gen.has(sessionId)) this.bump(sessionId);
+    if (this.timers.has(sessionId) || this.gen.has(sessionId)) {
+      this.bump(sessionId);
+    }
   }
 
   /** Arm a notice for `req` after the box's delay. Does nothing while `notifyOn` is not set; the
    *  hints are read again at send time, so turning the switch off also stops a pending one. */
   schedule(req: NotifyRequest): void {
     const mine = this.bump(req.sessionId);
-    void this.deps
-      .hints()
-      .then((h) => {
-        if (h.notifyOn !== true || this.gen.get(req.sessionId) !== mine) return;
-        // A send that throws (a key file that cannot be written, say) is logged, not left to
-        // reject with nothing listening.
-        const timer = setTimeout(
-          () =>
-            void this.fire(req, mine).catch((e: Error) =>
-              req.log("warn", `phone notice: send failed: ${errorText(e)}`),
-            ),
-          notifyDelayIn(h.notifyDelayMs),
-        );
-        // A pending notice must not keep a test process or a shutting-down dsh alive.
-        timer.unref?.();
-        this.timers.set(req.sessionId, timer);
-      })
-      .catch((e: Error) => req.log("warn", `phone notice: hints unreadable: ${e.message}`));
+
+    // Fire and forget: arming is synchronous for the caller; an unreadable hints file is logged.
+    void (async () => {
+      const h = await this.deps.hints();
+
+      if (h.notifyOn !== true || this.gen.get(req.sessionId) !== mine) {
+        return;
+      }
+
+      // A send that throws (a key file that cannot be written, say) is logged, not left to
+      // reject with nothing listening.
+      const timer = setTimeout(
+        () =>
+          void this.fire(req, mine).catch((cause: unknown) =>
+            req.log("warn", `phone notice: send failed: ${errorText(cause)}`),
+          ),
+        notifyDelayIn(h.notifyDelayMs),
+      );
+
+      // A pending notice must not keep a test process or a shutting-down dsh alive.
+      timer.unref?.();
+      this.timers.set(req.sessionId, timer);
+    })().catch((cause: unknown) =>
+      req.log("warn", `phone notice: hints unreadable: ${errorText(cause)}`),
+    );
   }
 
   /** Send `req`'s notice if nothing superseded it: same generation, still true, switch still on,
@@ -271,9 +315,19 @@ export class Notifier {
   private async fire(req: NotifyRequest, mine: number): Promise<void> {
     this.timers.delete(req.sessionId);
     const current = () => this.gen.get(req.sessionId) === mine;
-    if (!current() || !req.still()) return;
-    if ((await this.deps.hints()).notifyOn !== true || !current()) return;
-    if ((req.event === "finished" && (await req.isChild())) || !current()) return;
+
+    if (!current() || !req.still()) {
+      return;
+    }
+
+    if ((await this.deps.hints()).notifyOn !== true || !current()) {
+      return;
+    }
+
+    if ((req.event === "finished" && (await req.isChild())) || !current()) {
+      return;
+    }
+
     const send = this.deps.send ?? deliver;
     await send(this.deps.dir, noteFor(req.event, req.sessionId, req.title(), req.tool), req.log);
   }

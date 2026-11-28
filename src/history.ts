@@ -26,13 +26,22 @@ export const HISTORY_MAX_PROMPTS = 500;
  * newest sending only. Exact text decides a repeat, so a prompt that differs by one character is
  * two entries, as in a shell. Input order does not matter.
  */
-export function foldHistory(prompts: ReadonlyArray<HistoryEntry>): HistoryEntry[] {
+export function foldHistory(prompts: ReadonlyArray<HistoryEntry>): Array<HistoryEntry> {
   const newest = new Map<string, number>();
+
   for (const p of prompts) {
     const text = p.text.trim();
-    if (text === "" || text.startsWith(PLUGIN_NOTICE)) continue;
+
+    if (text === "" || text.startsWith(PLUGIN_NOTICE)) {
+      continue;
+    }
+
     const seen = newest.get(text);
-    if (seen === undefined || p.time > seen) newest.set(text, p.time);
+
+    if (seen === undefined || p.time > seen) {
+      newest.set(text, p.time);
+    }
   }
+
   return [...newest].map(([text, time]) => ({ text, time })).toSorted((a, b) => b.time - a.time);
 }

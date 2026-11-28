@@ -1,12 +1,12 @@
 // The dsh-to-Claude session id mapping, the mirror queue and stream shapes, and the watch record.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
 import { createHash } from "node:crypto";
-import { type FSWatcher } from "node:fs";
+import type { FSWatcher } from "node:fs";
 import { access } from "node:fs/promises";
 import { join } from "node:path";
-import { type FsBox } from "../remote-fs.js";
-import { type WatchRecord } from "../state.js";
-import { type FoldedTurn } from "../transcript.js";
+import type { FsBox } from "../remote-fs.js";
+import type { WatchRecord } from "../state.js";
+import type { FoldedTurn } from "../transcript.js";
 
 // ---------------------------------------------------------------------------
 // Session mapping: one Claude Code session per dsh session
@@ -14,7 +14,7 @@ import { type FoldedTurn } from "../transcript.js";
 /** Deterministic UUID for a dsh session id, so a reopened dsh session resumes the same Claude session. */
 /** Terminal exchanges waiting to be shown in a dsh session, and the one whose turn is open. */
 export interface MirrorQueue {
-  queue: FoldedTurn[];
+  queue: Array<FoldedTurn>;
   inFlight?: { id: string; turn: FoldedTurn; at: number };
 }
 
@@ -41,7 +41,11 @@ export function watchRecord(
   claudeId: string,
 ): WatchRecord {
   const record: WatchRecord = { path, seen, provider, claudeId };
-  if (box.sshHost) record.host = box.sshHost;
+
+  if (box.sshHost) {
+    record.host = box.sshHost;
+  }
+
   return record;
 }
 
@@ -63,7 +67,8 @@ export interface TranscriptWatch {
  *  it matches the one the CLI actually wrote. */
 export function claudeSessionId(sessionId: string): string {
   const h = createHash("sha256").update(`dsh-llm-claude:${sessionId}`).digest("hex");
-  const variant = ((parseInt(h.charAt(16), 16) & 0x3) | 0x8).toString(16);
+  const variant = ((Number.parseInt(h.charAt(16), 16) & 0x3) | 0x8).toString(16);
+
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
 }
 
@@ -74,10 +79,18 @@ export function claudeSessionId(sessionId: string): string {
  * binary and checked against a live run), so two long paths with one prefix stay apart.
  */
 export function projectDirName(cwd: string): string {
-  const flat = cwd.replace(/[^A-Za-z0-9]/g, "-");
-  if (flat.length <= 200) return flat;
+  const flat = cwd.replaceAll(/[^A-Za-z0-9]/g, "-");
+
+  if (flat.length <= 200) {
+    return flat;
+  }
+
   let hash = 0;
-  for (let i = 0; i < cwd.length; i++) hash = Math.imul(hash, 31) + cwd.charCodeAt(i);
+
+  for (let i = 0; i < cwd.length; i++) {
+    hash = Math.imul(hash, 31) + cwd.charCodeAt(i);
+  }
+
   return `${flat.slice(0, 200)}-${Math.abs(hash | 0).toString(36)}`;
 }
 
@@ -88,6 +101,7 @@ export function projectDirName(cwd: string): string {
 export async function claudeSessionExists(home: string, cwd: string, id: string): Promise<boolean> {
   try {
     await access(join(home, "projects", projectDirName(cwd), `${id}.jsonl`));
+
     return true;
   } catch {
     return false;

@@ -1,11 +1,11 @@
-import { type FinishReason, type StreamChunk } from "@deepseek-ai/dsh-llm";
-import { type ContextSource } from "../context-sources.js";
-import { type Agent, type JsonValue, type PluginContext, type ResolvedAgent, type ToolSchema } from "../dsh.js";
-import { type ClaudeEvent, type ClaudeProcessSpec, type SettingsKey, type RelayEvent, type RelayResult, type WorkspaceDiff } from "../process.js";
-import { type FsBox } from "../remote-fs.js";
-import { type LiveMode, type Translator } from "../translator.js";
-import { type LooseMessage, type NativeCopies } from "./prompt.js";
-import { type TurnTotals } from "./types.js";
+import type { FinishReason, StreamChunk } from "@deepseek-ai/dsh-llm";
+import type { ContextSource } from "../context-sources.js";
+import type { Agent, JsonValue, PluginContext, ResolvedAgent, ToolSchema } from "../dsh.js";
+import type { ClaudeEvent, ClaudeProcessSpec, SettingsKey, RelayEvent, RelayResult, WorkspaceDiff } from "../process.js";
+import type { FsBox } from "../remote-fs.js";
+import type { LiveMode, Translator } from "../translator.js";
+import type { LooseMessage, NativeCopies } from "./prompt.js";
+import type { TurnTotals } from "./types.js";
 export interface TurnRecord {
     at: number;
     costUsd: number;
@@ -16,7 +16,7 @@ export interface TurnRecord {
     output: number;
     cacheRead: number;
     cacheWrite: number;
-    denials?: string[];
+    denials?: Array<string>;
     /** Wall-clock ms from the prompt write to the first stream chunk; absent when not measured. */
     ttftMs?: number;
     /** The CLI's running totals as this turn's result reported them, kept so a handle attached to
@@ -37,13 +37,19 @@ export type SpliceEvent = {
     type?: string;
     data?: {
         target?: string;
-        inserted?: LooseMessage[];
+        inserted?: Array<LooseMessage>;
         removedCount?: number;
     };
 };
+/**
+ * True for dsh's `agent/inbox/spliced` session event with an object `data` whose `inserted`, when
+ * present, is a list of objects. dsh builds it from its own message lists, so that is taken as the
+ * shape; every message field is optional on `LooseMessage` and checked where it is read.
+ */
+export declare const isSpliceEvent: (v: unknown) => v is SpliceEvent;
 /** `GET /turns` and the `turns` event. */
 export interface TurnsReply {
-    turns: TurnRecord[];
+    turns: Array<TurnRecord>;
     total: TurnTotals;
 }
 /** One session's ultracode: what `/ultracode` asked for, and the CLI's last read-back of it. */
@@ -84,7 +90,7 @@ export interface ResultFrame {
     is_error?: boolean;
     stop_reason?: string;
     result?: unknown;
-    errors?: unknown[];
+    errors?: Array<unknown>;
     api_error_status?: number;
     subtype?: string;
 }
@@ -165,7 +171,7 @@ export declare function interruptOnAbort(kind: string | undefined, spawn: string
 export declare function abortKind(signal: AbortSignal | undefined): string | undefined;
 /** dsh's tool-result for a relayed call, searched from the newest message back; its image blocks
  *  come back as `refs` for the caller to load into `images`, absent when there are none. */
-export declare function toolResultFor(messages: LooseMessage[] | undefined, id: string): RelayResult | undefined;
+export declare function toolResultFor(messages: Array<LooseMessage> | undefined, id: string): RelayResult | undefined;
 /**
  * Loads each relayed result's image `refs` into `images` as base64 and drops `refs`. It reads
  * straight from dsh's store, without the 2000 px rule a stdin image gets: that rule exists because
@@ -174,9 +180,9 @@ export declare function toolResultFor(messages: LooseMessage[] | undefined, id: 
  * cannot read is skipped and reported through `warn`, so the text still goes back; without a store
  * every result goes back as text alone.
  */
-export declare function loadRelayImages(results: RelayResult[], store: PluginContext["attachments"] | undefined, signal: AbortSignal | undefined, warn: (msg: string) => void): Promise<void>;
+export declare function loadRelayImages(results: Array<RelayResult>, store: PluginContext["attachments"] | undefined, signal: AbortSignal | undefined, warn: (msg: string) => void): Promise<void>;
 /** Messages dsh delivered after the last assistant step. */
-export declare function afterLastAssistant(messages: LooseMessage[] | undefined): LooseMessage[];
+export declare function afterLastAssistant(messages: Array<LooseMessage> | undefined): Array<LooseMessage>;
 /** The Agent inside what dsh's session controller answered for a cold resume: `{ agent }`, or
  *  `{ error }` when the session cannot be resumed. Read as the Agent, the wrapper has no
  *  `followup`, and every wake of an unloaded session fails on it. The controller's error is thrown
@@ -189,10 +195,10 @@ export declare function resolvedAgent(found: ResolvedAgent): Agent;
 export declare const WAKE_TEXT = "[Oh My Claude] Claude Code replied on its own while this session was idle. Nobody sent a message: this notice only opens the turn, and Claude's reply follows it.";
 /** The block beside `WAKE_TEXT` that names the background tasks Claude was answering, each by the
  *  description it started with (else the CLI's summary, else its id) and its status word. */
-export declare function finishedTasksText(tasks: readonly {
+export declare function finishedTasksText(tasks: ReadonlyArray<{
     name: string;
     status: string;
-}[]): string;
+}>): string;
 /** A mirror turn whose followup never opened a turn (the agent went away) is put back after this. */
 export declare const MIRROR_TURN_TIMEOUT_MS = 120000;
 /** How long the transcript must stay still before the watcher reads it: the CLI writes a reply as
@@ -227,7 +233,7 @@ export declare const RELOAD_TEXT = "[Oh My Claude] the plugin reloaded while thi
 export declare const RESTART_TEXT = "[Oh My Claude] dsh restarted while this turn was in progress and the Claude Code process was replaced. Pick up where the transcript stops and finish the task. If this session has an active goal, dsh disarmed it on resume: call get_goal, then update_goal with action resume, so the goal rounds keep driving the work without anyone typing.";
 /** Added to a parent's restart notice when some of its subagents were continued through it, so the
  *  parent waits for their reports instead of sending them the work a second time. */
-export declare function childrenContinuedText(childIds: readonly string[]): string;
+export declare function childrenContinuedText(childIds: ReadonlyArray<string>): string;
 /** How long a subagent woken through its parent ignores further wakes: long enough for the turn
  *  the message opened to start and mark the process busy. */
 export declare const WAKE_THROUGH_PARENT_HOLD_MS = 10000;
@@ -245,23 +251,23 @@ export interface PendingFilter {
 /** Whether anything dsh delivered after the last assistant step still has to reach Claude. The
  *  turns that answer on their own (a wake's drain, an aside) go on to a normal turn when it does.
  *  A terminal mirror does not use this: only a person's prompt may start a turn there. Counting only `user`-kind messages dropped an Agent Team notice (#311). */
-export declare function hasPendingInput(messages: LooseMessage[] | undefined, filter?: PendingFilter): boolean;
+export declare function hasPendingInput(messages: Array<LooseMessage> | undefined, filter?: PendingFilter): boolean;
 /** Whether a person typed something beside a terminal mirror turn, which then goes on to a real
  *  Claude turn. Only a `user`-kind message counts, never an automated notice (a job line, a
  *  subagent report, a Team notice): the session belongs to a terminal, and a real turn there runs
  *  the model against someone else's conversation, which is why `wake()` leaves such sessions alone
  *  (the 2026-09-11 incident it records). The wake and the aside count every producer instead. */
-export declare const typedAfterMirror: (messages: LooseMessage[] | undefined) => boolean;
+export declare const typedAfterMirror: (messages: Array<LooseMessage> | undefined) => boolean;
 /** A turn opened by our own wake notice with nothing else to send: only drain what Claude already
  *  wrote. Anything else waiting in the same batch, whoever produced it, makes it a normal turn. */
-export declare function wakeOnlyTurn(messages: LooseMessage[] | undefined, filter?: PendingFilter): boolean;
+export declare function wakeOnlyTurn(messages: Array<LooseMessage> | undefined, filter?: PendingFilter): boolean;
 /** Drop messages Claude already received live on stdin (matched by `steerKey`). */
-export declare function dropSent<T extends LooseMessage>(messages: T[] | undefined, sent: Set<string> | undefined): T[];
+export declare function dropSent<T extends LooseMessage>(messages: Array<T> | undefined, sent: Set<string> | undefined): Array<T>;
 /** What dsh delivered at this step boundary besides the tool result: steers the user sent while
  *  the tool ran, subagent notices, other injections. Claude only sees the tool result, so they
  *  ride along with it. Empty when there is nothing. A message already written live to stdin is
  *  skipped, so Claude reads it once. */
-export declare function stepContextFor(messages: LooseMessage[] | undefined, drops?: ReadonlySet<ContextSource>, sent?: ReadonlySet<string>, copies?: NativeCopies): string;
+export declare function stepContextFor(messages: Array<LooseMessage> | undefined, drops?: ReadonlySet<ContextSource>, sent?: ReadonlySet<string>, copies?: NativeCopies): string;
 /** A fresh user message that is nothing but `/btw <question>`, and the question it carries. */
 export interface SideQuestion {
     message: LooseMessage;
@@ -275,7 +281,7 @@ export interface SideQuestion {
  * place. Only a message that is the command and nothing else counts, so prose quoting `/btw` is
  * still prose.
  */
-export declare function sideQuestionsIn(messages: LooseMessage[] | undefined): SideQuestion[];
+export declare function sideQuestionsIn(messages: Array<LooseMessage> | undefined): Array<SideQuestion>;
 /** How long to wait for the rest of a parallel dsh tool-call batch after the first one arrives. */
 export declare const RELAY_BATCH_MS = 1500;
 /** How long a step handing dsh a relay waits for Claude's own tool results still in flight.
@@ -299,7 +305,7 @@ export declare function nativeToolRows(config: {
     refused: boolean;
 };
 /** Count the human prompts dsh has in a transcript (context injections and tool results excluded). */
-export declare function userPromptCount(messages: LooseMessage[] | undefined): number;
+export declare function userPromptCount(messages: Array<LooseMessage> | undefined): number;
 /** The stream chunks that make one relayed dsh tool call a native tool-call block. */
 export declare function relayBlocks(tr: Translator, call: RelayEvent): IterableIterator<StreamChunk>;
 /** A process spec as a string, so two specs compare by content when deciding to reuse a process. */
@@ -310,10 +316,10 @@ export declare const specKey: (spec: ClaudeProcessSpec) => string;
  * description from live state, and a description that changed every turn would restart Claude
  * every turn, while a name or a schema changes only when the tool itself does.
  */
-export declare function toolSetDigest(tools: readonly ToolSchema[]): string;
+export declare function toolSetDigest(tools: ReadonlyArray<ToolSchema>): string;
 /** Whether a todo list still has work on it. A list of nothing but completed items is finished,
  *  and a finished list is not worth painting over a fresh message. */
-export declare function hasPendingTodo(todos: JsonValue[]): boolean;
+export declare function hasPendingTodo(todos: Array<JsonValue>): boolean;
 /**
  * The provider dsh talks to. It owns one Claude Code process per session, converts a dsh turn
  * into stdin lines and the CLI's stream-json back into dsh events, and keeps the state that has to

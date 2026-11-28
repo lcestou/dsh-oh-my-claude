@@ -4,6 +4,8 @@
 // now (PW_SESSION names its row, else the first row dsh labels Running). Point PLAYWRIGHT_ROOT at
 // any project with Playwright installed; arg 1 is the dsh launch token. `--shots <dir>` also saves
 // a screenshot of the line per read, named by viewport and scheme.
+import z from "@deepseek-ai/schemastery";
+import { fits } from "../../src/schema-fits.js";
 import { dshUrl, launch } from "./pw.js";
 
 const token = process.argv[2];
@@ -41,45 +43,63 @@ async function read(
   await p.goto(dshUrl(token), { waitUntil: "networkidle" });
   await p.waitForTimeout(2500);
   const running = p.locator('[role="treeitem"]').filter({ hasText: /Running|运行中/ });
+
   if ((await running.count()) === 0) {
     const ws = p
       .locator('[role="treeitem"]')
       .filter({ hasText: process.env.PW_WORKSPACE ?? "oh-my-claude" })
       .first();
-    if (await ws.count()) await ws.click({ force: true });
+
+    if (await ws.count()) {
+      await ws.click({ force: true });
+    }
+
     await p.waitForTimeout(1500);
   }
+
   const row = name
     ? p.locator('[role="treeitem"]').filter({ hasText: name }).first()
     : running.first();
-  if ((await row.count()) === 0) throw new Error("no running Claude session to read");
+
+  if ((await row.count()) === 0) {
+    throw new Error("no running Claude session to read");
+  }
+
   await row.click({ force: true });
-  if (viewport.width < 500) await p.setViewportSize(viewport);
+
+  if (viewport.width < 500) {
+    await p.setViewportSize(viewport);
+  }
+
   await p.waitForTimeout(4000);
+
   const out = await p.evaluate(async () => {
     const line = document.querySelector<HTMLElement>("[data-omc-turn-line]");
     const cs = line ? getComputedStyle(line) : null;
     const root = getComputedStyle(document.documentElement);
     const sid = new URL(location.href).searchParams.get("session") ?? "";
-    let live: Read["live"] = {};
+    let liveText = "";
+
     try {
       // The route needs the session id; the row's own subscription knows it, the check does not,
-      // so read the first live-turn body off the event stream instead.
-      live = await new Promise<Read["live"]>((resolve) => {
+      // so read the first live-turn body off the event stream instead. It is decoded outside the
+      // page, where the schema is.
+      liveText = await new Promise<string>((resolve) => {
         const es = new EventSource("/dsh-oh-my-claude/events");
         es.addEventListener("live-turn", (e) => {
-          // SAFETY: an EventSource listener for a named event receives a MessageEvent.
-          resolve(JSON.parse((e as MessageEvent).data).data);
+          // An event stream's data is always text.
+          resolve(String(e.data));
           es.close();
         });
         setTimeout(() => {
-          resolve({});
+          resolve("");
           es.close();
         }, 3000);
       });
     } catch {
       /* the figures are optional */
     }
+
     return {
       found: document.querySelectorAll("[data-omc-turn-line]").length,
       animationName: cs?.animationName ?? "",
@@ -91,21 +111,46 @@ async function read(
       shimmerOnLine: cs?.getPropertyValue("--omc-shimmer").trim() ?? "",
       detail: line?.querySelector("[data-omc-turn-detail]")?.textContent ?? "",
       spinner: line?.querySelector("span[aria-hidden]")?.textContent ?? "",
-      live,
+      liveText,
       sid,
     };
   });
+
   if (shotsDir !== undefined) {
     // The line's own box clips the verb's left edge (the sheen is painted past it), so the shot is
     // of the group button that holds the line, which also shows dsh's label beside it.
     const group = p.locator("button[data-turn-process]:has([data-omc-turn-line])").last();
+
     if (await group.count()) {
       await group.scrollIntoViewIfNeeded();
       await group.screenshot({ path: `${shotsDir}/${viewport.width}-${colorScheme}.png` });
     }
   }
+
   await ctx.close();
-  return out;
+
+  const { liveText, ...seen } = out;
+
+  return { ...seen, live: liveOf(liveText) };
+}
+
+/** The part of a live-turn event this check prints. */
+const LiveTurn = z.object({
+  data: z.object({ elapsedMs: z.number(), tokens: z.number(), mode: z.string() }),
+});
+
+/** The figures of one live-turn event's text, empty when none arrived or it does not parse or fit:
+ *  the figures are optional. */
+function liveOf(text: string): Read["live"] {
+  let raw: unknown;
+
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return {};
+  }
+
+  return fits(LiveTurn, raw) ? LiveTurn(raw).data : {};
 }
 
 const result = {
@@ -114,5 +159,7 @@ const result = {
   phoneDark: await read({ width: 390, height: 844 }, "dark"),
   phoneLight: await read({ width: 390, height: 844 }, "light"),
 };
+
 console.log(JSON.stringify(result, null, 2));
+
 await b.close();

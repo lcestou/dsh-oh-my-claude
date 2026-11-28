@@ -33,7 +33,7 @@ export interface UsageCredits {
 export type UsageReply = {
     ok: true;
     fetchedAt: number;
-    windows: UsageWindow[];
+    windows: Array<UsageWindow>;
     /** Paid extra usage is on and its own cap not reached: a full window does not block. */
     extraUsage?: boolean;
     credits?: UsageCredits;
@@ -67,25 +67,25 @@ export interface UsageDriver {
 /** A "Top skills" / "Top MCP servers" / ... group under one window. */
 export interface UsageDriverGroup {
     label: string;
-    drivers: UsageDriver[];
+    drivers: Array<UsageDriver>;
 }
 /** One time window of the `/usage` breakdown (e.g. "Last 7d"). */
 export interface UsageBreakdownWindow {
     label: string;
     requests: number;
     sessions: number;
-    groups: UsageDriverGroup[];
+    groups: Array<UsageDriverGroup>;
     /** The CLI's own sentences about how the work was shaped, verbatim, in the order it prints them
      *  ("83% of your usage was at >150k context"). They are the most useful thing in the report and
      *  the parser used to drop them. Claude Code calls them independent characteristics rather than
      *  a breakdown, so they do not add to 100 and must never be summed or sorted with the groups. */
-    behaviours: string[];
+    behaviours: Array<string>;
 }
 /** What the /breakdown route answers: the windows, or why there are none. */
 export type UsageBreakdownReply = {
     ok: true;
     fetchedAt: number;
-    windows: UsageBreakdownWindow[];
+    windows: Array<UsageBreakdownWindow>;
     host?: string;
     email?: string | null;
 } | {
@@ -99,7 +99,7 @@ export type UsageBreakdownReply = {
  * scope, and whatever kinds get added later); older answers carried `five_hour` / `seven_day`
  * objects with `utilization`. All read; unknown kinds keep their API name as the label.
  */
-export declare function usageWindows(payload: unknown): UsageWindow[];
+export declare function usageWindows(payload: unknown): Array<UsageWindow>;
 /**
  * The payload states credits twice: `spend` is the modern block, `extra_usage` the older parallel
  * one, so `spend` leads and `extra_usage` answers for a payload that predates it. Only `spend`
@@ -132,7 +132,7 @@ export declare function readUsage(fetchImpl?: UsageFetch, home?: string, sshHost
  * formatting and the CLI's `·` separator are assumed; a locale change would degrade the same way,
  * not throw.
  */
-export declare function parseUsageBreakdown(text: string): UsageBreakdownWindow[];
+export declare function parseUsageBreakdown(text: string): Array<UsageBreakdownWindow>;
 /** Run `claude -p "/usage"` on a box and parse its breakdown. Never throws; the panel shows the
  *  reason. Local via execFile with the box's config dir; an ssh box over ssh with its own login.
  *  COLUMNS/TERM force a wide, dumb terminal so no "Top …" row wraps and loses its tail. */

@@ -8,8 +8,10 @@ import { gated, hexToRgb, isColourInt, themeOf } from "./theme.js";
 
 /** The default mount: This box's own login, which keeps the accent unless a colour is picked. */
 export const THIS_BOX_PROVIDER = "claude-code";
+
 /** The hint that holds a box's picked colour, a 0xRRGGBB number like `themeAccent`. */
 export const boxColourKey = (provider: string): string => `boxColour:${provider}`;
+
 /** A turn of the colour wheel between neighbouring boxes: the golden angle, so any number of
  *  boxes keeps the shades apart without a fixed palette running out. */
 const STEP_DEGREES = 137.5;
@@ -29,11 +31,17 @@ function hslOf(hex: string): [number, number, number] {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   const l = (max + min) / 2;
-  if (max === min) return [0, 0, l];
+
+  if (max === min) {
+    return [0, 0, l];
+  }
+
   const d = max - min;
   const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+
   const h =
     max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+
   return [h * 60, s, l];
 }
 
@@ -48,6 +56,7 @@ function hexOfHsl(h: number, s: number, l: number): string {
   const k = (n: number) => (n + h / 30) % 12;
   const a = s * Math.min(l, 1 - l);
   const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+
   return `#${byte(f(0))}${byte(f(8))}${byte(f(4))}`;
 }
 
@@ -57,6 +66,7 @@ function hexOfHsl(h: number, s: number, l: number): string {
  *  back as itself; nothing then tells the boxes apart but a picked colour. */
 export function autoShade(accent: string, index: number): string {
   const [h, s, l] = hslOf(accent);
+
   return hexOfHsl((h + STEP_DEGREES * (index + 1)) % 360, s, l);
 }
 
@@ -67,13 +77,14 @@ export function autoShade(accent: string, index: number): string {
  */
 export function boxColours(
   hints: Record<string, boolean | number>,
-  providers: readonly string[],
+  providers: ReadonlyArray<string>,
 ): Map<string, string> {
   const accent = themeOf(hints).accent;
   const others = [...new Set(providers)].filter((p) => p !== THIS_BOX_PROVIDER).toSorted();
   const out = new Map<string, string>();
   out.set(THIS_BOX_PROVIDER, hexOf(hints[boxColourKey(THIS_BOX_PROVIDER)]) ?? accent);
   others.forEach((p, i) => out.set(p, hexOf(hints[boxColourKey(p)]) ?? autoShade(accent, i)));
+
   return out;
 }
 
@@ -90,15 +101,16 @@ const SAFE_ID = /^claude-code(-[a-z0-9-]+)?$/;
  */
 export function boxColourSheet(
   hints: Record<string, boolean | number>,
-  providers: readonly string[],
+  providers: ReadonlyArray<string>,
 ): string {
   const colours = boxColours(hints, providers);
   const accent = themeOf(hints).accent;
+
   return [...colours]
-    .filter(([p, c]) => SAFE_ID.test(p) && !(p === THIS_BOX_PROVIDER && c === accent))
-    .map(
-      ([p, c]) =>
-        `${gated("models", `[data-provider-id="${p}"][data-model-id]`, false)}{color:${c}}`,
+    .flatMap(([p, c]) =>
+      SAFE_ID.test(p) && !(p === THIS_BOX_PROVIDER && c === accent)
+        ? [`${gated("models", `[data-provider-id="${p}"][data-model-id]`, false)}{color:${c}}`]
+        : [],
     )
     .join("");
 }

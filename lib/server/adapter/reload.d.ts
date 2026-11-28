@@ -1,3 +1,4 @@
+import type { ClaudeCodeAdapter } from "./class.js";
 /** The slice of a cordis context read here. Mirrors: @deepseek-ai/cordis `Fiber.uid`, which is
  *  null once the fiber is disposed. The suites' fake contexts carry no fiber. */
 export interface ScopedContext {
@@ -11,7 +12,7 @@ export interface ScopedContext {
 export declare function contextActive(ctx: ScopedContext): boolean;
 /** The instance mounted for `providerId` right now, from the registry `apply` keeps on globalThis;
  *  undefined before the first mount. */
-export declare function mountedInstance<T>(providerId: string): T | undefined;
+export declare function mountedInstance(providerId: string): ClaudeCodeAdapter | undefined;
 /** How long a step that died on a replaced instance waits for an active one to resume it, and how
  *  often it looks. A toggle off and on again can take a while; past this the busy mark stays and
  *  the next boot's nudge picks the session up. */

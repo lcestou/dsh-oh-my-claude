@@ -12,7 +12,7 @@ export interface RowsSupport {
     reason: string;
 }
 /** The first line of a v3 log. */
-interface LogHeader {
+type LogHeader = {
     type: "session";
     version: number;
     id: string;
@@ -21,19 +21,19 @@ interface LogHeader {
     isSeeded: boolean;
     delegationDepth: number;
     agentPreset: string;
-}
+};
 /** One event line of a v3 log: the envelope dsh writes, with the payload it carries. */
-interface LogRow {
+type LogRow = {
     type: string;
     seq: number;
     time: number;
     surfaceOp?: "append";
-    sourceEventSeqs?: number[];
+    sourceEventSeqs?: Array<number>;
     data: JsonValue;
-}
+};
 export interface RawRowsLog {
     header: LogHeader;
-    rows: LogRow[];
+    rows: Array<LogRow>;
 }
 /** The slice of dsh's session-format catalog the probe calls: the restore a load runs. */
 export interface Catalog {

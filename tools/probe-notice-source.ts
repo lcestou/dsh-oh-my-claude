@@ -16,10 +16,12 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { noticeSource, RESTART_TEXT, WAKE_TEXT } from "../src/adapter.js";
-import { type RawRowsLog, rawRowsLog } from "../src/rows-probe.js";
+import { rawRowsLog } from "../src/rows-probe.js";
+import type { RawRowsLog } from "../src/rows-probe.js";
 
 /** A row of the synthetic log, the shape `rawRowsLog` builds. */
 type Row = RawRowsLog["rows"][number];
+
 /** A message source the plugin appends: a notice's, or the typed prompt's. */
 type Source = ReturnType<typeof noticeSource> | { kind: "user" };
 
@@ -35,6 +37,7 @@ interface Catalog {
 /** The value after `flag` on the command line, or undefined when the flag is absent. */
 const opt = (flag: string): string | undefined => {
   const i = process.argv.indexOf(flag);
+
   return i === -1 ? undefined : process.argv[i + 1];
 };
 
@@ -43,12 +46,17 @@ const opt = (flag: string): string | undefined => {
  *  bin.js is that path itself. */
 function dshPrefix(): string {
   const given = opt("--dsh");
-  if (given) return resolve(given);
+
+  if (given) {
+    return resolve(given);
+  }
+
   const bin = execFileSync("sh", ["-c", "command -v dsh"]).toString().trim();
   const real = execFileSync("readlink", ["-f", bin]).toString().trim();
   const launcher = readFileSync(real, "utf8").slice(0, 4096);
   const named = /(\S+)\/lib\/node_modules\/@deepseek-ai\/dsh\/lib\/bin\.js/.exec(launcher)?.[1];
   const prefix = named?.replace(/^"?\$HOME/, homedir()).replace(/"$/, "") ?? dirname(real);
+
   return named !== undefined ? resolve(prefix) : resolve(prefix, "..", "..", "..", "..", "..");
 }
 
@@ -58,10 +66,36 @@ async function loadCatalog(prefix: string): Promise<Catalog> {
     prefix,
     "lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-session-format-catalog/lib/index.js",
   );
-  if (!existsSync(p)) throw new Error(`no session-format catalog under ${prefix} (use --dsh)`);
-  // SAFETY: `p` is dsh's own catalog module, checked to exist above; a dsh that renames the export
-  // fails on `createRestore` below, which is the loud failure this check exists to surface.
-  return (await import(p)).sessionFormatCatalog as Catalog;
+
+  if (!existsSync(p)) {
+    throw new Error(`no session-format catalog under ${prefix} (use --dsh)`);
+  }
+
+  // `p` is dsh's own catalog module, checked to exist above; a dsh that renames the export fails
+  // the check below, which is the loud failure this check exists to surface.
+  const mod: unknown = await import(p);
+
+  const catalog =
+    typeof mod === "object" && mod !== null && "sessionFormatCatalog" in mod
+      ? mod.sessionFormatCatalog
+      : undefined;
+
+  if (!isCatalog(catalog)) {
+    throw new TypeError(`${p} exports no sessionFormatCatalog with a createRestore function`);
+  }
+
+  return catalog;
+}
+
+/** Whether a module export is dsh's catalog as far as a cheap check goes: an object with a
+ *  `createRestore` function. The rest of its shape is trusted; a mismatch fails on first use. */
+function isCatalog(v: unknown): v is Catalog {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    "createRestore" in v &&
+    typeof v.createRestore === "function"
+  );
 }
 
 /** Restore a one-turn log plus a second turn opened by a user message carrying `source`, the way
@@ -69,18 +103,25 @@ async function loadCatalog(prefix: string): Promise<Catalog> {
  *  the refusing message, or undefined when dsh accepts the whole log. */
 function refusal(catalog: Catalog, version: number, source: Source): string | undefined {
   const base = rawRowsLog(version);
-  // SAFETY: a JSON round trip of rows `rawRowsLog` just built keeps their shape; it only detaches
-  // the copy so a restore consuming one run cannot touch the next.
-  const rows = JSON.parse(JSON.stringify(base.rows)) as Row[];
+  // A deep copy detaches the rows `rawRowsLog` just built, so a restore consuming one run cannot
+  // touch the next.
+  const rows = structuredClone(base.rows);
   const n = rows.length;
   const msg = { content: [{ type: "text", text: "notice" }], source, role: "user", id: "n1" };
-  const at = (i: number, seq: number, type: string, data: Row["data"]): Row => ({
-    ...rows[i]!,
-    seq,
-    type,
-    data,
-  });
-  const extra: Row[] = [
+
+  /** A copy of row `i` renumbered to `seq` and given `type` and `data`; throws when the base log
+   *  is shorter than the splice assumes. */
+  const at = (i: number, seq: number, type: string, data: Row["data"]): Row => {
+    const row = rows[i];
+
+    if (!row) {
+      throw new RangeError(`the base log has no row ${i}`);
+    }
+
+    return { ...row, seq, type, data };
+  };
+
+  const extra: Array<Row> = [
     at(0, n, "agent/inbox/spliced", {
       target: "next-turn",
       start: 0,
@@ -93,16 +134,22 @@ function refusal(catalog: Catalog, version: number, source: Source): string | un
     at(n - 2, n + 4, "step/end", { turn: 2, step: 1 }),
     at(n - 1, n + 5, "turn/end", { turn: 2, reason: "done" }),
   ];
+
   const restore = catalog.createRestore(base.header, {
     recovery: "strict",
     validation: version >= 4 ? "current" : "transformed",
   });
+
   try {
-    for (const row of [...rows, ...extra]) restore.decodeRow(row);
+    for (const row of [...rows, ...extra]) {
+      restore.decodeRow(row);
+    }
+
     restore.finish();
+
     return undefined;
-  } catch (e) {
-    return e instanceof Error ? e.message : String(e);
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
 }
 
@@ -111,21 +158,26 @@ async function main(): Promise<number> {
   const catalog = await loadCatalog(dshPrefix());
   const version = catalog.currentVersion ?? 3;
   console.log(`dsh session format v${version}`);
-  const sources: [string, Source][] = [
+
+  const sources: Array<[string, Source]> = [
     ["wake notice", noticeSource(WAKE_TEXT, false, version)],
     ["restart notice, goal active", noticeSource(RESTART_TEXT, true, version)],
     ["restart notice, no goal", noticeSource(RESTART_TEXT, false, version)],
     ["typed prompt", { kind: "user" }],
   ];
+
   let bad = 0;
+
   for (const [label, source] of sources) {
     const why = refusal(catalog, version, source);
     console.log(`${why === undefined ? "ok     " : "REFUSED"} ${label}: ${JSON.stringify(source)}`);
+
     if (why !== undefined) {
       console.log(`        ${why}`);
       bad++;
     }
   }
+
   return bad === 0 ? 0 : 1;
 }
 

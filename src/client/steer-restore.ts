@@ -8,13 +8,13 @@ export const RESTORE_WINDOW_MS = 4000;
 /** What the watch remembers between one composer or steer-list update and the next. */
 export interface RestoreWatch {
   /** The composer's attachment ids at the last update, in row order. */
-  ids: readonly string[];
+  ids: ReadonlyArray<string>;
   /** The waiting steers at the last update. */
-  rows: readonly WaitingSteerRow[];
+  rows: ReadonlyArray<WaitingSteerRow>;
   /** Attachment steers that left the waiting list, not yet paired with a restore. */
   left: Array<{ text: string; count: number; at: number }>;
   /** Ids that appeared at the head of the composer's row, not yet paired with a steer. */
-  heads: Array<{ ids: string[]; at: number }>;
+  heads: Array<{ ids: Array<string>; at: number }>;
   /** Texts of paired steers, waiting for dsh to put the same words back in the composer. */
   words: Array<{ text: string; at: number }>;
   /** The composer's text at the last update. */
@@ -27,7 +27,7 @@ export interface RestoreWatch {
  *  composer's text. */
 export interface RestoreStep {
   next: RestoreWatch;
-  remove: string[];
+  remove: Array<string>;
   clearDraft: boolean;
 }
 
@@ -36,20 +36,27 @@ export interface RestoreStep {
 const withdrawnAt = new Map<string, number>();
 
 /** Record steers this tab is taking back, so their restore can pair. */
-export const noteWithdrawn = (ids: readonly string[], at = Date.now()): void => {
-  for (const id of ids) withdrawnAt.set(id, at);
+export const noteWithdrawn = (ids: ReadonlyArray<string>, at = Date.now()): void => {
+  for (const id of ids) {
+    withdrawnAt.set(id, at);
+  }
 };
 
 /** The steers taken back from this tab within the window, dropping older records as it reads. */
 export const withdrawnSince = (at: number): Set<string> => {
-  for (const [id, when] of withdrawnAt) if (at - when >= RESTORE_WINDOW_MS) withdrawnAt.delete(id);
+  for (const [id, when] of withdrawnAt) {
+    if (at - when >= RESTORE_WINDOW_MS) {
+      withdrawnAt.delete(id);
+    }
+  }
+
   return new Set(withdrawnAt.keys());
 };
 
 /** A watch that starts from what the composer and the list hold now, so nothing already there pairs. */
 export const startWatch = (
-  ids: readonly string[],
-  rows: readonly WaitingSteerRow[],
+  ids: ReadonlyArray<string>,
+  rows: ReadonlyArray<WaitingSteerRow>,
   draft = "",
 ): RestoreWatch => ({ ids, rows, left: [], heads: [], words: [], draft, jumps: [] });
 
@@ -70,8 +77,8 @@ export const startWatch = (
 export function stepRestore(
   watch: RestoreWatch,
   now: {
-    ids: readonly string[];
-    rows: readonly WaitingSteerRow[];
+    ids: ReadonlyArray<string>;
+    rows: ReadonlyArray<WaitingSteerRow>;
     draft: string;
     at: number;
     withdrawn: ReadonlySet<string>;
@@ -83,36 +90,63 @@ export function stepRestore(
   let words = watch.words.filter(fresh);
   const jumps = watch.jumps.filter(fresh);
   const text = now.draft.trim();
-  if (watch.draft.trim() === "" && text !== "") jumps.push({ text, at: now.at });
-  for (const was of watch.rows)
+
+  if (watch.draft.trim() === "" && text !== "") {
+    jumps.push({ text, at: now.at });
+  }
+
+  for (const was of watch.rows) {
     if (
       was.attachments?.length &&
       now.withdrawn.has(was.id) &&
       !now.rows.some((w) => w.id === was.id)
-    )
+    ) {
       left.push({ text: was.text.trim(), count: was.attachments.length, at: now.at });
+    }
+  }
+
   if (now.ids !== watch.ids) {
     const before = new Set(watch.ids);
-    const head: string[] = [];
+    const head: Array<string> = [];
+
     for (const id of now.ids) {
-      if (before.has(id)) break;
+      if (before.has(id)) {
+        break;
+      }
+
       head.push(id);
     }
+
     // Only a pure insertion at the head counts; a reorder or a removal alongside it is not dsh's.
-    if (head.length > 0 && before.size + head.length === now.ids.length)
+    if (head.length > 0 && before.size + head.length === now.ids.length) {
       heads.push({ ids: head, at: now.at });
+    }
   }
-  const remove: string[] = [];
+
+  const remove: Array<string> = [];
+
   for (const gone of left) {
     const match = heads.find((h) => h.ids.length === gone.count);
-    if (!match) continue;
+
+    if (!match) {
+      continue;
+    }
+
     remove.push(...match.ids);
     heads = heads.filter((h) => h !== match);
     left = left.filter((l) => l !== gone);
-    if (gone.text) words.push({ text: gone.text, at: gone.at });
+
+    if (gone.text) {
+      words.push({ text: gone.text, at: gone.at });
+    }
   }
+
   const said = words.find((w) => w.text === text && jumps.some((j) => j.text === text));
-  if (said) words = words.filter((w) => w !== said);
+
+  if (said) {
+    words = words.filter((w) => w !== said);
+  }
+
   return {
     next: { ids: now.ids, rows: now.rows, left, heads, words, draft: now.draft, jumps },
     remove,

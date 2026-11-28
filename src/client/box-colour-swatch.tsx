@@ -17,9 +17,9 @@ export type BoxEntry = { provider: string; host: string | null; name?: string | 
 /** Every mounted box from `GET /models?all=1`, the list the swatches and the sheet work from;
  *  undefined when the read fails, so a caller keeps what it last drew rather than dropping every
  *  box but This one until the next change. */
-const loadBoxList = (): Promise<BoxEntry[] | undefined> =>
+const loadBoxList = (): Promise<Array<BoxEntry> | undefined> =>
   fetch(`${ROUTE}/models?all=1`)
-    .then((r) => readJson<{ models?: BoxEntry[] }>(r))
+    .then((r) => readJson<{ models?: Array<BoxEntry> }>(r))
     .then((b) => (b.models ?? []).map(({ provider, host, name }) => ({ provider, host, name })))
     .catch(() => undefined);
 
@@ -35,26 +35,36 @@ export const boxLabel = (b: BoxEntry): string => b.name ?? b.host ?? t("main.ses
 export function startBoxColours(): () => void {
   let latest = 0;
   let live = true;
+
   /** Read hints and boxes and rewrite the sheet; a read that a newer one overtook is dropped. */
   const paint = () => {
     const mine = ++latest;
-    void Promise.all([loadHints(), loadBoxList()]).then(([hints, boxes]) => {
-      if (!live || mine !== latest || !boxes) return;
+    void (async () => {
+      const [hints, boxes] = await Promise.all([loadHints(), loadBoxList()]);
+
+      if (!live || mine !== latest || !boxes) {
+        return;
+      }
+
       let el = document.getElementById("omc-box-colours");
+
       if (!el) {
         el = document.createElement("style");
         el.id = "omc-box-colours";
-        document.head.appendChild(el);
+        document.head.append(el);
       }
+
       el.textContent = boxColourSheet(
         hints,
         boxes.map((b) => b.provider),
       );
-    });
+    })();
   };
+
   paint();
   window.addEventListener(HINTS_EVENT, paint);
   window.addEventListener(BOXES_EVENT, paint);
+
   return () => {
     live = false;
     window.removeEventListener(HINTS_EVENT, paint);
@@ -68,19 +78,26 @@ export function startBoxColours(): () => void {
  * picker, or in another tab, and the accent the automatic shades follow) and on BOXES_EVENT.
  * Empty until the first read lands.
  */
-export function useBoxColours(): { boxes: BoxEntry[]; colours: Map<string, string> } {
-  const [state, setState] = useState<{ boxes: BoxEntry[]; colours: Map<string, string> }>({
+export function useBoxColours(): { boxes: Array<BoxEntry>; colours: Map<string, string> } {
+  const [state, setState] = useState<{ boxes: Array<BoxEntry>; colours: Map<string, string> }>({
     boxes: [],
     colours: new Map(),
   });
+
   useEffect(() => {
     let live = true;
     let latest = 0;
+
     /** Read hints and boxes together; only the newest read lands. */
     const load = () => {
       const mine = ++latest;
-      void Promise.all([loadHints(), loadBoxList()]).then(([hints, boxes]) => {
-        if (!live || mine !== latest || !boxes) return;
+      void (async () => {
+        const [hints, boxes] = await Promise.all([loadHints(), loadBoxList()]);
+
+        if (!live || mine !== latest || !boxes) {
+          return;
+        }
+
         setState({
           boxes,
           colours: boxColours(
@@ -88,17 +105,20 @@ export function useBoxColours(): { boxes: BoxEntry[]; colours: Map<string, strin
             boxes.map((b) => b.provider),
           ),
         });
-      });
+      })();
     };
+
     load();
     window.addEventListener(HINTS_EVENT, load);
     window.addEventListener(BOXES_EVENT, load);
+
     return () => {
       live = false;
       window.removeEventListener(HINTS_EVENT, load);
       window.removeEventListener(BOXES_EVENT, load);
     };
   }, []);
+
   return state;
 }
 
@@ -122,14 +142,17 @@ const SWATCH: CSSProperties = {
 /** Inline sheet for the inner swatch of a native colour input, which only pseudo-elements reach;
  *  added once per page. */
 const ensureSwatchStyle = (): void => {
-  if (document.getElementById("omc-box-swatch-style")) return;
+  if (document.getElementById("omc-box-swatch-style")) {
+    return;
+  }
+
   const el = document.createElement("style");
   el.id = "omc-box-swatch-style";
   el.textContent =
     "[data-omc-box-colour]::-webkit-color-swatch-wrapper{padding:0}" +
     "[data-omc-box-colour]::-webkit-color-swatch{border:none;border-radius:3px}" +
     "[data-omc-box-colour]::-moz-color-swatch{border:none;border-radius:3px}";
-  document.head.appendChild(el);
+  document.head.append(el);
 };
 
 /**
@@ -151,6 +174,7 @@ export function BoxColourSwatch({
   useLocale();
   ensureSwatchStyle();
   const [picked, setPicked] = useHintValue(boxColourKey(provider));
+
   return (
     <>
       <input
@@ -159,7 +183,7 @@ export function BoxColourSwatch({
         aria-label={t("boxColours.pick", { name })}
         title={t("boxColours.pick", { name })}
         value={colour ?? "#888888"}
-        onChange={(e) => setPicked(parseInt(e.target.value.slice(1), 16))}
+        onChange={(e) => setPicked(Number.parseInt(e.target.value.slice(1), 16))}
         style={SWATCH}
       />
       {reset && picked !== undefined && (
@@ -184,7 +208,11 @@ export function BoxColourSwatch({
 export function BoxColoursList() {
   useLocale();
   const { boxes, colours } = useBoxColours();
-  if (boxes.length < 2) return null;
+
+  if (boxes.length < 2) {
+    return null;
+  }
+
   // This box first, then the others in the order their shades are numbered.
   const ordered = boxes.toSorted((a, b) =>
     a.provider === THIS_BOX_PROVIDER
@@ -193,6 +221,7 @@ export function BoxColoursList() {
         ? 1
         : a.provider.localeCompare(b.provider),
   );
+
   return (
     <div data-omc-box-colours="" style={{ display: "grid", gap: 6, fontSize: 13 }}>
       <div>{t("boxColours.title")}</div>

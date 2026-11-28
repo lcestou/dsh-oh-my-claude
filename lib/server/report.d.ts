@@ -12,10 +12,10 @@ export interface ReportInput {
     stateDir: string;
     stateWritable: boolean;
     /** null when no session was named or no process is running for it. */
-    mcp: {
+    mcp: Array<{
         name: string;
         status: string;
-    }[] | null;
+    }> | null;
     lastError: string | null;
     switches: Record<string, boolean | number>;
     running: number;

@@ -4,18 +4,24 @@
 // window, the partial bars, the keyboard walk, a hover or a tap, then the empty line and an older
 // server's reply with no history. Screenshots go to OUT (default /tmp/pw).
 // Usage: bun tools/playwright/usage-history.ts <token> [session title]
-import { dshUrl, launch, type Page } from "./pw.js";
-import { routeUsage, type HistoryCase } from "./usage-fixture.js";
+import { dshUrl, launch } from "./pw.js";
+import type { Page } from "./pw.js";
+import { routeUsage } from "./usage-fixture.js";
+import type { HistoryCase } from "./usage-fixture.js";
 
 const [token, sessionTitle] = process.argv.slice(2);
 const out = process.env.OUT ?? "/tmp/pw";
 const RING = 'button[aria-haspopup="dialog"]:has(> svg > circle + circle[stroke-dasharray])';
 const now = Date.now();
 let failed = 0;
+
 /** Print one result line, counting it when it failed. */
 const check = (ok: boolean, what: string) => {
   console.log(`${ok ? "PASS" : "FAIL"} ${what}`);
-  if (!ok) failed++;
+
+  if (!ok) {
+    failed++;
+  }
 };
 
 /** Load dsh with usage answered from the fixture, open the session under test (a DOM click, since
@@ -24,9 +30,11 @@ async function openRing(p: Page, which: HistoryCase): Promise<void> {
   await routeUsage(p, which, now);
   await p.goto(dshUrl(token), { waitUntil: "load" });
   await p.waitForTimeout(2500);
+
   const row = sessionTitle
     ? p.getByText(sessionTitle).first()
     : p.locator('[role="treeitem"]').last();
+
   await row.evaluate((el) => el.click());
   await p.waitForTimeout(3500);
   await p
@@ -37,13 +45,14 @@ async function openRing(p: Page, which: HistoryCase): Promise<void> {
 }
 
 /** The pace kinds the live rows show, in order: the rows above the strips must not change. */
-const paceKinds = (p: Page): Promise<(string | null)[]> =>
+const paceKinds = (p: Page): Promise<Array<string | null>> =>
   p
     .locator("[data-omc-usage-pace]")
     .evaluateAll((els) => els.map((el) => el.getAttribute("data-omc-usage-pace")));
 
 const b = await launch();
-let baseline: (string | null)[] = [];
+let baseline: Array<string | null> = [];
+
 for (const which of ["none", "empty"] as const) {
   const ctx = await b.newContext({ viewport: { width: 1400, height: 900 }, colorScheme: "dark" });
   const p = await ctx.newPage();
@@ -54,14 +63,20 @@ for (const which of ["none", "empty"] as const) {
     strips === 0 && empty === (which === "empty" ? 1 : 0),
     `${which}: ${strips} strips, ${empty} empty lines`,
   );
-  if (which === "none") baseline = await paceKinds(p);
+
+  if (which === "none") {
+    baseline = await paceKinds(p);
+  }
+
   await p.unrouteAll({ behavior: "ignoreErrors" });
   await ctx.close();
 }
-for (const colorScheme of ["dark", "light"] as const)
+
+for (const colorScheme of ["dark", "light"] as const) {
   for (const width of [1400, 390]) {
     const phone = width < 500;
     const scene = `${colorScheme} ${width}px`;
+
     const ctx = await b.newContext({
       viewport: { width, height: phone ? 844 : 900 },
       deviceScaleFactor: 2,
@@ -69,12 +84,15 @@ for (const colorScheme of ["dark", "light"] as const)
       isMobile: phone,
       hasTouch: phone,
     });
+
     const p = await ctx.newPage();
     await openRing(p, "full");
     const sliders = p.locator('[data-omc-usage-history] [role="slider"]');
+
     const maxes = await sliders.evaluateAll((els) =>
       els.map((el) => el.getAttribute("aria-valuemax")),
     );
+
     check(
       maxes.join("/") === "12/8/3/4",
       `${scene} strips hold 12/8/3/4 windows: ${maxes.join("/")}`,
@@ -100,8 +118,13 @@ for (const colorScheme of ["dark", "light"] as const)
     );
     const bar = p.locator("[data-omc-usage-history] [data-omc-usage-history-bar]").nth(2);
     const box = await bar.boundingBox();
-    if (phone && box) await p.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
-    else await bar.hover();
+
+    if (phone && box) {
+      await p.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    } else {
+      await bar.hover();
+    }
+
     await p.waitForTimeout(200);
     check(
       (await first.getAttribute("aria-valuenow")) === "3",
@@ -114,6 +137,10 @@ for (const colorScheme of ["dark", "light"] as const)
     await p.unrouteAll({ behavior: "ignoreErrors" });
     await ctx.close();
   }
+}
+
 await b.close();
+
 console.log(failed ? `${failed} FAILED` : "usage history check ok");
+
 process.exit(failed ? 1 : 0);

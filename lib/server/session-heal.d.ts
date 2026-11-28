@@ -1,5 +1,5 @@
-import { type Catalog } from "./session-repair.js";
-import { type SessionRepairRecord, type SessionRepairsFile } from "./state.js";
+import type { Catalog } from "./session-repair.js";
+import type { SessionRepairRecord, SessionRepairsFile } from "./state.js";
 /** A session log header as `list()` hands it: the id and cwd `locate` needs. */
 export interface HealHeader {
     id: string;
@@ -17,9 +17,9 @@ export interface HealHost {
         }>>;
         open(id: string, access: "read"): Promise<{
             read?(offset: number): Promise<{
-                events: readonly {
+                events: ReadonlyArray<{
                     type: string;
-                }[];
+                }>;
             }>;
             close(): Promise<void>;
         }>;

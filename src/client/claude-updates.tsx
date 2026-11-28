@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 
 import type { ClaudeUpdateState } from "../claude-update.js";
 import { BOXES_EVENT, SETTINGS_EVENT } from "./picker.js";
-import { btn, errText, meta, nested, readJson, ROUTE, select, T } from "./shared.js";
+import { btn, errText, meta, nested, readJson, ROUTE, select, T, errorText } from "./shared.js";
 import { LiveNote } from "./live-note.js";
 import { Switch } from "./switch.js";
 import { onBox, read, readTunables, updateSettings } from "./tune.js";
@@ -66,7 +66,7 @@ const boxLabel = (b: UpdateBox | undefined): string =>
  */
 export function ClaudeUpdateDetails() {
   useLocale();
-  const [boxes, setBoxes] = useState<UpdateBox[]>([LOCAL_BOX]);
+  const [boxes, setBoxes] = useState<Array<UpdateBox>>([LOCAL_BOX]);
   const [host, setHost] = useState("");
   const [upd, setUpd] = useState<UpdateReply | null>(null);
   const [channel, setChannel] = useState<string | undefined>(undefined);
@@ -78,13 +78,17 @@ export function ClaudeUpdateDetails() {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    const load = () =>
+    /** Reads the ssh boxes; a failed read keeps the list as it is. */
+    const load = () => {
       fetch(`${ROUTE}/ssh-boxes`)
-        .then((r) => readJson<{ boxes?: UpdateBox[] }>(r))
+        .then((r) => readJson<{ boxes?: Array<UpdateBox> }>(r))
         .then((b) => setBoxes([LOCAL_BOX, ...(b.boxes ?? [])]))
         .catch(() => {});
-    void load();
+    };
+
+    load();
     window.addEventListener(BOXES_EVENT, load);
+
     return () => window.removeEventListener(BOXES_EVENT, load);
   }, []);
 
@@ -92,26 +96,35 @@ export function ClaudeUpdateDetails() {
   const provider = box?.provider;
   const url = (extra = "") => `${ROUTE}/claude-update?host=${encodeURIComponent(host)}${extra}`;
 
-  useEffect(() => {
-    let live = true;
+  // Another box starts the card clean, during the render that switches.
+  const shownBox = `${host}\n${provider}`;
+  const [shownFor, setShownFor] = useState(shownBox);
+
+  if (shownFor !== shownBox) {
+    setShownFor(shownBox);
     setUpd(null);
     setCheckLine("");
     setErr("");
+  }
+
+  useEffect(() => {
+    let live = true;
     fetch(`${ROUTE}/claude-update?host=${encodeURIComponent(host)}`)
       .then((r) => readJson<UpdateReply>(r))
       .then((s) => live && setUpd(s))
-      .catch((e: Error) => live && setErr(e.message));
+      .catch((cause: unknown) => live && setErr(errorText(cause)));
+
     /** The channel as the box's settings.json holds it now. */
-    const readChannel = () =>
+    const readChannel = () => {
       read(provider)
-        .then((f) => {
-          if (!live) return;
-          setChannel(readTunables(f.text).autoUpdatesChannel);
-        })
+        .then((f) => live && setChannel(readTunables(f.text).autoUpdatesChannel))
         .catch(() => live && setChannel(undefined));
-    void readChannel();
+    };
+
+    readChannel();
     // The settings editor on the same page writes the same file, so a channel set there shows here.
     window.addEventListener(SETTINGS_EVENT, readChannel);
+
     return () => {
       live = false;
       window.removeEventListener(SETTINGS_EVENT, readChannel);
@@ -122,15 +135,17 @@ export function ClaudeUpdateDetails() {
   const post = async (body: { auto?: boolean }) => {
     setBusy(true);
     setErr("");
+
     try {
       const r = await fetch(url(), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
+
       setUpd(await readJson<UpdateReply>(r));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -141,6 +156,7 @@ export function ClaudeUpdateDetails() {
     setBusy(true);
     setErr("");
     setCheckLine("");
+
     try {
       const s = await readJson<UpdateReply>(await fetch(url("&now=1")));
       setUpd(s);
@@ -152,8 +168,8 @@ export function ClaudeUpdateDetails() {
             })
           : t("updates.checkFailed"),
       );
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -164,10 +180,15 @@ export function ClaudeUpdateDetails() {
   const writeChannel = async (next: string | undefined) => {
     setBusy(true);
     setErr("");
+
     try {
       const fresh = await read(provider);
       const out = updateSettings(fresh.text, "autoUpdatesChannel", next);
-      if (out.error !== undefined) throw new Error(out.error);
+
+      if (out.error !== undefined) {
+        throw new Error(out.error);
+      }
+
       await readJson(
         await fetch(`${ROUTE}/settings${onBox(provider)}`, {
           method: "PUT",
@@ -179,14 +200,15 @@ export function ClaudeUpdateDetails() {
       window.dispatchEvent(new Event(SETTINGS_EVENT));
       // The updater reads the channel before each check; ask for one so the card follows.
       setUpd(await readJson<UpdateReply>(await fetch(url("&now=1"))));
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
   };
 
   const history = (upd?.log ?? []).slice(-10).toReversed();
+
   const channelName =
     channel === "stable"
       ? t("updates.channelStable")
@@ -195,6 +217,7 @@ export function ClaudeUpdateDetails() {
         : channel === "latest"
           ? t("updates.channelLatest")
           : t("updates.channelDefault");
+
   const summary = [
     boxes.length > 1 ? boxLabel(box) : null,
     channelName,
@@ -203,6 +226,7 @@ export function ClaudeUpdateDetails() {
   ]
     .filter(Boolean)
     .join(" · ");
+
   return (
     <div
       data-omc-claude-update-details=""

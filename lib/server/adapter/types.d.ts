@@ -1,4 +1,4 @@
-import { type GenerateOptions, type Message } from "@deepseek-ai/dsh-llm";
+import type { GenerateOptions, Message } from "@deepseek-ai/dsh-llm";
 import type { Agent, JsonValue, SessionId } from "../dsh.js";
 import type { ClaudeEvent, ClaudeProcess, ContextUsage, HooksListing, McpServerStatus, PermissionRules, RelayResult, RewindResult, SteerAttachment, TurnPrep, WorkspaceDiff } from "../process.js";
 import type { FallbackRecord, LiveMode, SuggestionRow } from "../translator.js";
@@ -25,7 +25,7 @@ export type Continuation = {
     mode: "relay";
     proc: ClaudeProcess;
     options: SessionOptions;
-    results: RelayResult[];
+    results: Array<RelayResult>;
 } | {
     mode: "prompt";
     proc?: undefined;
@@ -136,18 +136,18 @@ export interface SteerCardState {
         text: string;
         at: number;
         relayed?: true;
-        attachments?: SteerAttachment[];
+        attachments?: Array<SteerAttachment>;
     }>;
     held: Array<{
         id: string;
         text: string;
-        attachments?: SteerAttachment[];
+        attachments?: Array<SteerAttachment>;
     }>;
 }
 /** Steers taken back from Claude while someone edits them. */
 export interface HeldSteer {
     /** The dsh messages, oldest first, as they left the inbox; a restore puts these back unchanged. */
-    messages: Message[];
+    messages: Array<Message>;
     /** Their texts one per line, what the editor starts from. */
     text: string;
     /** Restores the hold when its card stops polling, so an abandoned edit never loses a message. */
@@ -203,7 +203,7 @@ export type PermissionReadoutReply = ({
 export type McpStatusReply = {
     ok: true;
     error?: undefined;
-    servers: McpServerStatus[];
+    servers: Array<McpServerStatus>;
 } | {
     ok: false;
     error: string;
@@ -229,7 +229,7 @@ export interface PermissionModeInfo {
      *  A pick equal to the entry for the shield it lands on clears the override. */
     defaultModes: Record<string, string>;
     /** Permission modes the client may pick (at or below the ceiling). */
-    allowed: readonly string[];
+    allowed: ReadonlyArray<string>;
     /** The mode the session's running Claude process is in, or null when no process is alive. It
      *  lags `mode` after a pick the CLI could not take live; the next turn spawns with `mode`. */
     liveMode: string | null;
@@ -279,7 +279,7 @@ export interface TurnTotals {
  *  for one session. `GET /side-questions` answers these plus `claudeUpdate`, which the updater's
  *  own tick in sessions.ts adds and which no event carries. */
 export interface AsidesReply {
-    items: AsideEntry[];
+    items: Array<AsideEntry>;
     loginNeeded: LoginNeed | null;
     fallback: FallbackRecord | null;
     steers: SteerCardState;
@@ -295,7 +295,10 @@ export interface IdleReply {
 /** `GET /permission-mode` and the `permission-mode` event: the info plus the modes the client may
  *  pick, under the name the client already reads (`modes`). */
 export interface PermissionModeState extends PermissionModeInfo {
-    modes: readonly string[];
+    modes: ReadonlyArray<string>;
 }
 /** The key every live process is stored under, `providerId` then `sessionId`; a session id must not contain a colon or it would collide with this separator. */
 export declare function registryKey(providerId: string, sessionId: string): string;
+/** The part of a Claude process the control channel touches (`control`, `retarget`): its spec and
+ *  key, the control_response listener, and stdin. A check can hand in a bridge with just these. */
+export type ControlledProcess = Pick<ClaudeProcess, "spec" | "key" | "controlListener" | "write">;

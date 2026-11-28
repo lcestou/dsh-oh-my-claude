@@ -4,54 +4,50 @@ import { strict as assert } from "node:assert";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PluginContext } from "../dsh.js";
+import type { ClaudeContentBlock, ClaudeEvent, ClaudeStreamPartial } from "../process.js";
+import {
+  fakeClaudeProcess,
+  fakePluginContext,
+  fakePrep,
+  stepSession,
+  userTurn,
+} from "../test-context.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
 
 const stateDir = mkdtempSync(join(tmpdir(), "omc-steer-park-"));
 
 /** A process fed from `queue`: the frames a real CLI would write, in order, then end of stream. */
-function fakeProc(queue: unknown[]) {
-  return {
-    alive: true,
+function fakeProc(queue: Array<ClaudeEvent>) {
+  return fakeClaudeProcess({
     busy: false,
-    parked: undefined as string | undefined,
+    parked: undefined,
     steerPending: true,
     forwarded: 1,
-    relays: new Map(),
-    sent: new Set(),
-    steers: new Map(),
-    queue: { lines: [] },
-    queuedIndexes: [],
     idleKilled: false,
+    // The old fakes carried both: alive, with an exit code already set.
+    alive: true,
     exitCode: 0,
-    stderr: "",
-    stray: "",
     staleResults: 0,
     countStaleResults: () => 0,
     write: () => true,
-    nextEvent: async (ms?: number) =>
-      queue.length > 0 ? queue.shift() : ms === undefined ? null : { type: "timeout" },
+    nextEvent: async (ms) => queue.shift() ?? (ms === undefined ? null : { type: "timeout" }),
     kill() {},
-  };
+  });
 }
 
 /** Run one step over `queue` and answer how many frames it left unread and whether it parked. */
-async function step(queue: unknown[]) {
-  const session = {
-    header: { version: 0 },
-    snapshotEvents: () => [
-      { type: "turn/start", data: { turn: 1 } },
-      { type: "step/start", data: { step: 1 } },
-    ],
-    append: () => ({ seq: 1 }),
-  };
+async function step(queue: Array<ClaudeEvent>) {
+  const session = stepSession();
   const proc = fakeProc(queue);
-  // SAFETY: partial fakes; the step reads the session's log and nothing else of the context
-  const ctx = {
+
+  // The step reads the session's log and nothing else of the context.
+  const ctx = fakePluginContext({
     on() {},
     sessions: { get: () => session },
-  } as unknown as PluginContext;
+    agents: { get: () => undefined },
+  });
+
   const a = new ClaudeCodeAdapter(
     ctx,
     Config({
@@ -61,40 +57,36 @@ async function step(queue: unknown[]) {
       dshTools: true,
     }),
   );
+
   a.stateDir = stateDir;
-  const prep = {
-    input: "go",
-    spec: { model: "m" },
-    cwd: "/tmp",
-    session: undefined,
-    args: [],
-  };
-  // SAFETY: the fakes below stand in for a spawned process and its side channels
-  const loose = a as unknown as Record<string, unknown>;
-  loose.acquire = async () => ({ prep, proc });
-  loose.reconnectIfStale = async () => {};
-  loose.watchTranscript = async () => {};
-  loose.pumpMirror = async () => {};
-  const options = {
-    sessionId: "s",
-    model: "m",
-    messages: [{ role: "user", content: [{ type: "text", text: "go" }] }],
-    signal: new AbortController().signal,
-  };
-  // SAFETY: the options above are the fields a step reads
-  for await (const _ of a.stream(options as unknown as Parameters<typeof a.stream>[0])) void _;
+
+  const prep = fakePrep();
+
+  // The fakes below stand in for a spawned process and its side channels.
+  a.acquire = async () => ({ prep, proc });
+  a.reconnectIfStale = async () => {};
+
+  a.watchTranscript = async () => {};
+
+  a.pumpMirror = async () => {};
+
+  for await (const _ of a.stream(userTurn("s"))) {
+    // Drained: what the step leaves behind is what is checked.
+  }
+
   return { left: queue.length, parked: proc.parked };
 }
 
 /** An assistant `tool_use` block as the CLI streams it, with empty input. */
-const call = (id: string, name: string) => ({
+const call = (id: string, name: string): ClaudeContentBlock => ({
   type: "tool_use",
   id,
   name,
   input: {},
 });
+
 /** The user frame carrying the result for call `id`; `parent` set marks a subagent's inner result. */
-const result = (id: string, parent: string | null = null) => ({
+const result = (id: string, parent: string | null = null): ClaudeEvent => ({
   type: "user",
   parent_tool_use_id: parent,
   message: {
@@ -103,7 +95,8 @@ const result = (id: string, parent: string | null = null) => ({
 });
 
 /** One partial frame of a streamed message, as `--include-partial-messages` sends them. */
-const partial = (event: object) => ({ type: "stream_event", event });
+const partial = (event: ClaudeStreamPartial): ClaudeEvent => ({ type: "stream_event", event });
+
 /** The start and stop frames of a tool_use block at `index`. */
 const block = (index: number, id: string) => [
   partial({
@@ -123,8 +116,10 @@ const block = (index: number, id: string) => [
     result("b2"),
     result("b1"),
   ]);
+
   assert.deepEqual(batch, { left: 0, parked: "steer" }, "parks at the last result of the batch");
 }
+
 {
   // Streamed: the CLI runs a call as soon as its block closes, so the first result can land
   // before the second block has begun. The message is still open, so that is not the boundary.
@@ -136,8 +131,10 @@ const block = (index: number, id: string) => [
     partial({ type: "message_stop" }),
     result("b2"),
   ]);
+
   assert.deepEqual(streamed, { left: 0, parked: "steer" }, "a result inside an open message waits");
 }
+
 {
   // An agent's inner tool result is the agent's, not the message's: the Agent call is still out.
   const nested = await step([
@@ -153,8 +150,10 @@ const block = (index: number, id: string) => [
     result("n1", "t1"),
     result("t1"),
   ]);
+
   assert.deepEqual(nested, { left: 0, parked: "steer" }, "parks at the Agent's own result");
 }
+
 {
   // Text the CLI wrote itself (here what `/compact` ends with) is a user frame with no tool
   // result in it: the step reads on to the turn's end instead of parking there (#273).
@@ -167,8 +166,10 @@ const block = (index: number, id: string) => [
     },
     { type: "result", subtype: "success", is_error: false, result: "" },
   ]);
+
   assert.deepEqual(cliText, { left: 0, parked: undefined }, "the CLI's own text is no boundary");
 }
+
 {
   // A Stop hook that blocks (the test gate) hands Claude its reason as a synthetic user frame.
   // The CLI keeps a steer typed meanwhile for its own turn, so the step must read on, not park.
@@ -182,7 +183,10 @@ const block = (index: number, id: string) => [
     { type: "assistant", message: { id: "m2", content: [{ type: "text", text: "fixed" }] } },
     { type: "result", subtype: "success", is_error: false, result: "fixed" },
   ]);
+
   assert.notEqual(gated.parked, "steer", "a block reason is not where the CLI takes a steer");
 }
+
 rmSync(stateDir, { recursive: true, force: true });
+
 console.log("steer park ok");

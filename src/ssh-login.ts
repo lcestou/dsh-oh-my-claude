@@ -10,11 +10,18 @@
 // target. Tokens from the earlier `setup-token` flow still live under `ssh-tokens/` on boxes that
 // logged in that way; they are read and injected until Log out forgets them, never minted again.
 import { spawn } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
+import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { sshArgs } from "./process.js";
 
-type SpawnFn = typeof spawn;
+/** The one `spawn` overload the login uses: piped stdio, so a fake needs only this shape. */
+type SpawnFn = (
+  command: string,
+  args: ReadonlyArray<string>,
+  options: SpawnOptions,
+) => ChildProcess;
 
 interface LoginProc {
   child: ReturnType<SpawnFn>;
@@ -27,13 +34,16 @@ interface LoginProc {
 }
 
 const logins = new Map<string, LoginProc>();
+
 /** How long a started login may sit unfinished before its process is killed. */
 const LOGIN_TTL_MS = 10 * 60_000;
 const URL_RE = /https:\/\/claude\.com\/[^\s'"]+/;
+
 // A minted token is ~100 chars, so the length floor is what tells a whole token from the first few
 // bytes of one: stdout arrives in chunks, and a prefix like `sk-ant-oat01-P` matches an open-ended
 // pattern just as happily as the real thing. A partial that reaches the box is a year-long 401.
 const TOKEN_RE = /sk-ant-oat01-[A-Za-z0-9_-]{40,}/;
+
 /** The same shape, whole-string, for a token read back off disk. */
 const TOKEN_ONLY_RE = /^sk-ant-oat01-[A-Za-z0-9_-]{40,}$/;
 
@@ -41,8 +51,8 @@ const TOKEN_ONLY_RE = /^sk-ant-oat01-[A-Za-z0-9_-]{40,}$/;
 const slug = (s: string): string =>
   s
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-+|-+$/g, "")
     .slice(0, 64) || "x";
 
 /** The host string that means the box this plugin runs on; its token sits beside the ssh ones. */
@@ -60,6 +70,7 @@ export function sshTokenPath(stateDir: string, host: string): string {
 export function readSshToken(stateDir: string, host: string): string | undefined {
   try {
     const t = readFileSync(sshTokenPath(stateDir, host), "utf8").trim();
+
     // Anything that is not a whole token reads as no login. The spawn env, the hold script and the
     // panel's login badge all route through here, so a truncated file left by an older build stops
     // being injected and stops being reported as logged in, in one place.
@@ -73,7 +84,9 @@ export function readSshToken(stateDir: string, host: string): string | undefined
 export function deleteSshToken(stateDir: string, host: string): void {
   try {
     rmSync(sshTokenPath(stateDir, host));
-  } catch {}
+  } catch {
+    // Already gone: nothing to remove.
+  }
 }
 
 /** The last non-empty line, for a terse error without dumping the whole PTY buffer (which carries the
@@ -86,14 +99,16 @@ function lastLine(s: string): string {
     .split(/[\r\n]+/)
     .map((l) => l.trim())
     .filter(Boolean);
-  return (lines[lines.length - 1] ?? "").replace(TOKEN_RE, "sk-ant-oat01-***");
+
+  return (lines.at(-1) ?? "").replace(TOKEN_RE, "sk-ant-oat01-***");
 }
 
 /** A process to start: the binary and its argument list. */
 export interface Invocation {
   command: string;
-  args: string[];
+  args: Array<string>;
 }
+
 /**
  * The command line that runs `claude auth login` under a PTY. On a box it rides `ssh -tt`. On this
  * box there is no ssh to lend a PTY, so `script` (util-linux on Linux, BSD's on macOS) provides one;
@@ -106,10 +121,15 @@ export function loginInvocation(
 ): Invocation {
   // Wide `stty` so the sign-in URL prints on one line.
   const line = `stty cols 400 rows 60 2>/dev/null; ${command} auth login`;
-  if (host !== THIS_BOX) return { command: "ssh", args: ["-tt", ...sshArgs(host, line)] };
+
+  if (host !== THIS_BOX) {
+    return { command: "ssh", args: ["-tt", ...sshArgs(host, line)] };
+  }
+
   // The CLI opens the sign-in URL itself through the desktop's opener. The panel shows the link
   // too; these keep a headless box from erroring on an opener with no display.
   const quiet = `BROWSER=true DISPLAY= WAYLAND_DISPLAY= ${line}`;
+
   return platform === "darwin"
     ? { command: "script", args: ["-q", "/dev/null", "sh", "-c", quiet] }
     : { command: "script", args: ["-qfc", quiet, "/dev/null"] };
@@ -126,36 +146,55 @@ export function loginInvocation(
 export function startSshLogin(
   host: string,
   spawnFn: SpawnFn = spawn,
-  timeoutMs = 15000,
+  timeoutMs = 15_000,
   command = "claude",
   ttlMs = LOGIN_TTL_MS,
   opts: { key?: string; env?: NodeJS.ProcessEnv } = {},
 ): Promise<{ url?: string; error?: string }> {
   const key = opts.key ?? host;
   const prev = logins.get(key);
-  if (prev && !prev.done) prev.child.kill();
+
+  if (prev && !prev.done) {
+    prev.child.kill();
+  }
+
   const inv = loginInvocation(host, command);
+
   const child = spawnFn(inv.command, inv.args, {
     stdio: ["pipe", "pipe", "pipe"],
     env: opts.env ?? process.env,
   });
+
   const proc: LoginProc = { child, out: "", done: false, startedAt: Date.now() };
   logins.set(key, proc);
+
   // A login nobody finishes would otherwise hold its PTY and the CLI for the life of the server
   // (found 2026-09-13: a check that hit the start route left one running for good).
   const ttl = setTimeout(() => {
-    if (!proc.done) proc.child.kill();
+    if (!proc.done) {
+      proc.child.kill();
+    }
   }, ttlMs);
+
   ttl.unref?.();
+
   const onData = (chunk: Buffer) => {
     proc.out += chunk.toString();
+
     if (!proc.url) {
       const match = proc.out.match(URL_RE);
-      if (match) proc.url = match[0];
+
+      if (match) {
+        proc.url = match[0];
+      }
     }
+
     // Bound the buffer: keep the tail, which holds the last status line.
-    if (proc.out.length > 40000) proc.out = proc.out.slice(-16000);
+    if (proc.out.length > 40_000) {
+      proc.out = proc.out.slice(-16_000);
+    }
   };
+
   child.stdout?.on("data", onData);
   child.stderr?.on("data", onData);
   // `close`, not `exit`: exit fires when the process ends, while stdout may still have buffered
@@ -167,6 +206,7 @@ export function startSshLogin(
     proc.done = true;
     proc.out += `\n${String(err)}`;
   });
+
   return new Promise((resolve) => {
     const tick = setInterval(() => {
       if (proc.url) {
@@ -184,7 +224,11 @@ export function startSshLogin(
  *  taken off the list cannot still finish a login into its dir. A key with nothing held is a no-op. */
 export function cancelSshLogin(key: string): void {
   const proc = logins.get(key);
-  if (proc && !proc.done) proc.child.kill();
+
+  if (proc && !proc.done) {
+    proc.child.kill();
+  }
+
   logins.delete(key);
 }
 
@@ -194,8 +238,10 @@ export interface LoginOutcome {
   done: boolean;
   error?: string;
 }
+
 /** A poll's answer: still running, or the outcome. */
 export type LoginPoll = { pending: true } | ({ pending: false } & LoginOutcome);
+
 /** Asks the box whether it is logged in now: the one proof a login took, run after the process
  *  exits. The routes hand in `claude auth status` on that box; tests hand in a stub. */
 export type VerifyLogin = () => Promise<boolean>;
@@ -207,13 +253,17 @@ async function loginOutcome(
   proc: LoginProc,
   verify: VerifyLogin,
 ): Promise<LoginOutcome | undefined> {
-  if (!proc.done) return undefined;
+  if (!proc.done) {
+    return undefined;
+  }
+
   if (!proc.outcome) {
     const ok = await verify().catch(() => false);
     proc.outcome = ok
       ? { done: true }
       : { done: false, error: lastLine(proc.out) || "login did not complete" };
   }
+
   return proc.outcome;
 }
 
@@ -224,8 +274,13 @@ async function loginOutcome(
  */
 export async function pollSshLogin(host: string, verify: VerifyLogin): Promise<LoginPoll> {
   const proc = logins.get(host);
-  if (!proc) return { pending: false, done: false, error: "no login in progress; start again" };
+
+  if (!proc) {
+    return { pending: false, done: false, error: "no login in progress; start again" };
+  }
+
   const out = await loginOutcome(proc, verify);
+
   return out ? { pending: false, ...out } : { pending: true };
 }
 
@@ -239,26 +294,42 @@ export function submitSshLoginCode(
   host: string,
   code: string,
   verify: VerifyLogin,
-  timeoutMs = 30000,
+  timeoutMs = 30_000,
 ): Promise<LoginOutcome> {
   const proc = logins.get(host);
-  if (!proc) return Promise.resolve({ done: false, error: "no login in progress; start again" });
+
+  if (!proc) {
+    return Promise.resolve({ done: false, error: "no login in progress; start again" });
+  }
+
   // A newline in the code would submit early / inject a second line.
-  if (/[\r\n]/.test(code) || code.length > 512)
+  if (/[\r\n]/.test(code) || code.length > 512) {
     return Promise.resolve({ done: false, error: "invalid code" });
+  }
+
   return (async () => {
     const early = await loginOutcome(proc, verify);
-    if (early) return early;
+
+    if (early) {
+      return early;
+    }
+
     // Type the code, then submit with CR, because the Ink prompt ignores a bare newline.
     proc.child.stdin?.write(code.trim());
     setTimeout(() => proc.child.stdin?.write("\r"), 500);
     const submittedAt = Date.now();
+
     for (;;) {
-      await new Promise((r) => setTimeout(r, 250));
+      await sleep(250);
       const out = await loginOutcome(proc, verify);
-      if (out) return out;
+
+      if (out) {
+        return out;
+      }
+
       if (Date.now() - submittedAt > timeoutMs) {
         proc.child.kill();
+
         return { done: false, error: lastLine(proc.out) || "login did not finish" };
       }
     }

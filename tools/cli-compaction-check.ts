@@ -23,7 +23,8 @@
 // sonnet. dsh loads `lib/`, so run `bun run build` first.
 //
 //   bun tools/cli-compaction-check.ts [--dsh desktop|<bin.js or executable>] [--only s1,s3] [--keep]
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -36,12 +37,13 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createServer, type AddressInfo } from "node:net";
+import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { compactSummaryOf } from "../src/compact-summary.js";
 import { claudeSessionId, projectDirName } from "../src/adapter/transcript-watch.js";
-import type { SessionEvent } from "../src/dsh.js";
+import type { JsonValue } from "../src/dsh.js";
 import { readKeeperInfo } from "../src/process.js";
 
 const REPO = resolve(import.meta.dirname, "..");
@@ -52,24 +54,36 @@ const WINDOW = 200_000;
 const TEAM_BUNDLE = "@deepseek-ai/dsh-experimental-agent-team-profile";
 
 const args = process.argv.slice(2);
+
 /** The word after `name` on the command line, or undefined when the flag is not given. */
 const flag = (name: string) => {
   const at = args.indexOf(name);
+
   return at >= 0 ? args[at + 1] : undefined;
 };
+
 const dshArg = flag("--dsh") ?? "dsh";
 const dshPath = dshArg === "desktop" ? DESKTOP_DSH : dshArg;
-const dshCommand = dshPath.endsWith(".js") ? ["node", dshPath] : [dshPath];
+
+const dshCommand: [string, ...Array<string>] = dshPath.endsWith(".js")
+  ? ["node", dshPath]
+  : [dshPath];
+
 const only = flag("--only")?.split(",");
 const keep = args.includes("--keep");
 
 let failed = 0;
 let inconclusive = 0;
+
 /** Print one line and count it when the expectation does not hold. */
 const check = (label: string, ok: boolean, detail: string) => {
-  if (!ok) failed++;
+  if (!ok) {
+    failed++;
+  }
+
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}  ${detail}`);
 };
+
 /** A precondition the run did not reach: no verdict on what depends on it. */
 const unmet = (label: string, detail: string) => {
   inconclusive++;
@@ -86,32 +100,44 @@ const BASE_ENV: Record<string, string> = Object.fromEntries(
     )
     .flatMap((k) => {
       const v = process.env[k];
+
       return v === undefined ? [] : [[k, v]];
     }),
 );
 
+/** A JSON object, as opposed to an array, null or a scalar; its fields are still unchecked. */
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
 const WORDS = "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima".split(" ");
+
 /** `count` lines of rotating words, about 25 tokens each. */
 function lines(count: number, tag: string): string {
-  const out: string[] = [];
+  const out: Array<string> = [];
+
   for (let i = 1; i <= count; i++) {
-    const row: string[] = [];
-    for (let j = 0; j < WORDS.length; j++) row.push(WORDS[(i + j) % WORDS.length]!);
+    // Line i starts at word i, wrapping round to the front.
+    const shift = i % WORDS.length;
+    const row = [...WORDS.slice(shift), ...WORDS.slice(0, shift)];
+
     out.push(`${tag} line ${i}: ${row.join(" ")}`);
   }
+
   return out.join("\n");
 }
 
 /** A prompt of about 80,000 tokens: past the 80,000 threshold with Claude Code's own prompt
  *  added, under the 134,464 a 0.9 ratio leaves on a 200k window. */
 const BIG = `Here is a log for reference only; do not summarize it.\n${lines(3200, "log")}\n`;
+
 /** About 25,000 tokens: a parent a forked child inherits from stays under the threshold. */
 const MEDIUM = `Here is a log for reference only; do not summarize it.\n${lines(1000, "log")}\n`;
 
 /** Three files of about 20,000 tokens each: under the Read tool's per-file cap. */
 function writeReading(cwd: string) {
-  for (const part of [1, 2, 3])
+  for (const part of [1, 2, 3]) {
     writeFileSync(join(cwd, `part${part}.txt`), `${lines(1500, `part ${part}`)}\n`);
+  }
 }
 
 /** A loopback port free a moment ago, for the web server a scenario mounts. */
@@ -120,31 +146,50 @@ const freePort = () =>
     const server = createServer();
     server.once("error", fail);
     server.listen(0, "127.0.0.1", () => {
-      // SAFETY: a server listening on a TCP host answers its AddressInfo
-      const { port } = server.address() as AddressInfo;
+      // A server listening on a TCP host answers its AddressInfo; a pipe path or null would not.
+      const address = server.address();
+
+      if (address === null || typeof address === "string") {
+        server.close(() => fail(new Error("the loopback server has no TCP port")));
+
+        return;
+      }
+
+      const { port } = address;
       server.close(() => done(port));
     });
   });
 
 /** dsh's `acp` profile under `home`, with this checkout and `bundles` among its bundles. */
-function linkProfile(home: string, env: NodeJS.ProcessEnv, bundles: string[]) {
-  execFileSync(dshCommand[0]!, [...dshCommand.slice(1), "--profile", "acp", "--dump-config"], {
+function linkProfile(home: string, env: NodeJS.ProcessEnv, bundles: Array<string>) {
+  execFileSync(dshCommand[0], [...dshCommand.slice(1), "--profile", "acp", "--dump-config"], {
     env,
     stdio: "ignore",
   });
   const profile = join(home, "profiles", "acp");
   const manifestPath = join(profile, "package.json");
-  // SAFETY: the profile manifest dsh just wrote; only `dsh.profile.bundles` is touched
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-    dsh: { profile: { bundles: string[] } };
-  };
-  manifest.dsh.profile.bundles.push(...bundles, "dsh-oh-my-claude");
+
+  // The profile manifest dsh just wrote; only `dsh.profile.bundles` is touched.
+  const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const dsh = isRecord(manifest) ? manifest.dsh : undefined;
+  const dshProfile = isRecord(dsh) ? dsh.profile : undefined;
+  const listed = isRecord(dshProfile) ? dshProfile.bundles : undefined;
+
+  if (!Array.isArray(listed)) {
+    throw new TypeError(`${manifestPath} has no dsh.profile.bundles list`);
+  }
+
+  listed.push(...bundles, "dsh-oh-my-claude");
   writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   mkdirSync(join(profile, "node_modules"), { recursive: true });
   symlinkSync(REPO, join(profile, "node_modules", "dsh-oh-my-claude"));
-  if (bundles.length === 0) return;
+
+  if (bundles.length === 0) {
+    return;
+  }
+
   try {
-    execFileSync(dshCommand[0]!, [...dshCommand.slice(1), "--profile", "acp", "--dump-config"], {
+    execFileSync(dshCommand[0], [...dshCommand.slice(1), "--profile", "acp", "--dump-config"], {
       env,
       stdio: "ignore",
     });
@@ -169,9 +214,9 @@ const policy = (provider: string, model: string, ratio: number) => [
 function patchFile(
   root: string,
   ratio: number,
-  targets: Target[],
+  targets: Array<Target>,
   webPort?: number,
-  disallow: string[] = [],
+  disallow: Array<string> = [],
 ) {
   // The acp entry picks its sessions' model itself, ahead of agent-default-model.
   const out = [
@@ -189,9 +234,12 @@ function patchFile(
     ...policy("claude-code", MODEL, ratio),
     ...targets.flatMap((t) => policy(t.provider, t.model, t.ratio)),
   ];
-  if (disallow.length > 0)
+
+  if (disallow.length > 0) {
     out.push("- id: oh-my-claude", "  config:", `    disallowedTools: [${disallow.join(", ")}]`);
-  if (webPort !== undefined)
+  }
+
+  if (webPort !== undefined) {
     out.push(
       "- insert:",
       "    - id: workspace",
@@ -208,20 +256,78 @@ function patchFile(
       "        host: 127.0.0.1",
       `        port: ${webPort}`,
     );
+  }
+
   const path = join(root, "patch.yml");
   writeFileSync(path, `${out.join("\n")}\n`);
+
   return path;
 }
 
 /** The fields of an ACP answer this script reads: `session/new`'s id, `session/prompt`'s reason. */
 type Answer = { sessionId?: string; stopReason?: string };
+
+/** The fields of a JSON-RPC line from dsh this script reads, each checked as it was decoded. */
 type Rpc = {
   id?: number;
   method?: string;
-  params?: { options?: { optionId: string; kind?: string }[] };
+  /** A permission request's options; empty for anything else. */
+  options: Array<{ optionId: string; kind?: string }>;
   result?: Answer;
-  error?: { message?: string };
+  /** The error dsh answered, as JSON text: it is only ever shown. */
+  error?: string;
 };
+
+/** A JSON-RPC message this script writes: a request, or an answer to one of dsh's. */
+type RpcOut = {
+  jsonrpc: "2.0";
+  id: number;
+  method?: string;
+  params?: Params;
+  result?: JsonValue;
+  error?: { code: number; message: string };
+};
+
+/** A request's params, as JSON. */
+type Params = Record<string, JsonValue>;
+
+/** One JSON-RPC line decoded, or undefined when it is not JSON or not an object. A field of the
+ *  wrong type reads as absent. */
+function rpcOf(line: string): Rpc | undefined {
+  let raw: unknown;
+
+  try {
+    raw = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+
+  if (!isRecord(raw)) {
+    return undefined;
+  }
+
+  const { params, result } = raw;
+
+  const options: Array<unknown> =
+    isRecord(params) && Array.isArray(params.options) ? params.options : [];
+
+  return {
+    id: typeof raw.id === "number" ? raw.id : undefined,
+    method: typeof raw.method === "string" ? raw.method : undefined,
+    options: options.flatMap((o) =>
+      isRecord(o) && typeof o.optionId === "string"
+        ? [{ optionId: o.optionId, kind: typeof o.kind === "string" ? o.kind : undefined }]
+        : [],
+    ),
+    result: isRecord(result)
+      ? {
+          sessionId: typeof result.sessionId === "string" ? result.sessionId : undefined,
+          stopReason: typeof result.stopReason === "string" ? result.stopReason : undefined,
+        }
+      : undefined,
+    error: raw.error ? JSON.stringify(raw.error) : undefined,
+  };
+}
 
 /** A minimal Agent Client Protocol client over the dsh process's stdio. */
 class Acp {
@@ -231,7 +337,7 @@ class Acp {
   /** Start dsh's `acp` profile with `patch` laid over it; its stderr is kept in `stderrFile`. */
   constructor(env: NodeJS.ProcessEnv, patch: string, stderrFile: string) {
     this.child = spawn(
-      dshCommand[0]!,
+      dshCommand[0],
       [...dshCommand.slice(1), "--profile", "acp", "--patch", patch],
       { env, stdio: ["pipe", "pipe", "pipe"] },
     );
@@ -243,10 +349,14 @@ class Acp {
     let buffered = "";
     this.child.stdout?.on("data", (chunk: Buffer) => {
       buffered += chunk.toString();
+
       for (let at = buffered.indexOf("\n"); at >= 0; at = buffered.indexOf("\n")) {
         const line = buffered.slice(0, at);
         buffered = buffered.slice(at + 1);
-        if (line.trim()) this.receive(line);
+
+        if (line.trim()) {
+          this.receive(line);
+        }
       }
     });
   }
@@ -254,44 +364,53 @@ class Acp {
   /** One line from dsh: an answer to a request of ours, or a request of its own. A permission
    *  prompt is allowed, since the scenarios only read; anything else is refused. */
   receive(line: string) {
-    let msg: Rpc;
-    try {
-      // SAFETY: a JSON-RPC line from dsh's ACP server; each field read is checked below
-      msg = JSON.parse(line) as Rpc;
-    } catch {
+    const msg = rpcOf(line);
+
+    if (!msg) {
       return;
     }
+
     if (msg.method === undefined && msg.id !== undefined) {
       const waiter = this.waiting.get(msg.id);
       this.waiting.delete(msg.id);
-      if (msg.error) waiter?.fail(new Error(JSON.stringify(msg.error)));
-      else waiter?.done(msg.result ?? {});
+
+      if (msg.error) {
+        waiter?.fail(new Error(msg.error));
+      } else {
+        waiter?.done(msg.result ?? {});
+      }
+
       return;
     }
+
     if (msg.method === "session/request_permission" && msg.id !== undefined) {
-      const allow = msg.params?.options?.find((o) => o.kind?.startsWith("allow"));
-      const outcome = allow
+      const allow = msg.options.find((o) => o.kind?.startsWith("allow"));
+
+      const outcome: JsonValue = allow
         ? { outcome: "selected", optionId: allow.optionId }
         : { outcome: "cancelled" };
+
       this.send({ jsonrpc: "2.0", id: msg.id, result: { outcome } });
     } else if (msg.id !== undefined) {
-      this.send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "not supported" } });
+      this.send({ jsonrpc: "2.0", id: msg.id, error: { code: -32_601, message: "not supported" } });
     }
   }
 
   /** Write one JSON-RPC message as a line on dsh's stdin. */
-  send(msg: object) {
+  send(msg: RpcOut) {
     this.child.stdin?.write(`${JSON.stringify(msg)}\n`);
   }
 
   /** Send a request and wait for its answer; rejects on an error answer or after `timeoutMs`. */
-  request(method: string, params: object, timeoutMs = 600_000): Promise<Answer> {
+  request(method: string, params: Params, timeoutMs = 600_000): Promise<Answer> {
     const id = this.next++;
+
     return new Promise((done, fail) => {
       const timer = setTimeout(
         () => fail(new Error(`${method}: no answer in ${timeoutMs} ms`)),
         timeoutMs,
       );
+
       this.waiting.set(id, {
         done: (r) => {
           clearTimeout(timer);
@@ -309,65 +428,126 @@ class Acp {
   /** Hang up: dsh serves ACP until the client disconnects, then flushes and exits. */
   async close() {
     this.child.stdin?.end();
-    const exited = new Promise<void>((done) => this.child.once("exit", () => done()));
-    const timedOut = new Promise<boolean>((done) => setTimeout(() => done(true), 20_000));
-    if ((await Promise.race([exited.then(() => false), timedOut])) === true) this.child.kill();
+
+    const exited = new Promise<void>((done) => {
+      this.child.once("exit", () => done());
+    });
+
+    const timedOut = sleep(20_000, true);
+
+    if (await Promise.race([exited.then(() => false), timedOut])) {
+      this.child.kill();
+    }
   }
 }
 
 /** One line of a dsh session log; the first one is the header, whose fields are its own. */
-type Event = Pick<SessionEvent, "type" | "seq" | "time" | "data"> & {
+type Event = {
+  type: string;
+  /** NaN on the header, which has no seq or time: it compares as neither before nor after. */
+  seq: number;
+  time: number;
+  /** The payload, its fields checked where they are read; empty on the header. */
+  data: Record<string, unknown>;
   origin?: string;
   parentSession?: string;
 };
 
+/** One session log line as an Event. Throws on a line that is not JSON, so a log cut mid-line
+ *  is left out whole; a field of the wrong type reads as absent. */
+function eventOf(line: string): Event {
+  const raw: unknown = JSON.parse(line);
+
+  if (!isRecord(raw)) {
+    throw new TypeError(`not a session event: ${line.slice(0, 80)}`);
+  }
+
+  return {
+    type: typeof raw.type === "string" ? raw.type : "",
+    seq: typeof raw.seq === "number" ? raw.seq : Number.NaN,
+    time: typeof raw.time === "number" ? raw.time : Number.NaN,
+    data: isRecord(raw.data) ? raw.data : {},
+    origin: typeof raw.origin === "string" ? raw.origin : undefined,
+    parentSession: typeof raw.parentSession === "string" ? raw.parentSession : undefined,
+  };
+}
+
+/** The number at `key` in a usage record, 0 when it is missing or not a number. */
+function tokens(usage: Record<string, unknown>, key: string): number {
+  const v = usage[key];
+
+  return typeof v === "number" ? v : 0;
+}
+
 /** Every session log under `home`, by session id. Read while dsh runs too, so a log it is still
  *  writing reads as far as it got, or not at all. */
-function sessionLogs(home: string): Map<string, Event[]> {
-  const out = new Map<string, Event[]>();
+function sessionLogs(home: string): Map<string, Array<Event>> {
+  const out = new Map<string, Array<Event>>();
   const root = join(home, "sessions");
-  for (const group of existsSync(root) ? readdirSync(root) : [])
+
+  for (const group of existsSync(root) ? readdirSync(root) : []) {
     for (const id of readdirSync(join(root, group))) {
       const dir = join(root, group, id);
       const file = readdirSync(dir).find((f) => f.startsWith("session") && f.includes(".jsonl"));
-      if (!file) continue;
+
+      if (!file) {
+        continue;
+      }
+
       const path = join(dir, file);
+
       try {
         const text = path.endsWith(".zstd")
           ? execFileSync("zstd", ["-dc", path], { stdio: ["ignore", "pipe", "ignore"] }).toString()
           : readFileSync(path, "utf8");
-        const events: Event[] = [];
-        for (const l of text.split("\n").filter(Boolean))
-          // SAFETY: dsh's own session log, one event object per line; the header has no data
-          events.push({ data: {}, ...(JSON.parse(l) as Partial<Event>) } as Event);
+
+        // dsh's own session log, one event object per line; the header has no data.
+        const events = text
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => eventOf(l));
+
         out.set(id, events);
-      } catch {}
+      } catch {
+        // Not readable whole yet (a line cut mid-write, a frame zstd cannot finish): left out.
+      }
     }
+  }
+
   return out;
 }
 
 /** The prompt size each step reported, by turn, the way dsh's token meter reads it. */
-function promptsByTurn(events: Event[]): Map<number, number[]> {
-  const out = new Map<number, number[]>();
+function promptsByTurn(events: Array<Event>): Map<number, Array<number>> {
+  const out = new Map<number, Array<number>>();
+
   for (const e of events) {
-    if (e.type !== "assistant/message") continue;
-    // SAFETY: an assistant/message payload; its usage counters are numbers dsh normalized
-    const data = e.data as {
-      usage?: Record<string, number>;
-      message?: { usage?: Record<string, number> };
-    };
-    const usage = data.usage ?? data.message?.usage;
-    if (!usage) continue;
+    if (e.type !== "assistant/message") {
+      continue;
+    }
+
+    // An assistant/message payload; its usage counters are numbers dsh normalized.
+    const { message } = e.data;
+    const usage = e.data.usage ?? (isRecord(message) ? message.usage : undefined);
+
+    if (!isRecord(usage)) {
+      continue;
+    }
+
     const prompt =
-      (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
+      tokens(usage, "inputTokens") +
+      tokens(usage, "cacheReadTokens") +
+      tokens(usage, "cacheWriteTokens");
+
     const turn = Number(e.data.turn);
     out.set(turn, [...(out.get(turn) ?? []), prompt]);
   }
+
   return out;
 }
 
 /** The largest prompt `turn` reported, 0 when it reported none. */
-const peak = (events: Event[], turn: number | undefined) =>
+const peak = (events: Array<Event>, turn: number | undefined) =>
   Math.max(0, ...(promptsByTurn(events).get(turn ?? -1) ?? []));
 
 type Compaction = {
@@ -379,68 +559,100 @@ type Compaction = {
 };
 
 /** Every compaction dsh opened, with the turn that owned it (null for one run while idle). */
-function compactions(events: Event[]): Compaction[] {
+function compactions(events: Array<Event>): Array<Compaction> {
   const byId = new Map<string, Compaction>();
+
   for (const e of events) {
-    const id = String(e.data.compactionId ?? "");
-    if (e.type === "compaction/start")
+    const id = typeof e.data.compactionId === "string" ? e.data.compactionId : "";
+
+    if (e.type === "compaction/start") {
       byId.set(id, {
         turn: e.data.turn === null ? null : Number(e.data.turn),
         seq: e.seq,
         time: e.time,
       });
-    const c = byId.get(id);
-    if (!c) continue;
-    if (e.type === "compaction/summary") {
-      // SAFETY: the summary blocks dsh recorded; only their text is joined
-      const blocks = e.data.summary as { text?: string }[];
-      c.summary = blocks.map((b) => b.text ?? "").join("");
     }
-    if (e.type === "compaction/end" && e.data.error !== undefined)
+
+    const c = byId.get(id);
+
+    if (!c) {
+      continue;
+    }
+
+    if (e.type === "compaction/summary" && Array.isArray(e.data.summary)) {
+      // The summary blocks dsh recorded; only their text is joined.
+      const blocks: Array<unknown> = e.data.summary;
+      c.summary = blocks
+        .map((b) => (isRecord(b) && typeof b.text === "string" ? b.text : ""))
+        .join("");
+    }
+
+    if (e.type === "compaction/end" && e.data.error !== undefined) {
       c.error = JSON.stringify(e.data.error);
+    }
   }
+
   return [...byId.values()];
 }
 
 /** Compactions as one line each, for a failure's detail. */
-const shown = (all: Compaction[]) =>
+const shown = (all: Array<Compaction>) =>
   JSON.stringify(all.map((c) => ({ turn: c.turn, error: c.error?.slice(0, 80) })));
 
 /** The turn numbers in the order they opened. */
-const turnsOf = (events: Event[]) =>
-  events.filter((e) => e.type === "turn/start").map((e) => Number(e.data.turn));
+const turnsOf = (events: Array<Event>) =>
+  events.flatMap((e) => (e.type === "turn/start" ? [Number(e.data.turn)] : []));
 
 /** When `turn` ended, or undefined while it runs. */
-const turnEnd = (events: Event[], turn: number) =>
+const turnEnd = (events: Array<Event>, turn: number) =>
   events.find((e) => e.type === "turn/end" && Number(e.data.turn) === turn);
 
 /** The models the requests inside `turn` ran on, from the request headers it wrote. */
-function modelsIn(events: Event[], turn: number): string[] {
+function modelsIn(events: Array<Event>, turn: number): Array<string> {
   const start = events.find((e) => e.type === "turn/start" && Number(e.data.turn) === turn)?.seq;
   const end = turnEnd(events, turn)?.seq ?? Infinity;
-  if (start === undefined) return [];
-  return events
-    .filter((e) => e.type === "request/header" && e.seq > start && e.seq < end)
-    .map((e) => {
-      // SAFETY: a request/header payload; the model is read as a string or left out
-      const header = e.data.header as { config?: { model?: string } } | undefined;
-      return header?.config?.model ?? "";
-    });
+
+  if (start === undefined) {
+    return [];
+  }
+
+  return events.flatMap((e) => {
+    if (e.type !== "request/header" || !(e.seq > start && e.seq < end)) {
+      return [];
+    }
+
+    // A request/header payload; the model is read as a string or left out.
+    const { header } = e.data;
+    const config = isRecord(header) ? header.config : undefined;
+    const model = isRecord(config) ? config.model : undefined;
+
+    return [typeof model === "string" ? model : ""];
+  });
 }
 
 /** The newest summary Claude Code wrote for this dsh session: from its own transcript, else from
  *  any under the cwd, since a compaction can carry a session on in a transcript of its own. */
 function cliSummary(cwd: string, sessionId: string): string | undefined {
   const dir = join(homedir(), ".claude", "projects", projectDirName(cwd));
-  if (!existsSync(dir)) return undefined;
+
+  if (!existsSync(dir)) {
+    return undefined;
+  }
+
   const own = join(dir, `${claudeSessionId(sessionId)}.jsonl`);
   let found = existsSync(own) ? compactSummaryOf(readFileSync(own, "utf8")) : undefined;
-  if (found !== undefined) return found;
+
+  if (found !== undefined) {
+    return found;
+  }
+
   for (const path of readdirSync(dir)
     .filter((f) => f.endsWith(".jsonl"))
     .map((f) => join(dir, f))
-    .toSorted((a, b) => statSync(a).mtimeMs - statSync(b).mtimeMs))
+    .toSorted((a, b) => statSync(a).mtimeMs - statSync(b).mtimeMs)) {
     found = compactSummaryOf(readFileSync(path, "utf8")) ?? found;
+  }
+
   return found;
 }
 
@@ -448,8 +660,10 @@ function cliSummary(cwd: string, sessionId: string): string | undefined {
 const keeperPids = (state: string) => {
   const root = join(state, "keepers");
   const dirs = existsSync(root) ? readdirSync(root).map((d) => join(root, d)) : [];
+
   return dirs.flatMap((d) => {
     const info = readKeeperInfo(d);
+
     return info ? [info] : [];
   });
 };
@@ -459,13 +673,15 @@ const routeLog = (state: string, sessionId: string) =>
   (existsSync(join(state, "resume.log")) ? readFileSync(join(state, "resume.log"), "utf8") : "")
     .split("\n")
     .filter((l) => l.includes(`compaction ${sessionId}:`));
+
 /** How many of `log`'s lines mention `what`. */
-const count = (log: string[], what: string) => log.filter((l) => l.includes(what)).length;
+const count = (log: Array<string>, what: string) => log.filter((l) => l.includes(what)).length;
 
 /** Whether a process with this pid still runs. */
 const alive = (pid: number) => {
   try {
     process.kill(pid, 0);
+
     return true;
   } catch {
     return false;
@@ -475,7 +691,11 @@ const alive = (pid: number) => {
 /** Poll `test` every 2 s for up to `ms`; resolves to its last answer. */
 const waitFor = async (test: () => boolean, ms: number) => {
   const end = Date.now() + ms;
-  while (!test() && Date.now() < end) await new Promise((r) => setTimeout(r, 2000));
+
+  while (!test() && Date.now() < end) {
+    await sleep(2000);
+  }
+
   return test();
 };
 
@@ -488,30 +708,32 @@ type Run = {
   /** Pick another model the way dsh's model picker does, through ACP's config option. */
   switchTo: (provider: string, model: string) => Promise<void>;
 };
+
 type Verify = {
-  events: Event[];
-  logs: Map<string, Event[]>;
-  log: string[];
+  events: Array<Event>;
+  logs: Map<string, Array<Event>>;
+  log: Array<string>;
   state: string;
   cwd: string;
   sessionId: string;
   threshold: number;
   /** What each prompt ended with, in order. */
-  ends: string[];
+  ends: Array<string>;
 };
+
 type Scenario = {
   name: string;
   /** compaction-basic's thresholdRatio for haiku on its 200k window, capped at 134,464 by the
    *  65,536-token headroom. 0.4 puts it at 80,000: over what the CLI keeps after a /compact
    *  (about 43,000 on haiku), under a prompt carrying BIG. */
   ratio: number;
-  targets?: Target[];
+  targets?: Array<Target>;
   /** Mount what the plugin's MCP bridge needs, so Claude can call dsh tools. */
   bridge?: boolean;
   /** Extra profile bundles; a dsh that does not ship one cannot run the scenario. */
-  bundles?: string[];
+  bundles?: Array<string>;
   /** Claude Code tools the plugin keeps from the CLI (its `disallowedTools`). */
-  disallow?: string[];
+  disallow?: Array<string>;
   /** Extra environment for dsh and the CLI it spawns. */
   env?: Record<string, string>;
   /** Whether the session keeps one Claude process throughout; a model switch may respawn it. */
@@ -522,6 +744,7 @@ type Scenario = {
 
 const READ_ALL =
   "Use your Read tool to read part1.txt, part2.txt and part3.txt in the current directory, each in full.";
+
 const OK = "Reply with exactly: OK";
 const BIG_OK = `${BIG}Reply with exactly: OK`;
 
@@ -530,7 +753,7 @@ const BIG_OK = `${BIG}Reply with exactly: OK`;
 function turnStartCompaction(
   name: string,
   v: Verify,
-  session: { id: string; events: Event[]; log: string[] },
+  session: { id: string; events: Array<Event>; log: Array<string> },
   turn: number,
 ) {
   const { events, log } = session;
@@ -545,7 +768,7 @@ function turnStartCompaction(
   check(
     `${name} dsh holds the CLI's summary, or found its span smaller`,
     done.length === 1
-      ? done[0]!.summary?.trim() === cliSummary(v.cwd, session.id)?.trim()
+      ? done[0]?.summary?.trim() === cliSummary(v.cwd, session.id)?.trim()
       : done.length === 0 && here.some((c) => c.error?.includes("not smaller")),
     shown(all),
   );
@@ -558,12 +781,12 @@ function turnStartCompaction(
   check(
     `${name} the CLI's prompt is compacted`,
     after.length > 0 && after.every((p) => p < v.threshold),
-    `${after}`,
+    after.join(","),
   );
 }
 
 /** The child session a parent spawned, with its own id, or undefined when there is none. */
-function childOf(logs: Map<string, Event[]>, parent: string) {
+function childOf(logs: Map<string, Array<Event>>, parent: string) {
   return [...logs.entries()].find(
     ([, events]) => events[0]?.origin === "subagent" && events[0]?.parentSession === parent,
   );
@@ -571,11 +794,12 @@ function childOf(logs: Map<string, Event[]>, parent: string) {
 
 /** The turns a session ran itself: a forked child's log opens with the parent's turns it
  *  inherited, up to dsh's `session/end-seed` marker. */
-function ownTurns(events: Event[]): number[] {
+function ownTurns(events: Array<Event>): Array<number> {
   const seed = events.find((e) => e.type === "session/end-seed")?.seq ?? -1;
-  return events
-    .filter((e) => e.type === "turn/start" && e.seq > seed)
-    .map((e) => Number(e.data.turn));
+
+  return events.flatMap((e) =>
+    e.type === "turn/start" && e.seq > seed ? [Number(e.data.turn)] : [],
+  );
 }
 
 /** Claude Code's own subagent tools: kept from the CLI so the model spawns dsh's children. */
@@ -588,7 +812,7 @@ function childScenario(
   name: string,
   spawnText: string,
   wakeText: string,
-  bundles: string[] = [],
+  bundles: Array<string> = [],
 ): Scenario {
   return {
     name,
@@ -600,31 +824,48 @@ function childScenario(
     steps: async ({ prompt, home, sessionId }) => {
       await prompt(`${MEDIUM}Reply with exactly: OK`);
       await prompt(spawnText);
+
       const ownTurnEnded = (n: number) => () => {
         const child = childOf(sessionLogs(home), sessionId)?.[1] ?? [];
         const own = ownTurns(child)[n];
+
         return own !== undefined && turnEnd(child, own) !== undefined;
       };
+
       await waitFor(ownTurnEnded(0), 300_000);
       // Give dsh's settlement and the parent's notice a moment to land in the logs.
-      await new Promise((r) => setTimeout(r, 10_000));
+      await sleep(10_000);
+
       // dsh's tool-result pruner can meet its stale figure for a turn first (the child crossed by
       // reading files), so a second wake gives the compaction its turn.
       for (const n of [1, 2]) {
         await prompt(wakeText);
         await waitFor(ownTurnEnded(n), 300_000);
-        if (compactions(childOf(sessionLogs(home), sessionId)?.[1] ?? []).length > 0) break;
+
+        if (compactions(childOf(sessionLogs(home), sessionId)?.[1] ?? []).length > 0) {
+          break;
+        }
       }
     },
     verify: (v) => {
       const entry = childOf(v.logs, v.sessionId);
-      if (!entry) return unmet(`${name} child`, "no child session of the parent");
+
+      if (!entry) {
+        return unmet(`${name} child`, "no child session of the parent");
+      }
+
       const [childId, child] = entry;
       const childLog = routeLog(v.state, childId);
       const [own1, ...woken] = ownTurns(child);
-      if (own1 === undefined) return unmet(`${name} child ran`, "the child ran no turn");
-      if (peak(child, own1) < v.threshold)
+
+      if (own1 === undefined) {
+        return unmet(`${name} child ran`, "the child ran no turn");
+      }
+
+      if (peak(child, own1) < v.threshold) {
         return unmet(`${name} child crossing`, `its first turn peaked at ${peak(child, own1)}`);
+      }
+
       const all = compactions(child);
       const end1 = turnEnd(child, own1);
       check(
@@ -632,19 +873,26 @@ function childScenario(
         all.every((c) => c.turn !== null && c.turn !== own1 && c.seq > (end1?.seq ?? 0)),
         shown(all),
       );
+
       const notice = v.events.find(
         (e) => sourceKind(e) === "subagent-settled" && e.time >= (end1?.time ?? 0),
       );
+
       const lag = notice ? notice.time - (end1?.time ?? 0) : Infinity;
       check(`${name} the parent heard at once`, lag < 15_000, `${lag} ms after the child's turn`);
       const at = all[0]?.turn;
-      if (woken.length === 0)
+
+      if (woken.length === 0) {
         return unmet(
           `${name} child woken`,
           "no message reached the child: this dsh may not load tool-subagent-control's send_message",
         );
-      if (at === undefined || at === null)
+      }
+
+      if (at === undefined || at === null) {
         return unmet(`${name} child compacted`, `no compaction in ${woken.length} woken turns`);
+      }
+
       check(
         `${name} compacted at a woken turn's start`,
         woken.slice(0, 2).includes(at),
@@ -657,27 +905,37 @@ function childScenario(
 
 /** The `kind` of a message's source, for a user/message event. */
 function sourceKind(e: Event): string | undefined {
-  if (e.type !== "user/message") return undefined;
-  // SAFETY: a user/message payload; the source kind is read as a string or left out
-  const source = (e.data.source ?? (e.data.message as { source?: unknown })?.source) as
-    | { kind?: string }
-    | undefined;
-  return source?.kind;
+  if (e.type !== "user/message") {
+    return undefined;
+  }
+
+  // A user/message payload; the source kind is read as a string or left out.
+  const { message } = e.data;
+  const source = e.data.source ?? (isRecord(message) ? message.source : undefined);
+
+  return isRecord(source) && typeof source.kind === "string" ? source.kind : undefined;
 }
 
-const SCENARIOS: Scenario[] = [
+const SCENARIOS: Array<Scenario> = [
   {
     name: "s1",
     ratio: 0.4,
     steps: async ({ prompt }) => {
       await prompt(BIG_OK);
-      for (let i = 0; i < 2; i++) await prompt(OK);
+
+      for (let i = 0; i < 2; i++) {
+        await prompt(OK);
+      }
     },
     verify: (v) => {
-      const [t1, t2] = turnsOf(v.events);
-      if (peak(v.events, t1) < v.threshold)
+      // A turn that never opened reads as -1, which matches no turn.
+      const [t1, t2 = -1] = turnsOf(v.events);
+
+      if (peak(v.events, t1) < v.threshold) {
         return unmet("s1 crossing", `turn 1 peaked at ${peak(v.events, t1)}`);
-      turnStartCompaction("s1", v, { id: v.sessionId, events: v.events, log: v.log }, t2!);
+      }
+
+      turnStartCompaction("s1", v, { id: v.sessionId, events: v.events, log: v.log }, t2);
     },
   },
   {
@@ -693,14 +951,20 @@ const SCENARIOS: Scenario[] = [
       await prompt(OK);
     },
     verify: (v) => {
-      const [t1, t2, t3] = turnsOf(v.events);
-      const steps2 = promptsByTurn(v.events).get(t2!) ?? [];
-      if (peak(v.events, t1) >= v.threshold)
+      // A turn that never opened reads as -1, which matches no turn.
+      const [t1, t2 = -1, t3 = -1] = turnsOf(v.events);
+      const steps2 = promptsByTurn(v.events).get(t2) ?? [];
+
+      if (peak(v.events, t1) >= v.threshold) {
         return unmet("s2 start below", `turn 1 already at ${peak(v.events, t1)}`);
-      if (steps2.length < 2 || steps2[0]! < v.threshold)
-        return unmet("s2 mid-turn crossing", `turn 2 steps reported ${steps2}`);
+      }
+
+      if (steps2.length < 2 || (steps2[0] ?? 0) < v.threshold) {
+        return unmet("s2 mid-turn crossing", `turn 2 steps reported ${steps2.join(",")}`);
+      }
+
       const all = compactions(v.events);
-      const end2 = turnEnd(v.events, t2!)?.seq ?? Infinity;
+      const end2 = turnEnd(v.events, t2)?.seq ?? Infinity;
       const idle = all.filter((c) => c.turn === null && c.seq > end2);
       check(
         "s2 refused mid-turn and owed",
@@ -725,11 +989,11 @@ const SCENARIOS: Scenario[] = [
         !all.some((c) => c.turn === t3 && c.error === undefined),
         shown(all),
       );
-      const after = promptsByTurn(v.events).get(t3!) ?? [];
+      const after = promptsByTurn(v.events).get(t3) ?? [];
       check(
         "s2 the CLI's prompt is compacted",
         after.every((p) => p < v.threshold),
-        `${after}`,
+        after.join(","),
       );
     },
   },
@@ -747,17 +1011,20 @@ const SCENARIOS: Scenario[] = [
     },
     verify: (v) => {
       const cli = cliSummary(v.cwd, v.sessionId);
-      if (cli === undefined || count(v.log, "ran /compact") > 0)
+
+      if (cli === undefined || count(v.log, "ran /compact") > 0) {
         return unmet(
           "s3 Claude Code compacted first",
           `dsh's threshold came first or nothing compacted: ${v.log.join(" | ") || "no compaction"}`,
         );
+      }
+
       const all = compactions(v.events);
       const idle = all.filter((c) => c.turn === null && c.error === undefined);
       check("s3 reused the CLI's own compaction", count(v.log, "reused") > 0, v.log.join(" | "));
       check(
         "s3 dsh holds the CLI's summary",
-        idle.length === 1 && idle[0]!.summary?.trim() === cli.trim(),
+        idle.length === 1 && idle[0]?.summary?.trim() === cli.trim(),
         shown(all),
       );
       check(
@@ -778,15 +1045,19 @@ const SCENARIOS: Scenario[] = [
       await prompt(OK);
     },
     verify: (v) => {
-      const [t1, t2] = turnsOf(v.events);
-      if (peak(v.events, t1) < v.threshold)
+      // A turn that never opened reads as -1, which matches no turn.
+      const [t1, t2 = -1] = turnsOf(v.events);
+
+      if (peak(v.events, t1) < v.threshold) {
         return unmet("s4 crossing", `turn 1 peaked at ${peak(v.events, t1)}`);
+      }
+
       const all = compactions(v.events);
       check("s4 the switched turn completed", v.ends[1] === "end_turn", v.ends.join(" | "));
       check(
         "s4 it ran on sonnet",
-        modelsIn(v.events, t2!).includes(SONNET),
-        `${modelsIn(v.events, t2!)}`,
+        modelsIn(v.events, t2).includes(SONNET),
+        modelsIn(v.events, t2).join(","),
       );
       check("s4 one /compact on the CLI", count(v.log, "ran /compact") === 1, v.log.join(" | "));
       // A second ask in the same check meets a pick still pending: the one-shot keeps a switch
@@ -817,9 +1088,15 @@ const SCENARIOS: Scenario[] = [
     },
     verify: (v) => {
       const [t1] = turnsOf(v.events);
-      if (peak(v.events, t1) < v.threshold)
+
+      if (peak(v.events, t1) < v.threshold) {
         return unmet("s5 crossing", `turn 1 peaked at ${peak(v.events, t1)}`);
-      if (v.log.length === 0) return unmet("s5 compaction asked for", "dsh asked for none");
+      }
+
+      if (v.log.length === 0) {
+        return unmet("s5 compaction asked for", "dsh asked for none");
+      }
+
       check("s5 nothing refused", count(v.log, "refused") === 0, v.log.join(" | "));
       check("s5 at most one /compact", count(v.log, "ran /compact") <= 1, v.log.join(" | "));
       check(
@@ -827,14 +1104,17 @@ const SCENARIOS: Scenario[] = [
         !/Cannot switch|compaction failed/.test(v.ends[1] ?? ""),
         v.ends.join(" | "),
       );
+
       // The plugin sees a switch by the `model/selection` dsh writes for a pick, which DSH Desktop's
       // model picker does. An ACP client's pick lives in the bridge until the next request, so the
       // compaction ahead of it reads as one on Claude.
-      if (!v.events.some((e) => e.type === "model/selection"))
+      if (!v.events.some((e) => e.type === "model/selection")) {
         return unmet(
           "s5 the one-shot summarizer answered",
           `the ACP pick wrote no model/selection, so the switch was not visible: ${v.log.join(" | ")}`,
         );
+      }
+
       check(
         "s5 the one-shot summarizer answered",
         count(v.log, "one-shot, switching to deepseek-official") > 0 &&
@@ -856,15 +1136,19 @@ const SCENARIOS: Scenario[] = [
       await prompt(OK);
     },
     verify: (v) => {
-      const [, t2] = turnsOf(v.events);
+      // A turn that never opened reads as -1, which matches no turn.
+      const [, t2 = -1] = turnsOf(v.events);
       check("s6 the switched turn completed", v.ends[1] === "end_turn", v.ends.join(" | "));
       check(
         "s6 it ran on sonnet",
-        modelsIn(v.events, t2!).includes(SONNET),
-        `${modelsIn(v.events, t2!)}`,
+        modelsIn(v.events, t2).includes(SONNET),
+        modelsIn(v.events, t2).join(","),
       );
-      if (v.log.length === 0)
+
+      if (v.log.length === 0) {
         return unmet("s6 compaction at the switch", "dsh priced no switch: rc.5 has no such hook");
+      }
+
       check("s6 one /compact on the CLI", count(v.log, "ran /compact") === 1, v.log.join(" | "));
       check("s6 nothing refused", count(v.log, "refused") === 0, v.log.join(" | "));
     },
@@ -897,16 +1181,25 @@ const SCENARIOS: Scenario[] = [
       await waitFor(() => {
         const child = childOf(sessionLogs(home), sessionId)?.[1] ?? [];
         const own = ownTurns(child)[0];
+
         return own !== undefined && turnEnd(child, own) !== undefined;
       }, 300_000);
     },
     verify: (v) => {
       const entry = childOf(v.logs, v.sessionId);
-      if (!entry) return unmet("s9 child", "no child session of the parent");
+
+      if (!entry) {
+        return unmet("s9 child", "no child session of the parent");
+      }
+
       const [childId, child] = entry;
       const childLog = routeLog(v.state, childId);
       const [own1] = ownTurns(child);
-      if (own1 === undefined) return unmet("s9 child ran", "the child ran no turn");
+
+      if (own1 === undefined) {
+        return unmet("s9 child ran", "the child ran no turn");
+      }
+
       const all = compactions(child);
       check(
         "s9 the inherited history was compacted at the child's first turn",
@@ -923,7 +1216,7 @@ const SCENARIOS: Scenario[] = [
       check(
         "s9 the child's CLI started from the summary",
         after.length > 0 && after.every((p) => p < v.threshold),
-        `${after}`,
+        after.join(","),
       );
     },
   },
@@ -936,10 +1229,15 @@ async function runScenario(s: Scenario) {
   const root = mkdtempSync(
     join(process.platform === "win32" ? tmpdir() : "/tmp", `omc-${s.name}-`),
   );
+
   const home = join(root, "home");
   const state = join(root, "state");
   const cwd = join(root, "cwd");
-  for (const d of [home, state, cwd]) mkdirSync(d);
+
+  for (const d of [home, state, cwd]) {
+    mkdirSync(d);
+  }
+
   const realCwd = realpathSync(cwd);
   writeReading(realCwd);
   const env = { ...BASE_ENV, DSH_HOME: home, DSH_OMC_STATE_DIR: state, ...s.env };
@@ -947,8 +1245,10 @@ async function runScenario(s: Scenario) {
   console.log(`\n== ${s.name} (${root}), dsh threshold ${threshold}`);
   let acp: Acp | undefined;
   let sessionId = "";
+
   try {
     linkProfile(home, env, s.bundles ?? []);
+
     const patch = patchFile(
       root,
       s.ratio,
@@ -956,42 +1256,61 @@ async function runScenario(s: Scenario) {
       s.bridge ? await freePort() : undefined,
       s.disallow,
     );
+
     acp = new Acp(env, patch, join(root, "dsh.stderr"));
     await acp.request("initialize", { protocolVersion: 1, clientCapabilities: {} }, 120_000);
     // The plugin registers its adapter once the services it injects are up, a few seconds after
     // dsh answers `initialize`; until then dsh has no `claude-code` provider.
     const end = Date.now() + 60_000;
+
     while (!sessionId) {
       try {
         sessionId =
           (await acp.request("session/new", { cwd: realCwd, mcpServers: [] })).sessionId ?? "";
-        if (!sessionId) throw new Error("session/new answered no session id");
+
+        if (!sessionId) {
+          throw new Error("session/new answered no session id");
+        }
       } catch (error) {
-        if (Date.now() > end || !String(error).includes("no adapter registered")) throw error;
-        await new Promise((r) => setTimeout(r, 2000));
+        if (Date.now() > end || !String(error).includes("no adapter registered")) {
+          throw error;
+        }
+
+        await sleep(2000);
       }
     }
+
     const pids = new Set<number>();
-    const ends: string[] = [];
+    const ends: Array<string> = [];
     const client = acp;
+
     const prompt = async (text: string) => {
       const started = Date.now();
       let ended: string;
+
       try {
         const answer = await client.request("session/prompt", {
           sessionId,
           prompt: [{ type: "text", text }],
         });
+
         ended = answer.stopReason ?? "";
       } catch (error) {
         ended = String(error);
       }
+
       ends.push(ended);
-      for (const k of keeperPids(state)) pids.add(k.claudePid);
+
+      for (const k of keeperPids(state)) {
+        pids.add(k.claudePid);
+      }
+
       const took = Math.round((Date.now() - started) / 1000);
       console.log(`   prompt done in ${took} s (${ended.slice(0, 80)}): ${text.slice(-60)}`);
+
       return ended;
     };
+
     const switchTo = async (provider: string, model: string) => {
       await client.request("session/set_config_option", {
         sessionId,
@@ -1000,11 +1319,19 @@ async function runScenario(s: Scenario) {
       });
       console.log(`   picked ${provider}/${model}`);
     };
+
     await s.steps({ sessionId, state, home, prompt, switchTo });
     await acp.close();
     acp = undefined;
-    if (s.oneProcess !== false)
-      check(`${s.name} one Claude process throughout`, pids.size === 1, `claude pids ${[...pids]}`);
+
+    if (s.oneProcess !== false) {
+      check(
+        `${s.name} one Claude process throughout`,
+        pids.size === 1,
+        `claude pids ${[...pids].join(",")}`,
+      );
+    }
+
     const logs = sessionLogs(home);
     s.verify({
       events: logs.get(sessionId) ?? [],
@@ -1018,32 +1345,46 @@ async function runScenario(s: Scenario) {
     });
   } catch (error) {
     const why = error instanceof Error ? error.message : String(error);
-    if (s.bundles?.length && /bundle|Cannot find|not found|ERR_MODULE/i.test(why))
+
+    if (s.bundles?.length && /bundle|Cannot find|not found|ERR_MODULE/i.test(why)) {
       unmet(
         `${s.name} ran`,
         `this dsh does not ship ${s.bundles.join(", ")}: ${why.slice(0, 160)}`,
       );
-    else check(`${s.name} ran`, false, `${why}; dsh stderr: ${join(root, "dsh.stderr")}`);
+    } else {
+      check(`${s.name} ran`, false, `${why}; dsh stderr: ${join(root, "dsh.stderr")}`);
+    }
   } finally {
     await acp?.close();
     const pids = keeperPids(state).flatMap((k) => [k.pid, k.claudePid]);
-    for (const pid of pids)
+
+    for (const pid of pids) {
       try {
         process.kill(pid, "SIGTERM");
-      } catch {}
+      } catch {
+        // Already gone.
+      }
+    }
+
     // Claude writes its transcript as it exits, which would bring the project directory back.
     await waitFor(() => !pids.some(alive), 10_000);
+
     // The one-shot summarizer runs from the plugin's scratch directory, `aux` under its state dir.
-    for (const dir of [realCwd, join(realpathSync(state), "aux")])
+    for (const dir of [realCwd, join(realpathSync(state), "aux")]) {
       rmSync(join(homedir(), ".claude", "projects", projectDirName(dir)), {
         recursive: true,
         force: true,
       });
-    if (!keep) rmSync(root, { recursive: true, force: true });
+    }
+
+    if (!keep) {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 }
 
 const built = join(REPO, "lib", "server", "adapter", "class.js");
+
 if (
   !existsSync(built) ||
   statSync(built).mtimeMs < statSync(join(REPO, "src", "adapter", "class.ts")).mtimeMs
@@ -1051,7 +1392,15 @@ if (
   console.error("lib/ is older than src/: run `bun run build` first, dsh loads lib/");
   process.exit(2);
 }
+
 console.log(`dsh: ${dshCommand.join(" ")}`);
-for (const s of SCENARIOS) if (!only || only.includes(s.name)) await runScenario(s);
+
+for (const s of SCENARIOS) {
+  if (!only || only.includes(s.name)) {
+    await runScenario(s);
+  }
+}
+
 console.log(`\n${failed} failed, ${inconclusive} inconclusive`);
+
 process.exit(failed > 0 ? 1 : 0);

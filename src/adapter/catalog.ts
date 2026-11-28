@@ -1,10 +1,14 @@
 // The model ladder, the baked-in model list, the on-disk catalog cache and how a model id resolves.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
+import { parsedWith } from "../schema-fits.js";
+import { isRec, numberValue, stringOf } from "../decode.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { LlmModelInfo, LlmResolvedModelInfo, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
-import { type FirstPartyProbe, firstPartyOf } from "../first-party.js";
+import { brandString } from "@deepseek-ai/dsh-brand";
+import { firstPartyOf } from "../first-party.js";
+import type { FirstPartyProbe } from "../first-party.js";
 import type { RouteFilter } from "./routing.js";
 import { serverText } from "../locale.js";
 import type { CliModel } from "../process.js";
@@ -15,18 +19,30 @@ import { authHeaders, CLAUDE_HOME, STATE_DIR, writeJson } from "../state.js";
 // No default effort is advertised: `--effort` is only sent when dsh picks one, so the CLI's own default rules.
 /** The CLI's effort ladder, low to high; `readPickerSettings` validates `maxEffortLevel` against it. */
 export const EFFORTS_ALL = ["low", "medium", "high", "xhigh", "max"] as const;
+
 /** Trim an efforts list to those at or below `cap`. `"max"` and an absent cap keep everything.
  *  An id outside the ladder (a future level this build does not know) is left in, never hidden. */
-function capEfforts(efforts: readonly string[], cap?: (typeof EFFORTS_ALL)[number]): string[] {
-  if (cap === undefined || cap === "max") return [...efforts];
+function capEfforts(
+  efforts: ReadonlyArray<string>,
+  cap?: (typeof EFFORTS_ALL)[number],
+): Array<string> {
+  if (cap === undefined || cap === "max") {
+    return [...efforts];
+  }
+
   const ceiling = EFFORTS_ALL.indexOf(cap);
+  const levels: ReadonlyArray<string> = EFFORTS_ALL;
+
   return efforts.filter((e) => {
-    const i = EFFORTS_ALL.findIndex((level) => level === e);
+    const i = levels.indexOf(e);
+
     return i === -1 || i <= ceiling;
   });
 }
+
 /** One effort level's capability flag, as the Models API reports it. */
 type EffortLevelCaps = { supported?: boolean };
+
 /** The effort capability block: an overall flag plus one flag per level. A level the plugin does
  *  not know is still a key here; `unknownEffortsOf` reads those. */
 type EffortCaps = { supported?: boolean } & Partial<
@@ -40,14 +56,20 @@ const levelCaps = (v: EffortLevelCaps | boolean | undefined): EffortLevelCaps | 
 /** Levels the Models API marks supported that are not in `EFFORTS_ALL`. They are kept out of the
  *  picker on purpose (a new level is offered only after it has been looked at), and this is how
  *  one gets noticed: the names land on the row and Diagnostics lists them. */
-export function unknownEffortsOf(eff: EffortCaps | undefined): string[] {
-  if (!eff?.supported) return [];
-  const known: readonly string[] = EFFORTS_ALL;
+export function unknownEffortsOf(eff: EffortCaps | undefined): Array<string> {
+  if (!eff?.supported) {
+    return [];
+  }
+
+  const known: ReadonlyArray<string> = EFFORTS_ALL;
+
   return Object.entries(eff)
     .filter(([k, v]) => k !== "supported" && !known.includes(k) && levelCaps(v)?.supported === true)
     .map(([k]) => k);
 }
+
 const EFFORTS_45 = ["low", "medium", "high"];
+
 /** One picker row. `description` is dsh's own optional field, drawn under the name; only the CLI's
  *  rows carry one, and a row without one has no key, since dsh validates the shape it is given. */
 interface CatalogModel {
@@ -55,13 +77,13 @@ interface CatalogModel {
   id: string;
   name: string;
   contextWindow: number;
-  efforts: readonly string[];
+  efforts: ReadonlyArray<string>;
   description?: string;
   /** The Models API's `created_at`, as epoch ms; absent on a known or CLI row. Read by
    *  `mergeCatalog` to tell a model newer than the installed CLI from an old id it dropped. */
   createdAt?: number;
   /** Effort levels the Models API reports for this model that the plugin does not know yet. */
-  unknownEfforts?: string[];
+  unknownEfforts?: Array<string>;
   /** Set on one of the CLI's aliases that a router took over (`mergeCatalog`), to the alias
    *  (`sonnet`, `opus`, `haiku`): the model behind it is the router's, so its window is not
    *  Claude's and can be set in Settings, where the alias is the key it is kept under. */
@@ -77,11 +99,15 @@ const M = (
   id: string,
   label: string,
   contextWindow: number,
-  efforts: readonly string[],
+  efforts: ReadonlyArray<string>,
   description?: string,
 ): CatalogModel => {
   const row: CatalogModel = { provider: "claude-code", id, name: label, contextWindow, efforts };
-  if (description !== undefined) row.description = description;
+
+  if (description !== undefined) {
+    row.description = description;
+  }
+
   return row;
 };
 
@@ -120,6 +146,7 @@ export const KNOWN_MODELS = [
  */
 export const stableModelId = (id: string): string => {
   const bare = id.replace(/-\d{8}$/, "");
+
   return bare !== id && KNOWN_MODELS.some((m) => m.id === bare) ? bare : id;
 };
 
@@ -127,10 +154,12 @@ export const stableModelId = (id: string): string => {
 // Model catalog
 
 export const CATALOG_TTL_MS = 10 * 60 * 1000;
+
 /** How long the first listing of a boot waits for the lineup probe (`probeCliModels`) before it
  *  answers from what it has. A cold `claude -p` answered `list_models` in about 1.3 s on 2.1.309
  *  (2026-10-23); the probe itself keeps going past this, and its answer serves the next listing. */
 export const LINEUP_PROBE_WAIT_MS = 5000;
+
 /** The lineup probe's command line: stream-json both ways, so a control request can be written and
  *  its answer read, and no transcript, since no prompt is ever sent to it. */
 export const LINEUP_PROBE_ARGS = [
@@ -142,6 +171,7 @@ export const LINEUP_PROBE_ARGS = [
   "--verbose",
   "--no-session-persistence",
 ];
+
 let catalog = { at: 0, models: KNOWN_MODELS };
 
 /** Where the last catalog the API gave us is kept, so a boot with the API down still lists the real
@@ -150,6 +180,7 @@ let catalog = { at: 0, models: KNOWN_MODELS };
  *  dir and exercise the offline floor without depending on whatever this box has cached. */
 const catalogCachePath = () => join(process.env.DSH_OMC_STATE_DIR ?? STATE_DIR, "models.json");
 let diskSeeded = false;
+
 /** The shape a cached row must still hold. The cache is our own write, but a truncated or hand-edited
  *  file must never slip a malformed row into the catalog dsh validates, so it is re-parsed on read. */
 const CachedCatalog = z.array(
@@ -163,37 +194,59 @@ const CachedCatalog = z.array(
     unknownEfforts: z.array(z.string()),
   }),
 );
+
 /** Parse a persisted catalog file. Anything malformed reads as empty, so the caller falls back. */
-export function parseCatalogCache(text: string): ReturnType<typeof M>[] {
+export function parseCatalogCache(text: string): Array<ReturnType<typeof M>> {
   try {
-    return CachedCatalog(JSON.parse(text))
-      .filter((r) => r.id.length > 0 && r.name.length > 0)
-      .map((r) => {
-        const row = M(r.id, r.name, r.contextWindow, r.efforts);
-        if (r.createdAt !== undefined) row.createdAt = r.createdAt;
-        // Kept across a restart, so Diagnostics still names a new level before the next live read.
-        if (r.unknownEfforts && r.unknownEfforts.length > 0) row.unknownEfforts = r.unknownEfforts;
-        return row;
-      });
+    return (parsedWith(CachedCatalog, text) ?? []).flatMap((r) => {
+      if (r.id.length === 0 || r.name.length === 0) {
+        return [];
+      }
+
+      const row = M(r.id, r.name, r.contextWindow, r.efforts);
+
+      if (r.createdAt !== undefined) {
+        row.createdAt = r.createdAt;
+      }
+
+      // Kept across a restart, so Diagnostics still names a new level before the next live read.
+      if (r.unknownEfforts && r.unknownEfforts.length > 0) {
+        row.unknownEfforts = r.unknownEfforts;
+      }
+
+      return [row];
+    });
   } catch {
     return [];
   }
 }
+
 /** Seed the in-memory catalog from disk once, unless a live fetch has already replaced it. `at`
  *  stays 0 so the next `getCatalog` still tries the API; the disk copy only survives a failed fetch. */
 async function seedFromDisk() {
-  if (diskSeeded) return;
+  if (diskSeeded) {
+    return;
+  }
+
   diskSeeded = true;
-  if (catalog.at !== 0) return;
+
+  if (catalog.at !== 0) {
+    return;
+  }
+
   try {
     const rows = parseCatalogCache(await readFile(catalogCachePath(), "utf8"));
-    if (rows.length > 0 && catalog.at === 0) catalog = { at: 0, models: rows };
+
+    if (rows.length > 0 && catalog.at === 0) {
+      catalog = { at: 0, models: rows };
+    }
   } catch {
     /* no cache yet or unreadable: the KNOWN_MODELS floor stays */
   }
 }
+
 /** Persist a fetched catalog for later boots. Best effort: a write that fails just misses the seed. */
-async function persistCatalog(models: ReturnType<typeof M>[]) {
+async function persistCatalog(models: Array<ReturnType<typeof M>>) {
   try {
     const path = catalogCachePath();
     await mkdir(dirname(path), { recursive: true });
@@ -201,6 +254,33 @@ async function persistCatalog(models: ReturnType<typeof M>[]) {
   } catch {
     /* read-only state dir or full disk: fall through, the fetch still served this boot */
   }
+}
+
+/** True for a value the effort block can hold: the overall flag, or a level's block. */
+const isEffortEntry = (x: unknown): x is EffortLevelCaps | boolean =>
+  x === true ||
+  x === false ||
+  (isRec(x) && (x.supported === undefined || x.supported === true || x.supported === false));
+
+/** The effort capability block of a Models API row, keeping the flags and level blocks it can read
+ *  and skipping any other value, so a field the API adds later does not cost the model its
+ *  efforts. Undefined when the row has no block. */
+export function effortCapsOf(row: { effort?: unknown }): EffortCaps | undefined {
+  const raw = row.effort;
+
+  if (!isRec(raw)) {
+    return undefined;
+  }
+
+  const caps: EffortCaps = {};
+
+  for (const [key, value] of Object.entries(raw)) {
+    if (isEffortEntry(value)) {
+      caps[key] = value;
+    }
+  }
+
+  return caps;
 }
 
 /** One entry of the Anthropic Models API list, in the shape the picker uses. */
@@ -212,13 +292,21 @@ export function modelFromApi(m: {
   created_at?: string;
 }): CatalogModel {
   const eff = m.capabilities?.effort;
-  const efforts: string[] = eff?.supported ? EFFORTS_ALL.filter((l) => eff[l]?.supported) : [];
+  const efforts: Array<string> = eff?.supported ? EFFORTS_ALL.filter((l) => eff[l]?.supported) : [];
   const id = stableModelId(m.id ?? "");
   const row = M(id, m.display_name ?? id, m.max_input_tokens ?? 200_000, efforts);
   const unknown = unknownEffortsOf(eff);
-  if (unknown.length > 0) row.unknownEfforts = unknown;
+
+  if (unknown.length > 0) {
+    row.unknownEfforts = unknown;
+  }
+
   const created = m.created_at ? Date.parse(m.created_at) : Number.NaN;
-  if (!Number.isNaN(created)) row.createdAt = created;
+
+  if (!Number.isNaN(created)) {
+    row.createdAt = created;
+  }
+
   return row;
 }
 
@@ -234,9 +322,11 @@ export function modelFromApi(m: {
  * filters nothing and an empty one leaves Default alone.
  */
 const strip = (id: string) => (id.endsWith("[1m]") ? id.slice(0, -4) : id);
+
 /** An allowlist entry and a model id meet in one shape: no `claude-` prefix, no `[1m]` suffix. */
 const bareId = (id: string) => {
   const s = strip(id);
+
   return s.startsWith("claude-") ? s.slice("claude-".length) : s;
 };
 
@@ -258,29 +348,39 @@ const bareId = (id: string) => {
  * ran last answers for both, now across restarts too.
  */
 const liveWindows = new Map<string, number>();
+
 /** Where `liveWindows` is kept between boots; DSH_OMC_STATE_DIR moves it for tests, as the catalog's. */
 const windowsPath = () => join(process.env.DSH_OMC_STATE_DIR ?? STATE_DIR, "context-windows.json");
 let windowsSeed: Promise<void> | undefined;
+
 /** The last write queued, so writes land in the order they were asked and the newest map wins. */
 let windowsWrite: Promise<void> = Promise.resolve();
+
 /** Ids a session reported since this process started. A figure read back from disk is not in it,
  *  so the once-per-model ask between turns still refreshes a stored figure. */
 const reportedThisBoot = new Set<string>();
+
 /** The windows file: model id to the window its last session reported. Our own write, re-parsed
  *  on read so a hand-edited or truncated file is dropped whole rather than half-trusted. */
 const StoredWindows = z.dict(z.number());
+
 /** Load the stored windows once per process. A figure a session already reported this boot wins
  *  over the stored one; a malformed file is ignored and a non-positive figure skipped, never thrown. */
 export const seedLiveWindows = (): Promise<void> =>
   (windowsSeed ??= (async () => {
     try {
-      const stored = StoredWindows(JSON.parse(await readFile(windowsPath(), "utf8")));
-      for (const [id, n] of Object.entries(stored))
-        if (Number.isFinite(n) && n > 0 && !liveWindows.has(id)) liveWindows.set(id, n);
+      const stored = parsedWith(StoredWindows, await readFile(windowsPath(), "utf8"));
+
+      for (const [id, n] of Object.entries(stored ?? {})) {
+        if (Number.isFinite(n) && n > 0 && !liveWindows.has(id)) {
+          liveWindows.set(id, n);
+        }
+      }
     } catch {
       /* no file yet or unreadable: windows are relearned from the next context reads */
     }
   })());
+
 /** Queue a write of every known window. Writes run one after another and each reads the map when
  *  it runs, so the last to land holds the newest figures; `writeJson`'s temp file and rename keep a
  *  crash from tearing it. Best effort: a failed write costs a guess after the next restart. */
@@ -290,33 +390,42 @@ function persistLiveWindows() {
       /* read-only state dir or full disk: this boot still has the figures in memory */
     }),
   );
+
   return windowsWrite;
 }
+
 /** Resolves once every window write asked for so far has landed; tests await it. Waits for the seed
  *  first, because a note queues its write only after the seed, in a callback that runs before this. */
 export const flushLiveWindows = async (): Promise<void> => {
   await seedLiveWindows();
   await windowsWrite;
 };
+
 /** Whether a session reported this model's window since this process started. */
 export const windowReportedThisBoot = (modelId: string): boolean =>
   reportedThisBoot.has(windowKey(modelId));
 
 /** The liveWindows key: strip any ANSI codes and resolve to the stable id, so a window looked up by the CLI's raw model id matches the normalized one stored here. */
 export const windowKey = (id: string) => stableModelId(strip(id));
+
 /** Claude Code's env flag for "the base URL is a proxy in front of Anthropic" (`Xo()` in 2.1.274). */
 export const FIRST_PARTY_FLAG = "_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL";
+
 /** The base URL when it names a host the CLI does not treat as first-party, else undefined. The
  *  test is the CLI's own (`av()` in 2.1.274: `new URL(e).host` against `["api.anthropic.com"]`),
  *  `host` with its port included, so this fires exactly when the CLI demotes. */
 export const proxyBaseUrl = (raw: string | undefined): string | undefined => {
-  if (!raw) return undefined;
+  if (!raw) {
+    return undefined;
+  }
+
   try {
     return new URL(raw).host === "api.anthropic.com" ? undefined : raw;
   } catch {
     return raw;
   }
 };
+
 /**
  * Whether the base URL in force for a mount reaches Anthropic. `raw` is that URL as the mount's
  * settings and environment give it (`routeEnv`), which is not always this process's own
@@ -327,36 +436,54 @@ export const proxyBaseUrl = (raw: string | undefined): string | undefined => {
  */
 export const detectFirstParty = async (raw: string | undefined): Promise<FirstPartyProbe> => {
   const baseUrl = proxyBaseUrl(raw);
+
   return baseUrl ? firstPartyOf(baseUrl) : false;
 };
 
 /** Record what a session answered. A missing or nonsense figure leaves the last good one standing. */
 export const noteLiveWindow = (modelId: string | undefined, maxTokens: number | undefined) => {
-  if (modelId === undefined || maxTokens === undefined || !Number.isFinite(maxTokens)) return;
-  if (maxTokens <= 0) return;
+  if (modelId === undefined || maxTokens === undefined || !Number.isFinite(maxTokens)) {
+    return;
+  }
+
+  if (maxTokens <= 0) {
+    return;
+  }
+
   const key = windowKey(modelId);
   reportedThisBoot.add(key);
-  if (liveWindows.get(key) === maxTokens) return;
+
+  if (liveWindows.get(key) === maxTokens) {
+    return;
+  }
+
   liveWindows.set(key, maxTokens);
   // After the seed, so a figure noted before the first catalog read never overwrites the stored file.
   void seedLiveWindows().then(persistLiveWindows);
 };
+
 /** The context window a live session last reported for this model, which beats the catalog's
  *  figure because it is what this box's CLI actually runs with (a proxy can demote a 1M model to
  *  200k). Keyed by the stable id, so an alias and its dated spelling share one answer. Undefined
  *  until some session has reported it. */
 export const liveWindowFor = (modelId: string): number | undefined =>
   liveWindows.get(windowKey(modelId));
+
 /**
  * The known row a CLI row resolves to: the same id, or that id with the Models API's date suffix
  * (`claude-haiku-4-5-20251001`), and never an id it merely starts with. `claude-opus-5-5` starts
  * with `claude-opus-5`, and a bare prefix match put Opus 5.5 under Opus 5's id and name.
  */
-const knownRow = <T extends { id: string }>(base: T[], resolvedModel: string): T | undefined => {
+const knownRow = <T extends { id: string }>(
+  base: Array<T>,
+  resolvedModel: string,
+): T | undefined => {
   const bare = strip(resolvedModel);
   const undated = bare.replace(/-\d{8}$/, "");
+
   return base.find((b) => b.id === bare || b.id.replace(/-\d{8}$/, "") === undated);
 };
+
 /**
  * The name a model gets when no API row or table row names it: `claude-opus-5-5` reads
  * "Claude Opus 5.5", in the spelling the API gives its own rows, so a model newer than this build
@@ -366,15 +493,22 @@ const knownRow = <T extends { id: string }>(base: T[], resolvedModel: string): T
  */
 export const nameFromId = (id: string): string | undefined => {
   const m = /^claude-([a-z]+)-(\d+(?:-\d+)?)$/.exec(strip(id).replace(/-\d{8}$/, ""));
-  if (!m?.[1] || !m[2]) return undefined;
+
+  if (!m?.[1] || !m[2]) {
+    return undefined;
+  }
+
   return `Claude ${m[1].charAt(0).toUpperCase()}${m[1].slice(1)} ${m[2].replace("-", ".")}`;
 };
+
 /** The three forms an entry takes: a family alias, a version prefix, or the whole id. */
 const allows = (entry: string, id: string) => {
   const want = bareId(entry);
   const have = bareId(id);
+
   return have === want || have.startsWith(`${want}-`);
 };
+
 /**
  * Drops the rows a `hiddenModels` entry names. An entry matches a row's id exactly or with a date
  * stamp after it (`claude-haiku-4-5` hides `claude-haiku-4-5-20251001`), never a longer version:
@@ -382,26 +516,30 @@ const allows = (entry: string, id: string) => {
  * picker changes: a session already on a hidden model keeps running.
  */
 export const withoutHiddenModels = <T extends { id: string }>(
-  rows: readonly T[],
-  hidden: readonly string[],
-): T[] => {
+  rows: ReadonlyArray<T>,
+  hidden: ReadonlyArray<string>,
+): Array<T> => {
   const wanted = hidden.map(bareId);
+
   return rows.filter((r) => {
     const have = bareId(r.id);
+
     return (
       r.id === "default" ||
       !wanted.some(
         (w) =>
           have === w ||
-          new RegExp(`^${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-\\d{8}$`).test(have),
+          new RegExp(`^${w.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}-\\d{8}$`).test(have),
       )
     );
   });
 };
+
 /** The hints-store key that hides one model from one box's picker: `hideModel:<provider>:<id>`
  *  set to true, the provider being the mount's id (`claude-code`, `claude-code-<box>`). */
 export const hideModelHint = (provider: string, id: string): string =>
   `hideModel:${provider}:${id}`;
+
 /**
  * The model ids the Settings switches hid for one mount, read off the hints store. Only a `true`
  * under that mount's `hideModel:<provider>:` prefix counts; the store drops `false`, so a model
@@ -412,12 +550,14 @@ export const hideModelHint = (provider: string, id: string): string =>
 export const hintHiddenModels = (
   hints: Record<string, boolean | number>,
   provider: string,
-): string[] => {
+): Array<string> => {
   const prefix = hideModelHint(provider, "");
+
   return Object.entries(hints)
     .filter(([k, v]) => k.startsWith(prefix) && v === true)
     .map(([k]) => k.slice(prefix.length));
 };
+
 /**
  * The patch that carries hides written before the key named a box (`hideModel:<id>`, until
  * 2026-10-28) over to the default mount's key, and removes the old ones. Nothing reads the bare
@@ -427,27 +567,45 @@ export const hintHiddenModels = (
  */
 export const carriedHides = (hints: Record<string, boolean | number>) => {
   const patch: Record<string, boolean> = {};
+
   for (const [key, value] of Object.entries(hints)) {
     const id = key.startsWith("hideModel:") ? key.slice("hideModel:".length) : "";
-    if (id === "" || id.includes(":") || value !== true) continue;
+
+    if (id === "" || id.includes(":") || value !== true) {
+      continue;
+    }
+
     patch[key] = false;
     patch[hideModelHint("claude-code", id)] = true;
   }
+
   return patch;
 };
+
 /** The hints key a router alias's window is kept under, for one mount. */
 export const routerWindowHint = (provider: string, alias: string): string =>
   `routerWindow:${provider}:${alias}`;
+
 /** The windows Settings holds for one mount's router aliases, by alias, read off the hints
  *  store: whole numbers within the bounds a custom model's window is held to. */
 export const hintRouterWindows = (hints: Record<string, boolean | number>, provider: string) => {
   const prefix = routerWindowHint(provider, "");
   const out: Record<string, number> = {};
-  for (const [k, v] of Object.entries(hints))
-    if (k.startsWith(prefix) && Number.isInteger(v) && Number(v) >= 1000 && Number(v) <= 10_000_000)
+
+  for (const [k, v] of Object.entries(hints)) {
+    if (
+      k.startsWith(prefix) &&
+      Number.isInteger(v) &&
+      Number(v) >= 1000 &&
+      Number(v) <= 10_000_000
+    ) {
       out[k.slice(prefix.length)] = Number(v);
+    }
+  }
+
   return out;
 };
+
 /**
  * settings.json's picker with the plugin config's `customModels` added as option rows, after the
  * file's own: `mergeCatalog` keeps the last row written for an id, so a model named in both takes
@@ -459,23 +617,42 @@ export const hintRouterWindows = (hints: Record<string, boolean | number>, provi
  */
 export function withCustomModels(
   picker: PickerSettings | undefined,
-  custom: readonly CustomModel[],
+  custom: ReadonlyArray<CustomModel>,
 ): PickerSettings | undefined {
-  const rows = custom.flatMap((c): PickerOption[] => {
+  const rows = custom.flatMap((c): Array<PickerOption> => {
     const model = c.model.trim();
-    if (model === "") return [];
+
+    if (model === "") {
+      return [];
+    }
+
     const row: PickerOption = { model, added: true };
-    if (c.label !== undefined && c.label.trim() !== "") row.label = c.label.trim();
-    if (c.contextWindow !== undefined && Number.isInteger(c.contextWindow) && c.contextWindow > 0)
+
+    if (c.label !== undefined && c.label.trim() !== "") {
+      row.label = c.label.trim();
+    }
+
+    if (c.contextWindow !== undefined && Number.isInteger(c.contextWindow) && c.contextWindow > 0) {
       row.contextWindow = c.contextWindow;
+    }
+
     // An empty list is what the config schema fills in for an entry that names none, so it means
     // "not said" and a model the catalog knows keeps its own levels.
     const efforts = EFFORTS_ALL.filter((level) => c.efforts?.includes(level));
-    if (efforts.length > 0) row.efforts = efforts;
+
+    if (efforts.length > 0) {
+      row.efforts = efforts;
+    }
+
     return [row];
   });
-  if (rows.length === 0) return picker;
+
+  if (rows.length === 0) {
+    return picker;
+  }
+
   const base = picker ?? { options: [], replaceBuiltInOptions: false };
+
   return { ...base, options: [...base.options, ...rows] };
 }
 
@@ -499,16 +676,20 @@ interface MergedRow {
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
  *  short spelling. */
 export function mergeCatalog(
-  cli: CliModel[],
-  base: ReturnType<typeof M>[],
+  cli: Array<CliModel>,
+  base: Array<ReturnType<typeof M>>,
   picker?: PickerSettings,
   route?: RouteFilter,
 ) {
-  if (cli.length === 0 && !picker) return base;
+  if (cli.length === 0 && !picker) {
+    return base;
+  }
+
   // A CLI row is keyed by an alias (`opus`, `default`), so each row carries the id the allowlist reads.
   const fromCli = cli.map((c) => {
     const known = knownRow(base, c.resolvedModel);
     const window = c.resolvedModel.endsWith("[1m]") ? 1_000_000 : (known?.contextWindow ?? 200_000);
+
     // The CLI is asked for its picker once a process is live, so before that answer the lineup
     // spells a model `claude-haiku-4-5` and after it `haiku`. Anything holding an id across that
     // moment, a dsh subagent allowlist or a stored session model, reads the other spelling as a
@@ -516,6 +697,7 @@ export function mergeCatalog(
     // id, so both states offer the same ids; `default` and a `[1m]` variant have none to take.
     const stable =
       c.value === "default" || c.resolvedModel.endsWith("[1m]") ? undefined : known?.id;
+
     // The CLI names its rows for a terminal picker that shows nothing else ("Opus (1M context)",
     // "Fable", "Sonnet"), and the known rows that follow here read "Claude Opus 5"; two spellings
     // in one menu read as two lineups (owner, 2026-09-16). A row landing on a known model takes
@@ -533,17 +715,21 @@ export function mergeCatalog(
     // names only some. A Claude id there is a version pin or a cloud provider's spelling of the
     // same model, which is no remap. The lineup has to agree here as well.
     const target = picker?.aliasModels?.[c.value];
+
     const remapped =
       target !== undefined && !/claude/i.test(target) && strip(c.resolvedModel) === target;
+
     const label =
       c.value === "default" || name === undefined || named
         ? c.displayName
         : `${name}${c.resolvedModel.endsWith("[1m]") ? " (1M context)" : ""}`;
+
     // Only where the mount hands sizes over, which it does when its requests do not go straight
     // to Anthropic. Someone who names an alias on a direct box (a pinned version, say) still
     // reaches the Claude model the CLI knows, and its window is left alone.
     const sizes = picker?.routerWindows;
     const resized = (named || remapped) && sizes !== undefined;
+
     const row: MergedRow = {
       // A row the router took over reaches some other model, whose window nobody here knows.
       // Claude's figure for the alias (1M for Sonnet 5) promises room a local model may not
@@ -560,25 +746,32 @@ export function mergeCatalog(
       match: c.resolvedModel,
       routers: named || remapped,
     };
+
     if (resized) {
       row.row.routers = c.value;
       row.row.sized = true;
     }
+
     return row;
   });
+
   // A known model follows unless a CLI row already carries its exact id. A `[1m]` variant or the
   // `default` alias resolving to it keeps its own id, so it does not cover the plain one: a session
   // bound to `claude-fable-5-1` must still find that row, or the picker shows the raw id and an
   // empty menu (seen 2026-09-10, when the CLI's lineup offered only `claude-fable-5-1[1m]`).
   const emitted = new Set(fromCli.map((r) => r.row.id));
+
   // A model the API lists that the CLI's picker does not, released after every model the CLI
   // does offer, is one the installed CLI predates: its row says so, so a reader who picks it and
   // gets a refusal knows which update fixes it.
   // Dated only through the base: with no CLI row found there (a stale API cache), nothing is called
   // newer, since every dated row would be. Wrong for a real newer model in that state: unmarked.
-  const dated = cli
-    .map((c) => knownRow(base, c.resolvedModel)?.createdAt ?? 0)
-    .filter((n) => n > 0);
+  const dated = cli.flatMap((c) => {
+    const at = knownRow(base, c.resolvedModel)?.createdAt ?? 0;
+
+    return at > 0 ? [at] : [];
+  });
+
   const newestCli = dated.length > 0 ? Math.max(...dated) : Number.POSITIVE_INFINITY;
   const newer = (b: CatalogModel) => b.createdAt !== undefined && b.createdAt > newestCli;
   // With a CLI lineup in hand, the CLI decides what is current. A base row stays only when the CLI
@@ -590,27 +783,36 @@ export function mergeCatalog(
   // model's metadata), but `StaleModelRepair` moves it to its family's newest listed model when it
   // is opened idle. A `modelPicker.options` row with the full id keeps a model listed.
   const reached = new Set(cli.map((c) => strip(c.resolvedModel).replace(/-\d{8}$/, "")));
+
   const keep = (b: CatalogModel) =>
     !emitted.has(b.id) &&
     (cli.length === 0 || reached.has(b.id.replace(/-\d{8}$/, "")) || newer(b));
+
   const leftover = (b: CatalogModel): CatalogModel =>
     cli.length > 0 && newer(b) ? { ...b, description: serverText("modelNeedsCliUpdate") } : b;
-  let rows: MergedRow[] = [
+
+  let rows: Array<MergedRow> = [
     ...fromCli,
-    ...base.filter(keep).map((b) => ({ row: leftover(b), match: b.id, routers: false })),
+    ...base.flatMap((b) => (keep(b) ? [{ row: leftover(b), match: b.id, routers: false }] : [])),
   ];
+
   if (picker) {
     const extra = picker.options.map((o): MergedRow => {
       const known = base.find((b) => allows(o.model, b.id) || allows(b.id, o.model));
       const label = o.label ?? known?.name ?? o.model;
+
       const row = M(
         o.model,
         label,
         o.contextWindow ?? known?.contextWindow ?? 200_000,
         o.efforts ?? known?.efforts ?? [],
       );
+
       // A size someone stated for a model the plugin added is the only thing that knows it.
-      if (o.added === true && o.contextWindow !== undefined) row.sized = true;
+      if (o.added === true && o.contextWindow !== undefined) {
+        row.sized = true;
+      }
+
       return {
         row,
         match: o.model,
@@ -622,12 +824,19 @@ export function mergeCatalog(
         foreign: o.added === true && known === undefined,
       };
     });
-    if (picker.replaceBuiltInOptions) rows = rows.filter((r) => r.row.id === "default");
+
+    if (picker.replaceBuiltInOptions) {
+      rows = rows.filter((r) => r.row.id === "default");
+    }
+
     rows = [...rows, ...extra];
     const allow = picker.availableModels;
-    if (allow)
+
+    if (allow) {
       rows = rows.filter((r) => r.row.id === "default" || allow.some((e) => allows(e, r.match)));
+    }
   }
+
   // The listing follows where this mount's traffic goes. Straight to Anthropic, a model only a
   // router could answer for is left out: picked there, its turn fails. Through a router that
   // names the aliases it remaps, Claude's own rows are left out instead: the router sends them
@@ -642,21 +851,29 @@ export function mergeCatalog(
     const foreign = new Set(rows.filter((r) => r.foreign === true).map((r) => r.row.id));
     rows = rows.filter((r) => !foreign.has(r.row.id) && !foreign.has(r.match));
   }
-  if (route?.state === "routed" && !route.claudeToo && fromCli.some((r) => r.routers))
+
+  if (route?.state === "routed" && !route.claudeToo && fromCli.some((r) => r.routers)) {
     rows = rows.filter((r) => r.row.id === "default" || r.routers);
+  }
+
   // Two aliases can resolve to one model, and they now share its id. The row keeps the place of
   // the first one listed and the values of the last, which is why a `customModels` entry, added
   // after settings.json's own, is the one whose label and window show.
   return [...new Map(rows.map((r) => [r.row.id, r.row])).values()];
 }
+
 /** Each effort level the last Models API read reported that the plugin does not know, with the
  *  models that carry it, for Diagnostics. Empty until a read has happened, and after a read that
  *  found none. */
-export function unknownEffortLevels(): Array<{ level: string; models: string[] }> {
-  const byLevel = new Map<string, string[]>();
-  for (const m of catalog.models)
-    for (const level of m.unknownEfforts ?? [])
+export function unknownEffortLevels(): Array<{ level: string; models: Array<string> }> {
+  const byLevel = new Map<string, Array<string>>();
+
+  for (const m of catalog.models) {
+    for (const level of m.unknownEfforts ?? []) {
       byLevel.set(level, [...(byLevel.get(level) ?? []), m.name]);
+    }
+  }
+
   return [...byLevel].map(([level, models]) => ({ level, models }));
 }
 
@@ -667,11 +884,12 @@ export function unknownEffortLevels(): Array<{ level: string; models: string[] }
  * A listing can afford that once; a turn that asked several times before it spawned could not.
  */
 export async function catalogNow(
-  cli: CliModel[] = [],
+  cli: Array<CliModel> = [],
   picker?: PickerSettings,
   route?: RouteFilter,
 ) {
   await Promise.all([seedFromDisk(), seedLiveWindows()]);
+
   return mergeCatalog(cli, catalog.models, picker, route);
 }
 
@@ -679,19 +897,23 @@ export async function catalogNow(
  *  keeps the last good catalog on any failure so the picker never goes empty. */
 export async function getCatalog(
   fetchImpl = fetch,
-  cli: CliModel[] = [],
+  cli: Array<CliModel> = [],
   picker?: PickerSettings,
   route?: RouteFilter,
 ) {
   await Promise.all([seedFromDisk(), seedLiveWindows()]);
-  if (Date.now() - catalog.at < CATALOG_TTL_MS)
+
+  if (Date.now() - catalog.at < CATALOG_TTL_MS) {
     return mergeCatalog(cli, catalog.models, picker, route);
+  }
+
   // One read of the Models API at a time: every mount asks when the cache goes stale, and each
   // used to fire its own call (and, offline, wait out its own five-second timeout).
   apiRead ??= refreshFromApi(fetchImpl).finally(() => {
     apiRead = undefined;
   });
   await apiRead;
+
   return mergeCatalog(cli, catalog.models, picker, route);
 }
 
@@ -702,6 +924,7 @@ let apiRead: Promise<void> | undefined;
  *  marking the attempt so the next one waits out the TTL. */
 async function refreshFromApi(fetchImpl: typeof fetch): Promise<void> {
   const headers = await authHeaders(CLAUDE_HOME);
+
   if (headers) {
     try {
       const res = await fetchImpl("https://api.anthropic.com/v1/models?limit=100", {
@@ -711,21 +934,47 @@ async function refreshFromApi(fetchImpl: typeof fetch): Promise<void> {
         },
         signal: AbortSignal.timeout(5000),
       });
+
       if (res.ok) {
-        const data = (await res.json()).data ?? [];
-        // Two dated ids can land on one undated id; the first the API lists wins.
-        const mapped: ReturnType<typeof M>[] = data.map(modelFromApi);
+        const body: unknown = await res.json();
+
+        const data: ReadonlyArray<unknown> =
+          isRec(body) && Array.isArray(body.data) ? body.data : [];
+
+        // Two dated ids can land on one undated id; the first the API lists wins. A row that is
+        // not an object is skipped, and each field is kept only when it has the type read.
+        const mapped: Array<ReturnType<typeof M>> = data.flatMap((v) => {
+          if (!isRec(v)) {
+            return [];
+          }
+
+          const caps = v.capabilities;
+
+          return [
+            modelFromApi({
+              id: stringOf(v.id),
+              display_name: stringOf(v.display_name),
+              max_input_tokens: numberValue(v.max_input_tokens),
+              capabilities: isRec(caps) ? { effort: effortCapsOf(caps) } : undefined,
+              created_at: stringOf(v.created_at),
+            }),
+          ];
+        });
+
         const models = [...new Map(mapped.map((m) => [m.id, m])).values()];
+
         if (models.length > 0) {
           catalog = { at: Date.now(), models };
           void persistCatalog(models);
         }
+
         return;
       }
     } catch {
       /* offline or rejected: keep previous catalog */
     }
   }
+
   catalog = { at: Date.now(), models: catalog.models }; // retry no sooner than the TTL
 }
 
@@ -740,7 +989,11 @@ export function modelInfo(
     name: model.name ?? "",
     inputModalities: ["text", "image"] as const,
   };
-  if (model.description !== undefined) info.description = model.description;
+
+  if (model.description !== undefined) {
+    info.description = model.description;
+  }
+
   return info;
 }
 
@@ -748,13 +1001,14 @@ export function modelInfo(
 export function resolveModelInfo(
   provider: string,
   modelId: string,
-  models: ReturnType<typeof M>[] = catalog.models,
+  models: Array<ReturnType<typeof M>> = catalog.models,
   cap?: (typeof EFFORTS_ALL)[number],
 ): LlmResolvedModelInfo {
   // The unmerged API cache sits between the listing and the table: a model the CLI dropped is
   // gone from `models` but still needs its efforts and window, or a session bound to it fails
   // every turn that carries a stored effort (dsh refuses an effort the model does not list).
   const pool = [...models, ...catalog.models, ...KNOWN_MODELS];
+
   // A session stored before the ids settled asks for the dated one; it still names a model we know.
   // A `modelPicker.options` row may be written without the prefix (`opus-4-5`), the form the CLI
   // accepts; without the last lookup it resolved with no efforts and a stored effort failed its turns.
@@ -763,16 +1017,23 @@ export function resolveModelInfo(
     pool.find((m) => m.id.startsWith(modelId)) ??
     pool.find((m) => m.id === stableModelId(modelId)) ??
     pool.find((m) => m.id === `claude-${modelId}`);
+
   const info: LlmResolvedModelInfo = {
     ...modelInfo(provider, { id: modelId, name: found?.name ?? modelId }),
   };
+
   // A session's own answer first, whatever the tables say. It is the only figure that describes the
   // window the CLI compacts on, and it is right for a model released after this build.
   const live = liveWindowFor(modelId);
+
   if (!found) {
-    if (live !== undefined) info.context = { contextWindow: live };
+    if (live !== undefined) {
+      info.context = { contextWindow: live };
+    }
+
     return info;
   }
+
   // Except on a row whose window is stated (`sized`): the session is started with that number,
   // so the CLI's answer is the same number a moment late, and a size just changed in Settings
   // must not be hidden by the answer to the old one.
@@ -780,11 +1041,13 @@ export function resolveModelInfo(
     contextWindow: found.sized ? found.contextWindow : (live ?? found.contextWindow),
   };
   const efforts = capEfforts(found.efforts, cap);
+
   if (efforts.length > 0) {
     info.reasoning = {
-      // SAFETY: effort ids come from the CLI's own catalog; the brand marks provenance only
-      efforts: efforts.map((id) => ({ id: id as ReasoningEffortId, name: id })),
+      // Effort ids come from the CLI's own catalog; the brand marks provenance only.
+      efforts: efforts.map((id) => ({ id: brandString<ReasoningEffortId>(id), name: id })),
     };
   }
+
   return info;
 }

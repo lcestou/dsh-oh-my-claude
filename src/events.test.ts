@@ -1,13 +1,16 @@
 // Offline self-check: DSH_OMC_STATE_DIR=$(mktemp -d /tmp/omc-test.XXXXXX) bun src/events.test.ts.
 import assert from "node:assert/strict";
-import type { ServerResponse } from "node:http";
-import { EventHub, HEARTBEAT_MS, frame, hub, type OmcEvent } from "./events.js";
+import { IncomingMessage, ServerResponse } from "node:http";
+import { Socket } from "node:net";
+import { EventHub, HEARTBEAT_MS, frame, hub } from "./events.js";
+import type { OmcEvent } from "./events.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 interface FakeRes {
   res: ServerResponse;
   status: number;
   headers: Record<string, string>;
-  chunks: string[];
+  chunks: Array<string>;
   ended: boolean;
   onClose: (() => void) | undefined;
   needDrain: boolean;
@@ -16,8 +19,7 @@ interface FakeRes {
 /** A ServerResponse double that records what the hub writes and lets a test flip the drain flag
  *  and fire the close callback. */
 const fakeRes = (): FakeRes => {
-  const f: FakeRes = {
-    res: undefined as unknown as ServerResponse,
+  const f: Omit<FakeRes, "res"> = {
     status: 0,
     headers: {},
     chunks: [],
@@ -25,26 +27,47 @@ const fakeRes = (): FakeRes => {
     onClose: undefined,
     needDrain: false,
   };
-  f.res = {
-    writeHead: (s: number, h: Record<string, string>) => {
-      f.status = s;
-      f.headers = h;
+
+  // A real response on no socket, its writes and close hook recorded on the instance.
+  const res: ServerResponse = Object.defineProperties(
+    new ServerResponse(new IncomingMessage(new Socket())),
+    {
+      writeHead: {
+        value: (status: number, headers: Record<string, string>) => {
+          f.status = status;
+          f.headers = headers;
+
+          return res;
+        },
+      },
+      write: {
+        value: (chunk: string) => {
+          f.chunks.push(chunk);
+
+          return true;
+        },
+      },
+      end: {
+        value: () => {
+          f.ended = true;
+
+          return res;
+        },
+      },
+      on: {
+        value: (ev: string, cb: () => void) => {
+          if (ev === "close") {
+            f.onClose = cb;
+          }
+
+          return res;
+        },
+      },
+      writableNeedDrain: { get: () => f.needDrain },
     },
-    write: (chunk: string) => {
-      f.chunks.push(chunk);
-      return true;
-    },
-    end: () => {
-      f.ended = true;
-    },
-    on: (ev: string, cb: () => void) => {
-      if (ev === "close") f.onClose = cb;
-    },
-    get writableNeedDrain() {
-      return f.needDrain;
-    },
-  } as unknown as ServerResponse;
-  return f;
+  );
+
+  return Object.assign(f, { res });
 };
 
 // A. frame
@@ -60,10 +83,12 @@ const fakeRes = (): FakeRes => {
 {
   const h = new EventHub();
   const a = fakeRes();
-  const snap: OmcEvent[] = [
+
+  const snap: Array<OmcEvent> = [
     { kind: "awaiting", session: null, data: {} },
     { kind: "idle", session: "s1", data: { deadline: null, timeoutMs: 5 } },
   ];
+
   h.attach(a.res, "s1", snap);
   assert.equal(a.status, 200, "attach status");
   assert.equal(a.headers["content-type"], "text/event-stream", "attach content type");
@@ -125,28 +150,43 @@ const fakeRes = (): FakeRes => {
 // F. coalesce sends once per window with the newest builder; flush sends now and cancels
 const h = new EventHub();
 const a = fakeRes();
+
 h.attach(a.res, "s1", []);
+
 h.coalesce("s1", () => ({ kind: "live-turn", session: "s1", data: { tokens: 1 } }), 200);
+
 h.coalesce("s1", () => ({ kind: "live-turn", session: "s1", data: { tokens: 2 } }), 200);
+
 h.coalesce("s1", () => ({ kind: "live-turn", session: "s1", data: { tokens: 3 } }), 200);
+
 assert.equal(a.chunks.length, 1, "nothing goes out before the window ends");
-await new Promise((r) => setTimeout(r, 300));
+
+await sleep(300);
+
 assert.equal(a.chunks.length, 2, "one frame after the window");
+
 assert.equal(
   a.chunks[1],
   'event: live-turn\ndata: {"session":"s1","data":{"tokens":3}}\n\n',
   "the newest builder wins",
 );
+
 h.coalesce("s1", () => ({ kind: "live-turn", session: "s1", data: { tokens: 4 } }), 200);
+
 h.flush("s1", { kind: "live-turn", session: "s1", data: {} });
+
 assert.equal(a.chunks.length, 3, "flush publishes at once");
+
 assert.equal(
   a.chunks[2],
   'event: live-turn\ndata: {"session":"s1","data":{}}\n\n',
   "flush frame text",
 );
-await new Promise((r) => setTimeout(r, 300));
+
+await sleep(300);
+
 assert.equal(a.chunks.length, 3, "flush cancelled the pending coalesced frame");
+
 h.close();
 
 // G. close ends every response and empties the set
@@ -164,7 +204,7 @@ h.close();
 
 // H. the shared hub and the heartbeat constant
 {
-  assert.ok(hub instanceof EventHub, "the module exports one shared hub");
+  assert.equal(Object.getPrototypeOf(hub), EventHub.prototype, "the module exports one shared hub");
   assert.equal(HEARTBEAT_MS, 25_000, "heartbeat period under nginx's 60 s read timeout");
 }
 

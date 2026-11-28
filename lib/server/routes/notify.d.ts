@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { type RouteHandler } from "./context.js";
+import type { RouteHandler } from "./context.js";
 import type { RouteCtx } from "../sessions.js";
 import { deviceRows } from "../notify-store.js";
 /** The worker's path. Its scope is its own folder, which covers no dsh page: push and
@@ -18,4 +18,4 @@ export interface NotifyState {
  */
 export declare function servePushSw(_req: IncomingMessage, res: ServerResponse): Promise<void>;
 /** The `/notify` blocks; state lives under STATE_DIR, the box's, whichever mount answers. */
-export declare function notifyRoutes(c: RouteCtx): RouteHandler;
+export declare function notifyRoutes(c: Pick<RouteCtx, "ROUTE_PREFIX" | "json" | "readBody" | "log">): RouteHandler;

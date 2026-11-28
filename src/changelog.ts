@@ -12,38 +12,50 @@ export interface ChangelogRelease {
   date: string | null;
   /** The paragraph between the heading and the first `###`, when the release has one. */
   intro: string | null;
-  sections: { kind: string; items: string[] }[];
+  sections: Array<{ kind: string; items: Array<string> }>;
 }
 
 const HEADING = /^## \[([^\]]+)\](?: - (\d{4}-\d{2}-\d{2}))?/;
 
 /** Releases with something to say, newest first as the file lists them. A `## [Unreleased]` with
  *  no items and no paragraph, which is what cutting a release leaves at the top, is dropped. */
-export function parseChangelog(text: string): ChangelogRelease[] {
-  const out: ChangelogRelease[] = [];
+export function parseChangelog(text: string): Array<ChangelogRelease> {
+  const out: Array<ChangelogRelease> = [];
   let release: ChangelogRelease | null = null;
-  let section: { kind: string; items: string[] } | null = null;
+  let section: { kind: string; items: Array<string> } | null = null;
+
   for (const line of text.split("\n")) {
     const head = HEADING.exec(line);
+
     if (head) {
       release = { version: head[1] ?? "", date: head[2] ?? null, intro: null, sections: [] };
       section = null;
       out.push(release);
       continue;
     }
-    if (!release) continue;
+
+    if (!release) {
+      continue;
+    }
+
     if (line.startsWith("### ")) {
       section = { kind: line.slice(4).trim(), items: [] };
       release.sections.push(section);
     } else if (line.startsWith("- ")) {
-      if (section) section.items.push(line.slice(2).trim());
+      if (section) {
+        section.items.push(line.slice(2).trim());
+      }
     } else if (line.startsWith("  ") && section) {
       // A wrapped item: the file breaks lines at 100 columns and indents the rest by two.
       const prev = section.items.pop();
-      if (prev !== undefined) section.items.push(`${prev} ${line.trim()}`);
+
+      if (prev !== undefined) {
+        section.items.push(`${prev} ${line.trim()}`);
+      }
     } else if (line.trim() && !section) {
       release.intro = release.intro ? `${release.intro} ${line.trim()}` : line.trim();
     }
   }
+
   return out.filter((r) => r.intro !== null || r.sections.some((s) => s.items.length > 0));
 }

@@ -1,7 +1,17 @@
 // The Report a problem block: the server builds and redacts the text, this component only shows
 // it, lets the owner edit it, and copies it or opens an issue with it.
 import { useEffect, useRef, useState } from "react";
-import { btn, btnPrimary, errText, inputStyle, meta, readJson, ROUTE, T } from "./shared.js";
+import {
+  btn,
+  btnPrimary,
+  errText,
+  inputStyle,
+  meta,
+  readJson,
+  ROUTE,
+  T,
+  errorText,
+} from "./shared.js";
 import { t, useLocale } from "./i18n.js";
 
 interface Props {
@@ -22,28 +32,47 @@ export function ReportBlock({ sessionId, provider }: Props) {
 
   useEffect(() => {
     let live = true;
+
+    /** Puts the report and its issues link on screen and clears an earlier error. */
+    const show = (b: { text: string; issues: string }) => {
+      setText(b.text);
+      setIssues(b.issues);
+      setError("");
+    };
+
     const q = new URLSearchParams();
-    if (sessionId) q.set("session", sessionId);
-    if (provider) q.set("provider", provider);
-    if (host) q.set("host", "1");
+
+    if (sessionId) {
+      q.set("session", sessionId);
+    }
+
+    if (provider) {
+      q.set("provider", provider);
+    }
+
+    if (host) {
+      q.set("host", "1");
+    }
+
     fetch(`${ROUTE}/report?${q}`)
       .then((r) => readJson<{ text: string; issues: string }>(r))
-      .then((b) => {
+      .then((b) => live && show(b))
+      .catch((cause: unknown) => {
         if (live) {
-          setText(b.text);
-          setIssues(b.issues);
-          setError("");
+          setError(errorText(cause));
         }
-      })
-      .catch((e) => {
-        if (live) setError(e instanceof Error ? e.message : String(e));
       });
+
     return () => {
       live = false;
-      if (timerRef.current !== null) clearTimeout(timerRef.current);
+
+      if (timerRef.current !== null) {
+        clearTimeout(timerRef.current);
+      }
     };
   }, [sessionId, provider, host]);
 
+  /** Copies the report. Never rejects: a refused clipboard is the error line. */
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -107,7 +136,7 @@ export function ReportBlock({ sessionId, provider }: Props) {
           data-omc-report-copy=""
           style={btnPrimary}
           disabled={text === ""}
-          onClick={copy}
+          onClick={() => void copy()}
         >
           {copied ? t("copied") : t("report.copy")}
         </button>

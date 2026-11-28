@@ -7,7 +7,8 @@
 // theme switch off drops the tint. Shots at desktop and 390 px in light and dark land in
 // SHOTS_DIR. Run it against a scratch dsh only (DSH_ORIGIN): it writes accounts.json and hints
 // there. Arg 1 is the dsh launch token.
-import { dshUrl, launch, type Page } from "./pw.js";
+import { dshUrl, launch } from "./pw.js";
+import type { Page } from "./pw.js";
 
 const token = process.argv[2];
 const shots = process.env.SHOTS_DIR ?? "/tmp/omc-box-colours-shots";
@@ -15,14 +16,20 @@ const PROVIDER = "claude-code-omc-colour";
 const ACCENT = "rgb(217, 119, 87)";
 const PICK = "#3366ff";
 const PICK_RGB = "rgb(51, 102, 255)";
+
 // The Boxes card's own swatches: Customize, folded or not, carries a second set further up the page.
 const IN_BOXES = "#dsh-oh-my-claude-boxes";
 let failed = 0;
+
 /** One line per expectation; a miss counts toward the exit code. */
 const expect = (label: string, ok: boolean, seen = "") => {
-  if (!ok) failed++;
+  if (!ok) {
+    failed++;
+  }
+
   console.log(`${ok ? "PASS" : "FAIL"} ${label}${ok || !seen ? "" : ` (saw ${seen})`}`);
 };
+
 /** POST JSON to a plugin route from the page; answers the status. */
 const post = (p: Page, path: string, body: Record<string, string | number | boolean | null>) =>
   p.evaluate(
@@ -34,14 +41,17 @@ const post = (p: Page, path: string, body: Record<string, string | number | bool
       }).then((r) => r.status),
     [path, JSON.stringify(body)],
   );
+
 /** Open Settings → Oh My Claude and unfold the Boxes card, in either language. */
 const openBoxes = async (p: Page) => {
   await p.goto(dshUrl(token), { waitUntil: "load" });
   await p.waitForTimeout(2500);
   // Settings sits in the account menu at the foot of the sidebar since dsh 0.2.1.
   const gear = p.locator('button[aria-label*="Settings" i], a[aria-label*="Settings" i]');
-  if ((await gear.count()) > 0) await gear.first().click({ force: true });
-  else {
+
+  if ((await gear.count()) > 0) {
+    await gear.first().click({ force: true });
+  } else {
     await p
       .locator('button[aria-label="Account menu"], button[aria-label="账户菜单"]')
       .first()
@@ -52,6 +62,7 @@ const openBoxes = async (p: Page) => {
       .first()
       .click();
   }
+
   await p.waitForTimeout(800);
   await p
     .getByText(/^Oh My Claude$/)
@@ -59,22 +70,29 @@ const openBoxes = async (p: Page) => {
     .click({ force: true });
   await p.waitForTimeout(1500);
   const card = p.locator('#dsh-oh-my-claude-boxes[data-omc-card="closed"] button[aria-expanded]');
-  if ((await card.count()) > 0) await card.first().click({ force: true });
+
+  if ((await card.count()) > 0) {
+    await card.first().click({ force: true });
+  }
+
   await p.waitForTimeout(1200);
 };
+
 /** The computed text colour of a label span shaped like dsh's, for `provider`. The span is added
  *  once per page and per provider and stays, so a later read sees the sheet as it is then. */
 const labelColour = (p: Page, provider: string) =>
   p.evaluate((id) => {
     let el = document.querySelector<HTMLElement>(`[data-omc-check-label="${id}"]`);
+
     if (!el) {
       el = document.createElement("span");
       el.setAttribute("data-omc-check-label", id);
       el.setAttribute("data-provider-id", id);
       el.setAttribute("data-model-id", "claude-haiku-5-5");
       el.textContent = "Haiku";
-      document.body.appendChild(el);
+      document.body.append(el);
     }
+
     return getComputedStyle(el).color;
   }, provider);
 
@@ -82,11 +100,17 @@ const b = await launch();
 const ctx = await b.newContext({ viewport: { width: 1400, height: 900 }, colorScheme: "dark" });
 const a = await ctx.newPage();
 const other = await ctx.newPage();
+
 await openBoxes(a);
+
 await openBoxes(other);
+
 await post(a, "/accounts/remove", { provider: PROVIDER });
+
 await post(a, "/hints", { [`boxColour:${PROVIDER}`]: null, themeModelsOff: null });
+
 await a.waitForTimeout(1500);
+
 try {
   expect(
     "adding the account answers 200",
@@ -94,6 +118,7 @@ try {
       200,
   );
   await a.waitForTimeout(3000);
+
   for (const [tab, p] of [
     ["tab A", a],
     ["tab B", other],
@@ -107,6 +132,7 @@ try {
       (await p.locator(`${IN_BOXES} [data-omc-box-colour="${PROVIDER}"]`).count()) === 1,
     );
   }
+
   const thisBox = await labelColour(a, "claude-code");
   const auto = await labelColour(a, PROVIDER);
   expect("This box's model names keep the accent", thisBox === ACCENT, thisBox);
@@ -145,6 +171,7 @@ try {
   await a.waitForTimeout(2500);
   const back = await labelColour(a, PROVIDER);
   expect("Reset brings the automatic shade back", back === auto, back);
+
   for (const [w, scheme] of [
     [1400, "dark"],
     [1400, "light"],
@@ -155,6 +182,7 @@ try {
       viewport: { width: 1400, height: 900 },
       colorScheme: scheme,
     });
+
     const p = await shot.newPage();
     await openBoxes(p);
     await p.setViewportSize({ width: w, height: 900 });
@@ -169,6 +197,7 @@ try {
     expect(`no sideways scroll at ${w} ${scheme}`, width <= w, String(width));
     await shot.close();
   }
+
   await post(a, "/hints", { themeModelsOff: true });
   await a.evaluate(() => window.dispatchEvent(new Event("omc-hints")));
   await a.waitForTimeout(2500);
@@ -178,10 +207,14 @@ try {
   await post(a, "/hints", { [`boxColour:${PROVIDER}`]: null, themeModelsOff: null });
   await post(a, "/accounts/remove", { provider: PROVIDER });
 }
+
 await a.waitForTimeout(2500);
+
 expect(
   "removing the account takes its swatch away in tab B",
   (await other.locator(`${IN_BOXES} [data-omc-box-colour="${PROVIDER}"]`).count()) === 0,
 );
+
 await b.close();
+
 process.exit(failed ? 1 : 0);

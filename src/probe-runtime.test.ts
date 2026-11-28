@@ -9,21 +9,30 @@ import { tempDir } from "./test-tmp.js";
 
 const dir = tempDir("omc-probe-");
 const claude = join(dir, "claude");
+
 await writeFile(
   claude,
   [
     "#!/bin/sh",
     'case "$1" in',
     '  --version) echo "9.9.9 (Claude Code)";;',
-    '  auth) printf \'{"loggedIn": false, "authMethod": "none"}\\n\'; exit 1;;',
+    String.raw`  auth) printf '{"loggedIn": false, "authMethod": "none"}\n'; exit 1;;`,
     "esac",
   ].join("\n"),
 );
+
 await chmod(claude, 0o755);
+
 const status = await probeRuntime(dir, claude, "");
+
 assert.equal(status.version, "9.9.9 (Claude Code)", "the version survives a failing auth status");
+
 assert.equal(status.loggedIn, false, "the JSON the failing command printed is still read");
+
 assert.equal(status.error, undefined, "a logged-out box is not a failed probe");
+
 assert.equal(status.binary, claude);
+
 await rm(dir, { recursive: true, force: true });
+
 console.log("probe runtime ok");

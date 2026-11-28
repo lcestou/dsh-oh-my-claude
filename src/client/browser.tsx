@@ -27,15 +27,17 @@ import {
   IconPlusOutlineMedium,
 } from "./icons.js";
 import type { DirEntry } from "./shared.js";
+import { errorText } from "./shared.js";
 import { t as omcT, useLocale } from "./i18n.js";
+import { isNode } from "./dom-guards.js";
 
 /** One directory level plus its ancestry, the shape dsh's host listing answers in. */
 export interface Listing {
   path: string;
   home: string;
   /** Ancestor chain from the filesystem root to the level inclusive; every crumb is a jump target. */
-  crumbs: DirEntry[];
-  entries: DirEntry[];
+  crumbs: Array<DirEntry>;
+  entries: Array<DirEntry>;
   /** The backend cut `entries` at its bound; the missing rows are the name-sorted tail. */
   truncated?: boolean;
 }
@@ -61,17 +63,12 @@ export interface DirectoryBrowserProps {
   footerLead?: ReactNode;
 }
 
-/** What a directory operation rejects with: an Error, or dsh's host business message riding along. */
-export type OperationFailure = Error | { rpcError: { message: string } };
-
-/** Failure text from a directory operation, the host business message first when one rides along. */
-export const failureText = (error: OperationFailure): string =>
-  error instanceof Error ? error.message : error.rpcError.message;
-
 /** How long a scan may stay silent before the floating "Loading…" pill appears. */
 const SLOW_SCAN_DELAY_MS = 300;
+
 /** How long a navigation landing waits for its parent leg before committing the target alone. */
 const PARENT_LEG_WAIT_MS = 200;
+
 /** How long a typed draft rests before the panes follow it to a directory no pane lists. */
 const DRAFT_PREVIEW_DEBOUNCE_MS = 250;
 
@@ -79,9 +76,13 @@ const DRAFT_PREVIEW_DEBOUNCE_MS = 250;
  * Breadcrumb rows for display: inside the home subtree the chain starts at a localized Home
  * crumb; outside it the full ancestry shows, the root labelled by its own path.
  */
-export function displayCrumbs(listing: Listing, homeLabel: string): DirEntry[] {
+export function displayCrumbs(listing: Listing, homeLabel: string): Array<DirEntry> {
   const homeIndex = listing.crumbs.findIndex((crumb) => crumb.path === listing.home);
-  if (homeIndex === -1) return listing.crumbs;
+
+  if (homeIndex === -1) {
+    return listing.crumbs;
+  }
+
   return [
     { name: homeLabel, path: listing.home, hidden: false },
     ...listing.crumbs.slice(homeIndex + 1),
@@ -94,6 +95,7 @@ export const separatorOf = (listing: Listing): string => (listing.home.includes(
 /** The listed level as a directory part: its own path, separator-terminated (the root already is). */
 const levelDirectory = (listing: Listing): string => {
   const sep = separatorOf(listing);
+
   return listing.path.endsWith(sep) ? listing.path : `${listing.path}${sep}`;
 };
 
@@ -103,6 +105,7 @@ const draftDirectory = (listing: Listing, draft: string): string | null => {
     separatorOf(listing) === "\\"
       ? Math.max(draft.lastIndexOf("\\"), draft.lastIndexOf("/"))
       : draft.lastIndexOf("/");
+
   return cut === -1 ? null : draft.slice(0, cut + 1);
 };
 
@@ -123,14 +126,20 @@ export interface DraftReading {
   /** The final segment that prefix-filters `listing`, null when it does not answer that directory. */
   tail: string | null;
 }
+
 /** A draft path split into its directory and the tail that prefix-filters the listing; the tail
  *  null unless the directory is the current level or one the scan just landed in. */
 export function readDraft(listing: Listing, draft: string, scanned: Scanned | null): DraftReading {
   const directory = draftDirectory(listing, draft);
-  if (directory === null) return { directory: null, tail: null };
+
+  if (directory === null) {
+    return { directory: null, tail: null };
+  }
+
   const answers =
     directory === levelDirectory(listing) ||
     (scanned !== null && scanned.directory === directory && scanned.landed === listing.path);
+
   return { directory, tail: answers ? draft.slice(directory.length) : null };
 }
 
@@ -140,27 +149,37 @@ export function readDraft(listing: Listing, draft: string, scanned: Scanned | nu
  * names.
  */
 export function visibleEntries(
-  entries: DirEntry[],
+  entries: Array<DirEntry>,
   selectedPath: string | null,
   showHidden: boolean,
   filterPrefix: string | null,
-): DirEntry[] {
+): Array<DirEntry> {
   const needle = filterPrefix === null ? "" : filterPrefix.toLowerCase();
   const displayable = (entry: DirEntry) => showHidden || !entry.hidden || needle.startsWith(".");
+
   const matches = (entry: DirEntry) =>
     displayable(entry) && entry.name.toLowerCase().startsWith(needle);
+
   const narrowing = needle !== "" && entries.some(matches);
+
   return entries.filter((entry) => {
-    if (entry.path === selectedPath) return true;
-    if (narrowing) return matches(entry);
+    if (entry.path === selectedPath) {
+      return true;
+    }
+
+    if (narrowing) {
+      return matches(entry);
+    }
+
     return showHidden || !entry.hidden;
   });
 }
 
 const P = "omc-db";
+
 /** Joins the class names, dropping every falsy entry, so a call with only false, null or undefined
  *  returns an empty string rather than a stray space. */
-const cls = (...names: (string | false | null | undefined)[]): string =>
+const cls = (...names: Array<string | false | null | undefined>): string =>
   names.filter(Boolean).join(" ");
 
 // dsh's DirectoryBrowser.module.css, on this plugin's class names. The doubled dialog selector
@@ -225,7 +244,7 @@ function LevelColumn({
   filterPrefix,
   pathEditing,
 }: {
-  entries: DirEntry[];
+  entries: Array<DirEntry>;
   selectedPath: string | null;
   busy: boolean;
   onPick: (entry: DirEntry) => void;
@@ -235,10 +254,12 @@ function LevelColumn({
   pathEditing: boolean;
 }) {
   const visible = visibleEntries(entries, selectedPath, showHidden, filterPrefix);
+
   return (
     <ul className={`${P}-column`}>
       {visible.map((entry) => {
         const selected = entry.path === selectedPath;
+
         return (
           <li className={`${P}-rowSeat`} key={entry.path}>
             <button
@@ -282,8 +303,10 @@ export function DirectoryBrowser({
   const [selected, setSelected] = useState<DirEntry | null>(null);
   const [child, setChild] = useState<Listing | null>(null);
   const [loading, setLoading] = useState(false);
-  const [slowScan, setSlowScan] = useState(false);
+  // Each listing call opens a fresh silence window; the window whose delay ran out shows the pill.
   const [scanWindow, setScanWindow] = useState(0);
+  const [slowWindow, setSlowWindow] = useState<number | null>(null);
+  const slowScan = loading && slowWindow === scanWindow;
   const [error, setError] = useState<string | null>(null);
   const [pathDraft, setPathDraft] = useState<string | null>(null);
   const [showHidden, setShowHidden] = useState(false);
@@ -303,6 +326,7 @@ export function DirectoryBrowser({
     },
     [],
   );
+
   const compositionGuard = {
     onCompositionStart: () => {
       composingRef.current = true;
@@ -311,52 +335,63 @@ export function DirectoryBrowser({
       composingRef.current = false;
     },
   };
+
   /** Newer intent wins: invalidate the pending listing's settlement and abort its request. */
   const supersede = useCallback(() => {
     scanController.current?.abort();
     scanController.current = null;
+
     return ++requestSeq.current;
   }, []);
-  /** Hide any prior indicator and start a fresh silence window for one listing call. */
+
+  /** Hide any prior indicator and start a fresh silence window for one listing call; every caller
+   *  of `launchListing` calls this too, in the same update. */
   const restartSlowScanWindow = useCallback(() => {
-    setSlowScan(false);
     setScanWindow((value) => value + 1);
   }, []);
-  /** Launch one listing under a fresh controller so a later supersession can abort it. */
+
+  /** Launch one listing under a fresh controller so a later supersession can abort it. Sets no
+   *  state, so the open effect can start one. */
   const launchListing = useCallback(
     (path?: string) => {
       const seq = supersede();
       const controller = new AbortController();
       scanController.current = controller;
-      restartSlowScanWindow();
+
       return { seq, scan: listDirectory(path, controller.signal) };
     },
-    [supersede, restartSlowScanWindow, listDirectory],
+    [supersede, listDirectory],
   );
+
   /** A follow-up listing under the current seq: a newer intent aborts it like the leg it continues. */
   const continueScan = useCallback(
     (path: string) => {
       const controller = new AbortController();
       scanController.current = controller;
       restartSlowScanWindow();
+
       return listDirectory(path, controller.signal);
     },
     [restartSlowScanWindow, listDirectory],
   );
+
   // Enter owns the view from submission until its navigation lands, so the debounce timer the
   // same keystrokes armed must not supersede it. Cleared by the next edit.
   const previewSuspended = useRef(false);
+
   const viewRef = useRef<{ parent: Listing | null; child: Listing | null }>({
     parent: null,
     child: null,
   });
+
   useEffect(() => {
     viewRef.current = { parent, child };
   }, [parent, child]);
-  const scanned = useRef<Scanned | null>(null);
+  const [scanned, setScanned] = useState<Scanned | null>(null);
   // A landed preview replaced the pane a keyboard operator may have Tabbed onto, so the focus it
   // drops is re-parked on the still-open editor (the Modal has no focus trap).
   const refocusPathInput = useRef(false);
+
   /**
    * Replace the whole view with a freshly scanned level. Away from the display root the landing
    * is two-pane: the target's parent level with the target re-selected, so a crumb jump reads as
@@ -364,265 +399,442 @@ export function DirectoryBrowser({
    * PARENT_LEG_WAIT_MS; past it (a submitted path only) the target commits alone and a late parent
    * leg upgrades the landing in place. Until a commit, the previous view keeps rendering.
    */
-  const land = useCallback(
+  const startLanding = useCallback(
     (path: string | undefined, options: Landing) => {
       const { seq, scan } = launchListing(path);
-      setLoading(true);
-      if (options.announce) setError(null);
+
       const settle = () => {
         setLoading(false);
+
         if (options.closeEditor) {
           setPathDraft(null);
+
           return;
         }
+
         setError(null);
         refocusPathInput.current = true;
       };
-      scan.then(
-        (target) => {
-          if (seq !== requestSeq.current) return;
-          if (!options.closeEditor && path !== undefined)
-            scanned.current = { directory: path, landed: target.path };
-          let landed = false;
-          const landSingle = () => {
-            if (landed || seq !== requestSeq.current) return;
-            landed = true;
-            setParent(target);
-            setSelected(null);
-            setChild(null);
-            settle();
-          };
-          if (displayCrumbs(target, "").length < 2) {
-            landSingle();
+
+      // Never rejects: a failed scan is the error line (when announced) and nothing else.
+      void (async () => {
+        let target: Listing;
+
+        try {
+          target = await scan;
+        } catch (error_) {
+          if (seq !== requestSeq.current) {
             return;
           }
-          const parentCrumb = target.crumbs.at(-2);
-          if (parentCrumb === undefined) {
-            landSingle();
-            return;
-          }
-          continueScan(parentCrumb.path).then(
-            (parentLevel) => {
-              if (seq !== requestSeq.current) return;
-              const fold = (value: string) =>
-                separatorOf(parentLevel) === "\\" ? value.toLowerCase() : value;
-              const match = parentLevel.entries.find((e) => fold(e.path) === fold(target.path));
-              if (match === undefined) {
-                landSingle();
-                return;
-              }
-              landed = true;
-              setParent(parentLevel);
-              setSelected(match);
-              setChild(target);
-              settle();
-            },
-            () => landSingle(),
-          );
-          if (options.closeEditor) window.setTimeout(landSingle, PARENT_LEG_WAIT_MS);
-        },
-        (reason: OperationFailure) => {
-          if (seq !== requestSeq.current) return;
+
           setLoading(false);
-          if (options.announce) setError(failureText(reason));
-        },
-      );
+
+          if (options.announce) {
+            setError(errorText(error_));
+          }
+
+          return;
+        }
+
+        if (seq !== requestSeq.current) {
+          return;
+        }
+
+        if (!options.closeEditor && path !== undefined) {
+          setScanned({ directory: path, landed: target.path });
+        }
+
+        let landed = false;
+
+        const landSingle = () => {
+          if (landed || seq !== requestSeq.current) {
+            return;
+          }
+
+          landed = true;
+          setParent(target);
+          setSelected(null);
+          setChild(null);
+          settle();
+        };
+
+        if (displayCrumbs(target, "").length < 2) {
+          landSingle();
+
+          return;
+        }
+
+        const parentCrumb = target.crumbs.at(-2);
+
+        if (parentCrumb === undefined) {
+          landSingle();
+
+          return;
+        }
+
+        const parentScan = continueScan(parentCrumb.path);
+
+        if (options.closeEditor) {
+          window.setTimeout(landSingle, PARENT_LEG_WAIT_MS);
+        }
+
+        let parentLevel: Listing;
+
+        try {
+          parentLevel = await parentScan;
+        } catch {
+          landSingle();
+
+          return;
+        }
+
+        if (seq !== requestSeq.current) {
+          return;
+        }
+
+        const fold = (value: string) =>
+          separatorOf(parentLevel) === "\\" ? value.toLowerCase() : value;
+
+        const match = parentLevel.entries.find((e) => fold(e.path) === fold(target.path));
+
+        if (match === undefined) {
+          landSingle();
+
+          return;
+        }
+
+        landed = true;
+        setParent(parentLevel);
+        setSelected(match);
+        setChild(target);
+        settle();
+      })();
     },
     [launchListing, continueScan],
   );
+
+  /** `startLanding` from a handler: the loading mark (and, when announced, a cleared error) first,
+   *  in the same update as the scan it stands for. */
+  const land = useCallback(
+    (path: string | undefined, options: Landing) => {
+      restartSlowScanWindow();
+      setLoading(true);
+
+      if (options.announce) {
+        setError(null);
+      }
+
+      startLanding(path, options);
+    },
+    [restartSlowScanWindow, startLanding],
+  );
+
   /** Commit a submitted path (Enter, a crumb, the initial home listing): the editor closes, failures surface. */
   const navigate = useCallback(
     (path?: string) => land(path, { closeEditor: true, announce: true }),
     [land],
   );
+
   const refocusPick = useRef(false);
   const refocusEditZone = useRef(false);
   const pathInputRef = useRef<HTMLInputElement>(null);
   const editZoneRef = useRef<HTMLButtonElement>(null);
+
   /** Select a row of the listed level and preview its children on the right. */
   const select = useCallback(
     (entry: DirEntry) => {
       const { seq, scan } = launchListing(entry.path);
-      if (pathDraft !== null) refocusPick.current = true;
+      restartSlowScanWindow();
+
+      if (pathDraft !== null) {
+        refocusPick.current = true;
+      }
+
       setPathDraft(null);
       setSelected(entry);
       setChild(null);
       setLoading(true);
       setError(null);
-      scan.then(
-        (next) => {
-          if (seq !== requestSeq.current) return;
-          setChild(next);
+      // Never rejects: a failed scan is the error line, and the selection is dropped.
+      void (async () => {
+        try {
+          const next = await scan;
+
+          if (seq === requestSeq.current) {
+            setChild(next);
+            setLoading(false);
+          }
+        } catch (error_) {
+          if (seq !== requestSeq.current) {
+            return;
+          }
+
           setLoading(false);
-        },
-        (reason: OperationFailure) => {
-          if (seq !== requestSeq.current) return;
-          setLoading(false);
-          setError(failureText(reason));
+          setError(errorText(error_));
           setSelected(null);
           refocusEditZone.current = true;
-        },
-      );
+        }
+      })();
     },
-    [launchListing, pathDraft],
+    [launchListing, restartSlowScanWindow, pathDraft],
   );
+
   /** Walk the panes to the directory the draft addresses, without closing the editor. */
   const previewDraftLevel = useCallback(
     (directory: string) => land(directory, { closeEditor: false, announce: false }),
     [land],
   );
+
   /** Abandon path editing (Escape or clicking away) and restore the crumb view. */
   const cancelPathEdit = useCallback(() => {
     supersede();
     setLoading(false);
     setPathDraft(null);
     setError(null);
-    if (child === null) setSelected(null);
-    if (parent === null) navigate();
+
+    if (child === null) {
+      setSelected(null);
+    }
+
+    if (parent === null) {
+      navigate();
+    }
   }, [supersede, child, parent, navigate]);
+
   /** A right-column pick advances the view one level: child becomes the level. */
   const advance = useCallback(
     (entry: DirEntry) => {
-      if (child === null) return;
+      if (child === null) {
+        return;
+      }
+
       setParent(child);
       select(entry);
     },
     [child, select],
   );
-  useEffect(() => {
-    openGeneration.current += 1;
+
+  // Opening starts from a clean view on the home listing; closing drops every draft and error. The
+  // state half happens during render, the moment `open` flips; the effect below starts the scan or
+  // cancels the one in flight.
+  const [openSeen, setOpenSeen] = useState(false);
+
+  if (openSeen !== open) {
+    setOpenSeen(open);
+
     if (open) {
       setParent(null);
       setSelected(null);
       setChild(null);
       setCreatingFolder(false);
       setShowHidden(false);
-      navigate();
-      return;
+      // What `navigate` marks before its scan.
+      restartSlowScanWindow();
+      setLoading(true);
+      setError(null);
+    } else {
+      setLoading(false);
+      setError(null);
+      setPathDraft(null);
+      setFolderDraft(null);
+      setCreateError(null);
     }
-    supersede();
-    setLoading(false);
-    setError(null);
-    setPathDraft(null);
-    setFolderDraft(null);
-    setCreateError(null);
-    refocusPick.current = false;
-    refocusEditZone.current = false;
-  }, [open, navigate, supersede]);
+  }
+
+  useEffect(() => {
+    openGeneration.current += 1;
+
+    if (open) {
+      startLanding(undefined, { closeEditor: true, announce: true });
+    } else {
+      supersede();
+      refocusPick.current = false;
+      refocusEditZone.current = false;
+    }
+  }, [open, startLanding, supersede]);
   /** The folder a create or Open acts on: the selection, else the listed level. */
   const targetPath = selected?.path ?? parent?.path ?? null;
+
   const targetName =
     selected?.name ??
     (parent === null ? "" : (displayCrumbs(parent, t("browser.home")).at(-1)?.name ?? parent.path));
+
   const confirmCreate = () => {
-    if (targetPath === null || folderDraft === null || creatingFolder) return;
+    if (targetPath === null || folderDraft === null || creatingFolder) {
+      return;
+    }
+
     const name = folderDraft;
-    if (name.trim() === "") return;
+
+    if (name.trim() === "") {
+      return;
+    }
+
     setCreatingFolder(true);
     setCreateError(null);
     const generation = openGeneration.current;
-    createDirectory(targetPath, name).then(
-      (createdPath) => {
-        if (generation !== openGeneration.current) return;
-        setCreatingFolder(false);
-        setFolderDraft(null);
-        const { seq, scan } = launchListing(targetPath);
-        setLoading(true);
-        setError(null);
-        scan.then(
-          (level) => {
-            if (seq !== requestSeq.current) return;
-            setParent(level);
-            setLoading(false);
-            select({ name, path: createdPath, hidden: false });
-          },
-          (reason: OperationFailure) => {
-            if (seq !== requestSeq.current) return;
-            setLoading(false);
-            setError(failureText(reason));
-          },
-        );
-      },
-      (reason: OperationFailure) => {
-        if (generation !== openGeneration.current) return;
-        setCreatingFolder(false);
-        setCreateError(failureText(reason));
-      },
-    );
+    // Never rejects: a refused create is the form's error, a failed re-list the view's.
+    void (async () => {
+      let createdPath: string;
+
+      try {
+        createdPath = await createDirectory(targetPath, name);
+      } catch (error_) {
+        if (generation === openGeneration.current) {
+          setCreatingFolder(false);
+          setCreateError(errorText(error_));
+        }
+
+        return;
+      }
+
+      if (generation !== openGeneration.current) {
+        return;
+      }
+
+      setCreatingFolder(false);
+      setFolderDraft(null);
+      const { seq, scan } = launchListing(targetPath);
+      restartSlowScanWindow();
+      setLoading(true);
+      setError(null);
+
+      try {
+        const level = await scan;
+
+        if (seq === requestSeq.current) {
+          setParent(level);
+          setLoading(false);
+          select({ name, path: createdPath, hidden: false });
+        }
+      } catch (error_) {
+        if (seq === requestSeq.current) {
+          setLoading(false);
+          setError(errorText(error_));
+        }
+      }
+    })();
   };
+
   useEffect(() => {
-    if (!loading) {
-      setSlowScan(false);
-      return;
-    }
-    const timer = window.setTimeout(() => setSlowScan(true), SLOW_SCAN_DELAY_MS);
+    // The pill shows once this window has been silent past the delay, and only while loading.
+    const timer = loading
+      ? window.setTimeout(() => setSlowWindow(scanWindow), SLOW_SCAN_DELAY_MS)
+      : undefined;
+
     return () => window.clearTimeout(timer);
   }, [loading, scanWindow]);
   useEffect(() => {
-    if (pathDraft === null) return;
     const timer = window.setTimeout(() => {
-      if (previewSuspended.current) return;
+      if (pathDraft === null || previewSuspended.current) {
+        return;
+      }
+
       const current = viewRef.current.child ?? viewRef.current.parent;
-      if (current === null) return;
-      const { directory, tail } = readDraft(current, pathDraft, scanned.current);
-      if (directory === null || tail !== null) return;
+
+      if (current === null) {
+        return;
+      }
+
+      const { directory, tail } = readDraft(current, pathDraft, scanned);
+
+      if (directory === null || tail !== null) {
+        return;
+      }
+
       previewDraftLevel(directory);
     }, DRAFT_PREVIEW_DEBOUNCE_MS);
+
     return () => window.clearTimeout(timer);
-  }, [pathDraft, previewDraftLevel]);
+  }, [pathDraft, previewDraftLevel, scanned]);
   const crumbSource = child ?? parent;
+
   const typedPrefix =
     crumbSource === null || pathDraft === null
       ? null
-      : readDraft(crumbSource, pathDraft, scanned.current).tail;
+      : readDraft(crumbSource, pathDraft, scanned).tail;
+
   const crumbs = crumbSource === null ? [] : displayCrumbs(crumbSource, t("browser.home"));
   const crumbTail = crumbs.at(-1)?.path;
   useEffect(() => {
     const trail = crumbTrailRef.current;
-    if (trail !== null) trail.scrollLeft = trail.scrollWidth;
+
+    // A new last crumb is scrolled into view; with no crumbs there is nothing to scroll.
+    if (trail !== null && crumbTail !== undefined) {
+      trail.scrollLeft = trail.scrollWidth;
+    }
   }, [crumbTail]);
   const millerRowRef = useRef<HTMLDivElement>(null);
   const childPath = child?.path;
   useEffect(() => {
     const row = millerRowRef.current;
-    if (row !== null && childPath !== undefined) row.scrollLeft = row.scrollWidth;
+
+    if (row !== null && childPath !== undefined) {
+      row.scrollLeft = row.scrollWidth;
+    }
   }, [childPath]);
+  // Runs after every commit on purpose: it consumes the focus requests set beside several state
+  // updates, and some of those (setError(null) with no error showing) change no value a dependency
+  // list could name.
+  // oxlint-disable-next-line @nkzw/require-use-effect-arguments
   useEffect(() => {
     if (refocusPathInput.current) {
       refocusPathInput.current = false;
-      if (document.activeElement === document.body) pathInputRef.current?.focus();
+
+      if (document.activeElement === document.body) {
+        pathInputRef.current?.focus();
+      }
     }
-    if (pathDraft !== null) return;
+
+    if (pathDraft !== null) {
+      return;
+    }
+
     if (refocusPick.current) {
       refocusPick.current = false;
       refocusEditZone.current = false;
       const row = millerRowRef.current?.querySelector<HTMLElement>('button[aria-current="true"]');
       row?.focus();
+
       return;
     }
+
     if (refocusEditZone.current) {
       refocusEditZone.current = false;
-      if (document.activeElement !== document.body) return;
+
+      if (document.activeElement !== document.body) {
+        return;
+      }
+
       editZoneRef.current?.focus();
     }
   });
-  if (!open) return null;
+
+  if (!open) {
+    return null;
+  }
+
   const twoPane = selected !== null;
   const parentInert = busy || folderDraft !== null;
   const draftPending = pathDraft !== null;
+
   const onEnter = (e: ReactKeyboardEvent<HTMLInputElement>, run: () => void) => {
     if (e.key === "Enter" && !composingRef.current) {
       e.preventDefault();
       run();
     }
   };
+
   const editZoneStyle: CSSProperties = { font: "inherit" };
+
   return (
     <>
       <Modal
         open={open}
         onClose={() => {
-          if (folderDraft === null && !busy) onClose();
+          if (folderDraft === null && !busy) {
+            onClose();
+          }
         }}
         title={t("browser.title")}
         className={`${P}-dialog`}
@@ -634,17 +846,33 @@ export function DirectoryBrowser({
           className={`${P}-scope`}
           data-omc-browser=""
           onKeyDown={(e) => {
-            if (e.key !== "Escape" || pathDraft === null) return;
+            if (e.key !== "Escape" || pathDraft === null) {
+              return;
+            }
+
             e.stopPropagation();
             refocusEditZone.current = document.activeElement === pathInputRef.current;
             cancelPathEdit();
           }}
           onBlur={(e) => {
-            if (pathDraft === null) return;
-            if (!document.hasFocus()) return;
+            if (pathDraft === null) {
+              return;
+            }
+
+            if (!document.hasFocus()) {
+              return;
+            }
+
             const card = e.currentTarget.closest('[role="dialog"]');
-            if (card === null) return;
-            if (e.relatedTarget instanceof Node && card.contains(e.relatedTarget)) return;
+
+            if (card === null) {
+              return;
+            }
+
+            if (isNode(e.relatedTarget) && card.contains(e.relatedTarget)) {
+              return;
+            }
+
             refocusEditZone.current = false;
             cancelPathEdit();
           }}
@@ -692,10 +920,13 @@ export function DirectoryBrowser({
                       supersede();
                       setLoading(false);
                       previewSuspended.current = false;
+
                       if (parent === null) {
                         setPathDraft("");
+
                         return;
                       }
+
                       const base = selected?.path ?? parent.path;
                       const sep = separatorOf(parent);
                       setPathDraft(base.endsWith(sep) ? base : `${base}${sep}`);
@@ -816,7 +1047,9 @@ export function DirectoryBrowser({
               className={`${P}-action`}
               disabled={targetPath === null || loading || parentInert || draftPending}
               onClick={() => {
-                if (targetPath !== null) onOpen(targetPath);
+                if (targetPath !== null) {
+                  onOpen(targetPath);
+                }
               }}
             >
               {t("browser.open")}
@@ -827,7 +1060,9 @@ export function DirectoryBrowser({
       <Modal
         open={folderDraft !== null}
         onClose={() => {
-          if (!creatingFolder) setFolderDraft(null);
+          if (!creatingFolder) {
+            setFolderDraft(null);
+          }
         }}
         title={t("browser.newFolder")}
         className={`${P}-create`}
@@ -848,9 +1083,13 @@ export function DirectoryBrowser({
             {...compositionGuard}
             onKeyDown={(e) => {
               onEnter(e, confirmCreate);
+
               if (e.key === "Escape") {
                 e.stopPropagation();
-                if (!creatingFolder) setFolderDraft(null);
+
+                if (!creatingFolder) {
+                  setFolderDraft(null);
+                }
               }
             }}
           />

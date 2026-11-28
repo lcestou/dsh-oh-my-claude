@@ -1,3 +1,4 @@
+import { fits } from "./schema-fits.js";
 import z from "@deepseek-ai/schemastery";
 
 /**
@@ -29,6 +30,7 @@ export const ProbeBody = z.object({
   request_id: z.string().default(""),
   error: z.object({ type: z.string().default("") }),
 });
+
 export type ProbeBody = ReturnType<typeof ProbeBody>;
 
 /** One reading of the endpoint. `undefined` means the question could not be answered. */
@@ -40,8 +42,14 @@ export type FirstPartyProbe = boolean | undefined;
  * strong evidence: a gateway that fronts another provider mints its own error shape.
  */
 export const readsAsAnthropic = (body: ProbeBody, requestIdHeader: string): boolean => {
-  if (ANTHROPIC_REQUEST_ID.test(requestIdHeader)) return true;
-  if (ANTHROPIC_REQUEST_ID.test(body.request_id)) return true;
+  if (ANTHROPIC_REQUEST_ID.test(requestIdHeader)) {
+    return true;
+  }
+
+  if (ANTHROPIC_REQUEST_ID.test(body.request_id)) {
+    return true;
+  }
+
   return body.type === "error" && body.error.type !== "";
 };
 
@@ -64,6 +72,7 @@ export async function probeFirstParty(
 ): Promise<FirstPartyProbe> {
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), timeoutMs);
+
   try {
     const response = await fetchImpl(messagesUrl(baseUrl), {
       method: "POST",
@@ -71,7 +80,14 @@ export async function probeFirstParty(
       body: "{}",
       signal: abort.signal,
     });
-    const raw = await response.json().catch(() => ({}));
+
+    const raw: unknown = await response.json().catch(() => ({}));
+
+    // A body of another shape is no answer, as when the schema threw here.
+    if (!fits(ProbeBody, raw)) {
+      return undefined;
+    }
+
     return readsAsAnthropic(ProbeBody(raw), response.headers.get("request-id") ?? "");
   } catch {
     return undefined;
@@ -89,8 +105,14 @@ export type FirstPartyMode = "auto" | "on" | "off";
  * yes, `proxyFirstPartyOff` an explicit no, and neither is the default.
  */
 export const firstPartyMode = (hints: Record<string, boolean | number>): FirstPartyMode => {
-  if (hints.proxyFirstParty === true) return "on";
-  if (hints.proxyFirstPartyOff === true) return "off";
+  if (hints.proxyFirstParty === true) {
+    return "on";
+  }
+
+  if (hints.proxyFirstPartyOff === true) {
+    return "off";
+  }
+
   return "auto";
 };
 
@@ -107,8 +129,15 @@ export const wantsFirstParty = (
   detected: FirstPartyProbe,
 ): boolean => {
   const mode = firstPartyMode(hints);
-  if (mode === "on") return true;
-  if (mode === "off") return false;
+
+  if (mode === "on") {
+    return true;
+  }
+
+  if (mode === "off") {
+    return false;
+  }
+
   return detected === true;
 };
 
@@ -119,14 +148,17 @@ export const PROBE_TTL_MS = 60_000;
 /** The answers kept per base URL and the requests in flight, on the process: dsh builds the
  *  adapter more than once at boot, and the question is about an endpoint, not an instance. */
 const PROBES = Symbol.for("dsh-oh-my-claude.firstPartyProbes");
+
 interface ProbeStore {
   kept: Map<string, { at: number; answer: boolean }>;
   asking: Map<string, Promise<FirstPartyProbe>>;
 }
+
 /** The process-wide store, made on first use. */
 const probeStore = (): ProbeStore => {
-  // SAFETY: this plugin's own key on globalThis, typed here once
-  const g = globalThis as typeof globalThis & { [PROBES]?: ProbeStore };
+  // This plugin's own key on globalThis, typed here once
+  const g: typeof globalThis & { [PROBES]?: ProbeStore } = globalThis;
+
   return (g[PROBES] ??= { kept: new Map(), asking: new Map() });
 };
 
@@ -136,15 +168,25 @@ const probeStore = (): ProbeStore => {
 const refreshFirstParty = (baseUrl: string, probe: typeof probeFirstParty) => {
   const store = probeStore();
   const running = store.asking.get(baseUrl);
-  if (running) return running;
+
+  if (running) {
+    return running;
+  }
+
   const asked = probe(baseUrl)
     .then((answer) => {
-      if (answer === undefined) store.kept.delete(baseUrl);
-      else store.kept.set(baseUrl, { at: Date.now(), answer });
+      if (answer === undefined) {
+        store.kept.delete(baseUrl);
+      } else {
+        store.kept.set(baseUrl, { at: Date.now(), answer });
+      }
+
       return answer;
     })
     .finally(() => store.asking.delete(baseUrl));
+
   store.asking.set(baseUrl, asked);
+
   return asked;
 };
 
@@ -160,8 +202,13 @@ export async function firstPartyOf(
   now = Date.now(),
 ): Promise<FirstPartyProbe> {
   const kept = probeStore().kept.get(baseUrl);
-  if (kept && now - kept.at < PROBE_TTL_MS) return kept.answer;
+
+  if (kept && now - kept.at < PROBE_TTL_MS) {
+    return kept.answer;
+  }
+
   const asked = refreshFirstParty(baseUrl, probe);
+
   return kept ? kept.answer : asked;
 }
 
@@ -178,10 +225,20 @@ export function firstPartyKnown(
   now = Date.now(),
 ): FirstPartyProbe {
   const kept = probeStore().kept.get(baseUrl);
-  if (kept && now - kept.at < PROBE_TTL_MS) return kept.answer;
-  void refreshFirstParty(baseUrl, probe).then((answer) => {
-    if (answer !== kept?.answer) changed();
-  });
+
+  if (kept && now - kept.at < PROBE_TTL_MS) {
+    return kept.answer;
+  }
+
+  // Fire and forget: the caller reads the kept answer now, and `changed` reports a new one.
+  void (async () => {
+    const answer = await refreshFirstParty(baseUrl, probe);
+
+    if (answer !== kept?.answer) {
+      changed();
+    }
+  })();
+
   return kept?.answer;
 }
 

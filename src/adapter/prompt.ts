@@ -1,15 +1,15 @@
 // How a dsh session's messages turn into the prompt text, its parts, its attachments and its images.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
+import { isImageRef, isRec, numberValue, stringOf } from "../decode.js";
 import { basename } from "node:path";
-import { type ContentBlock, LlmError } from "@deepseek-ai/dsh-llm";
-import {
-  type ContextSizeKey,
-  type ContextSizes,
-  type ContextSource,
-  sourceBlockOf,
-} from "../context-sources.js";
-import { COMMAND_CATALOG, type ImageAttachmentRef } from "../dsh.js";
-import { errorText, type SteerAttachment } from "../process.js";
+import { LlmError } from "@deepseek-ai/dsh-llm";
+import type { ContentBlock } from "@deepseek-ai/dsh-llm";
+import { sourceBlockOf } from "../context-sources.js";
+import type { ContextSizeKey, ContextSizes, ContextSource } from "../context-sources.js";
+import { COMMAND_CATALOG } from "../dsh.js";
+import type { ImageAttachmentRef } from "../dsh.js";
+import { errorText } from "../process.js";
+import type { SteerAttachment } from "../process.js";
 
 const MAX_IMAGES = 20;
 
@@ -49,14 +49,16 @@ export type LooseMessage = {
     /** dsh's shape for the block: `snapshot` for context injected before a step, `notice` for a
      *  notice a producer sends. */
     form?: string;
+    /** dsh's one-line summary of a `notice` context block. */
+    summary?: string;
     /** dsh 0.2.3, on a system-prompt message: which sources it sets or retires. Absent on a
      *  message that holds a whole prompt, which is every one dsh wrote up to 0.2.2. */
-    sections?: readonly SystemSection[];
+    sections?: ReadonlyArray<SystemSection>;
     /** dsh 0.2.3, beside `sections`: this message replaces every source admitted before it.
      *  Without it the message changes only the sources it names. */
     reset?: boolean;
   };
-  content?: string | ContentBlock[];
+  content?: string | Array<ContentBlock>;
   /** dsh 0.1.7 answers a tool result as its own `role: "tool"` message and carries the call id on
    *  the message; up to 0.1.6 it was a user message holding a `tool-result` block. */
   toolCallId?: string;
@@ -65,31 +67,51 @@ export type LooseMessage = {
 
 /** The browser's IANA zone as dsh stamped it on the latest user prompt; undefined when no
  *  prompt carried one (an API caller, an old log), so clocks fall back to the box's zone. */
-export function clientTimeZone(messages: readonly LooseMessage[]): string | undefined {
+export function clientTimeZone(messages: ReadonlyArray<LooseMessage>): string | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const zone = messages[i]?.source?.clientTimeZone;
-    if (zone) return zone;
+
+    if (zone) {
+      return zone;
+    }
   }
+
   return undefined;
 }
 
 /** Join a message's text blocks on newlines, or return a string content as-is; non-text blocks (images, tool calls) are dropped and undefined content becomes empty. */
 export const textOf = (content: LooseMessage["content"]): string => {
-  if (!Array.isArray(content)) return content ?? "";
+  if (!Array.isArray(content)) {
+    return content ?? "";
+  }
+
   return content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n");
 };
 
 /** The file and image blocks of a message as the steer card names them, in block order. A block
  *  without its attachment reference (wire data from an older dsh) is skipped, as dsh's own queue
  *  dock does. Empty for a string content or a text-only message. */
-export const attachmentsOf = (content: LooseMessage["content"]): SteerAttachment[] =>
+export const attachmentsOf = (content: LooseMessage["content"]): Array<SteerAttachment> =>
   Array.isArray(content)
-    ? content.flatMap((b): SteerAttachment[] => {
-        if ((b.type !== "file" && b.type !== "image") || !b.attachment) return [];
-        // SAFETY: both attachment refs carry `bytes`; only the file one always carries `name`
-        const ref = b.attachment as { name?: string; bytes?: number };
-        const chip: SteerAttachment = { kind: b.type, bytes: ref.bytes ?? 0 };
-        if (ref.name) chip.name = ref.name;
+    ? content.flatMap((b): Array<SteerAttachment> => {
+        if ((b.type !== "file" && b.type !== "image") || !b.attachment) {
+          return [];
+        }
+
+        // Both attachment refs carry `bytes`; only the file one always carries `name`.
+        const ref: unknown = b.attachment;
+
+        const chip: SteerAttachment = {
+          kind: b.type,
+          bytes: (isRec(ref) ? numberValue(ref.bytes) : undefined) ?? 0,
+        };
+
+        const name = isRec(ref) ? stringOf(ref.name) : undefined;
+
+        if (name) {
+          chip.name = name;
+        }
+
         return [chip];
       })
     : [];
@@ -117,9 +139,13 @@ const isTurn = (m: LooseMessage, developer = false) =>
  * command grammar counts, so a bridged command on a fresh process is not sent as plain text. A
  * path such as `/home/x` has a slash in its name and never matches.
  */
-export function isCliCommandLine(text: string, known: readonly string[] | undefined): boolean {
+export function isCliCommandLine(text: string, known: ReadonlyArray<string> | undefined): boolean {
   const m = /^\/([a-z0-9_-]+)(?:\s|$)/.exec(text.trimStart());
-  if (!m) return false;
+
+  if (!m) {
+    return false;
+  }
+
   return known === undefined || known.includes(m[1] ?? "");
 }
 
@@ -129,16 +155,27 @@ export function isCliCommandLine(text: string, known: readonly string[] | undefi
  * and a prompt that changed during the session is a later system message holding the whole new
  * text, so the latest run is the prompt in force. Empty when no system message has text.
  */
-function latestSystemRun(all: readonly LooseMessage[]): string[] {
+function latestSystemRun(all: ReadonlyArray<LooseMessage>): Array<string> {
   let end = all.length - 1;
+
   // An emptied system message is skipped: dsh blanks the later ones when a session moves to a
   // route that is not in-history, and stopping there dropped the prompt for good.
-  while (end >= 0 && !(all[end]?.role === "system" && textOf(all[end]?.content).trim() !== ""))
+  while (end >= 0 && !(all[end]?.role === "system" && textOf(all[end]?.content).trim() !== "")) {
     end--;
+  }
+
   let start = end;
-  while (start > 0 && all[start - 1]?.role === "system") start--;
-  const parts: string[] = [];
-  for (let i = start; i >= 0 && i <= end; i++) parts.push(textOf(all[i]?.content));
+
+  while (start > 0 && all[start - 1]?.role === "system") {
+    start--;
+  }
+
+  const parts: Array<string> = [];
+
+  for (let i = start; i >= 0 && i <= end; i++) {
+    parts.push(textOf(all[i]?.content));
+  }
+
   return parts;
 }
 
@@ -153,31 +190,46 @@ function latestSystemRun(all: readonly LooseMessage[]): string[] {
  * A message without `sections` in the same history is a whole prompt from before the upgrade. It
  * stands until the next `reset`, which is the first thing dsh 0.2.3 writes after one.
  */
-function foldedSystemSections(all: readonly LooseMessage[]): string[] {
-  let whole: string[] = [];
+function foldedSystemSections(all: ReadonlyArray<LooseMessage>): Array<string> {
+  let whole: Array<string> = [];
   const live = new Map<string, { order: number; text: string }>();
   all.forEach((m, i) => {
-    if (m.role !== "system") return;
+    if (m.role !== "system") {
+      return;
+    }
+
     const sections = m.source?.sections;
+
     if (sections === undefined) {
       const text = textOf(m.content);
-      if (text.trim() === "") return;
+
+      if (text.trim() === "") {
+        return;
+      }
+
       const before = all[i - 1];
       const sameRun = before?.role === "system" && before.source?.sections === undefined;
       whole = sameRun ? [...whole, text] : [text];
       live.clear();
+
       return;
     }
+
     if (m.source?.reset) {
       whole = [];
       live.clear();
     }
+
     for (const section of sections) {
       if (section.state === "retired") {
         live.delete(section.name);
         continue;
       }
-      if (section.state !== "active") continue;
+
+      if (section.state !== "active") {
+        continue;
+      }
+
       const block = Array.isArray(m.content) ? m.content[section.contentIndex ?? -1] : undefined;
       live.set(section.name, {
         order: section.order ?? 0,
@@ -185,9 +237,11 @@ function foldedSystemSections(all: readonly LooseMessage[]): string[] {
       });
     }
   });
+
   const ordered = [...live.entries()]
     .toSorted(([aName, a], [bName, b]) => a.order - b.order || (aName < bName ? -1 : 1))
     .map(([, section]) => section.text);
+
   return [...whole, ...ordered];
 }
 
@@ -201,13 +255,14 @@ function foldedSystemSections(all: readonly LooseMessage[]): string[] {
  * paragraph for its entire system prompt, from the first model switch on.
  */
 export function dshSystemPrompt(
-  messages: readonly LooseMessage[] | undefined,
+  messages: ReadonlyArray<LooseMessage> | undefined,
   system?: string,
 ): string | undefined {
   const all = messages ?? [];
   const sectioned = all.some((m) => m.role === "system" && m.source?.sections !== undefined);
   const parts = sectioned ? foldedSystemSections(all) : latestSystemRun(all);
   const text = [system ?? "", ...parts].filter((p) => p.trim() !== "").join("\n\n");
+
   return text === "" ? undefined : text;
 }
 
@@ -221,7 +276,7 @@ const resultCallId = (m: LooseMessage): string | undefined =>
       : undefined;
 
 /** The tool calls an assistant message made, by id and name. */
-const toolCallsOf = (m: LooseMessage): { id: string; name: string; input: string }[] =>
+const toolCallsOf = (m: LooseMessage): Array<{ id: string; name: string; input: string }> =>
   m.role === "assistant" && Array.isArray(m.content)
     ? m.content.flatMap((b) =>
         b.type === "tool-call" ? [{ id: b.id, name: b.name, input: b.arguments }] : [],
@@ -238,33 +293,44 @@ const toolCallsOf = (m: LooseMessage): { id: string; name: string; input: string
  * `developer` keeps dsh's developer messages with text (see `isTurn`).
  */
 export function selectTurns(
-  messages: LooseMessage[] | undefined,
+  messages: Array<LooseMessage> | undefined,
   resuming: boolean,
   own?: string,
   developer = false,
-): LooseMessage[] {
+): Array<LooseMessage> {
   const all = messages ?? [];
   let start = 0;
+
   if (resuming) {
     let last = -1;
     let lastOwn = -1;
     all.forEach((m, i) => {
-      if (m.role !== "assistant") return;
+      if (m.role !== "assistant") {
+        return;
+      }
+
       last = i;
-      if (own !== undefined && m.source?.provider === own) lastOwn = i;
+
+      if (own !== undefined && m.source?.provider === own) {
+        lastOwn = i;
+      }
     });
     start = (lastOwn >= 0 ? lastOwn : last) + 1;
   }
+
   const slice = all.slice(start);
   const calls = new Set(slice.flatMap((m) => toolCallsOf(m).map((c) => c.id)));
+
   return slice.filter((m) => {
     const callId = resultCallId(m);
+
     return callId === undefined ? isTurn(m, developer) : calls.has(callId);
   });
 }
 
 /** The most of one tool's input or output another model's transcript carries into the prompt. */
 export const TOOL_TEXT_CAP = 2000;
+
 /** `text`, or its first `cap` characters and how many more there were; whole when `cap` is 0. */
 const capped = (text: string, cap: number) =>
   cap > 0 && text.length > cap
@@ -277,16 +343,29 @@ const capped = (text: string, cap: number) =>
  *  the next header or the closing tag. Empty when nothing but the wrapper would remain. */
 export function withoutNativeInstructions(text: string): string {
   const header = /^Instructions from: (.+)$/m;
-  if (!header.test(text)) return text;
+
+  if (!header.test(text)) {
+    return text;
+  }
+
   const close = /\s*<\/system-reminder>\s*$/.exec(text);
   const body = close ? text.slice(0, close.index) : text;
   const pieces = body.split(/^(?=Instructions from: )/m);
+
   const kept = pieces.filter((p) => {
     const m = header.exec(p);
+
     return !m || !/(^|\/)CLAUDE\.md\s*$/.test((m[1] ?? "").trim());
   });
-  if (kept.length === pieces.length) return text;
-  if (!kept.some((p) => header.test(p))) return "";
+
+  if (kept.length === pieces.length) {
+    return text;
+  }
+
+  if (!kept.some((p) => header.test(p))) {
+    return "";
+  }
+
   return kept.join("").trimEnd() + (close ? close[0] : "");
 }
 
@@ -298,6 +377,7 @@ export interface NativeCopies {
   claudeMd: boolean;
   skills: boolean;
 }
+
 /** Claude Code as it runs by default: it adds both. */
 export const CLI_COPIES: NativeCopies = { claudeMd: true, skills: true };
 
@@ -312,25 +392,34 @@ export const contextSourceOf = (m: LooseMessage): ContextSource | undefined =>
  *  took, so the two together are the bundle dsh handed over. A key is absent when this turn carried
  *  nothing of that kind, which is not the same as zero and must not be flattened into one. */
 export function contextSizes(
-  turns: LooseMessage[],
+  turns: Array<LooseMessage>,
   copies: NativeCopies = CLI_COPIES,
 ): ContextSizes {
   const sizes: ContextSizes = {};
+
   const add = (key: ContextSizeKey, n: number) => {
     sizes[key] = (sizes[key] ?? 0) + n;
   };
+
   for (const m of turns) {
     const source = contextSourceOf(m);
-    if (source === undefined) continue;
+
+    if (source === undefined) {
+      continue;
+    }
+
     const text = textOf(m.content);
+
     if (source !== "instructions") {
       add(source, text.length);
       continue;
     }
+
     const kept = copies.claudeMd ? withoutNativeInstructions(text) : text;
     add("instructions", kept.length);
     add("claudemd", text.length - kept.length);
   }
+
   return sizes;
 }
 
@@ -341,9 +430,12 @@ export function contextSizes(
  *  2026-09-18 in transcript 50525676: 4.3 KB from dsh, then 8.7 KB from the CLI, one row after the
  *  other); a skill the CLI does not list is dsh's only copy, so it stays. Undefined before the
  *  first init frame writes it. */
-const cliCommands = (): string[] | undefined =>
-  // SAFETY: a plain slot on globalThis, written only in bridgeCommands
-  (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG];
+const cliCommands = (): Array<string> | undefined => {
+  // A plain slot on globalThis, written only in bridgeCommands; the slot is optional, so no cast.
+  const g: typeof globalThis & { [COMMAND_CATALOG]?: Array<string> } = globalThis;
+
+  return g[COMMAND_CATALOG];
+};
 
 /** Prompt text of one dsh message: a withheld block answers empty, a skill-invocation the CLI also
  *  lists is dsh's duplicate of a body Claude Code injects itself (so it answers empty), and the
@@ -355,13 +447,19 @@ export const promptTextOf = (
   copies: NativeCopies = CLI_COPIES,
 ): string => {
   const source = contextSourceOf(m);
-  if (source !== undefined && drops.has(source)) return "";
+
+  if (source !== undefined && drops.has(source)) {
+    return "";
+  }
+
   if (
     copies.skills &&
     m.source?.kind === "skill-invocation" &&
     cliCommands()?.includes(m.source?.name ?? "")
-  )
+  ) {
     return "";
+  }
+
   return m.source?.kind === "agent-instructions" && copies.claudeMd
     ? withoutNativeInstructions(textOf(m.content))
     : textOf(m.content);
@@ -371,27 +469,34 @@ export const promptTextOf = (
  *  made and a tool result is labelled with the tool it came from, so a turn another model worked
  *  with tools reads as what happened, not as a bare reply. */
 const partsOf = (
-  turns: LooseMessage[],
+  turns: Array<LooseMessage>,
   drops: ReadonlySet<ContextSource>,
   cap: number,
   copies: NativeCopies,
 ) => {
   const names = new Map(turns.flatMap((m) => toolCallsOf(m).map((c) => [c.id, c.name] as const)));
-  return turns
-    .map((m) => {
-      const callId = resultCallId(m);
-      if (callId !== undefined)
-        return {
+
+  // A turn that comes out with no text is left out.
+  return turns.flatMap((m) => {
+    const callId = resultCallId(m);
+
+    if (callId !== undefined) {
+      return [
+        {
           role: "tool",
           text: `${names.get(callId) ?? "tool"} returned:\n${capped(textOf(m.content), cap)}`,
-        };
-      const text = promptTextOf(m, drops, copies);
-      const calls = toolCallsOf(m).map((c) => `(called ${c.name} ${capped(c.input, cap)})`);
-      // A native model reads a developer message as an in-history system message.
-      const role = m.role === "developer" ? "system" : m.role;
-      return { role, text: [text, ...calls].filter(Boolean).join("\n") };
-    })
-    .filter((t) => t.text !== "");
+        },
+      ];
+    }
+
+    const text = promptTextOf(m, drops, copies);
+    const calls = toolCallsOf(m).map((c) => `(called ${c.name} ${capped(c.input, cap)})`);
+    // A native model reads a developer message as an in-history system message.
+    const role = m.role === "developer" ? "system" : m.role;
+    const joined = [text, ...calls].filter(Boolean).join("\n");
+
+    return joined === "" ? [] : [{ role, text: joined }];
+  });
 };
 
 /**
@@ -401,7 +506,7 @@ const partsOf = (
  * along in `imageRefs`.
  */
 export function buildPrompt(
-  turns: LooseMessage[],
+  turns: Array<LooseMessage>,
   drops: ReadonlySet<ContextSource> = new Set(),
   /** Characters of one tool input or output kept (`replayToolTextLimit`); 0 keeps them whole. */
   cap: number = TOOL_TEXT_CAP,
@@ -417,6 +522,7 @@ export function buildPrompt(
   // and re-sending the copy here would double the file rather than rescue the turn. Under
   // `isolate` the CLI loads none, so `copies.claudeMd` keeps dsh's copy instead.
   const parts = filtered.length > 0 ? filtered : partsOf(turns, new Set(), cap, copies);
+
   if (!parts.some((t) => t.role === "user")) {
     // Attachment-only turn: the user sent an image (or other non-text block) with no typed
     // text. Images ride along separately via imageRefs, but Claude still needs a non-empty
@@ -425,10 +531,16 @@ export function buildPrompt(
       (m) =>
         m.role === "user" && Array.isArray(m.content) && m.content.some((b) => b.type !== "text"),
     );
-    if (hasUserAttachment) return "(see attached)";
+
+    if (hasUserAttachment) {
+      return "(see attached)";
+    }
+
     throw new LlmError("no user message", "INVALID_REQUEST");
   }
+
   const multi = parts.some((t) => t.role !== "user");
+
   return parts.map((t) => (multi ? `[${t.role}]\n${t.text}` : t.text)).join("\n\n");
 }
 
@@ -469,18 +581,33 @@ export const IMAGE_EXT = new Map([
  * the note points at the copy `keepImageCopy` wrote. Files need nothing here: dsh replaces a file
  * block with a line naming its stored path before any provider sees the turn.
  */
-export function attachmentNotes(turns: LooseMessage[], images: readonly LoadedImage[]): string {
+export function attachmentNotes(
+  turns: Array<LooseMessage>,
+  images: ReadonlyArray<LoadedImage>,
+): string {
   const pathOf = new Map(
-    images.filter((i) => i.attachmentId && i.path).map((i) => [i.attachmentId, i.path]),
+    images.flatMap((i) => (i.attachmentId && i.path ? [[i.attachmentId, i.path] as const] : [])),
   );
-  const notes: string[] = [];
+
+  const notes: Array<string> = [];
+
   for (const m of turns) {
-    if (m.role !== "user" || !Array.isArray(m.content)) continue;
+    if (m.role !== "user" || !Array.isArray(m.content)) {
+      continue;
+    }
+
     for (const b of m.content) {
-      if (b.type !== "image" || !b.attachment) continue;
+      if (b.type !== "image" || !isImageRef(b.attachment)) {
+        continue;
+      }
+
       const ref = b.attachment;
       const path = pathOf.get(ref.attachmentId);
-      if (!path) continue;
+
+      if (!path) {
+        continue;
+      }
+
       const size = ref.width && ref.height ? `, ${ref.width}x${ref.height}px` : "";
       const label = `[Image ${ref.name ? `"${ref.name}" ` : ""}(${ref.attachmentId})`;
       notes.push(
@@ -490,6 +617,7 @@ export function attachmentNotes(turns: LooseMessage[], images: readonly LoadedIm
       );
     }
   }
+
   return notes.join("\n");
 }
 
@@ -499,6 +627,7 @@ export function attachmentNotes(turns: LooseMessage[], images: readonly LoadedIm
  *  does not match. */
 const FILE_HANDLE =
   /(\[File ("(?:[^"\\]|\\.)*") \(\d+ bytes, sha256:([0-9a-f]{8})\): verbatim read-only copy saved at )("(?:[^"\\]|\\.)*")\./g;
+
 /** How long one attachment may take to reach a box: before a prompt, and at a step boundary,
  *  where the CLI sits parked waiting for the line this holds up. */
 export const COPY_CAP_MS = 300_000;
@@ -517,8 +646,12 @@ export async function relayFileHandles(
   log: (level: string, message: string) => void = () => {},
 ): Promise<string> {
   const farOf = new Map<string, string>();
+
   for (const [, , quotedName, sha, quotedPath] of text.matchAll(FILE_HANDLE)) {
-    if (!quotedName || !sha || !quotedPath || farOf.has(quotedPath)) continue;
+    if (!quotedName || !sha || !quotedPath || farOf.has(quotedPath)) {
+      continue;
+    }
+
     try {
       // The sha keeps two files that share a name apart on the box.
       const farName = `${sha}-${basename(String(JSON.parse(quotedName))) || "file"}`;
@@ -527,23 +660,37 @@ export async function relayFileHandles(
       log("warn", `attachment ${quotedName} not copied to the box: ${errorText(error)}`);
     }
   }
-  if (farOf.size === 0) return text;
+
+  if (farOf.size === 0) {
+    return text;
+  }
+
   // Rebuilt from the handle's own head, not searched for inside it: a file name may hold any text.
-  return text.replace(
+  return text.replaceAll(
     FILE_HANDLE,
     (whole: string, head: string, _name: string, _sha: string, quoted: string) => {
       const far = farOf.get(quoted);
+
       return far === undefined ? whole : `${head}${JSON.stringify(far)}.`;
     },
   );
 }
 
 /** The images of a turn, newest MAX_IMAGES kept, for the stdin line that carries them. */
-export function imageRefs(turns: LooseMessage[]): ImageAttachmentRef[] {
-  const refs: ImageAttachmentRef[] = [];
+export function imageRefs(turns: Array<LooseMessage>): Array<ImageAttachmentRef> {
+  const refs: Array<ImageAttachmentRef> = [];
+
   for (const m of turns) {
-    if (m.role !== "user" || !Array.isArray(m.content)) continue;
-    for (const b of m.content) if (b.type === "image" && b.attachment) refs.push(b.attachment);
+    if (m.role !== "user" || !Array.isArray(m.content)) {
+      continue;
+    }
+
+    for (const b of m.content) {
+      if (b.type === "image" && isImageRef(b.attachment)) {
+        refs.push(b.attachment);
+      }
+    }
   }
+
   return refs.slice(-MAX_IMAGES);
 }

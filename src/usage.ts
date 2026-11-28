@@ -1,6 +1,7 @@
 // Plan usage for the context-meter popover: the OAuth usage endpoint behind Claude Code's /usage
 // command, read with the login Claude Code stores, projected to the few fields the panel shows.
 // This is an I/O boundary: the payload is undocumented and decoded here into a closed shape.
+import { parsedWith } from "./schema-fits.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { execFile } from "node:child_process";
 import { authHeaders, authHeadersFrom, STATE_DIR, writeJson } from "./state.js";
@@ -15,13 +16,17 @@ import type { UsageHistory } from "./usage-history.js";
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const ROUTE = "/dsh-oh-my-claude/usage";
+
 /** Answers are served from cache this long, however many tabs, browsers and boxes ask. */
 const CACHE_MS = 5 * 60_000;
 const FORCE_MIN_AGE_MS = 30_000;
+
 /** A failed read (not a 429, which backs off on its own) is answered from memory this long. */
 const FAIL_MS = 60_000;
+
 /** After a 429 with no usable Retry-After, wait at least this long before touching the endpoint. */
 const RATE_LIMIT_FLOOR_MS = 60_000;
+
 /** Repeated 429s double the wait up to this; the endpoint's budget is the account's, shared with
  *  every other caller, so hammering it on a minute clock only prolongs the limit. */
 const RATE_LIMIT_CEILING_MS = 15 * 60_000;
@@ -29,15 +34,24 @@ const RATE_LIMIT_CEILING_MS = 15 * 60_000;
 /** How long to stay off the endpoint after the `strikes`-th 429 in a row. */
 export function backoffMs(retryAfter: number | undefined, strikes: number): number {
   const doubled = RATE_LIMIT_FLOOR_MS * 2 ** Math.max(0, strikes - 1);
+
   return Math.max(retryAfter ?? 0, Math.min(doubled, RATE_LIMIT_CEILING_MS));
 }
 
 /** Retry-After (seconds, or an HTTP-date) → ms; the floor when the header is missing or unparsable. */
 function retryAfterMs(header: string | null | undefined): number {
-  if (!header) return RATE_LIMIT_FLOOR_MS;
+  if (!header) {
+    return RATE_LIMIT_FLOOR_MS;
+  }
+
   const secs = Number(header);
-  if (Number.isFinite(secs)) return Math.max(secs * 1000, RATE_LIMIT_FLOOR_MS);
+
+  if (Number.isFinite(secs)) {
+    return Math.max(secs * 1000, RATE_LIMIT_FLOOR_MS);
+  }
+
   const at = Date.parse(header);
+
   return Number.isNaN(at) ? RATE_LIMIT_FLOOR_MS : Math.max(at - Date.now(), RATE_LIMIT_FLOOR_MS);
 }
 
@@ -75,7 +89,7 @@ export type UsageReply =
   | {
       ok: true;
       fetchedAt: number;
-      windows: UsageWindow[];
+      windows: Array<UsageWindow>;
       /** Paid extra usage is on and its own cap not reached: a full window does not block. */
       extraUsage?: boolean;
       credits?: UsageCredits;
@@ -108,40 +122,46 @@ export interface UsageDriver {
   name: string;
   pct: number;
 }
+
 /** A "Top skills" / "Top MCP servers" / ... group under one window. */
 export interface UsageDriverGroup {
   label: string;
-  drivers: UsageDriver[];
+  drivers: Array<UsageDriver>;
 }
+
 /** One time window of the `/usage` breakdown (e.g. "Last 7d"). */
 export interface UsageBreakdownWindow {
   label: string;
   requests: number;
   sessions: number;
-  groups: UsageDriverGroup[];
+  groups: Array<UsageDriverGroup>;
   /** The CLI's own sentences about how the work was shaped, verbatim, in the order it prints them
    *  ("83% of your usage was at >150k context"). They are the most useful thing in the report and
    *  the parser used to drop them. Claude Code calls them independent characteristics rather than
    *  a breakdown, so they do not add to 100 and must never be summed or sorted with the groups. */
-  behaviours: string[];
+  behaviours: Array<string>;
 }
+
 /** What the /breakdown route answers: the windows, or why there are none. */
 export type UsageBreakdownReply =
   | {
       ok: true;
       fetchedAt: number;
-      windows: UsageBreakdownWindow[];
+      windows: Array<UsageBreakdownWindow>;
       host?: string;
       email?: string | null;
     }
   | { ok: false; error: string; host?: string; email?: string | null };
 
 type Rec = Record<string, unknown>;
+
 /** True only for a plain object, so a JSON array or null is not treated as a record to read. */
 const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !Array.isArray(v);
+
 /** A percentage clamped into 0 to 100, or null for anything that is not a finite number. */
 const percentOf = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : null;
+
 /** A reset time in epoch milliseconds, rounded to the minute. A number from 1e11 up is already
  *  milliseconds and a smaller one is seconds; a string is parsed as a date. The endpoint answers a
  *  slightly different instant on every read (16:59:59.602, then 17:00:00.052, then .246, one reset
@@ -156,6 +176,7 @@ const resetOf = (v: unknown): number | null => {
       : typeof v === "string" && v.trim()
         ? Date.parse(v)
         : Number.NaN;
+
   return Number.isNaN(ms) ? null : Math.round(ms / 60_000) * 60_000;
 };
 
@@ -164,58 +185,90 @@ const resetOf = (v: unknown): number | null => {
  * scope, and whatever kinds get added later); older answers carried `five_hour` / `seven_day`
  * objects with `utilization`. All read; unknown kinds keep their API name as the label.
  */
-export function usageWindows(payload: unknown): UsageWindow[] {
+export function usageWindows(payload: unknown): Array<UsageWindow> {
   const row = isRec(payload) ? payload : {};
-  const out: UsageWindow[] = [];
+  const out: Array<UsageWindow> = [];
+
   const legacy = (v: unknown, label: string, kind: "session" | "weekly") => {
-    if (!isRec(v)) return;
+    if (!isRec(v)) {
+      return;
+    }
+
     const usedPercent = percentOf(v.utilization);
-    if (usedPercent !== null)
+
+    if (usedPercent !== null) {
       out.push({ label, kind, usedPercent, resetsAt: resetOf(v.resets_at) });
+    }
   };
+
   const limits = Array.isArray(row.limits) ? row.limits : [];
   let session: UsageWindow | undefined;
   let weekly: UsageWindow | undefined;
-  const others: UsageWindow[] = [];
+  const others: Array<UsageWindow> = [];
+
   for (const entry of limits) {
     // `is_active` is not read. The endpoint sends it false for windows that are plainly
     // running. The 5-hour and weekly rows of a live account both arrive false, and the CLI's
     // ignores the field entirely, keying off `percent` and `resets_at`. Skipping on it dropped
     // every modern row; the two main ones survived only because the legacy blocks below repeat
     // them, and a per-model weekly, which has no legacy twin, vanished.
-    if (!isRec(entry)) continue;
+    if (!isRec(entry)) {
+      continue;
+    }
+
     const usedPercent = percentOf(entry.percent);
-    if (usedPercent === null) continue;
+
+    if (usedPercent === null) {
+      continue;
+    }
+
     const resetsAt = resetOf(entry.resets_at);
     // The API grades each window itself; its grade is passed on rather than a threshold of ours.
     const graded = typeof entry.severity === "string" ? { severity: entry.severity } : {};
-    if (entry.kind === "session")
+
+    if (entry.kind === "session") {
       session ??= { label: "5-hour", kind: "session", usedPercent, resetsAt, ...graded };
-    else if (entry.kind === "weekly_all")
+    } else if (entry.kind === "weekly_all") {
       weekly ??= { label: "Weekly", kind: "weekly", usedPercent, resetsAt, ...graded };
-    else if (entry.kind === "weekly_scoped") {
+    } else if (entry.kind === "weekly_scoped") {
       const scope = isRec(entry.scope) ? entry.scope : {};
       const model = isRec(scope.model) ? scope.model : {};
+
       const name =
         typeof model.display_name === "string"
           ? model.display_name
           : typeof scope.surface === "string"
             ? scope.surface
             : "Model";
+
       const scoped: UsageWindow = { label: `${name} weekly`, usedPercent, resetsAt, ...graded };
-      if (typeof model.display_name === "string") scoped.model = model.display_name;
+
+      if (typeof model.display_name === "string") {
+        scoped.model = model.display_name;
+      }
+
       others.push(scoped);
     } else if (typeof entry.kind === "string") {
       // A window kind this code has not met yet: show it under its own name rather than hide it.
-      const label = entry.kind.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+      const label = entry.kind.replaceAll("_", " ").replace(/^\w/, (c) => c.toUpperCase());
       others.push({ label, usedPercent, resetsAt, ...graded });
     }
   }
-  if (session) out.push(session);
-  else legacy(row.five_hour, "5-hour", "session");
-  if (weekly) out.push(weekly);
-  else legacy(row.seven_day, "Weekly", "weekly");
+
+  if (session) {
+    out.push(session);
+  } else {
+    legacy(row.five_hour, "5-hour", "session");
+  }
+
+  if (weekly) {
+    out.push(weekly);
+  } else {
+    legacy(row.seven_day, "Weekly", "weekly");
+  }
+
   out.push(...others);
+
   return out;
 }
 
@@ -231,22 +284,33 @@ interface Money {
  * user cares about is the payload's own currency, which is what varies.
  */
 const money = (v: unknown): Money | undefined => {
-  if (!isRec(v)) return undefined;
+  if (!isRec(v)) {
+    return undefined;
+  }
+
   const minor = v.amount_minor;
-  if (typeof minor !== "number" || !Number.isFinite(minor)) return undefined;
+
+  if (typeof minor !== "number" || !Number.isFinite(minor)) {
+    return undefined;
+  }
+
   // Intl throws on a fraction count past 20 and on a code that is not three letters, and this
   // payload is undocumented enough that either could arrive.
   const exponent =
     typeof v.exponent === "number" && v.exponent >= 0 && v.exponent <= 20 ? v.exponent : 2;
+
   const currency =
     typeof v.currency === "string" && /^[A-Za-z]{3}$/.test(v.currency) ? v.currency : "USD";
+
   const value = minor / 10 ** exponent;
+
   const text = new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
     minimumFractionDigits: exponent,
     maximumFractionDigits: exponent,
   }).format(value);
+
   return { value, text };
 };
 
@@ -262,25 +326,39 @@ export function usageCredits(payload: unknown): UsageCredits {
   const spend = isRec(row.spend) ? row.spend : undefined;
   const used = money(spend?.used);
   const limit = money(spend?.limit) ?? money(spend?.cap);
+
   // Only the legacy block says "reached" outright; a spend that has met its own limit is the
   // same state said in numbers.
   const capped =
     extra.spend_limit_reached === true ||
     (used !== undefined && limit !== undefined && limit.value > 0 && used.value >= limit.value);
+
   const enabled = spend ? spend.enabled === true : extra.is_enabled === true;
   const out: UsageCredits = { enabled, capped, canPurchase: spend?.can_purchase_credits === true };
+
   // Credits that are off spend nothing, and the endpoint says so with a zero rather than a blank;
   // a constant $0.00 in the row would be noise.
-  if (enabled && used) out.used = used.text;
-  if (enabled && limit) out.limit = limit.text;
+  if (enabled && used) {
+    out.used = used.text;
+  }
+
+  if (enabled && limit) {
+    out.limit = limit.text;
+  }
+
   const note = spend?.disclaimer;
-  if (typeof note === "string" && note.trim()) out.note = note;
+
+  if (typeof note === "string" && note.trim()) {
+    out.note = note;
+  }
+
   return out;
 }
 
 /** Credits are on and their own cap not reached: a full plan window does not block a request. */
 export function extraUsageOn(payload: unknown): boolean {
   const credits = usageCredits(payload);
+
   return credits.enabled && !credits.capped;
 }
 
@@ -316,21 +394,35 @@ export async function readUsage(
   const headers = sshHost
     ? authHeadersFrom(await remoteCredentials(sshHost))
     : await authHeaders(home);
-  if (!headers?.Authorization) return { ok: false, error: "needs a Claude Code login" };
+
+  if (!headers?.Authorization) {
+    return { ok: false, error: "needs a Claude Code login" };
+  }
+
   try {
     const r = await fetchImpl(USAGE_URL, {
       headers: { ...headers, Accept: "application/json" },
       signal: AbortSignal.timeout(15_000),
     });
-    if (r.status === 401) return { ok: false, error: "login expired: run claude auth login" };
-    if (r.status === 429)
+
+    if (r.status === 401) {
+      return { ok: false, error: "login expired: run claude auth login" };
+    }
+
+    if (r.status === 429) {
       return {
         ok: false,
         error: "usage endpoint rate limited",
         retryAfterMs: retryAfterMs(r.headers?.get("retry-after")),
       };
-    if (r.status !== 200) return { ok: false, error: `HTTP ${r.status}` };
+    }
+
+    if (r.status !== 200) {
+      return { ok: false, error: `HTTP ${r.status}` };
+    }
+
     const payload: unknown = await r.json();
+
     return {
       ok: true,
       fetchedAt: Date.now(),
@@ -338,8 +430,8 @@ export async function readUsage(
       extraUsage: extraUsageOn(payload),
       credits: usageCredits(payload),
     };
-  } catch (e) {
-    return { ok: false, error: errorText(e).slice(0, 200) };
+  } catch (error) {
+    return { ok: false, error: errorText(error).slice(0, 200) };
   }
 }
 
@@ -352,38 +444,54 @@ export async function readUsage(
  * formatting and the CLI's `·` separator are assumed; a locale change would degrade the same way,
  * not throw.
  */
-export function parseUsageBreakdown(text: string): UsageBreakdownWindow[] {
-  const windows: UsageBreakdownWindow[] = [];
+export function parseUsageBreakdown(text: string): Array<UsageBreakdownWindow> {
+  const windows: Array<UsageBreakdownWindow> = [];
   let current: UsageBreakdownWindow | undefined;
+
   for (const raw of text.split("\n")) {
     const line = raw.trim();
     const head = /^(Last \d+[hdw]) · ([\d,]+) requests · ([\d,]+) sessions$/.exec(line);
+
     if (head) {
       current = {
         label: head[1] ?? "",
-        requests: Number((head[2] ?? "").replace(/,/g, "")),
-        sessions: Number((head[3] ?? "").replace(/,/g, "")),
+        requests: Number((head[2] ?? "").replaceAll(",", "")),
+        sessions: Number((head[3] ?? "").replaceAll(",", "")),
         groups: [],
         behaviours: [],
       };
       windows.push(current);
       continue;
     }
+
     const top = /^Top ([^:]+): (.+)$/.exec(line);
+
     if (top && current) {
       const label = (top[1] ?? "").replace(/^./, (c) => c.toUpperCase());
-      const drivers: UsageDriver[] = [];
+      const drivers: Array<UsageDriver> = [];
+
       for (const entry of (top[2] ?? "").split(", ")) {
         const m = /^(.+) (\d+)%$/.exec(entry.trim());
-        if (m) drivers.push({ name: m[1] ?? "", pct: Number(m[2]) });
+
+        if (m) {
+          drivers.push({ name: m[1] ?? "", pct: Number(m[2]) });
+        }
       }
-      if (drivers.length > 0) current.groups.push({ label, drivers });
+
+      if (drivers.length > 0) {
+        current.groups.push({ label, drivers });
+      }
+
       continue;
     }
+
     // Anything else indented under a window header is one of the CLI's behaviour sentences. It has
     // to start with a percentage, so a legend or a stray blank cannot be mistaken for one.
-    if (current && /^\d+% of your usage /.test(line)) current.behaviours.push(line);
+    if (current && /^\d+% of your usage /.test(line)) {
+      current.behaviours.push(line);
+    }
   }
+
   return windows.filter((w) => w.groups.length > 0 || w.behaviours.length > 0);
 }
 
@@ -398,7 +506,9 @@ export function readUsageBreakdown(
   return new Promise((resolve) => {
     const done = (stdout: string) =>
       resolve({ ok: true, fetchedAt: Date.now(), windows: parseUsageBreakdown(stdout) });
+
     const fail = () => resolve({ ok: false, error: "usage breakdown unavailable" });
+
     if (sshHost) {
       const remote = `COLUMNS=1000 TERM=dumb ${shq(command)} -p '/usage'`;
       execFile(
@@ -407,8 +517,10 @@ export function readUsageBreakdown(
         { timeout: 15_000, maxBuffer: 256 * 1024 },
         (err, stdout) => (err || !stdout.trim() ? fail() : done(stdout)),
       );
+
       return;
     }
+
     const env = { ...cliEnvFor(realHome), COLUMNS: "1000", TERM: "dumb" };
     execFile(
       command,
@@ -422,10 +534,14 @@ export function readUsageBreakdown(
 /** The reset instant of a window still at its cap, or undefined when nothing blocks a request.
  *  A reply that could not be read answers undefined too: the wake then finds out by trying. */
 export function stillLimitedUntil(reply: UsageReply, now = Date.now()): number | undefined {
-  if (!reply.ok || reply.extraUsage) return undefined;
+  if (!reply.ok || reply.extraUsage) {
+    return undefined;
+  }
+
   const resets = reply.windows.flatMap((w) =>
     w.usedPercent >= 100 && w.resetsAt !== null && w.resetsAt > now ? [w.resetsAt] : [],
   );
+
   return resets.length > 0 ? Math.max(...resets) : undefined;
 }
 
@@ -468,20 +584,25 @@ const CachedBreakdown = z.object({
 export function parseBreakdownCache(
   text: string,
 ): Record<string, { at: number; reply: UsageBreakdownReply }> | undefined {
-  let parsed: ReturnType<typeof CachedBreakdown>;
-  try {
-    parsed = CachedBreakdown(JSON.parse(text));
-  } catch {
+  const parsed = parsedWith(CachedBreakdown, text);
+
+  if (parsed === undefined) {
     return undefined;
   }
+
   // The validator fills a missing field in rather than rejecting it: a missing list comes back
   // empty, and a missing `reply` comes back as `{}`, with `ok: true` not enforced. Measured, not
   // assumed. The first half is what makes an old file safe, since the crash was `.map` on a list
   // that was not there and an empty list renders nothing. The second half would serve an entry
   // that is not a reply at all, so `ok` is checked here by hand.
   const out: Record<string, { at: number; reply: UsageBreakdownReply }> = {};
-  for (const [key, entry] of Object.entries(parsed.entries))
-    if (entry.reply.ok === true) out[key] = entry;
+
+  for (const [key, entry] of Object.entries(parsed.entries)) {
+    if (entry.reply.ok) {
+      out[key] = entry;
+    }
+  }
+
   return out;
 }
 
@@ -498,42 +619,54 @@ export interface UsageMemo {
 /** A persisted number, or 0 for anything that is not a finite one. */
 const finite = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
+/** True for a saved successful reply: ok, its fetch time, and every window's label and percent
+ *  checked; the other window fields are optional and the client reads them defensively. */
+const isOkReply = (r: unknown): r is Extract<UsageReply, { ok: true }> =>
+  isRec(r) &&
+  r.ok === true &&
+  typeof r.fetchedAt === "number" &&
+  Array.isArray(r.windows) &&
+  r.windows.every(
+    (w) => isRec(w) && typeof w.label === "string" && typeof w.usedPercent === "number",
+  );
+
 /** The persisted plan-usage memo, or undefined when the file is not the shape the reader needs: an
  *  older build's, a torn write, a hand edit. Checked by hand rather than by schema because most
  *  window fields are optional; a reply is kept only once its `ok`, `fetchedAt` and window list are
  *  sound, and anything else about an entry degrades to "nothing known". */
 export function parseUsageMemo(text: string): Record<string, UsageMemo> | undefined {
   let raw: unknown;
+
   try {
     raw = JSON.parse(text);
   } catch {
     return undefined;
   }
-  if (!isRec(raw) || !isRec(raw.entries)) return undefined;
+
+  if (!isRec(raw) || !isRec(raw.entries)) {
+    return undefined;
+  }
+
   const out: Record<string, UsageMemo> = {};
+
   for (const [key, e] of Object.entries(raw.entries)) {
-    if (!isRec(e)) continue;
+    if (!isRec(e)) {
+      continue;
+    }
+
     const entry: UsageMemo = {
       at: finite(e.at),
       limitedUntil: finite(e.limitedUntil),
       strikes: finite(e.strikes),
     };
-    const r = e.reply;
-    if (
-      isRec(r) &&
-      r.ok === true &&
-      typeof r.fetchedAt === "number" &&
-      Array.isArray(r.windows) &&
-      r.windows.every(
-        (w) => isRec(w) && typeof w.label === "string" && typeof w.usedPercent === "number",
-      )
-    ) {
-      // SAFETY: ok, fetchedAt and every window's label and percent were checked just above; the
-      // other window fields are optional and the client reads them defensively.
-      entry.reply = r as Extract<UsageReply, { ok: true }>;
+
+    if (isOkReply(e.reply)) {
+      entry.reply = e.reply;
     }
+
     out[key] = entry;
   }
+
   return out;
 }
 
@@ -565,17 +698,26 @@ export function createUsageReader(
   // this every tab's poll would ask Anthropic again. Memory only: a restart may try once at once.
   const failed = new Map<string, { at: number; reply: UsageReply }>();
   let usageLoaded: Promise<void> | undefined;
+
   /** Reads the file once per reader; a missing or damaged file leaves the memo empty, never throws,
    *  and an entry already in memory wins over the one on disk. */
-  const usageLoad = (): Promise<void> =>
-    (usageLoaded ??= readFile(file, "utf8")
+  const usageLoad = (): Promise<void> => (usageLoaded ??= usageFill());
+
+  /** The one read behind `usageLoad`: a missing or damaged file reads as no entries. */
+  async function usageFill(): Promise<void> {
+    const entries = await readFile(file, "utf8")
       .then(parseUsageMemo)
-      .catch(() => undefined)
-      .then((entries) => {
-        for (const [key, entry] of Object.entries(entries ?? {}))
-          if (!memo.has(key)) memo.set(key, entry);
-      }));
+      .catch(() => undefined);
+
+    for (const [key, entry] of Object.entries(entries ?? {})) {
+      if (!memo.has(key)) {
+        memo.set(key, entry);
+      }
+    }
+  }
+
   let saving: Promise<void> = Promise.resolve();
+
   /** Writes the whole memo in the background, one write at a time and each snapshotting the memo
    *  as it starts, so a slow earlier write can never land over a later one. A failed write is
    *  dropped, not retried: the memo still works in memory and the next restart starts blind. */
@@ -584,12 +726,18 @@ export function createUsageReader(
       .then(() => write(file, { entries: Object.fromEntries(memo) }))
       .catch(() => undefined);
   };
+
   /** This key's memo entry, created empty (and so never on disk until a read sets it) if new. */
   const slot = (key: string): UsageMemo => {
     let m = memo.get(key);
-    if (!m) memo.set(key, (m = { at: 0, limitedUntil: 0, strikes: 0 }));
+
+    if (!m) {
+      memo.set(key, (m = { at: 0, limitedUntil: 0, strikes: 0 }));
+    }
+
     return m;
   };
+
   /** One box's plan usage. Never forces: the endpoint's budget is the account's, shared by every
    *  tab, browser and CLI, so one read per CACHE_MS serves them all. Answers stale figures, not an
    *  error, while limited or failing, unless the login itself is gone. */
@@ -598,38 +746,58 @@ export function createUsageReader(
     const key = sshHost ? `ssh:${sshHost}` : home;
     const m = slot(key);
     const t0 = now();
-    if (t0 < m.limitedUntil)
+
+    if (t0 < m.limitedUntil) {
       return fallback(m, { ok: false, error: "usage endpoint rate limited" });
-    if (m.reply && t0 - m.at < CACHE_MS) return m.reply;
-    const miss = failed.get(key);
-    if (miss && t0 - miss.at < FAIL_MS) return miss.reply;
-    if (!inFlight.has(key)) {
-      inFlight.set(
-        key,
-        readUsage(fetchImpl, home, sshHost).then((reply) => {
-          inFlight.delete(key);
-          if (reply.ok) {
-            m.reply = reply;
-            m.at = now();
-            m.limitedUntil = 0;
-            m.strikes = 0;
-            failed.delete(key);
-            usageSave();
-            return reply;
-          }
-          if (reply.retryAfterMs) {
-            m.strikes += 1;
-            m.limitedUntil = now() + backoffMs(reply.retryAfterMs, m.strikes);
-            usageSave();
-          }
-          const out = fallback(m, reply);
-          failed.set(key, { at: now(), reply: out });
-          return out;
-        }),
-      );
     }
-    return inFlight.get(key)!;
+
+    if (m.reply && t0 - m.at < CACHE_MS) {
+      return m.reply;
+    }
+
+    const miss = failed.get(key);
+
+    if (miss && t0 - miss.at < FAIL_MS) {
+      return miss.reply;
+    }
+
+    const pending = inFlight.get(key);
+
+    if (pending) {
+      return pending;
+    }
+
+    const started = readUsage(fetchImpl, home, sshHost).then((reply) => {
+      inFlight.delete(key);
+
+      if (reply.ok) {
+        m.reply = reply;
+        m.at = now();
+        m.limitedUntil = 0;
+        m.strikes = 0;
+        failed.delete(key);
+        usageSave();
+
+        return reply;
+      }
+
+      if (reply.retryAfterMs) {
+        m.strikes += 1;
+        m.limitedUntil = now() + backoffMs(reply.retryAfterMs, m.strikes);
+        usageSave();
+      }
+
+      const out = fallback(m, reply);
+      failed.set(key, { at: now(), reply: out });
+
+      return out;
+    });
+
+    inFlight.set(key, started);
+
+    return started;
   };
+
   return read;
 }
 
@@ -669,23 +837,33 @@ export function registerUsageRoute(
   // was fetched after the box's email last changed. Gets wrong: a login changed across a dsh
   // restart within CACHE_MS, where the first email seen is already the new one.
   const loginSince = new Map<string, { email: string; since: number }>();
+
   /** Whether a reading fetched at `fetchedAt` on `box` can belong to `email`. */
   const readSince = (box: string, email: string, fetchedAt: number): boolean => {
     const seen = loginSince.get(box);
+
     if (!seen) {
       loginSince.set(box, { email, since: -1 });
+
       return true;
     }
-    if (seen.email !== email) loginSince.set(box, { email, since: Date.now() });
+
+    if (seen.email !== email) {
+      loginSince.set(box, { email, since: Date.now() });
+    }
+
     // Strict: a reading stamped in the very millisecond of the switch may still be the old one.
     return fetchedAt > (loginSince.get(box)?.since ?? -1);
   };
+
   const historyFile = join(STATE_DIR, "usage-history.json");
+
   const history = createUsageHistory(
     () => readFile(historyFile, "utf8"),
     // Owner-only, like the SSH tokens: the keys are login emails.
     (value) => writeJson(historyFile, value, { mode: 0o600 }),
   );
+
   // Breakdown answers are cached per box, and unlike the plan windows this cache is also written
   // to disk. The read is a `claude -p "/usage"` spawn, measured at 3.6 s on the author's box, and
   // an in-memory cache alone meant every dsh restart threw the answer away and the next person to
@@ -695,18 +873,32 @@ export function registerUsageRoute(
   const bdCached = new Map<string, { at: number; reply: UsageBreakdownReply }>();
   const bdInFlight = new Map<string, Promise<UsageBreakdownReply>>();
   let bdLoaded = false;
+
   /** Seed the memory cache from disk, once per process. A missing or unreadable file is a miss. */
   const bdLoad = async (): Promise<void> => {
-    if (bdLoaded) return;
+    if (bdLoaded) {
+      return;
+    }
+
     bdLoaded = true;
+
     const entries = await readFile(bdFile, "utf8")
       .then(parseBreakdownCache)
       .catch(() => undefined);
-    if (entries === undefined) return;
-    for (const [key, entry] of Object.entries(entries))
-      if (!bdCached.has(key)) bdCached.set(key, entry);
+
+    if (entries === undefined) {
+      return;
+    }
+
+    for (const [key, entry] of Object.entries(entries)) {
+      if (!bdCached.has(key)) {
+        bdCached.set(key, entry);
+      }
+    }
   };
+
   let bdSaving: Promise<void> = Promise.resolve();
+
   /** Writes the breakdown cache one write at a time, each snapshotting it as it starts, so an
    *  older snapshot never lands last. A failed write is dropped: the cache still works in memory
    *  and the next restart just pays the spawn again. */
@@ -715,6 +907,7 @@ export function registerUsageRoute(
       .then(() => writeJson(bdFile, { entries: Object.fromEntries(bdCached) }))
       .catch(() => undefined);
   };
+
   const readBd = (
     force: boolean,
     realHome: string,
@@ -722,31 +915,51 @@ export function registerUsageRoute(
     sshHost?: string,
   ): Promise<UsageBreakdownReply> => {
     const key = sshHost ? `ssh:${sshHost}` : realHome;
+
     return bdLoad().then(() => {
       const entry = bdCached.get(key);
+
       // Any cached answer serves an ordinary open, however old: the figures cover 24 hours and
       // seven days, so a stale one is close enough, and spawning on open is the whole problem.
       // Only Refresh (`force`) spawns, and even then not twice within FORCE_MIN_AGE_MS.
-      if (entry && (!force || Date.now() - entry.at < FORCE_MIN_AGE_MS)) return entry.reply;
-      if (!bdInFlight.has(key)) {
-        bdInFlight.set(
-          key,
-          readUsageBreakdown(command, realHome, sshHost).then((reply) => {
-            if (reply.ok || !entry?.reply.ok) {
-              bdCached.set(key, { at: Date.now(), reply });
-              if (reply.ok) bdSave();
-            }
-            bdInFlight.delete(key);
-            return bdCached.get(key)!.reply;
-          }),
-        );
+      if (entry && (!force || Date.now() - entry.at < FORCE_MIN_AGE_MS)) {
+        return entry.reply;
       }
-      return bdInFlight.get(key)!;
+
+      const pending = bdInFlight.get(key);
+
+      if (pending) {
+        return pending;
+      }
+
+      const started = readUsageBreakdown(command, realHome, sshHost).then((reply) => {
+        if (reply.ok || !entry?.reply.ok) {
+          bdCached.set(key, { at: Date.now(), reply });
+
+          if (reply.ok) {
+            bdSave();
+          }
+        }
+
+        bdInFlight.delete(key);
+
+        // Not kept only when a good answer was already cached, so that is the answer.
+        return bdCached.get(key)?.reply ?? reply;
+      });
+
+      bdInFlight.set(key, started);
+
+      return started;
     });
   };
+
   ctx.inject?.(["webServer", "connection"], (host) => {
     const { webServer, connection } = host;
-    if (!webServer || !connection) return;
+
+    if (!webServer || !connection) {
+      return;
+    }
+
     host.effect?.(
       () =>
         webServer.register({
@@ -754,6 +967,7 @@ export function registerUsageRoute(
           path: ROUTE,
           handler: async (req: IncomingMessage, res: ServerResponse) => {
             const rejection = connection.requestRejection?.(req);
+
             const send = (
               status: number,
               body: UsageReply | UsageBreakdownReply | { error: string },
@@ -764,56 +978,82 @@ export function registerUsageRoute(
               });
               res.end(JSON.stringify(body));
             };
-            if (rejection !== undefined) return send(rejection, { error: "forbidden" });
-            if (req.method !== "GET") return send(405, { error: "GET only" });
+
+            if (rejection !== undefined) {
+              return send(rejection, { error: "forbidden" });
+            }
+
+            if (req.method !== "GET") {
+              return send(405, { error: "GET only" });
+            }
+
             try {
               const url = new URL(req.url ?? "/", "http://dsh");
               const force = url.searchParams.get("force") === "1";
               // Resolve the box for the requested provider; fall back to the default instance.
               // An unknown provider id (instance gone after a reload) reads the default instance.
               const provider = url.searchParams.get("provider");
+
               const box: { home: string; sshHost?: string; realHome?: string; command?: string } =
                 (provider && boxFor?.(provider)) || { home: defaultHome ?? "" };
+
               // The real config dir, not the transcript mirror: the mirror links its login back
               // here, and only the real dir can be matched to the macOS Keychain login.
               const realHome = box.realHome ?? options?.realHome ?? box.home;
+
               if (url.pathname.endsWith("/breakdown")) {
                 const bdCommand = box.command ?? options?.command ?? "claude";
+
                 const [reply, who] = await Promise.all([
                   readBd(force, realHome, bdCommand, box.sshHost),
                   identity(box.home, box.sshHost),
                 ]);
-                if (reply.ok && reply.windows.length === 0)
+
+                if (reply.ok && reply.windows.length === 0) {
                   log(
                     "warn",
                     "usage breakdown: no windows parsed (/usage text format may have changed)",
                   );
+                }
+
                 return send(200, { ...reply, ...who });
               }
+
               // The usage belongs to that box's login; say so, the browser hops between boxes.
               const [reply, who, routed] = await Promise.all([
                 read(realHome, box.sshHost),
                 identity(box.home, box.sshHost),
                 options?.routed?.(provider ?? undefined).catch(() => false) ?? false,
               ]);
-              if (!reply.ok) return send(200, { ...reply, ...who });
+
+              if (!reply.ok) {
+                return send(200, { ...reply, ...who });
+              }
+
               const base = routed
                 ? { ...reply, ...who, routed: true as const }
                 : { ...reply, ...who };
+
               // History is kept per login email, so two boxes on one account share it. A box whose
               // CLI names no email (an API key, a login it cannot read) records nothing: a box path
               // is not a login, and one box can change accounts under it. A stale reply is a
               // reading already folded in. Routed or not, the windows are the login's.
-              if (!who.email) return send(200, base);
+              if (!who.email) {
+                return send(200, base);
+              }
+
               if (
                 !reply.stale &&
                 readSince(box.sshHost ? `ssh:${box.sshHost}` : realHome, who.email, reply.fetchedAt)
-              )
+              ) {
                 await history.record(who.email, reply.windows, reply.fetchedAt);
+              }
+
               return send(200, { ...base, history: await history.view(who.email, Date.now()) });
-            } catch (e) {
-              log("warn", `usage route failed: ${errorText(e)}`);
-              return send(500, { error: errorText(e) });
+            } catch (error) {
+              log("warn", `usage route failed: ${errorText(error)}`);
+
+              return send(500, { error: errorText(error) });
             }
           },
         }),

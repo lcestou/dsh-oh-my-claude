@@ -8,9 +8,12 @@ export function subagentLinkOf(
   header: { parentSession?: string; origin?: string },
   events: () => Iterable<{ type: string; data?: unknown }>,
 ): { parentId: string; noticePending: boolean } | undefined {
-  if (header.origin !== "subagent" || !header.parentSession) return undefined;
+  if (header.origin !== "subagent" || !header.parentSession) {
+    return undefined;
+  }
+
   return {
-    parentId: String(header.parentSession),
+    parentId: header.parentSession,
     noticePending: hasPendingNotice(events(), "dsh-oh-my-claude", [
       RESTART_TEXT,
       RECONNECT_TEXT,

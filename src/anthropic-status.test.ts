@@ -1,11 +1,14 @@
 // Offline self-check: bun src/anthropic-status.test.ts. Fake fetch, no network.
 import { strict as assert } from "node:assert";
 import { anthropicStatus, degradedNote, forgetStatus, peekStatus } from "./anthropic-status.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const makeFetch = (doc: unknown, status = 200) => {
   let calls = 0;
+
   return async (_url: string, _init: { signal: AbortSignal }) => {
     calls += 1;
+
     return new Response(JSON.stringify(doc), { status });
   };
 };
@@ -14,24 +17,28 @@ const makeFetch = (doc: unknown, status = 200) => {
 {
   forgetStatus();
   const now = Date.now();
+
   const fetchFn = makeFetch({
     status: { indicator: "minor", description: "Degraded performance" },
   });
+
   const val = await anthropicStatus(fetchFn, now);
   assert.deepEqual(val, { indicator: "minor", description: "Degraded performance" });
-  assert.equal(degradedNote(val!), " · Anthropic reports Degraded performance");
+  assert.equal(degradedNote(val), " · Anthropic reports Degraded performance");
 }
 
 // a `none` document gives an empty degradedNote
 {
   forgetStatus();
   const now = Date.now();
+
   const fetchFn = makeFetch({
     status: { indicator: "none", description: "All systems operational" },
   });
+
   const val = await anthropicStatus(fetchFn, now);
   assert.deepEqual(val, { indicator: "none", description: "All systems operational" });
-  assert.equal(degradedNote(val!), "");
+  assert.equal(degradedNote(val), "");
 }
 
 // cache: second call at now + 30_000 does not fetch again; at now + 61_000 does
@@ -39,8 +46,10 @@ const makeFetch = (doc: unknown, status = 200) => {
   forgetStatus();
   const now = Date.now();
   let calls = 0;
+
   const fetchFn = async (_url: string, _init: { signal: AbortSignal }) => {
     calls += 1;
+
     return new Response(
       JSON.stringify({ status: { indicator: "minor", description: "Degraded" } }),
       {
@@ -48,6 +57,7 @@ const makeFetch = (doc: unknown, status = 200) => {
       },
     );
   };
+
   await anthropicStatus(fetchFn, now);
   assert.equal(calls, 1);
   await anthropicStatus(fetchFn, now + 30_000);
@@ -61,10 +71,13 @@ const makeFetch = (doc: unknown, status = 200) => {
   forgetStatus();
   const now = Date.now();
   let calls = 0;
+
   const fetchFn = async (_url: string, _init: { signal: AbortSignal }) => {
     calls += 1;
+
     return new Response(JSON.stringify({}), { status: 503 });
   };
+
   await anthropicStatus(fetchFn, now);
   assert.equal(calls, 1);
   await anthropicStatus(fetchFn, now + 60_000);
@@ -77,9 +90,11 @@ const makeFetch = (doc: unknown, status = 200) => {
 {
   forgetStatus();
   const now = Date.now();
+
   const fetchFn = async () => {
     throw new Error("nope");
   };
+
   const val = await anthropicStatus(fetchFn, now);
   assert.equal(val, undefined);
 }
@@ -101,9 +116,11 @@ const makeFetch = (doc: unknown, status = 200) => {
   forgetStatus();
   const now = Date.now();
   let calls = 0;
+
   const fetchFn = async () => {
     calls += 1;
-    await new Promise((r) => setTimeout(r, 50));
+    await sleep(50);
+
     return new Response(
       JSON.stringify({ status: { indicator: "critical", description: "Down" } }),
       {
@@ -111,6 +128,7 @@ const makeFetch = (doc: unknown, status = 200) => {
       },
     );
   };
+
   const [a, b] = await Promise.all([anthropicStatus(fetchFn, now), anthropicStatus(fetchFn, now)]);
   assert.deepEqual(a, { indicator: "critical", description: "Down" });
   assert.deepEqual(b, { indicator: "critical", description: "Down" });

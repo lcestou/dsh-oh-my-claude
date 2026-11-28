@@ -5,7 +5,7 @@ import { KINDS, SLOW_MS, dispatch, newestWins, pollEvery, streamUp, subscribe } 
 
 {
   const got: Array<[string | null, number | null]> = [];
-  const other: number[] = [];
+  const other: Array<number> = [];
   const off = subscribe("idle", (session, data) => got.push([session, data.deadline]));
   const offOther = subscribe("turns", () => other.push(1));
   dispatch("idle", "s1", { deadline: 42, timeoutMs: 5 });

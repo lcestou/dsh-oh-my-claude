@@ -10,7 +10,11 @@ const REGISTRY = "https://registry.npmjs.org";
  *  same numbers without one, and a string that is not a version compares as nothing. */
 export function parse(v: string): [number, number, number, boolean] | undefined {
   const m = /^v?(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?$/.exec(v.trim());
-  if (!m) return undefined;
+
+  if (!m) {
+    return undefined;
+  }
+
   return [Number(m[1]), Number(m[2]), Number(m[3]), m[4] !== undefined];
 }
 
@@ -18,12 +22,26 @@ export function parse(v: string): [number, number, number, boolean] | undefined 
 export function isNewer(current: string, latest: string): boolean {
   const a = parse(current);
   const b = parse(latest);
-  if (!a || !b) return false;
+
+  if (!a || !b) {
+    return false;
+  }
+
   const [aMaj, aMin, aPat, aPre] = a;
   const [bMaj, bMin, bPat, bPre] = b;
-  if (bMaj !== aMaj) return bMaj > aMaj;
-  if (bMin !== aMin) return bMin > aMin;
-  if (bPat !== aPat) return bPat > aPat;
+
+  if (bMaj !== aMaj) {
+    return bMaj > aMaj;
+  }
+
+  if (bMin !== aMin) {
+    return bMin > aMin;
+  }
+
+  if (bPat !== aPat) {
+    return bPat > aPat;
+  }
+
   // Same numbers: a release beats a prerelease of it; otherwise equal.
   return aPre && !bPre;
 }
@@ -33,6 +51,7 @@ export function isNewer(current: string, latest: string): boolean {
  *  and gets the README's default. */
 export function profileFromPath(path: string, fallback = "web"): string {
   const m = /\/profiles\/([^/]+)\/node_modules\//.exec(path);
+
   return m?.[1] ?? fallback;
 }
 
@@ -40,7 +59,10 @@ export function profileFromPath(path: string, fallback = "web"): string {
 export function updateCommand(name: string, profile: string): string | undefined {
   // DSH Desktop owns the `desktop` profile and the dsh CLI refuses it, so a copied command would
   // only fail; Desktop users update from the app's own Plugins page, which the pill opens.
-  if (profile === "desktop") return undefined;
+  if (profile === "desktop") {
+    return undefined;
+  }
+
   return `dsh plugin --profile ${profile} update ${name}`;
 }
 
@@ -50,8 +72,10 @@ type FetchFn = (url: string, init: { signal: AbortSignal }) => Promise<Response>
  *  retry on every panel open. */
 const TTL_OK = 24 * 60 * 60_000;
 const TTL_FAIL = 60 * 60_000;
+
 /** What the registry said about `name`'s latest release: its version, and the lowest dsh it runs on. */
 export type LatestRelease = { version: string; dshFloor: string | undefined };
+
 const cache = new Map<string, { at: number; ttl: number; value: LatestRelease | undefined }>();
 
 /** The dsh peer the plugin declares (`@deepseek-ai/dsh-llm`), and its lowest accepted version. */
@@ -64,6 +88,7 @@ const PEER_RANGE = new RegExp(`"${DSH_PEER}"\\s*:\\s*"[\\^~>=\\s]*([^"\\s]+)[^"]
  *  left must parse as a version. Absent or unreadable: undefined. */
 export function dshFloor(packageJsonText: string): string | undefined {
   const v = PEER_RANGE.exec(packageJsonText)?.[1];
+
   return v && parse(v) ? v : undefined;
 }
 
@@ -77,28 +102,67 @@ const prereleaseIds = (v: string) => v.trim().split("-").slice(1).join("-").spli
 export function atLeast(version: string, floor: string): boolean {
   const a = parse(version);
   const b = parse(floor);
-  if (!a || !b) return false;
+
+  if (!a || !b) {
+    return false;
+  }
+
   const [aMaj, aMin, aPat, aPre] = a;
   const [bMaj, bMin, bPat, bPre] = b;
-  if (aMaj !== bMaj) return aMaj > bMaj;
-  if (aMin !== bMin) return aMin > bMin;
-  if (aPat !== bPat) return aPat > bPat;
-  if (!aPre) return true; // a release reaches any prerelease of its number
-  if (!bPre) return false; // a prerelease never reaches its release
+
+  if (aMaj !== bMaj) {
+    return aMaj > bMaj;
+  }
+
+  if (aMin !== bMin) {
+    return aMin > bMin;
+  }
+
+  if (aPat !== bPat) {
+    return aPat > bPat;
+  }
+
+  if (!aPre) {
+    return true;
+  } // a release reaches any prerelease of its number
+
+  if (!bPre) {
+    return false;
+  } // a prerelease never reaches its release
+
   const at = prereleaseIds(version);
   const bt = prereleaseIds(floor);
+
   for (let i = 0; i < Math.max(at.length, bt.length); i++) {
     const x = at[i];
     const y = bt[i];
-    if (x === undefined) return false; // fewer identifiers ranks lower
-    if (y === undefined) return true;
-    if (x === y) continue;
+
+    if (x === undefined) {
+      return false;
+    } // fewer identifiers ranks lower
+
+    if (y === undefined) {
+      return true;
+    }
+
+    if (x === y) {
+      continue;
+    }
+
     const xn = /^\d+$/.test(x);
     const yn = /^\d+$/.test(y);
-    if (xn && yn) return Number(x) > Number(y);
-    if (xn !== yn) return yn; // numbers rank below words
+
+    if (xn && yn) {
+      return Number(x) > Number(y);
+    }
+
+    if (xn !== yn) {
+      return yn;
+    } // numbers rank below words
+
     return x > y;
   }
+
   return true;
 }
 
@@ -113,24 +177,35 @@ export async function latestRelease(
   timeoutMs = 2500,
 ): Promise<LatestRelease | undefined> {
   const hit = cache.get(name);
-  if (hit && now - hit.at < hit.ttl) return hit.value;
+
+  if (hit && now - hit.at < hit.ttl) {
+    return hit.value;
+  }
+
   let value: LatestRelease | undefined;
+
   try {
     const r = await fetchFn(`${REGISTRY}/${encodeURIComponent(name)}/latest`, {
       signal: AbortSignal.timeout(timeoutMs),
     });
+
     if (r.ok) {
       // ponytail: the `/latest` document's top-level `version` is its first "version" key (the
       // nested maps hold ranges keyed by package name); a regex reads it without a JSON walk.
       // `parse` still has to accept it. Upgrade path: a typed decoder if the document grows one.
       const text = await r.text();
       const v = /"version"\s*:\s*"([^"]+)"/.exec(text)?.[1];
-      if (v && parse(v)) value = { version: v, dshFloor: dshFloor(text) };
+
+      if (v && parse(v)) {
+        value = { version: v, dshFloor: dshFloor(text) };
+      }
     }
   } catch {
     // offline, blocked, or slow: the pill just does not show this time
   }
+
   cache.set(name, { at: now, ttl: value ? TTL_OK : TTL_FAIL, value });
+
   return value;
 }
 
@@ -154,9 +229,14 @@ export function updateOffer(
   dsh: string | null | undefined,
   command: string | undefined,
 ): UpdateOffer | undefined {
-  if (!newest || !isNewer(current, newest.version)) return undefined;
-  if (newest.dshFloor && dsh && !atLeast(dsh, newest.dshFloor))
+  if (!newest || !isNewer(current, newest.version)) {
+    return undefined;
+  }
+
+  if (newest.dshFloor && dsh && !atLeast(dsh, newest.dshFloor)) {
     return { latest: newest.version, needsDsh: newest.dshFloor };
+  }
+
   return command ? { latest: newest.version, update: command } : { latest: newest.version };
 }
 

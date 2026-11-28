@@ -6,6 +6,14 @@ Versions from 1.0.0 up are on npm. Everything below 1.0.0 was released from the 
 
 ## [Unreleased]
 
+### Changed
+
+- The Node the plugin declares is 24.9, up from 22.15. Nothing changes for anyone running dsh: dsh 0.2.2 and later already need Node 24.9, so the old figure promised a Node the plugin never ran on.
+
+### Fixed
+
+- The cost pill's accessible name starts with the figures it shows, so voice control can find it by what is on screen; the breakdown follows, as before.
+
 ## [1.7.1] - 2026-11-27
 
 dsh: runs on 0.2.2-alpha.2 through 0.2.3-alpha.2; built and tested on 0.2.3-alpha.2.

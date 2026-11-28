@@ -19,7 +19,8 @@ import { mkdir, open, readdir, readFile, rm, stat, writeFile } from "node:fs/pro
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { nodeSpawner, shq, sshArgs, type SubprocessHandle } from "./process.js";
+import { nodeSpawner, shq, sshArgs } from "./process.js";
+import type { SubprocessHandle } from "./process.js";
 
 /** The part of a mount this module needs: an empty `sshHost` means this PC. */
 export interface FsBox {
@@ -72,7 +73,7 @@ export const makeDirScript = (dir: string): string => `mkdir -- ${shq(dir)}`;
 export interface DirLevel {
   path: string;
   home: string;
-  names: string[];
+  names: Array<string>;
 }
 
 /**
@@ -81,6 +82,7 @@ export interface DirLevel {
  */
 export function splitDirs(out: string): DirLevel {
   const [path = "", home = "", ...names] = out.split("\n");
+
   return { path, home, names: names.filter((n) => n !== "").toSorted() };
 }
 
@@ -141,6 +143,7 @@ const MARK = "\u0001omc\u0001";
 /** The script's own output, or null when the marker never arrived and there is no answer to read. */
 export const afterMark = (out: string): string | null => {
   const at = out.indexOf(MARK);
+
   return at === -1 ? null : out.slice(at + MARK.length);
 };
 
@@ -158,18 +161,25 @@ const ssh = (host: string, script: string, timeout = 15_000, input?: string): Pr
       sshArgs(host, `printf ${shq(MARK)}; ${script}`),
       { timeout, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
       (e, out, err) => {
-        const said = afterMark(String(out));
+        const said = afterMark(out);
+
         const r: Ran = {
-          // SAFETY: execFile's error carries the remote exit status; anything else (spawn failure,
-          // timeout) has no code and reads as 255, the status ssh itself uses for a failed connection.
-          code: e === null ? 0 : ((e as { code?: number }).code ?? 255),
-          out: said ?? String(out),
-          err: String(err).trim().slice(0, 300),
+          // execFile's error carries the remote exit status as a number; anything else (a spawn
+          // failure's errno name, a timeout) reads as 255, the status ssh itself uses for a failed
+          // connection.
+          code: e === null ? 0 : typeof e.code === "number" ? e.code : 255,
+          out: said ?? out,
+          err: err.trim().slice(0, 300),
         };
-        if (said === null) reject(transportError(host, r));
-        else resolve(r);
+
+        if (said === null) {
+          reject(transportError(host, r));
+        } else {
+          resolve(r);
+        }
       },
     );
+
     // ssh can exit before it reads the content (refused login, unreachable box). The write then
     // hits a closed pipe, and an EPIPE with no listener throws in the dsh-web process instead of
     // reaching the callback above, which already reports the failed run.
@@ -182,6 +192,7 @@ export function splitRead(out: string): FileRead {
   const cut = out.indexOf("\n");
   const head = cut === -1 ? out : out.slice(0, cut);
   const seconds = Number(head.trim());
+
   return {
     text: cut === -1 ? "" : out.slice(cut + 1),
     mtimeMs: Number.isFinite(seconds) ? seconds * 1000 : 0,
@@ -191,17 +202,29 @@ export function splitRead(out: string): FileRead {
 /** The file with its mtime, or null when it does not exist. Throws when the box cannot be reached. */
 export async function readAt(box: FsBox, path: string): Promise<FileRead | null> {
   if (!box.sshHost) {
-    const read = await Promise.all([readFile(path, "utf8"), stat(path)]).catch((e: unknown) => {
+    const read = await Promise.all([readFile(path, "utf8"), stat(path)]).catch((error: unknown) => {
       // Only an absent file reads as null. A permission error or a broken mount is a fault worth
       // surfacing, and answering null for it would show an unreadable file as one that is not there.
-      if (!isEnoent(e)) throw e;
+      if (!isEnoent(error)) {
+        throw error;
+      }
+
       return null;
     });
+
     return read === null ? null : { text: read[0], mtimeMs: read[1].mtimeMs };
   }
+
   const r = await ssh(box.sshHost, readScript(path));
-  if (r.code === ABSENT) return null;
-  if (r.code !== 0) throw transportError(box.sshHost, r);
+
+  if (r.code === ABSENT) {
+    return null;
+  }
+
+  if (r.code !== 0) {
+    throw transportError(box.sshHost, r);
+  }
+
   return splitRead(r.out);
 }
 
@@ -210,15 +233,27 @@ export async function sizeAt(box: FsBox, path: string): Promise<number | null> {
   if (!box.sshHost) {
     try {
       return (await stat(path)).size;
-    } catch (e) {
-      if (!isEnoent(e)) throw e;
+    } catch (error) {
+      if (!isEnoent(error)) {
+        throw error;
+      }
+
       return null;
     }
   }
+
   const r = await ssh(box.sshHost, sizeScript(path));
-  if (r.code === ABSENT) return null;
-  if (r.code !== 0) throw transportError(box.sshHost, r);
+
+  if (r.code === ABSENT) {
+    return null;
+  }
+
+  if (r.code !== 0) {
+    throw transportError(box.sshHost, r);
+  }
+
   const n = Number(r.out.trim());
+
   return Number.isFinite(n) ? n : null;
 }
 
@@ -228,26 +263,41 @@ export async function sizeAt(box: FsBox, path: string): Promise<number | null> {
 export async function readFromAt(box: FsBox, path: string, offset: number): Promise<string> {
   if (!box.sshHost) {
     let fh;
+
     try {
       fh = await open(path, "r");
-    } catch (e) {
-      if (!isEnoent(e)) throw e;
+    } catch (error) {
+      if (!isEnoent(error)) {
+        throw error;
+      }
+
       return "";
     }
+
     try {
       const { size } = await fh.stat();
-      if (size <= offset) return "";
+
+      if (size <= offset) {
+        return "";
+      }
+
       const buf = Buffer.alloc(size - offset);
       // `bytesRead`, not `buf.length`: a file truncated between the stat and the read returns fewer
       // bytes, and decoding the untouched zero tail would append junk that fails to parse as a row.
       const { bytesRead } = await fh.read(buf, 0, buf.length, offset);
+
       return buf.toString("utf8", 0, bytesRead);
     } finally {
       await fh.close();
     }
   }
+
   const r = await ssh(box.sshHost, tailScript(path, offset), 60_000);
-  if (r.code !== 0) throw transportError(box.sshHost, r);
+
+  if (r.code !== 0) {
+    throw transportError(box.sshHost, r);
+  }
+
   return r.out;
 }
 
@@ -257,10 +307,17 @@ export async function readTextAt(box: FsBox, path: string): Promise<string | nul
 }
 
 /** The names in a directory; an absent directory lists empty, the way a local read does. */
-export async function listNamesAt(box: FsBox, dir: string): Promise<string[]> {
-  if (!box.sshHost) return await readdir(dir).catch(() => []);
+export async function listNamesAt(box: FsBox, dir: string): Promise<Array<string>> {
+  if (!box.sshHost) {
+    return await readdir(dir).catch(() => []);
+  }
+
   const r = await ssh(box.sshHost, listScript(dir));
-  if (r.code !== 0) throw transportError(box.sshHost, r);
+
+  if (r.code !== 0) {
+    throw transportError(box.sshHost, r);
+  }
+
   return r.out.split("\n").filter((n) => n !== "");
 }
 
@@ -273,7 +330,11 @@ export async function listDirsAt(box: FsBox, dir: string): Promise<DirLevel | nu
     const home = homedir();
     const at = dir === "" ? home : dir;
     const kids = await readdir(at, { withFileTypes: true }).catch(() => null);
-    if (kids === null) return null;
+
+    if (kids === null) {
+      return null;
+    }
+
     return {
       path: at,
       home,
@@ -283,9 +344,17 @@ export async function listDirsAt(box: FsBox, dir: string): Promise<DirLevel | nu
         .toSorted(),
     };
   }
+
   const r = await ssh(box.sshHost, dirsScript(dir));
-  if (r.code === ABSENT) return null;
-  if (r.code !== 0) throw transportError(box.sshHost, r);
+
+  if (r.code === ABSENT) {
+    return null;
+  }
+
+  if (r.code !== 0) {
+    throw transportError(box.sshHost, r);
+  }
+
   return splitDirs(r.out);
 }
 
@@ -293,10 +362,15 @@ export async function listDirsAt(box: FsBox, dir: string): Promise<DirLevel | nu
 export async function makeDirAt(box: FsBox, dir: string): Promise<void> {
   if (!box.sshHost) {
     await mkdir(dir);
+
     return;
   }
+
   const r = await ssh(box.sshHost, makeDirScript(dir));
-  if (r.code !== 0) throw transportError(box.sshHost, r);
+
+  if (r.code !== 0) {
+    throw transportError(box.sshHost, r);
+  }
 }
 
 /**
@@ -305,19 +379,27 @@ export async function makeDirAt(box: FsBox, dir: string): Promise<void> {
  */
 export async function writeAt(box: FsBox, path: string, text: string): Promise<number> {
   const body = text.endsWith("\n") ? text : `${text}\n`;
+
   if (!box.sshHost) {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, body, "utf8");
+
     return (await stat(path)).mtimeMs;
   }
+
   const r = await ssh(
     box.sshHost,
     writeScript(path),
     15_000,
     Buffer.from(body, "utf8").toString("base64"),
   );
-  if (r.code !== 0) throw transportError(box.sshHost, r);
+
+  if (r.code !== 0) {
+    throw transportError(box.sshHost, r);
+  }
+
   const seconds = Number(r.out.trim());
+
   return Number.isFinite(seconds) ? seconds * 1000 : 0;
 }
 
@@ -330,16 +412,32 @@ const homes = new Map<string, string>();
  * rather than assumed: the account there is often not the account here.
  */
 export async function homeAt(box: FsBox): Promise<string> {
-  if (!box.sshHost) return homedir();
+  if (!box.sshHost) {
+    return homedir();
+  }
+
   const cached = homes.get(box.sshHost);
-  if (cached !== undefined) return cached;
+
+  if (cached !== undefined) {
+    return cached;
+  }
+
   const r = await ssh(box.sshHost, 'printf %s "$HOME"');
-  if (r.code !== 0) throw transportError(box.sshHost, r);
+
+  if (r.code !== 0) {
+    throw transportError(box.sshHost, r);
+  }
+
   const home = r.out.trim();
+
   // An empty `$HOME` would build `/.claude/settings.json` and edit the wrong file, so it is a fault
   // rather than a value to cache: the caller hears about the box instead of writing to the root.
-  if (home === "") throw new Error(`${box.sshHost}: no $HOME on the remote account`);
+  if (home === "") {
+    throw new Error(`${box.sshHost}: no $HOME on the remote account`);
+  }
+
   homes.set(box.sshHost, home);
+
   return home;
 }
 
@@ -347,10 +445,15 @@ export async function homeAt(box: FsBox): Promise<string> {
 export async function removeAt(box: FsBox, path: string): Promise<void> {
   if (!box.sshHost) {
     await rm(path, { force: true });
+
     return;
   }
+
   const r = await ssh(box.sshHost, removeScript(path));
-  if (r.code !== 0) throw transportError(box.sshHost, r);
+
+  if (r.code !== 0) {
+    throw transportError(box.sshHost, r);
+  }
 }
 
 /** Delete a directory and everything under it; a directory already gone is not an error. The caller
@@ -359,10 +462,15 @@ export async function removeAt(box: FsBox, path: string): Promise<void> {
 export async function removeDirAt(box: FsBox, dir: string): Promise<void> {
   if (!box.sshHost) {
     await rm(dir, { recursive: true, force: true });
+
     return;
   }
+
   const r = await ssh(box.sshHost, `rm -rf -- ${shq(dir)}`);
-  if (r.code !== 0) throw transportError(box.sshHost, r);
+
+  if (r.code !== 0) {
+    throw transportError(box.sshHost, r);
+  }
 }
 
 /** Where an attachment lands on a box: under the far `$HOME`, beside the hold dir this plugin
@@ -371,7 +479,10 @@ const FAR_ATTACHMENTS = '"$HOME"/.local/state/dsh-oh-my-claude/attachments';
 
 /** One path segment: what a far file name has to be, so it cannot leave the attachments dir. */
 const isSegment = (name: string): boolean =>
-  name !== "" && name !== "." && name !== ".." && ![...name].some((ch) => ch === "/" || ch < " ");
+  name !== "" &&
+  name !== "." &&
+  name !== ".." &&
+  !name.split("").some((ch) => ch === "/" || ch < " ");
 
 /**
  * Write stdin to `<attachments>/<name>` on the box and print the absolute path it has there. The
@@ -407,8 +518,14 @@ export async function copyToAt(
   timeoutMs = 300_000,
   run: RunWithStdin = (host, script) => nodeSpawner("ssh", sshArgs(host, script), "."),
 ): Promise<string> {
-  if (!box.sshHost) throw new Error("copyToAt: no box to copy to");
-  if (!isSegment(name)) throw new Error(`copyToAt: "${name}" is not a file name`);
+  if (!box.sshHost) {
+    throw new Error("copyToAt: no box to copy to");
+  }
+
+  if (!isSegment(name)) {
+    throw new Error(`copyToAt: "${name}" is not a file name`);
+  }
+
   // A missing local file fails here, before any connection is opened.
   const { size } = await stat(localPath);
   const host = box.sshHost;
@@ -422,14 +539,18 @@ export async function copyToAt(
     err += String(chunk);
   });
   const timer = setTimeout(() => child.terminate(), timeoutMs);
+
   try {
     // A broken pipe here is the far side's failure, which the exit status and stderr below say
     // better than EPIPE does.
     await pipeline(createReadStream(localPath), child.stdin).catch(() => {});
     const { exitCode } = await child.done;
     const far = (afterMark(out) ?? "").trim();
-    if (exitCode !== 0 || far === "")
+
+    if (exitCode !== 0 || far === "") {
       throw transportError(host, { code: exitCode ?? 255, out, err: err.trim().slice(0, 300) });
+    }
+
     return far;
   } finally {
     clearTimeout(timer);

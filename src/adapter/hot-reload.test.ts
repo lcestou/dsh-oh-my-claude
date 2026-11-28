@@ -4,13 +4,27 @@
 // still dies must be handed to the new instance, and an event builder that throws must not escape
 // its timer (2026-11-12 23:43: the turn died, then dsh did).
 import { strict as assert } from "node:assert";
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ADAPTER_CURRENT, type Agent, type PluginContext } from "../dsh.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import { ADAPTER_CURRENT, asSessionId } from "../dsh.js";
+import type { PluginContext, SessionEvent } from "../dsh.js";
 import { EventHub } from "../events.js";
-import type { ClaudeProcess } from "../process.js";
+import type { ClaudeEvent, ClaudeProcess } from "../process.js";
+import {
+  fakeAgent,
+  fakeClaudeProcess,
+  fakePluginContext,
+  fakeSession,
+  fakeSpec,
+  notFaked,
+  recordingResponse,
+  userTurn,
+} from "../test-context.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
 import { contextActive } from "./reload.js";
@@ -21,31 +35,38 @@ import { registryKey } from "./types.js";
 const g = globalThis as typeof globalThis & {
   [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
 };
+
 const mounts = (g[ADAPTER_CURRENT] ??= new Map());
 
-const session = {
-  header: { version: 0 },
-  snapshotEvents: () => [
-    { type: "turn/start", data: { turn: 1 } },
-    { type: "step/start", data: { step: 1 } },
+const session = fakeSession({
+  snapshotEvents: (): Array<SessionEvent> => [
+    { type: "turn/start", seq: 0, time: 0, data: { turn: 1 } },
+    { type: "step/start", seq: 1, time: 0, data: { step: 1 } },
   ],
-  append: () => ({ seq: 1 }),
-};
+  append: (type) => ({ type, seq: 1, time: 0, data: {} }),
+});
+
 /** A fake plugin context with a cordis-like fiber, and a `sessions` that throws once the fiber is
- *  disposed, the way cordis answers an injected service on an inactive context. */
-const scoped = (uid: number) => {
-  const fiber = { uid: uid as number | null };
-  const ctx = {
-    on() {},
-    fiber,
-    get sessions() {
-      if (fiber.uid === null)
+ *  disposed, the way cordis answers an injected service on an inactive context. The step reads the
+ *  session's log through `sessions` and nothing else. */
+const scoped = (uid: number): { ctx: PluginContext; fiber: { uid: number | null } } => {
+  const fiber: { uid: number | null } = { uid };
+  const store = fakePluginContext({ sessions: { get: () => session } }).sessions;
+
+  // No agent is registered for the fakes' sessions, so the step mounts no `/compact` override.
+  const base = fakePluginContext({ on() {}, fiber, agents: { get: () => undefined } });
+
+  const ctx = Object.defineProperty(base, "sessions", {
+    get: () => {
+      if (fiber.uid === null) {
         throw new Error('cannot get required service "sessions" in inactive context');
-      return { get: () => session };
+      }
+
+      return store;
     },
-  };
-  // SAFETY: partial fake; the step reads the session's log through `sessions` and nothing else
-  return { ctx: ctx as unknown as PluginContext, fiber };
+  });
+
+  return { ctx, fiber };
 };
 
 {
@@ -67,15 +88,9 @@ const scoped = (uid: number) => {
   const b = new ClaudeCodeAdapter(two.ctx, Config({}));
   mounts.set(b.providerId, b);
   assert.equal(a.ctx, two.ctx, "disposed with a successor: the successor's");
-  assert.doesNotThrow(() => a.ctx.sessions.get(asId("s")), "so its services answer again");
+  assert.doesNotThrow(() => a.ctx.sessions.get(asSessionId("s")), "so its services answer again");
   assert.equal(b.ctx, two.ctx);
   mounts.delete(b.providerId);
-}
-
-/** dsh's session id brand, for the fakes' `get`. */
-function asId(id: string): Parameters<PluginContext["sessions"]["get"]>[0] {
-  // SAFETY: the fakes' `get` ignores its argument
-  return id as unknown as Parameters<PluginContext["sessions"]["get"]>[0];
 }
 
 // A profile config edit re-applies the plugin in the same fiber: the context is shared and its
@@ -95,25 +110,17 @@ function asId(id: string): Parameters<PluginContext["sessions"]["get"]>[0] {
 // A coalesced event whose builder throws is dropped; the hub keeps working.
 {
   let escaped = false;
+
   /** Records a throw that got out of the hub's timer, which in dsh's process ends the server. */
   const onUncaught = (): void => {
     escaped = true;
   };
+
   process.on("uncaughtException", onUncaught);
   const hub = new EventHub();
-  const written: string[] = [];
-  // SAFETY: partial ServerResponse; attach writes headers and text, publish reads writableNeedDrain,
-  // close ends it
-  const res = {
-    writeHead() {},
-    write(t: string) {
-      written.push(t);
-      return true;
-    },
-    on() {},
-    end() {},
-    writableNeedDrain: false,
-  } as unknown as Parameters<EventHub["attach"]>[0];
+  // Attach writes headers and text, publish reads writableNeedDrain, close ends it.
+  const { res, written } = recordingResponse();
+
   hub.attach(res, "s", []);
   hub.coalesce(
     "idle:s",
@@ -123,7 +130,7 @@ function asId(id: string): Parameters<PluginContext["sessions"]["get"]>[0] {
     1,
   );
   hub.coalesce("live-turn:s", () => ({ kind: "live-turn", session: "s", data: { n: 1 } }), 5);
-  await new Promise((r) => setTimeout(r, 30));
+  await sleep(30);
   assert.ok(
     written.some((t) => t.startsWith("event: live-turn")),
     "the throw stayed in its timer and the next event went out",
@@ -137,18 +144,21 @@ function asId(id: string): Parameters<PluginContext["sessions"]["get"]>[0] {
 /** A sleeping child standing in for a keeper's Claude, with a promise that settles on its exit. */
 const fakeClaude = () => {
   const child: ChildProcess = spawn("sleep", ["60"], { stdio: "ignore" });
-  const exited = new Promise<boolean>((r) => child.once("exit", () => r(true)));
+  const exited = once(child, "exit").then(() => true);
+
   return { child, exited };
 };
+
 /** Settles true when `exited` does within `ms`, else false. */
 const exitsWithin = (exited: Promise<boolean>, ms: number) =>
-  Promise.race([exited, new Promise<boolean>((r) => setTimeout(() => r(false), ms))]);
+  Promise.race([exited, sleep(ms).then(() => false)]);
 
 // Adoption after a hot reload leaves the keeper of a registered process alone, and still retires
 // a genuinely older keeper behind one it adopts itself.
 {
   const adapter = new ClaudeCodeAdapter(scoped(3).ctx, Config({}));
   adapter.stateDir = mkdtempSync(join(tmpdir(), "omc-hot-reload-"));
+
   const keeper = (name: string, sessionId: string, claudePid: number, startedAt: number) => {
     const dir = join(adapter.stateDir, "keepers", name);
     mkdirSync(dir, { recursive: true });
@@ -168,15 +178,17 @@ const exitsWithin = (exited: Promise<boolean>, ms: number) =>
         procSpec: { cwd: "/tmp", effort: null, mode: "default", sessionId, temporary: false },
       }),
     );
+
     return dir;
   };
+
   const live = fakeClaude();
   const fresh = fakeClaude();
   const stale = fakeClaude();
   // The previous instance's process for s-live, mid-turn, in the registry it shares with this one.
-  const running = { alive: true, busy: true, relays: new Map(), lastUsed: Date.now(), kill() {} };
-  // SAFETY: partial fake; adoption only asks the registry whether the key is there
-  adapter.processes.set(registryKey("claude-code", "s-live"), running as unknown as ClaudeProcess);
+  // Adoption only asks the registry whether the key is there.
+  const running = fakeClaudeProcess({ busy: true, lastUsed: Date.now(), kill() {} });
+  adapter.processes.set(registryKey("claude-code", "s-live"), running);
   const liveDir = keeper("1111111111111111-a", "s-live", live.child.pid ?? -1, Date.now() - 5000);
   keeper("2222222222222222-b", "s-dup", fresh.child.pid ?? -1, Date.now());
   const staleDir = keeper("2222222222222222-a", "s-dup", stale.child.pid ?? -1, Date.now() - 9000);
@@ -189,7 +201,7 @@ const exitsWithin = (exited: Promise<boolean>, ms: number) =>
   assert.ok(existsSync(liveDir), "and its directory");
   assert.equal(
     adapter.processes.get(registryKey("claude-code", "s-live")),
-    running as unknown,
+    running,
     "and the registered process stays the one in use",
   );
   assert.equal(await exitsWithin(stale.exited, 2000), true, "an older duplicate is still retired");
@@ -197,7 +209,11 @@ const exitsWithin = (exited: Promise<boolean>, ms: number) =>
   assert.equal(await exitsWithin(fresh.exited, 300), false, "behind the one this pass adopted");
   const log = readFileSync(join(adapter.stateDir, "resume.log"), "utf8");
   assert.match(log, /kept keeper 1111111111111111-a for s-live: its process outlived a hot reload/);
-  for (const c of [live, fresh, stale]) c.child.kill("SIGKILL");
+
+  for (const c of [live, fresh, stale]) {
+    c.child.kill("SIGKILL");
+  }
+
   adapter.processes.get(registryKey("claude-code", "s-dup"))?.kill();
   adapter.processes.delete(registryKey("claude-code", "s-live"));
   adapter.processes.delete(registryKey("claude-code", "s-dup"));
@@ -212,7 +228,13 @@ const exitsWithin = (exited: Promise<boolean>, ms: number) =>
   const four = scoped(4);
   const adapter = new ClaudeCodeAdapter(four.ctx, Config({}));
   adapter.stateDir = mkdtempSync(join(tmpdir(), "omc-second-dsh-"));
-  const keeper = (name: string, sessionId: string, claudePid: number, holder?: object) => {
+
+  const keeper = (
+    name: string,
+    sessionId: string,
+    claudePid: number,
+    holder?: { pid: number; cmdline?: string },
+  ) => {
     const dir = join(adapter.stateDir, "keepers", name);
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -230,32 +252,46 @@ const exitsWithin = (exited: Promise<boolean>, ms: number) =>
         procSpec: { cwd: "/tmp", effort: null, mode: "default", sessionId, temporary: false },
       }),
     );
-    if (holder) writeFileSync(join(dir, "holder.json"), JSON.stringify(holder));
+
+    if (holder) {
+      writeFileSync(join(dir, "holder.json"), JSON.stringify(holder));
+    }
+
     return dir;
   };
+
   // The server that holds the keeper: another live process, with the command line /proc shows.
   const server = fakeClaude();
   const serverPid = server.child.pid ?? -1;
-  await new Promise((r) => setTimeout(r, 50));
+  await sleep(50);
   let serverCmd = "";
+
   try {
     serverCmd = readFileSync(`/proc/${serverPid}/cmdline`, "utf8");
-  } catch {}
+  } catch {
+    // No /proc (not Linux): the reused-pid case below needs the command line and is skipped.
+  }
+
   const held = fakeClaude();
   const gone = fakeClaude();
   const reused = fakeClaude();
+
   const heldDir = keeper("3333333333333333-a", "s-held", held.child.pid ?? -1, {
     pid: serverPid,
     cmdline: serverCmd,
   });
+
   // A holder that has exited: a restart, the case adoption exists for.
   keeper("4444444444444444-a", "s-gone", gone.child.pid ?? -1, { pid: 2 ** 22 + 7 });
+
   // A holder pid now running something else, which the command line gives away.
-  if (serverCmd)
+  if (serverCmd) {
     keeper("5555555555555555-a", "s-reused", reused.child.pid ?? -1, {
       pid: serverPid,
       cmdline: "node\0/usr/local/bin/dsh\0",
     });
+  }
+
   const left = await adapter.adoptKeepers();
   assert.deepEqual([...left], [heldDir], "the pass reports the keeper it left");
   assert.equal(
@@ -270,11 +306,14 @@ const exitsWithin = (exited: Promise<boolean>, ms: number) =>
     adapter.processes.has(registryKey("claude-code", "s-gone")),
     "a keeper whose holder exited is adopted",
   );
-  if (serverCmd)
+
+  if (serverCmd) {
     assert.ok(
       adapter.processes.has(registryKey("claude-code", "s-reused")),
       "and so is one whose holder pid was reused",
     );
+  }
+
   const log = readFileSync(join(adapter.stateDir, "resume.log"), "utf8");
   assert.match(
     log,
@@ -292,94 +331,112 @@ const exitsWithin = (exited: Promise<boolean>, ms: number) =>
   assert.ok(!adapter.foreignSessions.has("s-held"), "and its boot nudge is this instance's");
   // The automatic retry stops with the scope.
   four.fiber.uid = null;
-  for (const c of [held, gone, reused]) c.child.kill("SIGKILL");
+
+  for (const c of [held, gone, reused]) {
+    c.child.kill("SIGKILL");
+  }
+
   for (const s of ["s-held", "s-gone", "s-reused"]) {
     adapter.processes.get(registryKey("claude-code", s))?.kill();
     adapter.processes.delete(registryKey("claude-code", s));
   }
+
   rmSync(adapter.stateDir, { recursive: true, force: true });
 }
 
-/** A fake process that streams one text delta and then, on `die()`, reads as exited. */
+/** A fake process that streams one text delta and then, on `die()`, reads as exited. `killed()`
+ *  counts the kills it took. */
 const dyingProcess = () => {
   let finish: (v: null) => void = () => {};
-  const frames: unknown[] = [
+  let alive = true;
+  let killed = 0;
+
+  const frames: Array<ClaudeEvent> = [
     {
       type: "stream_event",
-      event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      event: { type: "content_block_start", index: 0, content_block: { type: "text" } },
     },
     {
       type: "stream_event",
       event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "hi" } },
     },
   ];
-  const proc = {
-    alive: true,
+
+  const proc = fakeClaudeProcess({
+    get alive() {
+      return alive;
+    },
     busy: false,
     parked: undefined,
     steerPending: false,
     forwarded: 0,
     interruptOwed: false,
     spec: { child: "node" },
-    relays: new Map(),
-    sent: new Set(),
-    steers: new Map(),
-    queue: { lines: [] },
-    queuedIndexes: [],
-    idleKilled: false,
     exitCode: -1,
-    stderr: "",
-    stray: "",
     staleResults: 0,
-    killed: 0,
     countStaleResults: () => 0,
     write: () => true,
     nextEvent: async () => {
-      if (frames.length > 0) return frames.shift();
-      if (!proc.alive) return null;
-      return new Promise<null>((r) => (finish = r));
+      const frame = frames.shift();
+
+      if (frame) {
+        return frame;
+      }
+
+      if (!alive) {
+        return null;
+      }
+
+      return new Promise<null>((r) => {
+        finish = r;
+      });
     },
     kill() {
-      proc.killed++;
+      killed++;
     },
-  };
+  });
+
   const die = () => {
-    proc.alive = false;
+    alive = false;
     finish(null);
   };
-  return { proc, die };
+
+  return { proc, die, killed: () => killed };
 };
 
 /** Run one step on `a` with the fake process, let `between` happen once it is streaming, then end
  *  the process and drain the step. Returns the last chunk dsh would see. */
 const runStep = async (a: ClaudeCodeAdapter, sessionId: string, between: () => void) => {
-  const { proc, die } = dyingProcess();
-  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
-  // SAFETY: the fakes below stand in for a spawned process and its side channels
-  const loose = a as unknown as Record<string, unknown>;
-  loose.acquire = async () => ({ prep, proc });
-  loose.reconnectIfStale = async () => {};
-  loose.watchTranscript = async () => {};
-  loose.pumpMirror = async () => {};
-  const options = {
-    sessionId,
-    model: "m",
-    messages: [{ role: "user", content: [{ type: "text", text: "go" }] }],
-    signal: new AbortController().signal,
-  };
-  // SAFETY: the options above are the fields a step reads
-  const gen = a.stream(options as unknown as Parameters<typeof a.stream>[0]);
+  const dying = dyingProcess();
+  const { proc, die } = dying;
+  const prep = { input: "go", spec: fakeSpec({ model: "m" }), cwd: "/tmp", args: [] };
+  // The fakes below stand in for a spawned process and its side channels.
+  a.acquire = async () => ({ prep, proc });
+  a.reconnectIfStale = async () => {};
+
+  a.watchTranscript = async () => {};
+
+  a.pumpMirror = async () => {};
+
+  const gen = a.stream(userTurn(sessionId));
   await gen.next();
   between();
   die();
   let last: unknown;
-  for await (const chunk of gen) last = chunk;
-  return { last, proc };
+
+  for await (const chunk of gen) {
+    last = chunk;
+  }
+
+  return { last, killed: dying.killed };
 };
+
 /** The session ids busy.json under `dir` lists; empty when the file is missing or unreadable. */
-const busyIn = (dir: string): string[] => {
+const busyIn = (dir: string): Array<string> => {
   try {
-    return JSON.parse(readFileSync(join(dir, "busy.json"), "utf8"));
+    const listed = JSON.parse(readFileSync(join(dir, "busy.json"), "utf8"));
+
+    return Array.isArray(listed) ? listed.filter((id): id is string => typeof id === "string") : [];
   } catch {
     return [];
   }
@@ -392,11 +449,11 @@ const busyIn = (dir: string): string[] => {
   const a = new ClaudeCodeAdapter(one.ctx, Config({ resume: true, toolsInline: false }));
   a.stateDir = mkdtempSync(join(tmpdir(), "omc-hot-reload-"));
   mounts.set(a.providerId, a);
-  const handed: string[] = [];
+  const handed: Array<string> = [];
   let b: ClaudeCodeAdapter | undefined;
-  // SAFETY: the resume's own timing, shortened for the suite
-  (a as unknown as Record<string, unknown>).resumeAfterReload = (id: string) =>
-    ClaudeCodeAdapter.prototype.resumeAfterReload.call(a, id, 10, 100);
+  // The resume's own timing, shortened for the suite.
+  a.resumeAfterReload = (id) => ClaudeCodeAdapter.prototype.resumeAfterReload.call(a, id, 10, 100);
+
   const { last } = await runStep(a, "s-orphan", () => {
     one.fiber.uid = null; // the reload disposes the old scope...
     b = new ClaudeCodeAdapter(scoped(6).ctx, Config({}));
@@ -404,17 +461,29 @@ const busyIn = (dir: string): string[] => {
     b.takeOverReloadedTurn = async (id: string) => {
       handed.push(id);
     };
+
     mounts.set(b.providerId, b); // ...and mounts the next instance
   });
+
   assert.match(JSON.stringify(last), /"kind":"error"/, "the step itself still fails");
-  for (let i = 0; i < 50 && handed.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+
+  for (let i = 0; i < 50 && handed.length === 0; i++) {
+    await sleep(20);
+  }
+
   assert.deepEqual(handed, ["s-orphan"], "the new instance takes the session over");
+
   // The mark is a queued file write too; wait for it rather than read it the same tick.
-  for (let i = 0; i < 100 && busyIn(a.stateDir).length === 0; i++)
-    await new Promise((r) => setTimeout(r, 20));
+  for (let i = 0; i < 100 && busyIn(a.stateDir).length === 0; i++) {
+    await sleep(20);
+  }
+
   assert.deepEqual(busyIn(a.stateDir), ["s-orphan"], "the mark stays for it, or for the next boot");
   rmSync(a.stateDir, { recursive: true, force: true });
-  if (b) mounts.delete(b.providerId);
+
+  if (b) {
+    mounts.delete(b.providerId);
+  }
 }
 
 // The same death on a live scope is an ordinary failure: the mark goes and nothing resumes.
@@ -426,15 +495,19 @@ const busyIn = (dir: string): string[] => {
   c.resumeAfterReload = async () => {
     resumed++;
   };
-  const { proc } = await runStep(c, "s-plain", () => {});
-  await new Promise((r) => setTimeout(r, 50));
+
+  const { killed } = await runStep(c, "s-plain", () => {});
+  await sleep(50);
   assert.equal(resumed, 0, "no reload, no resume");
+
   // The clear is a file write queued behind the others; under the parallel suite it can land past
   // a fixed wait, so wait for it, up to two seconds.
-  for (let i = 0; i < 100 && busyIn(c.stateDir).length > 0; i++)
-    await new Promise((r) => setTimeout(r, 20));
+  for (let i = 0; i < 100 && busyIn(c.stateDir).length > 0; i++) {
+    await sleep(20);
+  }
+
   assert.deepEqual(busyIn(c.stateDir), [], "the busy mark is cleared");
-  assert.equal(proc.killed, 1, "and the dead process is cleaned up as before");
+  assert.equal(killed(), 1, "and the dead process is cleaned up as before");
   rmSync(c.stateDir, { recursive: true, force: true });
   mounts.delete(c.providerId);
 }
@@ -447,13 +520,15 @@ const busyIn = (dir: string): string[] => {
   const woken: Array<[string, boolean, string | undefined]> = [];
   b.wake = async (id: string, proc: ClaudeProcess | undefined, text?: string) => {
     woken.push([id, proc !== undefined, text]);
+
     return true;
   };
-  const put = (id: string, p: object) =>
-    // SAFETY: partial fake; the takeover reads alive, busy and hasTurnOutput
-    b.processes.set(registryKey("claude-code", id), p as unknown as ClaudeProcess);
-  put("t-busy", { alive: true, busy: true, hasTurnOutput: () => true });
-  put("t-live", { alive: true, busy: false, hasTurnOutput: () => true });
+
+  // The takeover reads alive, busy and hasTurnOutput.
+  const put = (id: string, p: ClaudeProcess) => b.processes.set(registryKey("claude-code", id), p);
+
+  put("t-busy", fakeClaudeProcess({ busy: true, hasTurnOutput: () => true }));
+  put("t-live", fakeClaudeProcess({ busy: false, hasTurnOutput: () => true }));
   await b.takeOverReloadedTurn("t-busy");
   await b.takeOverReloadedTurn("t-gone");
   await b.takeOverReloadedTurn("t-live");
@@ -471,37 +546,55 @@ const busyIn = (dir: string): string[] => {
 // a scope: 'command "compact" is already registered'), and the registration that stays must mark
 // the typed `/compact` on the live instance, where the next turn's compaction check reads it.
 {
+  type Command = Parameters<NonNullable<PluginContext["commands"]>["register"]>[0];
+
   const taken = new Set<string>();
-  const handlers: Array<(input: object) => Promise<{ kind: string }>> = [];
+  const handlers: Array<Command["handler"]> = [];
   // Every try counts: the override catches dsh's "already registered" throw and only logs it, so a
   // second attempt would leave one handler behind and pass a count of handlers alone.
   let attempts = 0;
-  const child = {
-    effect: (fn: () => void) => fn(),
+
+  const child = fakePluginContext({
+    effect: (fn) => {
+      fn();
+    },
     commands: {
-      register: (d: { name: string; handler: (input: object) => Promise<{ kind: string }> }) => {
+      register: (d) => {
         attempts++;
-        if (taken.has(d.name)) throw new Error(`command "${d.name}" is already registered`);
+
+        if (taken.has(d.name)) {
+          throw new Error(`command "${d.name}" is already registered`);
+        }
+
         taken.add(d.name);
         handlers.push(d.handler);
+
         return () => {};
       },
+      find: notFaked("commands.find"),
     },
-  };
-  const agent = {
-    id: "reloaded",
-    followup: () => 0,
-    ctx: { plugin: (def: { apply: (c: typeof child) => void }) => def.apply(child) },
-  };
+  });
+
+  // The fake carries only what the override reads: ctx.plugin and followup.
+  const agent = fakeAgent({
+    id: asSessionId("reloaded"),
+    followup: () => {},
+    ctx: fakePluginContext({
+      plugin: (def) => {
+        def.apply(child);
+
+        return {};
+      },
+    }),
+  });
+
   const old = new ClaudeCodeAdapter(scoped(20).ctx, Config({}));
   mounts.set(old.providerId, old);
-  // SAFETY: the fake carries only what the override reads: ctx.plugin and followup
-  old.mountCompactOverride(agent as unknown as Agent);
+  old.mountCompactOverride(agent);
   const next = new ClaudeCodeAdapter(scoped(21).ctx, Config({}));
   mounts.set(next.providerId, next);
   assert.doesNotThrow(
-    // SAFETY: as above
-    () => next.mountCompactOverride(agent as unknown as Agent),
+    () => next.mountCompactOverride(agent),
     "the new instance finds the agent already carrying it",
   );
   assert.equal(handlers.length, 1, "one registration, not two");
@@ -518,4 +611,5 @@ const busyIn = (dir: string): string[] => {
 }
 
 console.log("hot reload ok");
+
 process.exit(0); // adopted keepers' attach retries and the fakes' reads would hold the run open

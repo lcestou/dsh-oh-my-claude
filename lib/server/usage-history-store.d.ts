@@ -1,4 +1,4 @@
-import { type HistoryFile, type HistoryWindow } from "./usage-history.js";
+import type { HistoryFile, HistoryWindow } from "./usage-history.js";
 /** The history file, or an empty one when the text is not JSON or not this shape (a torn write, an
  *  older build's, a hand edit). A malformed row is dropped alone; the rest of its login survives. */
 export declare function parseUsageHistory(text: string): HistoryFile;
@@ -11,7 +11,7 @@ export declare function parseUsageHistory(text: string): HistoryFile;
  */
 export declare function createUsageHistory(read: () => Promise<string>, write: (value: HistoryFile) => Promise<void>): {
     /** Folds one fresh reply into `login`'s rows; writes only when a row changed. */
-    record: (login: string, windows: readonly HistoryWindow[], fetchedAt: number) => Promise<void>;
+    record: (login: string, windows: ReadonlyArray<HistoryWindow>, fetchedAt: number) => Promise<void>;
     /** `login`'s ended windows as of `now`; `{}` for a login never recorded. */
     view: (login: string, now: number) => Promise<import("./usage-history.js").UsageHistory>;
 };

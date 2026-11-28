@@ -5,14 +5,33 @@ import {
   formatToolCall,
   formatToolResult,
   HEADER_MARK,
-  type LiveTask,
   applyTaskPatch,
   ENDED_TASKS_KEPT,
   HOOK_OUTPUT_LIMIT,
-  type HookRun,
 } from "./translator.js";
+import type { LiveTask, HookRun } from "./translator.js";
 import type { PluginLoadError } from "./plugins.js";
 import type { FallbackRecord } from "./translator.js";
+import type { ClaudeContentBlock, ClaudeStreamPartial } from "./process.js";
+import type { ContentBlock, StreamChunk } from "@deepseek-ai/dsh-llm";
+
+/** The block the last chunk closes, or undefined when the last chunk closes none. */
+const lastBlock = (chunks: Array<StreamChunk>): ContentBlock | undefined => {
+  const last = chunks.at(-1);
+
+  return last?.type === "block-end" ? last.block : undefined;
+};
+
+/** The text a block carries, or undefined for none or a kind that carries no text. */
+const blockText = (block: ContentBlock | undefined): string | undefined =>
+  block !== undefined && "text" in block ? block.text : undefined;
+
+/** The text the last chunk streams, or undefined when it is not a text or reasoning delta. */
+const deltaText = (chunks: Array<StreamChunk>): string | undefined => {
+  const last = chunks.at(-1);
+
+  return last?.type === "text-delta" || last?.type === "reasoning-delta" ? last.text : undefined;
+};
 
 // Every header we write carries the mark right behind its glyph, and nothing else does: the client
 // requires it before it claims a paragraph as a tool header, so prose that opens with one of these
@@ -46,6 +65,7 @@ assert.equal(
     "edit",
     JSON.stringify({ file_path: "x.ts", old_string: "a\nb", new_string: "c" }),
   );
+
   assert.equal(md, "✎\u2060 Edit `x.ts`\n```diff\n- a\n- b\n+ c\n```");
 }
 
@@ -76,6 +96,7 @@ assert.equal(
     "task",
     JSON.stringify({ prompt: Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n") }),
   );
+
   assert.ok(md.includes("…"), md);
   assert.ok(md.length < 500, md);
 }
@@ -109,6 +130,7 @@ assert.equal(
   formatToolResult("read", "/a/b.py", "print(1)", false),
   "▤\u2060 Read · Result\n```python\nprint(1)\n```",
 );
+
 assert.equal(formatToolResult("bash", "", "done", false), "❯\u2060 Bash · Result\n```\ndone\n```");
 
 // error results are plain-fenced and labelled error
@@ -151,6 +173,7 @@ assert.equal(
       ],
     }),
   );
+
   assert.equal(
     md,
     "\u2611\u2060 Todo write 3 items\n```markdown\n- [x] wire icons\n- [~] add tests\n- [ ] open PR\n```",
@@ -171,6 +194,7 @@ assert.equal(
   formatToolCall("exit_plan_mode", JSON.stringify({ plan: "1. do it" })),
   "\u2630\u2060 Exit plan mode\n```markdown\n1. do it\n```",
 );
+
 assert.equal(formatToolCall("enter_plan_mode", "{}"), "\u2630\u2060 Enter plan mode");
 
 // slash_command, bash_output, kill_shell: one-liners naming what they touched
@@ -178,19 +202,23 @@ assert.equal(
   formatToolCall("slash_command", JSON.stringify({ command: "/unslop" })),
   "\u2318\u2060 Slash command `/unslop`",
 );
+
 assert.equal(
   formatToolCall("bash_output", JSON.stringify({ bash_id: "b12", filter: "error" })),
   "\u276f\u2060 Bash output `b12` matching `error`",
 );
+
 assert.equal(
   formatToolCall("kill_shell", JSON.stringify({ shell_id: "b12" })),
   "\u276f\u2060 Kill shell `b12`",
 );
+
 // the CLI names the handle `bash_id` on one tool and `shell_id` on the other; both read either
 assert.equal(
   formatToolCall("bash_output", JSON.stringify({ shell_id: "b13" })),
   "\u276f\u2060 Bash output `b13`",
 );
+
 assert.equal(
   formatToolCall("kill_shell", JSON.stringify({ bash_id: "b13" })),
   "\u276f\u2060 Kill shell `b13`",
@@ -213,14 +241,16 @@ assert.equal(
 
 // api_retry with statusNote: 5xx gets the note appended, 429 does not; seen tracks which codes were asked
 {
-  const seen: number[] = [];
-  // SAFETY: Translator constructor type lacks statusNote in the exported declaration but the field is set
+  const seen: Array<number> = [];
+
   const t = new Translator({
     statusNote: (code) => {
       seen.push(code);
+
       return " · Anthropic reports Degraded performance";
     },
-  }) as any;
+  });
+
   const degraded = t.translate({
     type: "system",
     subtype: "api_retry",
@@ -229,12 +259,14 @@ assert.equal(
     retry_delay_ms: 2000,
     error: { status: 529, message: "overloaded" },
   });
-  assert.equal(degraded.at(-1).block.type, "reasoning");
+
+  assert.equal(lastBlock(degraded)?.type, "reasoning");
   assert.equal(
-    degraded.at(-1).block.text,
+    blockText(lastBlock(degraded)),
     "⚠ overloaded · Retrying in 2s · attempt 1/3 · Anthropic reports Degraded performance",
   );
   assert.deepEqual(seen, [529]);
+
   const rateLimited = t.translate({
     type: "system",
     subtype: "api_retry",
@@ -243,7 +275,8 @@ assert.equal(
     retry_delay_ms: 2000,
     error: { status: 429, message: "rate limit" },
   });
-  assert.equal(rateLimited.at(-1).block.text, "⚠ rate limit · Retrying in 2s · attempt 1/3");
+
+  assert.equal(blockText(lastBlock(rateLimited)), "⚠ rate limit · Retrying in 2s · attempt 1/3");
   assert.deepEqual(seen, [529]);
 }
 
@@ -253,15 +286,16 @@ console.log("translator format ok");
 // init (no key) clears with []; a commands_changed refresh passes undefined so stored errors are
 // left alone.
 {
-  // SAFETY: the test reaches onInit, a private field, to observe what translate forwards
-  const t = new Translator() as unknown as {
-    onInit?: (c: string[], tools: string[], pe?: PluginLoadError[]) => void;
-    translate: (e: unknown) => void;
-  };
-  let seen: { names: string[]; tools: string[]; pe: PluginLoadError[] | undefined } | undefined;
+  const t = new Translator();
+
+  let seen:
+    | { names: Array<string>; tools: Array<string>; pe: Array<PluginLoadError> | undefined }
+    | undefined;
+
   t.onInit = (names, tools, pe) => {
     seen = { names, tools, pe };
   };
+
   t.translate({
     type: "system",
     subtype: "init",
@@ -285,17 +319,16 @@ console.log("translator format ok");
     "commands_changed forwards undefined, leaving errors untouched",
   );
 }
+
 console.log("translator plugin-errors ok");
+
 // model_fallback / refusal / consent frames: each draws its reasoning line and fires onModel once
 // with the fields the notice and picker read. Synthetic frames built from the 2.1.277 schemas
 // (byte search, notes/design/2026-09-19-model-fallback.md); the model_fallback frame is the shape
 // the Haiku probe produced live.
 {
-  // SAFETY: the test reaches onModel, a private field, to observe what translate forwards
-  const t = new Translator() as unknown as {
-    onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
-    translate: (e: unknown) => Array<{ block?: { type?: string; text?: string } }>;
-  };
+  const t = new Translator();
+
   const seen: Array<Omit<FallbackRecord, "sessionId" | "at">> = [];
   t.onModel = (rec) => {
     seen.push(rec);
@@ -310,9 +343,10 @@ console.log("translator plugin-errors ok");
     fallback_model: "Opus 4.8",
     api_refusal_category: "cyber",
   });
-  assert.equal(refusal.at(-1)?.block?.type, "reasoning", "refusal line is a reasoning block");
+
+  assert.equal(lastBlock(refusal)?.type, "reasoning", "refusal line is a reasoning block");
   assert.equal(
-    refusal.at(-1)?.block?.text,
+    blockText(lastBlock(refusal)),
     "⚠ Model switched: Fable 5.1 → Opus 4.8 (cyber safeguard)",
     "sticky refusal line names the category",
   );
@@ -331,8 +365,9 @@ console.log("translator plugin-errors ok");
     original_model: "Fable 5.1",
     api_refusal_category: "cyber",
   });
+
   assert.equal(
-    noFallback.at(-1)?.block?.text,
+    blockText(lastBlock(noFallback)),
     "⛔ Request blocked on Fable 5.1 (cyber safeguard)",
     "no-fallback line blocks with the category",
   );
@@ -351,8 +386,9 @@ console.log("translator plugin-errors ok");
     persisted_as_default: true,
     content: "Switched to Opus 5 — now your default model",
   });
+
   assert.equal(
-    consent.at(-1)?.block?.text,
+    blockText(lastBlock(consent)),
     "⚠ Switched to Opus 5 — now your default model",
     "consent line uses the CLI content",
   );
@@ -371,28 +407,32 @@ console.log("translator plugin-errors ok");
     fallback_model: "claude-haiku-4-5-20251001",
     content: "Switched to Haiku 4.5 because claude-nonexistent-9-9 is not available",
   });
+
   assert.equal(
-    primary.at(-1)?.block?.text,
+    blockText(lastBlock(primary)),
     "⚠ Switched to Haiku 4.5 because claude-nonexistent-9-9 is not available",
     "model_fallback line uses the CLI content",
   );
   assert.equal(seen.at(-1)?.kind, "model_fallback", "onModel kind is model_fallback");
 }
+
 console.log("translator model-fallback ok");
+
 // init.plugin_warnings: the init frame's plugin_warnings reach onInit as its fourth argument,
 // alongside plugin_errors; a clean init clears both with []; a commands_changed refresh passes
 // undefined so stored warnings are left alone. reload carries no warning_count, so warnings refresh
 // only from a fresh init frame.
 {
-  // SAFETY: the test reaches onInit, a private field, to observe what translate forwards
-  const t = new Translator() as unknown as {
-    onInit?: (c: string[], tools: string[], pe?: PluginLoadError[], pw?: PluginLoadError[]) => void;
-    translate: (e: unknown) => void;
-  };
-  let seen: { pe: PluginLoadError[] | undefined; pw: PluginLoadError[] | undefined } | undefined;
+  const t = new Translator();
+
+  let seen:
+    | { pe: Array<PluginLoadError> | undefined; pw: Array<PluginLoadError> | undefined }
+    | undefined;
+
   t.onInit = (_names, _tools, pe, pw) => {
     seen = { pe, pw };
   };
+
   t.translate({
     type: "system",
     subtype: "init",
@@ -424,6 +464,7 @@ console.log("translator model-fallback ok");
     "commands_changed forwards undefined, leaving warnings untouched",
   );
 }
+
 console.log("translator plugin-warnings ok");
 
 // The line's mode, the way the CLI's own reducer sets it: requesting from the CLI's own status
@@ -431,23 +472,31 @@ console.log("translator plugin-warnings ok");
 // message_stop; message_start sets nothing. `tool` drops on the echo that answers the last call,
 // and that echo is a frame (the stall clock restarts at the tool's end).
 {
-  const modes: string[] = [];
+  const modes: Array<string> = [];
   const tools: Array<{ tool: boolean; frame: boolean }> = [];
-  // SAFETY: the test feeds hand-built frames, the way the blocks above do
+
   const t = new Translator({
     onProgress: (p) => {
-      if (p.mode) modes.push(p.mode);
-      if (p.tool !== undefined) tools.push({ tool: p.tool, frame: p.frame === true });
+      if (p.mode) {
+        modes.push(p.mode);
+      }
+
+      if (p.tool !== undefined) {
+        tools.push({ tool: p.tool, frame: p.frame === true });
+      }
     },
-  }) as any;
-  const ev = (event: object, parent?: string) =>
+  });
+
+  const ev = (event: ClaudeStreamPartial, parent?: string) =>
     t.translate({ type: "stream_event", event, parent_tool_use_id: parent ?? null });
+
   const echo = (id: string, parent?: string) =>
     t.translate({
       type: "user",
       message: { content: [{ type: "tool_result", tool_use_id: id }] },
       parent_tool_use_id: parent ?? null,
     });
+
   t.translate({ type: "system", subtype: "status", status: "requesting" });
   ev({ type: "message_start", message: { id: "m1" } });
   ev({ type: "content_block_start", index: 0, content_block: { type: "thinking" } });
@@ -522,16 +571,11 @@ console.log("translator plugin-warnings ok");
 
 // init frame: an environment API key draws one reasoning line; the login draws nothing
 {
-  // SAFETY: the strict event union is bypassed the way the api_retry block above does it
-  const t = new Translator() as any;
+  const t = new Translator();
   const keyed = t.translate({ type: "system", subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" });
-  assert.equal(
-    keyed.at(-1)?.block?.type,
-    "reasoning",
-    "the key is announced on the reasoning lane",
-  );
+  assert.equal(lastBlock(keyed)?.type, "reasoning", "the key is announced on the reasoning lane");
   assert.ok(
-    String(keyed.at(-1)?.block?.text).includes("ANTHROPIC_API_KEY"),
+    String(blockText(lastBlock(keyed))).includes("ANTHROPIC_API_KEY"),
     "the line names the variable",
   );
   assert.deepEqual(t.translate({ type: "system", subtype: "init", apiKeySource: "none" }), []);
@@ -540,8 +584,7 @@ console.log("translator plugin-warnings ok");
     [],
     "an old CLI without the field",
   );
-  // SAFETY: as above
-  const noted = new Translator({ noteApiKey: () => false }) as any;
+  const noted = new Translator({ noteApiKey: () => false });
   assert.deepEqual(
     noted.translate({ type: "system", subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" }),
     [],
@@ -552,8 +595,7 @@ console.log("translator plugin-warnings ok");
 // task frames reach onTask: start inserts, updated carries the status, notification ends it
 {
   const seen: Array<[string, string]> = [];
-  // SAFETY: the strict event union is bypassed the way the api_retry block above does it
-  const t = new Translator({ onTask: (id, patch) => seen.push([id, patch.status]) }) as any;
+  const t = new Translator({ onTask: (id, patch) => seen.push([id, patch.status]) });
   t.translate({
     type: "system",
     subtype: "task_started",
@@ -582,8 +624,7 @@ console.log("translator plugin-warnings ok");
   // A background task outlives its turn: the next turn's translator has no block for it, and the
   // status still has to reach the list.
   const late: Array<[string, string]> = [];
-  // SAFETY: as above
-  const fresh = new Translator({ onTask: (id, patch) => late.push([id, patch.status]) }) as any;
+  const fresh = new Translator({ onTask: (id, patch) => late.push([id, patch.status]) });
   fresh.translate({
     type: "system",
     subtype: "task_updated",
@@ -646,11 +687,13 @@ console.log("translator plugin-warnings ok");
   );
   applyTaskPatch(tasks, "t2", { status: "completed" }, 10);
   assert.equal(tasks.size, 1, "a terminal status for an unknown task inserts nothing");
+
   // Past ENDED_TASKS_KEPT ended rows, the oldest ended one goes; running rows are never counted.
   for (let i = 0; i < ENDED_TASKS_KEPT; i++) {
     applyTaskPatch(tasks, `e${i}`, { description: `job ${i}`, status: "running" }, 20 + i);
     applyTaskPatch(tasks, `e${i}`, { status: "completed" }, 40 + i);
   }
+
   applyTaskPatch(tasks, "live", { description: "still going", status: "running" }, 99);
   assert.equal(tasks.has("t1"), false, "the oldest ended row went");
   assert.equal(tasks.has("e0"), true, "the newest ten ended rows stay");
@@ -660,9 +703,9 @@ console.log("translator plugin-warnings ok");
 // hook_response: every finished hook reaches onHookRun, clean ones included, with its output cut
 // to HOOK_OUTPUT_LIMIT; only a failed one also draws a line.
 {
-  const runs: HookRun[] = [];
-  // SAFETY: the strict event union is bypassed the way the api_retry block above does it
-  const t = new Translator({ onHookRun: (r) => runs.push(r) }) as any;
+  const runs: Array<HookRun> = [];
+  const t = new Translator({ onHookRun: (r) => runs.push(r) });
+
   const clean = t.translate({
     type: "system",
     subtype: "hook_response",
@@ -672,7 +715,9 @@ console.log("translator plugin-warnings ok");
     exit_code: 0,
     stdout: "CAVEMAN MODE ACTIVE",
   });
+
   assert.equal(clean.length, 0, "a clean hook draws nothing");
+
   const failed = t.translate({
     type: "system",
     subtype: "hook_response",
@@ -682,6 +727,7 @@ console.log("translator plugin-warnings ok");
     exit_code: 2,
     stderr: "x".repeat(HOOK_OUTPUT_LIMIT + 50),
   });
+
   assert.ok(failed.length > 0, "a failed hook draws its line");
   assert.deepEqual(
     runs.map((r) => [r.name, r.event, r.outcome, r.exitCode, r.output.length]),
@@ -699,14 +745,14 @@ console.log("translator plugin-warnings ok");
 
 // task_progress draws the CLI's per-step description once per change, beside the tool name
 {
-  // SAFETY: the strict event union is bypassed the way the api_retry block above does it
-  const t = new Translator() as any;
+  const t = new Translator();
   t.translate({
     type: "system",
     subtype: "task_started",
     task_id: "t3",
     description: "count lines",
   });
+
   const first = t.translate({
     type: "system",
     subtype: "task_progress",
@@ -714,10 +760,12 @@ console.log("translator plugin-warnings ok");
     last_tool_name: "Bash",
     description: "Running Count lines in a.ts",
   });
+
   assert.ok(
-    String(first.at(-1)?.text).includes("Bash\nRunning Count lines in a.ts"),
+    String(deltaText(first)).includes("Bash\nRunning Count lines in a.ts"),
     "tool and step on the first frame",
   );
+
   const same = t.translate({
     type: "system",
     subtype: "task_progress",
@@ -725,7 +773,9 @@ console.log("translator plugin-warnings ok");
     last_tool_name: "Bash",
     description: "Running Count lines in a.ts",
   });
+
   assert.deepEqual(same, [], "nothing changed, nothing drawn");
+
   const next = t.translate({
     type: "system",
     subtype: "task_progress",
@@ -733,7 +783,9 @@ console.log("translator plugin-warnings ok");
     last_tool_name: "Bash",
     description: "Running Count lines in b.ts",
   });
-  assert.equal(String(next.at(-1)?.text), "\nRunning Count lines in b.ts", "a new step alone");
+
+  assert.equal(String(deltaText(next)), "\nRunning Count lines in b.ts", "a new step alone");
+
   const summed = t.translate({
     type: "system",
     subtype: "task_progress",
@@ -742,11 +794,8 @@ console.log("translator plugin-warnings ok");
     description: "Counting b",
     summary: "Counting b",
   });
-  assert.equal(
-    String(summed.at(-1)?.text),
-    "\nCounting b",
-    "a summary equal to the step draws once",
-  );
+
+  assert.equal(String(deltaText(summed)), "\nCounting b", "a summary equal to the step draws once");
 }
 
 // A user frame whose content is a string is text the CLI wrote itself, not a tool result. The two
@@ -754,17 +803,22 @@ console.log("translator plugin-warnings ok");
 // "content.filter is not a function" and the turn was drawn as failed (#273).
 {
   const t = new Translator();
+
   const call = {
     type: "assistant" as const,
     message: { content: [{ type: "tool_use" as const, id: "tu1", name: "Read", input: {} }] },
   };
+
   Array.from(t.translate(call));
   assert.equal(t.callsOutstanding(), true);
+
   for (const content of [
     "This session is being continued from a previous conversation that ran out of context.",
     "<local-command-stdout>Compacted </local-command-stdout>",
-  ])
+  ]) {
     assert.deepEqual([...t.translate({ type: "user", message: { content } })], []);
+  }
+
   assert.equal(t.callsOutstanding(), true, "CLI text answers no call");
   const result = { type: "tool_result" as const, tool_use_id: "tu1", content: "file text" };
   const drawn = [...t.translate({ type: "user", message: { content: [result] } })];
@@ -775,25 +829,31 @@ console.log("translator plugin-warnings ok");
 // The test gate's block reason arrives as a synthetic user frame whose content is a plain string
 // (CLI 2.1.332, seen on a live run 2026-11-25), and must draw one reasoning line all the same.
 {
-  // SAFETY: translate takes the CLI's frame union; this literal is the user frame the CLI sends
-  const t = new Translator() as any;
+  const t = new Translator();
+
   const text =
     "Stop hook feedback:\n[test gate 1/3] The tests failed, so your turn did not end.\nCommand: x";
-  for (const content of [text, [{ type: "text", text }]]) {
+
+  const contents: Array<string | Array<ClaudeContentBlock>> = [text, [{ type: "text", text }]];
+
+  for (const content of contents) {
     const out = t.translate({
       type: "user",
       isSynthetic: true,
-      message: { role: "user", content },
+      message: { content },
     });
-    assert.equal(out.at(-1)?.block?.type, "reasoning", `gate line drawn for ${typeof content}`);
-    assert.match(out.at(-1)?.block?.text ?? "", /1\/3/);
+
+    assert.equal(lastBlock(out)?.type, "reasoning", `gate line drawn for ${typeof content}`);
+    assert.match(blockText(lastBlock(out)) ?? "", /1\/3/);
   }
+
   // Other synthetic string text still draws nothing.
   const other = t.translate({
     type: "user",
     isSynthetic: true,
-    message: { role: "user", content: "Stop hook feedback:\nsomething else" },
+    message: { content: "Stop hook feedback:\nsomething else" },
   });
+
   assert.equal(other.length, 0);
   console.log("translator test gate line ok");
 }

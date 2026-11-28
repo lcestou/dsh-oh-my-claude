@@ -66,11 +66,12 @@ import {
       "junk",
     ],
     totalTokens: 150,
-    maxTokens: 200000,
+    maxTokens: 200_000,
     percentage: 0.1,
     model: "claude-opus-4-8",
     autocompactSource: "threshold",
   });
+
   // `kind` is what the panel classifies a row on — the CLI's description says never to classify on
   // the English name — so a kind the plugin does not know is dropped rather than shown as a row
   // whose tokens count as conversation.
@@ -84,7 +85,7 @@ import {
     [{ name: "later", tokens: 1, deferred: false }],
   );
   assert.equal(out.totalTokens, 150);
-  assert.equal(out.maxTokens, 200000);
+  assert.equal(out.maxTokens, 200_000);
   assert.equal(out.percentage, 0.1);
   assert.equal(out.model, "claude-opus-4-8");
   // The CLI names it autocompactSource; the panel reads out.autocompact. A rename breaks the badge.
@@ -95,11 +96,14 @@ import {
   // the whole session again. A figure below the last one is a total that started over.
   const running = [12.94, 16.15, 16.95, 21.3];
   let soFar = 0;
+
   const perTurn = running.map((total) => {
     const share = turnDelta(total, soFar);
     soFar = total;
+
     return share;
   });
+
   assert.deepEqual(
     perTurn.map((n) => Number(n.toFixed(2))),
     [12.94, 3.21, 0.8, 4.35],
@@ -107,21 +111,24 @@ import {
   assert.equal(Number(perTurn.reduce((a, b) => a + b, 0).toFixed(2)), 21.3);
   assert.equal(turnDelta(0.5, 40), 0.5, "a total that restarted is already this turn's own");
   assert.equal(turnDelta(-1, 0), 0, "no negative share from a figure the CLI should never send");
+
   // What a resumed process counts from: the transcript's last cost-state row. The figures are the
   // ones a real session showed on 2026-10-07, where the next result read 580.71 and was stored as
   // one turn's cost.
   const state = (cost: unknown, api: unknown) =>
     JSON.stringify({ type: "cost-state", totalCostUSD: cost, totalAPIDuration: api });
+
   const text = [
     JSON.stringify({ type: "user", message: { content: "hi" } }),
-    state(330.54, 15002317),
+    state(330.54, 15_002_317),
     JSON.stringify({ type: "assistant" }),
-    state(569.46, 26371690),
+    state(569.46, 26_371_690),
     "",
   ].join("\n");
+
   const from = costStateOf(text);
-  assert.deepEqual(from, { costUsd: 569.46, apiMs: 26371690 }, "the last row wins");
-  assert.equal(turnDelta(580.71, from!.costUsd).toFixed(2), "11.25", "the turn's own share");
+  assert.deepEqual(from, { costUsd: 569.46, apiMs: 26_371_690 }, "the last row wins");
+  assert.equal(turnDelta(580.71, from.costUsd).toFixed(2), "11.25", "the turn's own share");
   assert.equal(costStateOf("") ?? costStateOf('{"type":"user"}\n'), undefined);
   assert.deepEqual(
     costStateOf(`${state(1, 2)}\n{"type":"cost-state","totalCostUSD":9`),
@@ -159,6 +166,7 @@ import {
       ],
     },
   });
+
   assert.equal(wrapped.filesCount, 2);
   assert.equal(wrapped.linesAdded, 10);
   assert.equal(wrapped.linesRemoved, 4);
@@ -182,6 +190,7 @@ import {
     stats: { filesCount: 1, linesAdded: 1, linesRemoved: 0 },
     perFileStats: [{ path: "x", added: 1, removed: 0 }],
   });
+
   assert.equal(flat.filesCount, 1);
   assert.deepEqual(flat.files[0], {
     path: "x",
@@ -212,6 +221,7 @@ import {
       { name: "warned", message: "just a message" },
     ],
   });
+
   assert.equal(out.length, 4);
   assert.deepEqual(out[0], { name: "fs", status: "connected", version: "1.2.3" });
   // A server with no status reads as "unknown", not the empty string.
@@ -239,6 +249,7 @@ import {
       { displayName: "no value" },
     ],
   });
+
   assert.equal(out.length, 2);
   assert.deepEqual(out[0], {
     value: "opus",
@@ -348,7 +359,7 @@ import {
 
   assert.equal(toJsonValue(Symbol("test")), undefined);
 
-  assert.equal(toJsonValue(BigInt(9007199254740992)), undefined);
+  assert.equal(toJsonValue(BigInt(9_007_199_254_740_992)), undefined);
 }
 
 // interruptLine is what Stop writes to stdin. The CLI reads stdin line by line, so a missing
@@ -366,9 +377,9 @@ import {
   assert.equal(emptyParsed.request_id, "");
 
   // The id is JSON-escaped, so a quote in it cannot split the line.
-  const specialLine = interruptLine('req-"quote\\"end');
+  const specialLine = interruptLine(String.raw`req-"quote\"end`);
   const specialParsed = JSON.parse(specialLine);
-  assert.equal(specialParsed.request_id, 'req-"quote\\"end');
+  assert.equal(specialParsed.request_id, String.raw`req-"quote\"end`);
 }
 
 // controlErrorLine answers a control request the plugin could not satisfy. The CLI waits for that
@@ -425,6 +436,7 @@ import {
       managedOnly: true,
     },
   });
+
   assert.equal(out.rules.length, 4);
   assert.deepEqual(out.rules[0], {
     behavior: "allow",
@@ -490,6 +502,7 @@ import {
       null,
     ],
   });
+
   assert.equal(out.hooks.length, 4);
   assert.deepEqual(out.hooks[0], {
     event: "PreToolUse",
@@ -541,10 +554,15 @@ import {
     /not an ssh host/,
     "sshArgs will not build the command",
   );
-  for (const bad of ["", " box", "box\nmore", "a\0b", "-p22"])
+
+  for (const bad of ["", " box", "box\nmore", "a\0b", "-p22"]) {
     assert.equal(isSshHost(bad), false, `refused: ${JSON.stringify(bad)}`);
-  for (const good of ["box", "user@box", "box.lan", "10.0.0.5", "user@host.example.com"])
+  }
+
+  for (const good of ["box", "user@box", "box.lan", "10.0.0.5", "user@host.example.com"]) {
     assert.equal(isSshHost(good), true, `accepted: ${good}`);
+  }
+
   const args = sshArgs("user@box", "echo hi");
   const at = args.indexOf("user@box");
   assert.equal(args[at - 1], "--", "option parsing ends immediately before the host");
@@ -567,16 +585,19 @@ import {
     },
     "tu1",
   );
+
   assert.ok(q, "parsed");
   const first = q[0];
   assert.ok(first, "one question");
   assert.equal(first.options.length, 2, "both options kept");
   assert.equal(first.options[1]?.description, "one per row", "descriptions still pass through");
   assert.equal(first.detail, "**Grid**\n\n````\n| a | b |\n````", "the preview is the detail");
+
   const plain = parseQuestions(
     { questions: [{ question: "Go?", options: [{ label: "Yes" }] }] },
     "tu2",
   );
+
   assert.equal(plain?.[0]?.detail, undefined, "no detail without a preview");
 }
 
@@ -596,9 +617,11 @@ import {
     fired: number;
     onSuggestion?: () => void;
   } = { resultSeen: false, fired: 0 };
+
   proc.onSuggestion = () => {
     proc.fired += 1;
   };
+
   const storedText = (): string | undefined => proc.suggestion?.text;
   const note = ClaudeProcess.prototype.noteSuggestion;
   const frame = '{"type":"prompt_suggestion","suggestion":"  Step 3?  "}';
@@ -625,11 +648,13 @@ import {
 // session_title_changed frames are consumed by noteTitle: the name is kept, onTitle fires once
 // per change, and the echo of a name the adapter already set is a no-op
 {
-  const proc: { title?: string; seen: string[]; onTitle?: (t: string) => void } = { seen: [] };
+  const proc: { title?: string; seen: Array<string>; onTitle?: (t: string) => void } = { seen: [] };
   proc.onTitle = (t) => proc.seen.push(t);
   const note = ClaudeProcess.prototype.noteTitle;
+
   const frame = (title: string) =>
     JSON.stringify({ type: "system", subtype: "session_title_changed", title });
+
   assert.equal(note.call(proc, frame("  Probe title ")), true, "consumed");
   assert.deepEqual(proc.seen, ["Probe title"], "fired with the trimmed name");
   assert.equal(note.call(proc, frame("Probe title")), true, "the echo is consumed too");

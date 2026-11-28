@@ -52,7 +52,7 @@ export class EventHub {
   /** Hold `res` open as an event stream for `session` (null: only tab-wide kinds). Writes the
    *  headers, a `: connected` comment and every snapshot event, then keeps the response until the
    *  socket closes. Starts the heartbeat with the first connection and stops it with the last. */
-  attach(res: ServerResponse, session: string | null, snapshot: OmcEvent[]): void {
+  attach(res: ServerResponse, session: string | null, snapshot: Array<OmcEvent>): void {
     res.writeHead(200, {
       "content-type": "text/event-stream",
       "cache-control": "no-cache, no-store",
@@ -62,21 +62,31 @@ export class EventHub {
       "x-accel-buffering": "no",
     });
     res.write(": connected\n\n");
-    for (const e of snapshot) res.write(frame(e));
+
+    for (const e of snapshot) {
+      res.write(frame(e));
+    }
+
     const c: Connection = { res, session };
     this.connections.add(c);
     // `res` alone, as dsh's twin does: the response's close is the socket's.
     res.on("close", () => {
       this.connections.delete(c);
+
       if (this.connections.size === 0 && this.beat !== undefined) {
         clearInterval(this.beat);
         this.beat = undefined;
       }
     });
+
     if (this.beat === undefined) {
       const ping = frame({ kind: "ping", session: null, data: {} });
       this.beat = setInterval(() => {
-        for (const { res: r } of this.connections) if (!r.writableNeedDrain) r.write(ping);
+        for (const { res: r } of this.connections) {
+          if (!r.writableNeedDrain) {
+            r.write(ping);
+          }
+        }
       }, HEARTBEAT_MS);
       this.beat.unref?.();
     }
@@ -85,9 +95,16 @@ export class EventHub {
   /** Send `e` to every connection whose session matches, or to all when `e.session` is null. */
   publish(e: OmcEvent): void {
     const text = frame(e);
+
     for (const c of this.connections) {
-      if (e.session !== null && c.session !== e.session) continue;
-      if (c.res.writableNeedDrain) continue;
+      if (e.session !== null && c.session !== e.session) {
+        continue;
+      }
+
+      if (c.res.writableNeedDrain) {
+        continue;
+      }
+
       c.res.write(text);
     }
   }
@@ -97,10 +114,13 @@ export class EventHub {
    *  session (`live-turn:<id>`), so two kinds for one session never replace each other. */
   coalesce(key: string, build: () => OmcEvent, ms = 1000): void {
     const p = this.pending.get(key);
+
     if (p) {
       p.build = build;
+
       return;
     }
+
     const entry = {
       build,
       timer: setTimeout(() => {
@@ -110,35 +130,51 @@ export class EventHub {
         // (2026-11-12 23:43). Every kind is a current value, so the next event or the tab's
         // fallback poll carries what this one would have.
         let e: OmcEvent;
+
         try {
           e = entry.build();
         } catch {
           return;
         }
+
         this.publish(e);
       }, ms),
     };
+
     this.pending.set(key, entry);
   }
 
   /** Cancel a pending coalesced event under `key` and publish `e` now. */
   flush(key: string, e: OmcEvent): void {
     const p = this.pending.get(key);
+
     if (p) {
       clearTimeout(p.timer);
       this.pending.delete(key);
     }
+
     this.publish(e);
   }
 
   /** End every response and stop the timers. Called by the route's disposer only: a box mount
    *  going away must not close the root's streams, and a reload disposes the route anyway. */
   close(): void {
-    for (const p of this.pending.values()) clearTimeout(p.timer);
+    for (const p of this.pending.values()) {
+      clearTimeout(p.timer);
+    }
+
     this.pending.clear();
-    if (this.beat !== undefined) clearInterval(this.beat);
+
+    if (this.beat !== undefined) {
+      clearInterval(this.beat);
+    }
+
     this.beat = undefined;
-    for (const c of this.connections) c.res.end();
+
+    for (const c of this.connections) {
+      c.res.end();
+    }
+
     this.connections.clear();
   }
 }

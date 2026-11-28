@@ -36,7 +36,7 @@ export declare class EventHub {
     /** Hold `res` open as an event stream for `session` (null: only tab-wide kinds). Writes the
      *  headers, a `: connected` comment and every snapshot event, then keeps the response until the
      *  socket closes. Starts the heartbeat with the first connection and stops it with the last. */
-    attach(res: ServerResponse, session: string | null, snapshot: OmcEvent[]): void;
+    attach(res: ServerResponse, session: string | null, snapshot: Array<OmcEvent>): void;
     /** Send `e` to every connection whose session matches, or to all when `e.session` is null. */
     publish(e: OmcEvent): void;
     /** Publish `build()` under `key` at most once per `ms`; a call while one is pending replaces

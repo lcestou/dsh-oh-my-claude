@@ -15,6 +15,7 @@ export interface TestGateConfig {
   /** The run is stopped past this, and the turn ends without a verdict. */
   timeoutSec: number;
 }
+
 /** `test-gate.json` under the state dir: one entry per workspace, keyed by its absolute path
  *  exactly as dsh names the session's cwd. A workspace with no entry has the gate off. */
 export type TestGateFile = Record<string, TestGateConfig>;
@@ -23,10 +24,13 @@ export const TRIES_DEFAULT = 3;
 export const TRIES_MAX = 5;
 export const TIMEOUT_DEFAULT_SEC = 300;
 export const TIMEOUT_MIN_SEC = 10;
+
 /** Under the plugin's 30 min idle watchdog (`idleTimeoutMs`), which a silent hook would trip. */
 export const TIMEOUT_MAX_SEC = 1200;
+
 /** The longest failure tail handed to Claude, in characters (the last lines win). */
 export const TAIL_CHARS = 4000;
+
 /** dsh session ids are UUIDs; anything else never names a run file. */
 export const SESSION_ID = /^[\w-]{1,128}$/;
 
@@ -42,6 +46,7 @@ export const RUN_STATES = [
   "broken",
   "stopped",
 ] as const;
+
 export type RunState = (typeof RUN_STATES)[number];
 
 /** `test-gate/<dsh session id>.json`: the session's latest run, written by the hook script and
@@ -90,12 +95,25 @@ export function decide(
   tries: number,
 ): Verdict {
   const before = stopHookActive ? prevAttempt : 0;
-  if (exit.stopped) return { state: "stopped", attempt: before, block: false };
-  if (exit.timedOut) return { state: "timed-out", attempt: before, block: false };
-  if (exit.code === 0) return { state: "passed", attempt: before, block: false };
-  if (exit.code === 126 || exit.code === 127)
+
+  if (exit.stopped) {
+    return { state: "stopped", attempt: before, block: false };
+  }
+
+  if (exit.timedOut) {
+    return { state: "timed-out", attempt: before, block: false };
+  }
+
+  if (exit.code === 0) {
+    return { state: "passed", attempt: before, block: false };
+  }
+
+  if (exit.code === 126 || exit.code === 127) {
     return { state: "broken", attempt: before, block: false };
+  }
+
   const attempt = before + 1;
+
   return attempt <= tries
     ? { state: "fixing", attempt, block: true }
     : { state: "gave-up", attempt: before, block: false };
@@ -105,13 +123,14 @@ export function decide(
  *  asking. Under acceptEdits or default, Claude could edit package.json's `test` script (an edit
  *  is approved there, a command is not) and the gate would run it unasked. Wrong case: a session
  *  in acceptEdits is never gated, though the owner switched the workspace on. */
-export const GATE_MODES: readonly string[] = ["bypassPermissions", "auto"];
+export const GATE_MODES: ReadonlyArray<string> = ["bypassPermissions", "auto"];
 
 /** The environment names the test run drops: dsh's own seam's rule (`SCRUBBED_NAME` and `DSH_*` in
  *  src/process.ts) plus a router's auth header. Not a security boundary: Claude's own Bash sees
  *  the full environment, and the login on disk (`CLAUDE_CONFIG_DIR`) stays. It keeps repo code
  *  from reading the plugin's keys by accident. */
 const DROPPED_ENV = /KEY|PASSWORD|SECRET|TOKEN|^DSH_|^ANTHROPIC_CUSTOM_HEADERS$/i;
+
 /** `env` without the names `DROPPED_ENV` matches, and without unset names. */
 export function testEnv(env: Readonly<Record<string, string | undefined>>) {
   return Object.fromEntries(
@@ -146,6 +165,7 @@ export function gateReason(attempt: number, tries: number, command: string, tail
  *  this gate's; undefined for another Stop hook's feedback or any other text. */
 export function gateNoteOf(text: string): { attempt: number; tries: number } | undefined {
   const m = TAG.exec(text);
+
   return m ? { attempt: Number(m[1]), tries: Number(m[2]) } : undefined;
 }
 
@@ -182,7 +202,7 @@ export function stopHookSettings(
 export interface ProjectFiles {
   /** package.json's `scripts.test`. */
   testScript?: string | undefined;
-  lockfiles: string[];
+  lockfiles: Array<string>;
   pyproject?: string | undefined;
   hasPytestIni?: boolean;
   cargoToml?: boolean;
@@ -198,19 +218,39 @@ export interface ProjectFiles {
  */
 export function suggestCommand(f: ProjectFiles): string | undefined {
   const script = f.testScript?.trim();
+
   if (script && !script.includes("no test specified")) {
-    if (f.lockfiles.includes("bun.lock") || f.lockfiles.includes("bun.lockb"))
+    if (f.lockfiles.includes("bun.lock") || f.lockfiles.includes("bun.lockb")) {
       return "bun run test";
-    if (f.lockfiles.includes("pnpm-lock.yaml")) return "pnpm test";
-    if (f.lockfiles.includes("yarn.lock")) return "yarn test";
+    }
+
+    if (f.lockfiles.includes("pnpm-lock.yaml")) {
+      return "pnpm test";
+    }
+
+    if (f.lockfiles.includes("yarn.lock")) {
+      return "yarn test";
+    }
+
     return "npm test";
   }
+
   if (f.hasPytestIni || f.pyproject?.includes("[tool.pytest")) {
     return f.lockfiles.includes("uv.lock") ? "uv run pytest -q" : "pytest -q";
   }
-  if (f.cargoToml) return "cargo test";
-  if (f.goMod) return "go test ./...";
-  if (f.makefile && /^test:/m.test(f.makefile)) return "make test";
+
+  if (f.cargoToml) {
+    return "cargo test";
+  }
+
+  if (f.goMod) {
+    return "go test ./...";
+  }
+
+  if (f.makefile && /^test:/m.test(f.makefile)) {
+    return "make test";
+  }
+
   return undefined;
 }
 
@@ -222,6 +262,7 @@ const fit = (x: number, d: number, lo: number, hi: number) =>
  *  a limit still runs at the limit rather than being refused. */
 export function clampGate(e: TestGateConfig): TestGateConfig {
   const command = e.command.trim();
+
   return {
     enabled: e.enabled && command !== "",
     command,

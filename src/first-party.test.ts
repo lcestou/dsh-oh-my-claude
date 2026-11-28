@@ -10,6 +10,7 @@ import {
   readsAsAnthropic,
   wantsFirstParty,
 } from "./first-party.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 // The 401 a proxy that forwards hands back, recorded from headroom and from api.anthropic.com on
 // 2026-09-17: the same body, down to the request id's shape.
@@ -20,28 +21,33 @@ const ANTHROPIC_401 = {
 };
 
 assert.equal(readsAsAnthropic(ProbeBody(ANTHROPIC_401), ""), true);
+
 // The header alone answers it, which is what a proxy that rewrites the body still passes through.
 assert.equal(readsAsAnthropic(ProbeBody({}), "req_011Cf9DpmX2NdPab62fkHhee"), true);
+
 // The error shape with no id anywhere is the weakest yes, and still a yes.
 assert.equal(
   readsAsAnthropic(ProbeBody({ type: "error", error: { type: "invalid_request_error" } }), ""),
   true,
 );
+
 // A gateway in front of another provider: neither the id nor the shape.
 assert.equal(readsAsAnthropic(ProbeBody({ message: "Missing Authentication Token" }), ""), false);
+
 assert.equal(readsAsAnthropic(ProbeBody({}), "8f3c-not-anthropic"), false);
+
 assert.equal(readsAsAnthropic(ProbeBody({}), ""), false);
 
 // The probe reads a real response object and asks the endpoint once.
 {
-  const calls: string[] = [];
-  const fake = (async (url: string) => {
-    calls.push(url);
-    return {
-      json: async () => ANTHROPIC_401,
-      headers: { get: () => null },
-    };
-  }) as unknown as typeof fetch;
+  const calls: Array<string> = [];
+
+  const fake: typeof fetch = async (input) => {
+    calls.push(new Request(input).url);
+
+    return new Response(JSON.stringify(ANTHROPIC_401));
+  };
+
   assert.equal(await probeFirstParty("http://127.0.0.1:8787", fake), true);
   // One request, and the path is appended without doubling the separator.
   assert.deepEqual(calls, ["http://127.0.0.1:8787/v1/messages"]);
@@ -53,24 +59,32 @@ assert.equal(readsAsAnthropic(ProbeBody({}), ""), false);
 
 // A refused connection is "not asked", not "not Anthropic".
 {
-  const fake = (async () => {
+  const fake: typeof fetch = async () => {
     throw new Error("ECONNREFUSED");
-  }) as unknown as typeof fetch;
+  };
+
   assert.equal(await probeFirstParty("http://127.0.0.1:9", fake), undefined);
 }
 
 // Absent keys are the default; each flag names its own answer.
 assert.equal(firstPartyMode({}), "auto");
+
 assert.equal(firstPartyMode({ proxyFirstParty: true }), "on");
+
 assert.equal(firstPartyMode({ proxyFirstPartyOff: true }), "off");
 
 // A choice outranks the endpoint, in both directions: detection never flips a chosen switch back.
 assert.equal(wantsFirstParty({ proxyFirstPartyOff: true }, true), false);
+
 assert.equal(wantsFirstParty({ proxyFirstParty: true }, false), true);
+
 assert.equal(wantsFirstParty({ proxyFirstParty: true }, undefined), true);
+
 // Auto follows the probe, and an unanswered probe leaves the flag off.
 assert.equal(wantsFirstParty({}, true), true);
+
 assert.equal(wantsFirstParty({}, false), false);
+
 assert.equal(wantsFirstParty({}, undefined), false);
 
 // What CC Switch 4.0.29's local router answers the same probe (HTTP 400, recorded 2026-11-10 with
@@ -83,6 +97,7 @@ const CC_SWITCH_400 = {
     message: "messages must be a non-empty list: send at least one message",
   },
 };
+
 assert.equal(readsAsAnthropic(ProbeBody(CC_SWITCH_400), ""), false);
 
 // The kept answers, per URL. A probe that counts its calls and answers what it is told to.
@@ -91,10 +106,13 @@ assert.equal(readsAsAnthropic(ProbeBody(CC_SWITCH_400), ""), false);
   const url = "http://127.0.0.1:15721";
   let calls = 0;
   let answer: boolean | undefined = false;
+
   const probe = async () => {
     calls++;
+
     return answer;
   };
+
   // Real time: the store stamps an answer with the clock, and `now` is only what it is read at.
   const t0 = Date.now();
   // A turn waits for the first answer, then reads the kept one for a while.
@@ -121,7 +139,7 @@ assert.equal(readsAsAnthropic(ProbeBody(CC_SWITCH_400), ""), false);
     firstPartyKnown(url, () => changed++, probe, t0),
     undefined,
   );
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await sleep(5);
   assert.equal(changed, 1, "the first answer is a change from not knowing");
   assert.equal(
     firstPartyKnown(url, () => changed++, probe, t0 + 1),
@@ -133,7 +151,7 @@ assert.equal(readsAsAnthropic(ProbeBody(CC_SWITCH_400), ""), false);
     firstPartyKnown(url, () => changed++, probe, late),
     false,
   );
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await sleep(5);
   assert.equal(calls, 2);
   assert.equal(changed, 1);
   // The endpoint stops answering: the kept answer is dropped and the listing is told.
@@ -142,14 +160,14 @@ assert.equal(readsAsAnthropic(ProbeBody(CC_SWITCH_400), ""), false);
     firstPartyKnown(url, () => changed++, probe, t0 + 4 * PROBE_TTL_MS),
     false,
   );
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await sleep(5);
   assert.equal(changed, 2);
   assert.equal(
     firstPartyKnown(url, () => changed++, probe, Date.now()),
     undefined,
     "an endpoint that went quiet is no longer known",
   );
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await sleep(5);
   assert.equal(changed, 2, "still unanswered is not a change");
   forgetFirstParty();
 }

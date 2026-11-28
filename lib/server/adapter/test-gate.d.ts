@@ -1,4 +1,5 @@
-import { stopHookSettings, type TestGateRun } from "../test-gate.js";
+import { stopHookSettings } from "../test-gate.js";
+import type { TestGateRun } from "../test-gate.js";
 /** The built hook script, one level up in `lib/server/`. Only a path: under the test runner it
  *  names a `.js` that does not exist, and nothing there spawns it. */
 export declare const HOOK_SCRIPT: string;

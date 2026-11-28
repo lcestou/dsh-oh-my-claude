@@ -25,6 +25,7 @@
     ]
   },
   "include": [
+    "oxlint.config.ts",
     "src/**/*.ts",
     "src/**/*.tsx",
     "tools/**/*.ts"

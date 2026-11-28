@@ -16,11 +16,14 @@ await Promise.all([
   updateHints(path, { spendWarnUsd: 25 }),
   updateHints(path, { themeRowOff: true }),
 ]);
+
 const all = await readHints(path);
+
 assert.deepEqual(all, { starterOff: true, costOff: true, spendWarnUsd: 25, themeRowOff: true });
 
 // `false` and `null` clear a key and leave its neighbours alone.
 await updateHints(path, { starterOff: false, costOff: null });
+
 assert.deepEqual(await readHints(path), { spendWarnUsd: 25, themeRowOff: true });
 
 // A model id is anything without whitespace, so a hide key carries a slash, an at sign or the CLI's
@@ -30,6 +33,7 @@ await updateHints(path, {
   "hideModel:claude-code:opus[1m]": true,
   "hideModel:claude-code:team@gateway": true,
 });
+
 {
   const kept = await readHints(path);
   assert.equal(kept["hideModel:claude-code:qwen/qwen3-coder"], true);
@@ -50,6 +54,7 @@ await updateHints(path, {
   __proto__: true,
   negative: -1,
 });
+
 assert.equal(
   (await updateHints(path, { "hideModel:claude-code-lilly:claude-opus-5": true }))[
     "hideModel:claude-code-lilly:claude-opus-5"
@@ -57,7 +62,9 @@ assert.equal(
   true,
   "a scoped key with a model id is kept",
 );
+
 await updateHints(path, { "hideModel:claude-code-lilly:claude-opus-5": false });
+
 assert.deepEqual(await readHints(path), { spendWarnUsd: 25, themeRowOff: true });
 
 // The file on disk is valid JSON after all of it, not a half-written map.

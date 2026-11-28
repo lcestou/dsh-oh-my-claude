@@ -8,7 +8,9 @@ assert.deepEqual(themeOf({}), {
   shimmer: "#f59575",
   shimmerDark: "#eb9f7f",
 });
+
 assert.deepEqual(themeOf({ themeOff: true }).groups, []);
+
 assert.deepEqual(themeOf({ themeProseOff: true }).groups, [
   "row",
   "composer",
@@ -17,6 +19,7 @@ assert.deepEqual(themeOf({ themeProseOff: true }).groups, [
   "panel",
   "rainbow",
 ]);
+
 assert.deepEqual(themeOf({ themeRowOff: true, themeRainbowOff: true }).groups, [
   "prose",
   "composer",
@@ -24,22 +27,41 @@ assert.deepEqual(themeOf({ themeRowOff: true, themeRainbowOff: true }).groups, [
   "send",
   "panel",
 ]);
+
 // Each split group turns off alone.
 assert.deepEqual(themeOf({ themeModelsOff: true }).groups.includes("models"), false);
+
 assert.deepEqual(themeOf({ themeModelsOff: true }).groups.includes("prose"), true);
+
 assert.deepEqual(themeOf({ themeComposerOff: true }).groups.includes("composer"), false);
+
 assert.equal(themeOf({}).shimmer, "#f59575");
-assert.equal(themeOf({ themeAccent: 0xd97757 }).shimmer, "#f59575");
-assert.equal(themeOf({ themeAccent: 0x3366cc }).shimmer, "color-mix(in srgb, #3366cc 72%, white)");
-assert.equal(themeOf({ themeAccent: 0x3366cc }).accent, "#3366cc");
-assert.equal(themeOf({ themeAccent: 0x0066cc }).accent, "#0066cc");
+
+assert.equal(themeOf({ themeAccent: 0xd9_77_57 }).shimmer, "#f59575");
+
+assert.equal(
+  themeOf({ themeAccent: 0x33_66_cc }).shimmer,
+  "color-mix(in srgb, #3366cc 72%, white)",
+);
+
+assert.equal(themeOf({ themeAccent: 0x33_66_cc }).accent, "#3366cc");
+
+assert.equal(themeOf({ themeAccent: 0x00_66_cc }).accent, "#0066cc");
+
 assert.equal(themeOf({ themeAccent: -1 }).accent, "#d97757");
-assert.equal(themeOf({ themeAccent: 0x1000000 }).accent, "#d97757");
+
+assert.equal(themeOf({ themeAccent: 0x1_00_00_00 }).accent, "#d97757");
+
 assert.equal(themeOf({ themeAccent: 100.5 }).accent, "#d97757");
+
 assert.equal(themeOf({ themeAccent: true }).accent, "#d97757");
-assert.equal(themeOf({ themeOff: true, themeAccent: 0x3366cc }).accent, "#3366cc");
+
+assert.equal(themeOf({ themeOff: true, themeAccent: 0x33_66_cc }).accent, "#3366cc");
+
 assert.deepEqual(hexToRgb("#d97757"), [217, 119, 87]);
+
 assert.deepEqual(hexToRgb("#0066cc"), [0, 102, 204]);
+
 assert.equal(THEME_GROUPS.length, 7);
 
 console.log("theme.test.ts: ok");
@@ -48,7 +70,7 @@ console.log("theme.test.ts: ok");
 {
   assert.equal(themeOf({}).shimmerDark, "#eb9f7f");
   assert.equal(
-    themeOf({ themeAccent: 0x3366cc }).shimmerDark,
+    themeOf({ themeAccent: 0x33_66_cc }).shimmerDark,
     "color-mix(in srgb, #3366cc 80%, white)",
   );
   console.log("shimmer-dark ok");

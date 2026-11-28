@@ -7,6 +7,7 @@
  * ssh setup, and a box that answers but has no `claude` needs an install. Before this, all four
  * read as one ssh error string in the row.
  */
+import { stringOf, isRec } from "./decode.js";
 import type { SshBox } from "./sessions.js";
 
 export type ReachStage =
@@ -49,33 +50,53 @@ const STAGE_HINTS = {
  */
 export function classifyReach(exitCode: number | null, stderr: string, stdout: string): Reach {
   const err = stderr.trim();
+
   const last =
     err
       .split(/\r?\n/)
       .filter((l) => l !== "")
       .at(-1) ?? "";
+
   const stage = ((): ReachStage => {
-    if (/could not resolve hostname|name or service not known|nodename nor servname/i.test(err))
+    if (/could not resolve hostname|name or service not known|nodename nor servname/i.test(err)) {
       return "dns";
+    }
+
     if (
       /host key verification failed|remote host identification has changed|no .*host key is known/i.test(
         err,
       )
-    )
+    ) {
       return "hostkey";
+    }
+
     if (
       /no route to host|connection timed out|network is unreachable|connection refused|operation timed out|connect to host .* port \d+/i.test(
         err,
       )
-    )
+    ) {
       return "route";
-    if (/tailnet policy does not permit|tailscale: .*not permit/i.test(err)) return "policy";
-    if (/permission denied|too many authentication failures|authentication failed/i.test(err))
+    }
+
+    if (/tailnet policy does not permit|tailscale: .*not permit/i.test(err)) {
+      return "policy";
+    }
+
+    if (/permission denied|too many authentication failures|authentication failed/i.test(err)) {
       return "auth";
-    if (exitCode === 255) return "route"; // ssh's own failure with a line we do not know
-    if (exitCode !== 0) return "shell";
+    }
+
+    if (exitCode === 255) {
+      return "route";
+    } // ssh's own failure with a line we do not know
+
+    if (exitCode !== 0) {
+      return "shell";
+    }
+
     return stdout.trim() === "" ? "no-cli" : "ok";
   })();
+
   return { stage, hint: stage === "ok" ? "" : STAGE_HINTS[stage], detail: last };
 }
 
@@ -85,7 +106,7 @@ export function classifyReach(exitCode: number | null, stderr: string, stdout: s
  * failed, which is a different repair.
  */
 export const reachScript = (command: string): string =>
-  `command -v ${JSON.stringify(command).replace(/"/g, "'")} 2>/dev/null; true`;
+  `command -v ${JSON.stringify(command).replaceAll('"', "'")} 2>/dev/null; true`;
 
 /** A Tailscale peer as the Boxes tab offers it: name for the row, host for ssh, and whether it is up. */
 export interface TailscalePeer {
@@ -102,29 +123,48 @@ export interface TailscalePeer {
  * when the tailnet has one (it is what `ssh` resolves through the tailscale resolver), else the
  * first Tailscale IP. This box's own entry is not a peer. Anything malformed reads as no peers.
  */
-export function tailscalePeers(text: string): TailscalePeer[] {
+export function tailscalePeers(text: string): Array<TailscalePeer> {
   let parsed: unknown;
+
   try {
     parsed = JSON.parse(text);
   } catch {
     return [];
   }
-  if (typeof parsed !== "object" || parsed === null) return [];
+
+  if (typeof parsed !== "object" || parsed === null) {
+    return [];
+  }
+
   // SAFETY: the shape is tailscale's status document; every field is checked before use
   const doc = parsed as { Peer?: Record<string, unknown>; MagicDNSSuffix?: unknown };
-  if (typeof doc.Peer !== "object" || doc.Peer === null) return [];
-  const peers: TailscalePeer[] = [];
+
+  if (typeof doc.Peer !== "object" || doc.Peer === null) {
+    return [];
+  }
+
+  const peers: Array<TailscalePeer> = [];
+
   for (const raw of Object.values(doc.Peer)) {
-    if (typeof raw !== "object" || raw === null) continue;
-    // SAFETY: one peer record; each field is checked for its type before it is read
-    const p = raw as Record<string, unknown>;
+    if (!isRec(raw)) {
+      continue;
+    }
+
+    // One peer record; each field is checked for its type before it is read.
+    const p = raw;
     const name = typeof p.HostName === "string" ? p.HostName : "";
     const dns = typeof p.DNSName === "string" ? p.DNSName.replace(/\.$/, "") : "";
+
     const ips = Array.isArray(p.TailscaleIPs)
       ? p.TailscaleIPs.filter((ip): ip is string => typeof ip === "string")
       : [];
+
     const host = dns || ips[0] || "";
-    if (!name || !host) continue;
+
+    if (!name || !host) {
+      continue;
+    }
+
     const keys = p.SSH_HostKeys;
     peers.push({
       name,
@@ -134,13 +174,14 @@ export function tailscalePeers(text: string): TailscalePeer[] {
       tailscaleSsh: Array.isArray(keys) && keys.length > 0,
     });
   }
+
   return peers.toSorted(
     (a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name),
   );
 }
 
 /** A peer that is already a saved box, by host, so the picker can say so instead of adding twice. */
-export const peerSaved = (peer: TailscalePeer, boxes: SshBox[]): boolean =>
+export const peerSaved = (peer: TailscalePeer, boxes: Array<SshBox>): boolean =>
   boxes.some((b) => b.host === peer.host || b.host.endsWith(`@${peer.host}`));
 
 /** What `tailscale status --json` says about this node: whether it is on a tailnet, and who it is. */
@@ -149,32 +190,43 @@ export interface TailscaleState {
   state: string;
   loggedIn: boolean;
   self?: { name: string; host: string; ip: string };
-  peers: TailscalePeer[];
+  peers: Array<TailscalePeer>;
 }
 
 /** Parses `tailscale status --json` output, returning undefined on anything it cannot read and
  *  deriving login state from the 'Running' backend state. */
 export function tailscaleStatus(text: string): TailscaleState | undefined {
   let parsed: unknown;
+
   try {
     parsed = JSON.parse(text);
   } catch {
     return undefined;
   }
-  if (typeof parsed !== "object" || parsed === null) return undefined;
+
+  if (typeof parsed !== "object" || parsed === null) {
+    return undefined;
+  }
+
   // SAFETY: tailscale's status document; each field is checked before use
   const doc = parsed as { BackendState?: unknown; Self?: Record<string, unknown> };
   const state = typeof doc.BackendState === "string" ? doc.BackendState : "NoState";
   const out: TailscaleState = { state, loggedIn: state === "Running", peers: tailscalePeers(text) };
   const me = doc.Self;
+
   if (typeof me === "object" && me !== null) {
     const name = typeof me.HostName === "string" ? me.HostName : "";
     const dns = typeof me.DNSName === "string" ? me.DNSName.replace(/\.$/, "") : "";
+
     const ips = Array.isArray(me.TailscaleIPs)
       ? me.TailscaleIPs.filter((ip): ip is string => typeof ip === "string")
       : [];
-    if (name) out.self = { name, host: dns || ips[0] || "", ip: ips[0] ?? "" };
+
+    if (name) {
+      out.self = { name, host: dns || ips[0] || "", ip: ips[0] ?? "" };
+    }
   }
+
   return out;
 }
 
@@ -187,7 +239,7 @@ export interface WireguardPeer {
   iface: string;
   /** The first allowed address without its mask: what ssh dials. */
   host: string;
-  allowedIps: string[];
+  allowedIps: Array<string>;
   endpoint: string;
   /** Seconds since the last handshake, or nothing when there has never been one. */
   handshakeAge: number | null;
@@ -199,18 +251,29 @@ export interface WireguardPeer {
  * keepalive). The host is the peer's first single address (/32 or /128); a peer whose allowed
  * ranges hold no single address is skipped, since there is no one host to dial in a range.
  */
-export function wireguardPeers(dump: string, now = Date.now()): WireguardPeer[] {
-  const peers: WireguardPeer[] = [];
+export function wireguardPeers(dump: string, now = Date.now()): Array<WireguardPeer> {
+  const peers: Array<WireguardPeer> = [];
+
   for (const line of dump.split(/\r?\n/)) {
     const f = line.split("\t");
-    if (f.length < 9) continue;
+
+    if (f.length < 9) {
+      continue;
+    }
+
     const iface = f[0] ?? "";
+
     const allowedIps = (f[4] ?? "")
       .split(",")
       .map((x) => x.trim())
       .filter((x) => x !== "");
+
     const single = allowedIps.find((ip) => /\/(32|128)$/.test(ip));
-    if (!iface || !single) continue;
+
+    if (!iface || !single) {
+      continue;
+    }
+
     const handshake = Number(f[5]);
     peers.push({
       iface,
@@ -220,6 +283,7 @@ export function wireguardPeers(dump: string, now = Date.now()): WireguardPeer[] 
       handshakeAge: handshake > 0 ? Math.max(0, Math.round(now / 1000 - handshake)) : null,
     });
   }
+
   return peers;
 }
 
@@ -246,11 +310,16 @@ export function validateTailnetJoin(raw: {
   loginServer?: unknown;
   authKey?: unknown;
 }): ValidatedTailnetJoin {
-  const loginServer = String(raw.loginServer ?? "").trim();
-  const authKey = String(raw.authKey ?? "").trim();
-  if (loginServer && !/^https?:\/\/[A-Za-z0-9.:_-]+(\/[A-Za-z0-9._/-]*)?$/.test(loginServer))
+  const loginServer = (stringOf(raw.loginServer) ?? "").trim();
+  const authKey = (stringOf(raw.authKey) ?? "").trim();
+
+  if (loginServer && !/^https?:\/\/[A-Za-z0-9.:_-]+(\/[A-Za-z0-9._/-]*)?$/.test(loginServer)) {
     return { error: "login server must be an http(s) URL" };
-  if (authKey && !/^[A-Za-z0-9_+/=.-]{8,200}$/.test(authKey))
+  }
+
+  if (authKey && !/^[A-Za-z0-9_+/=.-]{8,200}$/.test(authKey)) {
     return { error: "that does not look like a pre-auth key" };
+  }
+
   return { value: { loginServer, authKey } };
 }

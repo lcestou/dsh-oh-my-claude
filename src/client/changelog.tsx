@@ -2,14 +2,15 @@
 // component draws the releases it answers and marks the one this box runs. The items carry
 // backticks and nothing else, so the inline renderer is a split on backticks.
 import { useEffect, useState } from "react";
-import { ACCENT, errText, meta, pill, readJson, ROUTE, stateText, T } from "./shared.js";
-import { t, useLocale, type OmcKey } from "./i18n.js";
+import { ACCENT, errText, meta, pill, readJson, ROUTE, stateText, T, errorText } from "./shared.js";
+import { t, useLocale } from "./i18n.js";
+import type { OmcKey } from "./i18n.js";
 
 interface Release {
   version: string;
   date: string | null;
   intro: string | null;
-  sections: { kind: string; items: string[] }[];
+  sections: Array<{ kind: string; items: Array<string> }>;
 }
 
 const FULL_URL = "https://github.com/lcestou/dsh-oh-my-claude/blob/main/CHANGELOG.md";
@@ -18,6 +19,7 @@ const FULL_URL = "https://github.com/lcestou/dsh-oh-my-claude/blob/main/CHANGELO
  *  The entries themselves stay in English, the language the file is written in. */
 function kindLabel(kind: string): string {
   const key = KIND_KEYS.get(kind);
+
   return key ? t(key) : kind;
 }
 
@@ -50,22 +52,28 @@ function Inline({ text }: { text: string }) {
  *  the version this box runs. */
 export function ChangelogBlock() {
   useLocale();
-  const [releases, setReleases] = useState<Release[] | null>(null);
+  const [releases, setReleases] = useState<Array<Release> | null>(null);
   const [version, setVersion] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     let live = true;
+
+    /** Puts the route's answer on screen. */
+    const showChangelog = (b: { version: string; releases: Array<Release> }) => {
+      setVersion(b.version);
+      setReleases(b.releases);
+    };
+
     fetch(`${ROUTE}/changelog`)
-      .then((r) => readJson<{ version: string; releases: Release[] }>(r))
-      .then((b) => {
-        if (!live) return;
-        setVersion(b.version);
-        setReleases(b.releases);
-      })
-      .catch((e) => {
-        if (live) setError(e instanceof Error ? e.message : String(e));
+      .then((r) => readJson<{ version: string; releases: Array<Release> }>(r))
+      .then((b) => live && showChangelog(b))
+      .catch((cause: unknown) => {
+        if (live) {
+          setError(errorText(cause));
+        }
       });
+
     return () => {
       live = false;
     };
@@ -82,14 +90,23 @@ export function ChangelogBlock() {
       {t("changelog.full")}
     </a>
   );
-  if (error) return <p style={errText}>{error}</p>;
-  if (releases === null) return <p style={stateText}>{t("loading")}</p>;
-  if (releases.length === 0)
+
+  if (error) {
+    return <p style={errText}>{error}</p>;
+  }
+
+  if (releases === null) {
+    return <p style={stateText}>{t("loading")}</p>;
+  }
+
+  if (releases.length === 0) {
     return (
       <p data-omc-changelog="" style={stateText}>
         {t("changelog.none")} {link}
       </p>
     );
+  }
+
   return (
     <div data-omc-changelog="">
       {releases.map((r) => (

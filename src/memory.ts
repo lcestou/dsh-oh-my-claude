@@ -4,7 +4,8 @@
 // Every read and write goes through `remote-fs`, so a session running on an SSH box lists and edits
 // that box's memories rather than this PC's. A box that is this PC still lands on `node:fs`.
 import { join } from "node:path";
-import { listNamesAt, readAt, readTextAt, removeAt, writeAt, type FsBox } from "./remote-fs.js";
+import { listNamesAt, readAt, readTextAt, removeAt, writeAt } from "./remote-fs.js";
+import type { FsBox } from "./remote-fs.js";
 
 export interface MemoryFile {
   name: string;
@@ -20,6 +21,7 @@ export const isMemoryName = (name: string): boolean => /^\w[\w.-]{0,127}\.md$/.t
 /** The `description:` line of the frontmatter, else "". */
 export function memorySummary(text: string): string {
   const m = /^description:\s*(.+)$/m.exec(text.split(/^---\s*$/m)[1] ?? "");
+
   return m?.[1]?.trim() ?? "";
 }
 
@@ -30,13 +32,15 @@ export function memorySummary(text: string): string {
  * socket and run at once, and a memory dir holds tens of files, not thousands. Fold them into a
  * single remote script the day a directory is big enough to feel it.
  */
-export async function listMemory(box: FsBox, dir: string): Promise<MemoryFile[]> {
-  const names = (await listNamesAt(box, dir).catch((): string[] => [])).filter(isMemoryName);
+export async function listMemory(box: FsBox, dir: string): Promise<Array<MemoryFile>> {
+  const names = (await listNamesAt(box, dir).catch((): Array<string> => [])).filter(isMemoryName);
+
   const files = await Promise.all(
     names.map(async (name) => {
       // A file listed a moment ago can be gone by the time it is read; it drops out of the list
       // rather than failing the whole tab.
       const read = await readAt(box, join(dir, name));
+
       return read === null
         ? null
         : {
@@ -47,6 +51,7 @@ export async function listMemory(box: FsBox, dir: string): Promise<MemoryFile[]>
           };
     }),
   );
+
   // Index first, then newest first.
   return files
     .filter((f): f is MemoryFile => f !== null)
@@ -67,10 +72,21 @@ export function dropIndexLine(index: string, name: string): string {
  *  leaves no index to update. */
 export async function deleteMemory(box: FsBox, dir: string, name: string): Promise<void> {
   await removeAt(box, join(dir, name));
-  if (name === "MEMORY.md") return;
+
+  if (name === "MEMORY.md") {
+    return;
+  }
+
   const indexPath = join(dir, "MEMORY.md");
   const index = await readTextAt(box, indexPath);
-  if (index === null) return;
+
+  if (index === null) {
+    return;
+  }
+
   const next = dropIndexLine(index, name);
-  if (next !== index) await writeAt(box, indexPath, next);
+
+  if (next !== index) {
+    await writeAt(box, indexPath, next);
+  }
 }

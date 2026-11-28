@@ -1,11 +1,12 @@
 // The SSH-box mount bookkeeping: mount one adapter per box the panel lists, withdraw the ones it dropped.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
-import { accountIdentity, type SshBox, sshBoxProviderId } from "../sessions.js";
+import { accountIdentity, sshBoxProviderId } from "../sessions.js";
+import type { SshBox } from "../sessions.js";
 import type { PluginContext } from "../dsh.js";
 import { STATE_DIR } from "../state.js";
 import { readSshToken, THIS_BOX } from "../ssh-login.js";
 import { errorText } from "../process.js";
-import { Config } from "./config.js";
+import type { Config } from "./config.js";
 import { ClaudeCodeAdapter } from "./class.js";
 
 /** The mark a mount this plugin made from its own state file (an SSH box, an account) carries in
@@ -28,6 +29,7 @@ export function tagPluginMount(adapter: ClaudeCodeAdapter): void {
  *  hand-written mount or the default, which a reconcile must not mount over. */
 export function heldByOther(adapters: Map<string, ClaudeCodeAdapter>, providerId: string): boolean {
   const held: MaybeTagged | undefined = adapters.get(providerId);
+
   return held !== undefined && held[PLUGIN_MOUNT] !== true;
 }
 
@@ -51,13 +53,16 @@ export function registerMount(
       settingsPath: [],
     },
   ]);
+
   try {
     const disposeAdapter = ctx.llm.registerAdapter([adapter.providerId], adapter);
     adapter.registration = disposeAdapter;
+
     return { disposeAdapter, disposeDirectory };
-  } catch (e) {
+  } catch (error) {
     disposeDirectory();
-    log("warn", `${adapter.providerId} not mounted: ${errorText(e)}`);
+    log("warn", `${adapter.providerId} not mounted: ${errorText(error)}`);
+
     return undefined;
   }
 }
@@ -84,14 +89,18 @@ export interface SshBoxMount {
 export function reconcileSshBoxes(
   ctx: PluginContext,
   base: Schemastery.TypeT<typeof Config>,
-  boxes: SshBox[],
+  boxes: Array<SshBox>,
   mounts: Map<string, SshBoxMount>,
   adapters: Map<string, ClaudeCodeAdapter>,
   log: (level: string, msg: string) => void,
 ) {
   const desired = new Map(boxes.map((b) => [sshBoxProviderId(b.name), b] as const));
+
   for (const [providerId, mount] of mounts) {
-    if (desired.has(providerId)) continue;
+    if (desired.has(providerId)) {
+      continue;
+    }
+
     mount.disposeAdapter();
     mount.disposeDirectory();
     mount.adapter.disposeProcesses();
@@ -99,14 +108,19 @@ export function reconcileSshBoxes(
     adapters.delete(providerId);
     log("info", `ssh box ${providerId} withdrawn`);
   }
+
   for (const [providerId, box] of desired) {
-    if (mounts.has(providerId)) continue;
+    if (mounts.has(providerId)) {
+      continue;
+    }
+
     // A hand-written mount or the default already owns this id: leave it, rather than throw
     // DUPLICATE_ADAPTER on the registration. A previous scope's box (tagged) is mounted over.
     if (heldByOther(adapters, providerId)) {
       log("warn", `ssh box "${box.name}" -> ${providerId} already mounted; skipped`);
       continue;
     }
+
     const adapter = new ClaudeCodeAdapter(ctx, {
       ...base,
       providerId,
@@ -117,8 +131,13 @@ export function reconcileSshBoxes(
       dshTools: false,
       configDir: "",
     });
+
     const registered = registerMount(ctx, adapter, log);
-    if (!registered) continue;
+
+    if (!registered) {
+      continue;
+    }
+
     const { disposeAdapter, disposeDirectory } = registered;
     tagPluginMount(adapter);
     probeLogin(adapter);
@@ -129,7 +148,9 @@ export function reconcileSshBoxes(
     // the far claudes it left running (2026-09-08: the first restart after holds shipped left the
     // nova session's cli alive on the box with nothing attached, because only the main mount
     // adopted). A hot reload finds the processes already in the shared registry and skips them.
-    void adapter.adoptHolds().catch((e) => log("warn", `hold adoption: ${errorText(e)}`));
+    void adapter
+      .adoptHolds()
+      .catch((cause: unknown) => log("warn", `hold adoption: ${errorText(cause)}`));
   }
 }
 
@@ -142,10 +163,13 @@ export const probeLogin = (adapter: ClaudeCodeAdapter) => {
     : adapter.providerId === "claude-code"
       ? readSshToken(STATE_DIR, THIS_BOX)
       : undefined;
+
   if (panelToken) {
     adapter.setLoggedIn(true);
+
     return;
   }
+
   void accountIdentity(adapter.config.command, adapter.claudeHome, adapter.config.sshHost)
     .then((who) => adapter.setLoggedIn(who.loggedIn))
     .catch(() => {});

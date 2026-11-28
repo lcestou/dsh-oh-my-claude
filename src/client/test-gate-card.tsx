@@ -5,7 +5,8 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { t, useLocale } from "./i18n.js";
 import { subscribe } from "./events.js";
 import { OpenPanelEvent } from "./edit-last.js";
-import { DOCK_ATTR, DOCK_CARD, ROUTE, T, readJson, type ClientCtx } from "./shared.js";
+import { DOCK_ATTR, DOCK_CARD, ROUTE, T, readJson } from "./shared.js";
+import type { ClientCtx } from "./shared.js";
 import type { TestGateRun } from "../test-gate.js";
 
 /** The notice box the context card uses, so the two read as one family above the composer. */
@@ -17,6 +18,7 @@ const BOX = {
   padding: "8px 10px",
   fontSize: 13,
 } as const;
+
 /** A small outlined button, as on the context card. */
 const SMALL = {
   background: "transparent",
@@ -27,13 +29,17 @@ const SMALL = {
   color: T.text,
   fontSize: 12,
 } as const;
+
 /** A run shorter than this never shows "Running": a fast suite would only flash. */
 const RUNNING_DELAY_MS = 800;
 
 /** The sentence for a run, or null when the run shows no card: a clean first pass, a cancel, or
  *  one the owner closed. */
 export function gateLine(run: TestGateRun): string | null {
-  if (run.dismissed) return null;
+  if (run.dismissed) {
+    return null;
+  }
+
   switch (run.state) {
     case "held":
       return t("testGate.held");
@@ -52,22 +58,31 @@ export function gateLine(run: TestGateRun): string | null {
     case "broken":
       return t("testGate.broken", { code: String(run.exitCode ?? "?") });
     case "stopped":
-      return null;
+      break;
   }
+
+  // Stopped: the owner or the turn ended it, which the card does not report.
+  return null;
 }
 
 /** What the card shows for `run` while the session's turn is or is not running: `gateLine`, or
  *  null for a run left `running` or `fixing` after the turn ended (an interrupt while Claude was
  *  fixing fires no Stop hook; a restart can kill the hook), since that line would lie. */
 export function cardLine(run: TestGateRun, turnRunning: boolean): string | null {
-  if ((run.state === "running" || run.state === "fixing") && !turnRunning) return null;
+  if ((run.state === "running" || run.state === "fixing") && !turnRunning) {
+    return null;
+  }
+
   return gateLine(run);
 }
 
 /** The dot's colour: an error for a failure, muted for a run that is going or said nothing
  *  either way (held, timed out, stopped), the success colour only for a pass. */
 export function dotColour(state: TestGateRun["state"]): string {
-  if (state === "fixing" || state === "gave-up" || state === "broken") return T.err;
+  if (state === "fixing" || state === "gave-up" || state === "broken") {
+    return T.err;
+  }
+
   return state === "passed" ? T.ok : T.muted;
 }
 
@@ -75,42 +90,69 @@ export function dotColour(state: TestGateRun["state"]): string {
  *  (`cardLine`). */
 export function TestGateCard({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useLocale();
+
   const turnRunning = useSyncExternalStore(
     (fn) => ctx.sessions.list.subscribe?.(fn) ?? (() => {}),
     () => ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running === true,
   );
+
   const [run, setRun] = useState<TestGateRun | null>(null);
   const [open, setOpen] = useState(false);
   const [late, setLate] = useState(false);
+  // A session switch drops the last session's run, during the render that switches.
+  const [runFor, setRunFor] = useState(sessionId);
+
+  if (runFor !== sessionId) {
+    setRunFor(sessionId);
+    setRun(null);
+  }
+
   useEffect(() => {
     let live = true;
     // Once an event lands it is newer than the first read, which then must not write over it.
     let heard = false;
-    setRun(null);
     // The first read covers a tab opened mid-run; the event carries every write after it.
     fetch(`${ROUTE}/test-gate/run?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<{ run: TestGateRun | null }>(r))
       .then((r) => live && !heard && setRun(r.run))
       .catch(() => {});
+
     const off = subscribe("test-gate", (s, data) => {
-      if (s !== sessionId) return;
+      if (s !== sessionId) {
+        return;
+      }
+
       heard = true;
       setRun(data);
     });
+
     return () => {
       live = false;
       off();
     };
   }, [sessionId]);
   const running = run?.state === "running";
-  useEffect(() => {
+  // The run being timed: each new run, or the end of one, starts the delay over. Reset during
+  // render, the timer below lets it go.
+  const timedRun = running ? String(run.startedAt) : null;
+  const [lateFor, setLateFor] = useState(timedRun);
+
+  if (lateFor !== timedRun) {
+    setLateFor(timedRun);
     setLate(false);
-    if (!running) return;
-    const timer = setTimeout(() => setLate(true), RUNNING_DELAY_MS);
+  }
+
+  useEffect(() => {
+    const timer = timedRun === null ? undefined : setTimeout(() => setLate(true), RUNNING_DELAY_MS);
+
     return () => clearTimeout(timer);
-  }, [running, run?.startedAt]);
+  }, [timedRun]);
   const line = run ? cardLine(run, turnRunning) : null;
-  if (!run || line === null || (running && !late)) return null;
+
+  if (!run || line === null || (running && !late)) {
+    return null;
+  }
+
   const dismiss = () => {
     setRun({ ...run, dismissed: true });
     void fetch(`${ROUTE}/test-gate/run`, {
@@ -119,6 +161,7 @@ export function TestGateCard({ sessionId, ctx }: { sessionId: string; ctx: Clien
       body: JSON.stringify({ session: sessionId }),
     }).catch(() => {});
   };
+
   return (
     <div {...{ [DOCK_ATTR]: "1" }} style={DOCK_CARD}>
       <div

@@ -14,15 +14,25 @@ import {
 
 // Version order: numbers first, then a release beats its own prerelease; junk is never newer.
 assert.equal(isNewer("1.0.0", "1.0.1"), true);
+
 assert.equal(isNewer("1.0.0", "1.1.0"), true);
+
 assert.equal(isNewer("1.9.9", "2.0.0"), true);
+
 assert.equal(isNewer("1.0.1", "1.0.0"), false);
+
 assert.equal(isNewer("1.0.0", "1.0.0"), false);
+
 assert.equal(isNewer("1.0.0-rc.1", "1.0.0"), true, "release after its prerelease");
+
 assert.equal(isNewer("1.0.0", "1.0.0-rc.2"), false, "a prerelease of the same is not newer");
+
 assert.equal(isNewer("1.0.0", "1.0.1-rc.1"), true, "a prerelease of a later patch is newer");
+
 assert.equal(isNewer("1.0.0", "latest"), false);
+
 assert.equal(isNewer("", "1.0.1"), false);
+
 assert.equal(isNewer("1.0.0", "v1.0.1"), true, "a leading v is tolerated");
 
 // The profile comes off the install path; a linked checkout falls back.
@@ -30,15 +40,19 @@ assert.equal(
   profileFromPath("file:///home/u/.dsh/profiles/web/node_modules/dsh-oh-my-claude/lib/server/x.js"),
   "web",
 );
+
 assert.equal(
   profileFromPath("file:///home/u/.dsh/profiles/lab-2/node_modules/dsh-oh-my-claude/lib/x.js"),
   "lab-2",
 );
+
 assert.equal(profileFromPath("file:///home/u/Projects/oh-my-claude/lib/server/x.js"), "web");
+
 assert.equal(
   updateCommand("dsh-oh-my-claude", "web"),
   "dsh plugin --profile web update dsh-oh-my-claude",
 );
+
 // DSH Desktop owns the `desktop` profile and the CLI refuses it: no command to copy there.
 assert.equal(updateCommand("dsh-oh-my-claude", "desktop"), undefined);
 
@@ -47,12 +61,14 @@ assert.equal(updateCommand("dsh-oh-my-claude", "desktop"), undefined);
   forgetLatest();
   let calls = 0;
   let reply: { ok: boolean; body: unknown } = { ok: true, body: { version: "1.0.1" } };
-  const fetchFn = (async (url: string) => {
+
+  const fetchFn = async (url: string) => {
     calls++;
     assert.equal(url, "https://registry.npmjs.org/dsh-oh-my-claude/latest");
-    // SAFETY: the reader only calls `ok` and `text()`; a whole Response is more than the check needs
-    return { ok: reply.ok, text: async () => JSON.stringify(reply.body) } as Response;
-  }) as typeof fetch;
+
+    return new Response(JSON.stringify(reply.body), { status: reply.ok ? 200 : 500 });
+  };
+
   const t0 = 1_000_000;
   assert.equal(await latestVersion("dsh-oh-my-claude", fetchFn, t0), "1.0.1");
   assert.equal(await latestVersion("dsh-oh-my-claude", fetchFn, t0 + 60_000), "1.0.1");
@@ -91,9 +107,11 @@ assert.equal(updateCommand("dsh-oh-my-claude", "desktop"), undefined);
 
   // A fetch that throws (offline) is swallowed.
   forgetLatest();
-  const boom = (async () => {
+
+  const boom = async () => {
     throw new Error("ENOTFOUND");
-  }) as typeof fetch;
+  };
+
   assert.equal(await latestVersion("dsh-oh-my-claude", boom, t0), undefined);
 }
 
@@ -141,37 +159,54 @@ assert.equal(
   dshFloor('{"peerDependencies":{"@deepseek-ai/dsh-llm":"^0.1.6-alpha.2"}}'),
   "0.1.6-alpha.2",
 );
+
 assert.equal(
   dshFloor('{"peerDependencies":{"@deepseek-ai/dsh-llm": ">=0.1.5-rc.1"}}'),
   "0.1.5-rc.1",
 );
+
 // A floor and a ceiling: the floor is still the first bound.
 assert.equal(
   dshFloor('{"peerDependencies":{"@deepseek-ai/dsh-llm":">=0.1.5-rc.1 <0.3.0"}}'),
   "0.1.5-rc.1",
 );
+
 assert.equal(dshFloor('{"peerDependencies":{"@deepseek-ai/dsh-llm":"*"}}'), undefined);
+
 assert.equal(dshFloor('{"peerDependencies":{"react":"^18"}}'), undefined);
 
 // Reaching a floor, prerelease tags included, as semver orders them.
 assert.equal(atLeast("0.1.6-alpha.2", "0.1.6-alpha.2"), true);
+
 assert.equal(atLeast("0.1.6-alpha.2", "0.1.6-alpha.1"), true);
+
 assert.equal(atLeast("0.1.6-alpha.1", "0.1.6-alpha.2"), false);
+
 assert.equal(atLeast("0.1.6-rc.1", "0.1.6-alpha.2"), true, "rc ranks above alpha");
+
 assert.equal(atLeast("0.1.6", "0.1.6-alpha.2"), true, "a release reaches its prereleases");
+
 assert.equal(atLeast("0.1.6-rc.2", "0.1.6"), false, "a prerelease never reaches its release");
+
 assert.equal(atLeast("0.1.5-rc.2", "0.1.6-alpha.2"), false, "the old line stays below");
+
 assert.equal(atLeast("0.1.7-alpha.1", "0.1.6-alpha.2"), true);
+
 assert.equal(atLeast("0.2.0", "0.1.6-alpha.2"), true);
+
 assert.equal(atLeast("0.1.6-alpha", "0.1.6-alpha.1"), false, "fewer identifiers rank lower");
+
 assert.equal(atLeast("0.1.6-alpha.10", "0.1.6-alpha.9"), true, "numeric, not lexical");
+
 assert.equal(atLeast("garbage", "0.1.6"), false);
 
 // The registry read carries the floor beside the version; a document without a peer range has none.
 {
   forgetLatest();
+
   const doc =
     '{"name":"x","version":"1.3.0","peerDependencies":{"@deepseek-ai/dsh-llm":"^0.1.6-alpha.2"}}';
+
   const fetchFn = async () => new Response(doc, { status: 200 });
   assert.deepEqual(await latestRelease("x", fetchFn, 0), {
     version: "1.3.0",

@@ -1,12 +1,15 @@
 // Permission rules as settings.json holds them, and the rule a tool call suggests. Pure: the
 // adapter calls suggestRule on a request it is about to ask about, the Tune tab calls the rest on
 // the file's text. Tested in permissions.test.ts.
+import { stringOf, isJsonValue, isRec } from "./decode.js";
 import type { JsonValue } from "./dsh.js";
 
 /** The three lists under `permissions` in settings.json. */
 export const PERMISSION_KINDS = ["allow", "deny", "ask"] as const;
+
 export type PermissionKind = (typeof PERMISSION_KINDS)[number];
-export type PermissionRules = { [K in PermissionKind]: string[] };
+
+export type PermissionRules = { [K in PermissionKind]: Array<string> };
 
 /** A settings document as this module handles it: it edits one key and keeps the rest. */
 type Settings = { [key: string]: JsonValue };
@@ -25,15 +28,22 @@ type Settings = { [key: string]: JsonValue };
  */
 export function suggestRule(toolName: string, input: Record<string, JsonValue>): string {
   if (toolName === "Bash" || toolName === "PowerShell") {
-    const words = String(input.command ?? "")
-      .trim()
-      .split(/\s+/);
+    const words = (stringOf(input.command) ?? "").trim().split(/\s+/);
+
     const head =
       words[1] !== undefined && !words[1].startsWith("-") ? words.slice(0, 2) : [words[0]];
-    if (head[0]) return `${toolName}(${head.join(" ")}${toolName === "Bash" ? ":*" : " *"})`;
+
+    if (head[0]) {
+      return `${toolName}(${head.join(" ")}${toolName === "Bash" ? ":*" : " *"})`;
+    }
   }
+
   const path = input.file_path;
-  if (typeof path === "string" && path !== "") return `${toolName}(${path})`;
+
+  if (typeof path === "string" && path !== "") {
+    return `${toolName}(${path})`;
+  }
+
   return toolName;
 }
 
@@ -46,29 +56,36 @@ const RULE = /^[A-Za-z][\dA-Za-z_]*(\(.*\))?$/;
 /** Parse settings JSON, or undefined when the text is not JSON or not a plain object. */
 const settingsObject = (text: string): Settings | undefined => {
   let parsed: unknown;
+
   try {
     parsed = JSON.parse(text);
   } catch {
     return undefined;
   }
-  if (!(parsed instanceof Object) || Array.isArray(parsed)) return undefined;
-  // SAFETY: the value parsed as a plain object, which is the shape the settings route enforces too.
-  return parsed as Settings;
+
+  // A plain object, which is the shape the settings route enforces too.
+  return isJsonValue(parsed) && isRec(parsed) ? parsed : undefined;
 };
 
 /** The string rules under `kind`, or an empty list when `permissions` is missing, not an object,
  *  or not holding an array there. */
-const ruleList = (settings: Settings | undefined, kind: PermissionKind): string[] => {
+const ruleList = (settings: Settings | undefined, kind: PermissionKind): Array<string> => {
   const permissions = settings?.permissions;
-  if (!(permissions instanceof Object) || Array.isArray(permissions)) return [];
-  // SAFETY: a plain object; the value under each kind is checked before it is used.
-  const list = (permissions as Settings)[kind];
+
+  if (!isRec(permissions)) {
+    return [];
+  }
+
+  // The value under each kind is checked before it is used.
+  const list = permissions[kind];
+
   return Array.isArray(list) ? list.filter((rule) => typeof rule === "string") : [];
 };
 
 /** The three lists as they stand. A file that is not JSON, or a list of the wrong shape, reads empty. */
 export function readPermissionRules(text: string): PermissionRules {
   const settings = settingsObject(text);
+
   return {
     allow: ruleList(settings, "allow"),
     deny: ruleList(settings, "deny"),
@@ -87,22 +104,38 @@ export function setPermissionRule(
   rule: string,
   action: "add" | "remove",
 ): { text: string; error?: undefined } | { error: string } {
-  if (action === "add" && !RULE.test(rule.trim()))
+  if (action === "add" && !RULE.test(rule.trim())) {
     return { error: `a rule is a tool name, optionally with a specifier: Bash(npm run:*)` };
+  }
+
   const settings = settingsObject(text);
-  if (settings === undefined) return { error: "settings.json must be a JSON object" };
+
+  if (settings === undefined) {
+    return { error: "settings.json must be a JSON object" };
+  }
+
   const current = ruleList(settings, kind);
+
   const next =
     action === "add" ? [...new Set([...current, rule.trim()])] : current.filter((r) => r !== rule);
-  const permissions: Settings =
-    settings.permissions instanceof Object && !Array.isArray(settings.permissions)
-      ? // SAFETY: a plain object, the shape the CLI reads `permissions` as.
-        { ...(settings.permissions as Settings) }
-      : {};
-  if (next.length === 0) delete permissions[kind];
-  else permissions[kind] = next;
-  if (Object.keys(permissions).length === 0) delete settings.permissions;
-  else settings.permissions = permissions;
+
+  const permissions: Settings = isRec(settings.permissions)
+    ? // A plain object, the shape the CLI reads `permissions` as.
+      { ...settings.permissions }
+    : {};
+
+  if (next.length === 0) {
+    delete permissions[kind];
+  } else {
+    permissions[kind] = next;
+  }
+
+  if (Object.keys(permissions).length === 0) {
+    delete settings.permissions;
+  } else {
+    settings.permissions = permissions;
+  }
+
   // Two spaces and a trailing newline: how Claude Code writes the file itself.
   return { text: `${JSON.stringify(settings, null, 2)}\n` };
 }

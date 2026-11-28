@@ -5,8 +5,17 @@
 // turn the CLI starts on its own and dsh never opened. These blocks pin the hold path, so a later
 // switch has a baseline to match.
 import { strict as assert } from "node:assert";
-import type { PluginContext } from "../dsh.js";
-import type { ClaudeProcess } from "../process.js";
+import { MessageId } from "@deepseek-ai/dsh-llm";
+import type { Message } from "@deepseek-ai/dsh-llm";
+import type { Agent, JsonValue } from "../dsh.js";
+import {
+  fakeAgent,
+  fakeClaudeProcess,
+  fakePluginContext,
+  fieldsOf,
+  objectOf,
+  parseJson,
+} from "../test-context.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
 import { registryKey } from "./types.js";
@@ -17,79 +26,95 @@ function makeProc(
   cancelled: boolean,
   steers: Array<[string, { uuid: string; text: string; at: number }]>,
 ) {
-  const written: Array<{ subtype: string; message_uuid?: string }> = [];
-  const proc: Record<string, unknown> = {
-    alive: true,
+  const written: Array<{ [key: string]: JsonValue }> = [];
+
+  // The send-now path reads only the fields below.
+  const proc = fakeClaudeProcess({
     busy: true,
-    relays: new Map(),
     controlListener: undefined,
     steerPending: true,
     forwarded: steers.length,
     sent: new Set(steers.map(([id]) => `k-${id}`)),
-    steers: new Map(steers.map(([id, s]) => [id, { ...s, key: `k-${id}` }])),
+    steers: new Map(steers.map(([id, st]) => [id, { ...st, key: `k-${id}` }])),
     /** Records each control request and answers it `{ cancelled }` on the next tick. */
     write(line: string) {
-      const req = JSON.parse(line);
-      if (req.type !== "control_request") return true;
-      written.push(req.request);
+      const req = objectOf(parseJson(line));
+
+      if (req.type !== "control_request") {
+        return true;
+      }
+
+      const requestId = fieldsOf(req, { request_id: "string?" }).request_id;
+
+      written.push(objectOf(req.request));
       setTimeout(() => {
-        // SAFETY: the adapter installs this listener before writing a control request
-        (proc.controlListener as (e: object) => void)({
+        // The adapter installs this listener before writing a control request.
+        proc.controlListener?.({
           type: "control_response",
-          response: { subtype: "success", request_id: req.request_id, response: { cancelled } },
+          response: { subtype: "success", request_id: requestId, response: { cancelled } },
         });
       }, 0);
+
       return true;
     },
-  };
-  // SAFETY: partial fake; the send-now path reads only the fields above
-  return { proc: proc as unknown as ClaudeProcess, raw: proc, written };
+  });
+
+  return { proc, raw: proc, written };
 }
 
 /** A dsh agent whose inbox holds `ids`, recording every call send-now makes on it in order. */
 function makeAgent(ids: Array<[string, string]>, withCancel = true) {
-  const calls: string[] = [];
-  const nextStep = ids.map(([id, text]) => ({
-    id,
+  const calls: Array<string> = [];
+
+  const nextStep: Array<Message> = ids.map(([id, text]) => ({
+    id: MessageId(id),
     role: "user",
     source: { kind: "user", rpcId: `r-${id}` },
     content: [{ type: "text", text }],
   }));
-  const agent: Record<string, unknown> = {
+
+  const agent = fakeAgent({
     inbox: {
       nextStep,
       replace: () => true,
       /** Records the inbox removal. */
       remove(id: string) {
         calls.push(`remove ${id}`);
+
         return true;
       },
     },
     /** Records the steer and its text. */
-    steer(m: { id: string; content: Array<{ text: string }> }) {
-      calls.push(`steer ${m.id} ${m.content[0]!.text}`);
+    steer(m) {
+      const [first] = m.content;
+      calls.push(`steer ${m.id} ${first && "text" in first ? first.text : ""}`);
     },
     /** Records a follow-up, which send-now must never use. */
-    followup(m: { id: string }) {
+    followup(m) {
       calls.push(`followup ${m.id}`);
     },
-  };
+  });
+
   if (withCancel) {
     /** Records the turn cut and whether the inbox was kept. */
-    agent.cancel = (reason: { kind: string }, opts: { keepInbox?: boolean }) =>
-      calls.push(`cancel ${reason.kind} keepInbox=${opts.keepInbox}`);
+    agent.cancel = (reason, opts) => {
+      calls.push(`cancel ${reason.kind} keepInbox=${opts?.keepInbox}`);
+    };
+
     /** Records the wait for dsh to go idle. */
     agent.whenIdle = async () => {
       calls.push("idle");
     };
   }
+
   return { agent, calls };
 }
 
 /** An adapter whose context hands out `agent` for every session. */
-function adapterWith(agent: object) {
-  // SAFETY: partial fake; send-now reads `agents.get` and subscribes with `on`
-  const ctx = { on() {}, agents: { get: () => agent } } as unknown as PluginContext;
+function adapterWith(agent: Agent) {
+  // Send-now reads `agents.get` and subscribes with `on`.
+  const ctx = fakePluginContext({ on() {}, agents: { get: () => agent } });
+
   return new ClaudeCodeAdapter(ctx, Config({}));
 }
 
@@ -114,11 +139,14 @@ function adapterWith(agent: object) {
     ["m1", "first"],
     ["m2", "second"],
   ]);
+
   const adapter = adapterWith(agent);
+
   const { proc, written } = makeProc(true, [
     ["m1", { uuid: "u1", text: "first", at: 5 }],
     ["m2", { uuid: "u2", text: "second", at: 9 }],
   ]);
+
   adapter.processes.set(registryKey(adapter.providerId, "s1"), proc);
   assert.deepEqual(await adapter.sendSteerNow("s1", ["m2", "m1"]), { ok: true });
   assert.deepEqual(

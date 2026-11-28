@@ -5,11 +5,10 @@ import { sessionLabel } from "./panel.js";
 import { SearchField } from "./search-field.js";
 import { Menu } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { CSSProperties } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { SessionData } from "./shared.js";
 import {
-  type ClientCtx,
   ROUTE,
-  SessionData,
   T,
   ago,
   btn,
@@ -25,11 +24,15 @@ import {
   row,
   saveBlob,
   select,
+  errorText,
 } from "./shared.js";
-import { BoxData, SkeletonRows } from "./boxes.js";
+import type { ClientCtx } from "./shared.js";
+import type { BoxData } from "./boxes.js";
+import { SkeletonRows } from "./boxes.js";
 
 /** Deep link another box's panel sends us to: `#claude-session=<id>&cwd=<path>`. */
 const HASH_KEY = "claude-session";
+
 /** A row's identity in the list: the same transcript id can sit on two boxes. */
 const rowKey = (r: { g: { key: string }; s: { id: string } }): string => `${r.g.key}-${r.s.id}`;
 
@@ -37,29 +40,45 @@ const rowKey = (r: { g: { key: string }; s: { id: string } }): string => `${r.g.
 const slugFile = (title: string): string =>
   title
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
+    .replaceAll(/[^a-z0-9]+/g, "-")
+    .replaceAll(/^-|-$/g, "")
     .slice(0, 40) || "claude";
 
 /** A byte count for a session row: whole KB under a megabyte, MB with one decimal above. */
 export const size = (bytes: number): string =>
   bytes < 1_000_000 ? `${Math.round(bytes / 1000)} KB` : `${(bytes / 1_000_000).toFixed(1)} MB`;
+
 /** `/home/me/Projects/app` → `Projects/app`, and the same for a Windows path; keeps the full path
  *  for the title attribute. */
 const shortPath = (p: string | undefined): string => {
-  if (!p) return "";
+  if (!p) {
+    return "";
+  }
+
   const parts = p.split(/[\\/]/).filter(Boolean);
+
   return parts.length > 2 ? parts.slice(-2).join("/") : p;
 };
 
 /** Where a transcript lives: terminal only, a live dsh session, or an archived one. */
 function Origin({ s }: { s: { dsh?: { archived?: boolean; id?: string }; imported?: boolean } }) {
   useLocale();
-  if (s.imported) return <span style={pill(T.brand)}>{t("main.origin.imported")}</span>;
-  if (!s.dsh) return <span style={pill(T.faint)}>{t("main.origin.terminal")}</span>;
-  if (s.dsh.archived) return <span style={pill(T.warn)}>{t("main.origin.archived")}</span>;
+
+  if (s.imported) {
+    return <span style={pill(T.brand)}>{t("main.origin.imported")}</span>;
+  }
+
+  if (!s.dsh) {
+    return <span style={pill(T.faint)}>{t("main.origin.terminal")}</span>;
+  }
+
+  if (s.dsh.archived) {
+    return <span style={pill(T.warn)}>{t("main.origin.archived")}</span>;
+  }
+
   return <span style={pill(T.brand)}>dsh</span>;
 }
+
 /** Returns a box's origin: terminal, archived or dsh, and terminal when it has no dsh record. */
 const originOf = (s: { dsh?: { archived?: boolean } }): string =>
   !s.dsh ? "terminal" : s.dsh.archived ? "archived" : "dsh";
@@ -73,7 +92,7 @@ interface RemoteSessionData extends SessionData {
   host?: string;
   ok?: boolean;
   error?: string;
-  sessions?: SessionData[];
+  sessions?: Array<SessionData>;
   name?: string;
 }
 
@@ -84,12 +103,12 @@ interface SshSessionData {
   provider?: string;
   ok?: boolean;
   error?: string;
-  sessions?: SessionData[];
+  sessions?: Array<SessionData>;
 }
 
 interface SessionsProps {
   ctx: ClientCtx;
-  boxes: BoxData[];
+  boxes: Array<BoxData>;
   /** Dismiss the settings panel, so a restored session lands in the foreground as if clicked. */
   close?: () => void;
 }
@@ -100,7 +119,7 @@ export interface GroupInfo {
   host?: string;
   ok: boolean;
   error?: string;
-  sessions: SessionData[];
+  sessions: Array<SessionData>;
   box?: BoxData;
   /** An SSH box: transcripts live on its host, reachable only over ssh. No HTTP box to jump to. */
   sshBox?: boolean;
@@ -123,7 +142,7 @@ const filterSelect: CSSProperties = { ...select, flex: "1 1 160px", maxWidth: "n
  * so the paging math is checked without a DOM.
  */
 export function pageSessions(
-  groups: GroupInfo[],
+  groups: Array<GroupInfo>,
   filters: {
     box: string;
     cwd: string;
@@ -140,6 +159,7 @@ export function pageSessions(
   const { box, cwd, origin, query = "", shown, deepIds } = filters;
   const hidden: Record<string, number> = {};
   const matched: Record<string, number> = {};
+
   const keep = (s: SessionData) =>
     (deepIds === undefined || deepIds.has(s.id)) &&
     (cwd === "all" || s.cwd === cwd) &&
@@ -148,11 +168,16 @@ export function pageSessions(
     // result away: the typed phrase is in the messages, not the titles, which is the only reason
     // anyone presses the button. Caught in the browser on 2026-09-20, 59 hits rendering as 0 rows.
     (deepIds !== undefined || matchesQuery(s, query));
+
   const cappedList = (pairs: Array<{ g: GroupInfo; s: SessionData }>, key: string) => {
     const sorted = pairs.toSorted((a, b) => b.s.modifiedAt - a.s.modifiedAt);
     matched[key] = sorted.length;
     const cap = shown[key] ?? PAGE;
-    if (sorted.length > cap) hidden[key] = sorted.length - cap;
+
+    if (sorted.length > cap) {
+      hidden[key] = sorted.length - cap;
+    }
+
     return sorted.slice(0, cap);
   };
 
@@ -160,12 +185,14 @@ export function pageSessions(
   if (box !== "all") {
     const g = groups.find((x) => x.key === box);
     const pairs = g ? g.sessions.filter(keep).map((s) => ({ g, s })) : [];
+
     return { list: cappedList(pairs, box), hidden, matched };
   }
 
   // All boxes: one timeline across every box, capped once under "all". Session ids are unique per
   // box and the self-proxy box is dropped upstream, so no row appears twice.
   const pairs = groups.flatMap((g) => g.sessions.filter(keep).map((s) => ({ g, s })));
+
   return { list: cappedList(pairs, "all"), hidden, matched };
 }
 
@@ -176,9 +203,9 @@ export function pageSessions(
  */
 export function Sessions({ ctx, boxes, close }: SessionsProps) {
   useLocale();
-  const [local, setLocal] = useState<{ host?: string; sessions?: SessionData[] } | null>(null);
-  const [remote, setRemote] = useState<RemoteSessionData[]>([]);
-  const [ssh, setSsh] = useState<SshSessionData[]>([]);
+  const [local, setLocal] = useState<{ host?: string; sessions?: Array<SessionData> } | null>(null);
+  const [remote, setRemote] = useState<Array<RemoteSessionData>>([]);
+  const [ssh, setSsh] = useState<Array<SshSessionData>>([]);
   const [loading, setLoading] = useState(true);
   const [remoteLoading, setRemoteLoading] = useState(false);
   const [error, setError] = useState("");
@@ -205,32 +232,57 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
   const [menuFor, setMenuFor] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const load = () => {
-    setLoading(true);
-    setError("");
+  const hasBoxes = boxes.length > 0;
+
+  /** Every list read. Sets state only as the answers land, so the box-set effect below can start
+   *  it; `load` and the render-time block mark the tab loading first. */
+  const readAll = useCallback(() => {
     fetch(`${ROUTE}/sessions?all=1`)
-      .then((r) => readJson<{ host?: string; sessions?: SessionData[] } | null>(r))
+      .then((r) => readJson<{ host?: string; sessions?: Array<SessionData> } | null>(r))
       .then((body) => setLocal(body ?? null))
-      .catch((e: Error) => setError(e.message))
+      .catch((cause: unknown) => setError(errorText(cause)))
       .finally(() => setLoading(false));
     // SSH boxes list over ssh (own registry, no HTTP url); fetch regardless of the HTTP boxes above.
     fetch(`${ROUTE}/boxes/ssh-sessions`)
-      .then((r) => readJson<{ boxes?: SshSessionData[] } | null>(r))
+      .then((r) => readJson<{ boxes?: Array<SshSessionData> } | null>(r))
       .then((body) => setSsh(body?.boxes ?? []))
       .catch(() => setSsh([]));
-    if (boxes.length === 0) return;
-    setRemoteLoading(true);
-    fetch(`${ROUTE}/boxes/sessions`)
-      .then((r) => readJson<{ boxes?: RemoteSessionData[] } | null>(r))
-      .then((body) => setRemote(body?.boxes ?? []))
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setRemoteLoading(false));
-  };
-  useEffect(load, [boxes.map((b) => b.url).join("|")]);
 
-  const groups = useMemo<GroupInfo[]>(() => {
-    const out: GroupInfo[] = [];
-    if (local)
+    if (hasBoxes) {
+      fetch(`${ROUTE}/boxes/sessions`)
+        .then((r) => readJson<{ boxes?: Array<RemoteSessionData> } | null>(r))
+        .then((body) => setRemote(body?.boxes ?? []))
+        .catch((cause: unknown) => setError(errorText(cause)))
+        .finally(() => setRemoteLoading(false));
+    }
+  }, [hasBoxes]);
+
+  /** The Refresh button: loading, error cleared, every list read again. */
+  const load = () => {
+    setLoading(true);
+    setError("");
+    setRemoteLoading(hasBoxes);
+    readAll();
+  };
+
+  // A box added, removed or swapped reads every list again: marked during render, as a Refresh
+  // click marks it, and read by the effect.
+  const boxUrls = boxes.map((b) => b.url).join("|");
+  const [readFor, setReadFor] = useState<string | null>(null);
+
+  if (readFor !== boxUrls) {
+    setReadFor(boxUrls);
+    setLoading(true);
+    setError("");
+    setRemoteLoading(hasBoxes);
+  }
+
+  useEffect(readAll, [readAll, boxUrls]);
+
+  const groups = useMemo<Array<GroupInfo>>(() => {
+    const out: Array<GroupInfo> = [];
+
+    if (local) {
       out.push({
         // Name is the host, not a fixed "This box": the plugin runs on whatever box, so the label
         // must read as that box's name. A "· here" marker in the chip says which one is local.
@@ -240,12 +292,18 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
         ok: true,
         sessions: local.sessions ?? [],
       });
+    }
+
     for (const b of boxes) {
       const r = remote.find((x) => x.url === b.url);
+
       // A box whose URL loops back to this same dsh (e.g. a NAS reverse proxy pointing at self)
       // reports the local hostname and returns the same transcripts already in the local group.
       // Skip it so nothing is listed twice; when unreachable we cannot tell, so it still shows.
-      if (local?.host && r?.host && r.host === local.host) continue;
+      if (local?.host && r?.host && r.host === local.host) {
+        continue;
+      }
+
       out.push({
         key: b.url,
         name: b.name,
@@ -260,7 +318,8 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
         box: b,
       });
     }
-    for (const s of ssh)
+
+    for (const s of ssh) {
       out.push({
         key: `ssh:${s.host ?? s.name}`,
         name: s.name,
@@ -271,6 +330,8 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
         sshBox: true,
         provider: s.provider,
       });
+    }
+
     return out;
   }, [local, remote, ssh, boxes, remoteLoading]);
 
@@ -280,17 +341,29 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
     () => pageSessions(groups, { box, cwd, origin, query, shown, deepIds }),
     [groups, box, cwd, origin, query, shown, deepIds],
   );
+
   const rows = paged.list;
 
-  const cwds = useMemo<string[]>(() => {
+  const cwds = useMemo<Array<string>>(() => {
     const set = new Set<string>();
-    for (const g of groups)
-      if (box === "all" || g.key === box) for (const s of g.sessions) if (s.cwd) set.add(s.cwd);
+
+    for (const g of groups) {
+      if (box === "all" || g.key === box) {
+        for (const s of g.sessions) {
+          if (s.cwd) {
+            set.add(s.cwd);
+          }
+        }
+      }
+    }
+
     return [...set].toSorted();
   }, [groups, box]);
-  useEffect(() => {
-    if (cwd !== "all" && !cwds.includes(cwd)) setCwd("all");
-  }, [cwds.join("|")]);
+
+  // A workspace that left the list (its box removed, its sessions gone) drops the filter back to all.
+  if (cwd !== "all" && !cwds.includes(cwd)) {
+    setCwd("all");
+  }
 
   const open = async (r: {
     g: { key: string; box?: BoxData; name: string; sshBox?: boolean; provider?: string };
@@ -304,53 +377,76 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
       if (r.s.dsh?.id) {
         setBusyId(r.s.id);
         setError("");
+
         try {
           await openHere(ctx, r.s, r.s.cwd ?? "");
           close?.();
-        } catch (e) {
-          setError(e instanceof Error ? e.message : String(e));
+        } catch (error_) {
+          setError(error_ instanceof Error ? error_.message : String(error_));
         } finally {
           setBusyId("");
         }
+
         return;
       }
+
       // A raw box transcript dsh never tracked: make a session for it, bind it to the box's provider
       // (default model) so the resume runs back on the box, then open. If the model seam is gone we
       // fall back to a clear message rather than resuming it against the local claude.
       const provider = r.g.provider;
+
       if (!provider) {
         setError(t("main.sessions.pickModel", { name: r.g.name }));
+
         return;
       }
+
       setBusyId(r.s.id);
       setError("");
+
       try {
         await ctx.sessions.create({ sessionId: r.s.id });
         const dir = ctx.modelDirectories.directoryFor(r.s.id);
         const state = await dir.load?.();
         const model = state?.groups.find((g) => g.id === provider)?.models[0]?.id;
-        if (model && dir.select) await dir.select({ provider, model });
+
+        if (model && dir.select) {
+          await dir.select({ provider, model });
+        }
+
         openSession(ctx, r.s.id);
         close?.();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+      } catch (error_) {
+        setError(error_ instanceof Error ? error_.message : String(error_));
       } finally {
         setBusyId("");
       }
+
       return;
     }
+
     if (r.g.key !== "local") {
-      if (!r.g.box) return;
+      if (!r.g.box) {
+        return;
+      }
+
       window.location.assign(jumpUrl(r.g.box, r.s));
+
       return;
     }
+
     setBusyId(r.s.id);
     setError("");
+
     try {
       await openHere(ctx, r.s, r.s.cwd ?? "");
-      if (r.s.dsh?.archived)
+
+      if (r.s.dsh?.archived) {
         setLocal((l) => {
-          if (!l?.sessions) return l;
+          if (!l?.sessions) {
+            return l;
+          }
+
           return {
             ...l,
             sessions: l.sessions.map((x) =>
@@ -358,9 +454,11 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
             ),
           };
         });
+      }
+
       close?.();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     } finally {
       setBusyId("");
     }
@@ -373,17 +471,26 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
     const wanted = rows.filter((r) => picked.has(rowKey(r)));
     setMoving(t("main.sessions.downloading", { n: wanted.length }));
     setError("");
+
     try {
       for (const r of wanted) {
         const q = new URLSearchParams({ id: r.s.id });
-        if (r.s.cwd) q.set("cwd", r.s.cwd);
-        if (r.g.provider) q.set("provider", r.g.provider);
+
+        if (r.s.cwd) {
+          q.set("cwd", r.s.cwd);
+        }
+
+        if (r.g.provider) {
+          q.set("provider", r.g.provider);
+        }
+
         const base = `${r.s.title ? slugFile(r.s.title) : "claude"}-${r.s.id.slice(0, 8)}`;
         await saveBlob(`${ROUTE}/transcript?${q}`, `${base}.jsonl`);
       }
+
       setPicked(new Set());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     } finally {
       setMoving("");
     }
@@ -398,27 +505,41 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
     setMenuFor("");
     setError("");
     const q = new URLSearchParams({ id: r.s.id });
-    if (r.s.cwd) q.set("cwd", r.s.cwd);
-    if (r.g.provider) q.set("provider", r.g.provider);
+
+    if (r.s.cwd) {
+      q.set("cwd", r.s.cwd);
+    }
+
+    if (r.g.provider) {
+      q.set("provider", r.g.provider);
+    }
+
     const base = `${r.s.title ? slugFile(r.s.title) : "claude"}-${r.s.id.slice(0, 8)}`;
+
     try {
-      if (action === "jsonl") await saveBlob(`${ROUTE}/transcript?${q}`, `${base}.jsonl`);
-      else if (action === "md") await saveBlob(`${ROUTE}/transcript.md?${q}`, `${base}.md`);
-      else if (action === "resume") {
+      if (action === "jsonl") {
+        await saveBlob(`${ROUTE}/transcript?${q}`, `${base}.jsonl`);
+      } else if (action === "md") {
+        await saveBlob(`${ROUTE}/transcript.md?${q}`, `${base}.md`);
+      } else if (action === "resume") {
         const host = r.g.sshBox ? r.g.host : undefined;
         await navigator.clipboard.writeText(resumeCommand(r.s.id, r.s.cwd, host));
         setMoving(t("copied"));
         setTimeout(() => setMoving(""), 1600);
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     }
   };
 
   const importFiles = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
+    if (!files || files.length === 0) {
+      return;
+    }
+
     setMoving(t("main.sessions.importing", { n: files.length }));
     setError("");
+
     try {
       for (const f of Array.from(files)) {
         const body = await readJson<{ id?: string; error?: string }>(
@@ -428,12 +549,15 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
             body: JSON.stringify({ text: await f.text() }),
           }),
         );
-        if (!body.id)
+
+        if (!body.id) {
           throw new Error(`${f.name}: ${body.error ?? t("main.sessions.importFailed")}`);
+        }
       }
+
       load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     } finally {
       setMoving("");
     }
@@ -442,19 +566,26 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
   const runDeep = async () => {
     setDeepBusy(true);
     setDeepNote("");
+
     try {
       // The route needs an absolute path when the scope is `workspace`; the panel's cwd filter is
       // the string "all", not a path. Read the workspace the panel is open in the way context-sizes
       // and claude-md do, using the open session's own cwd, and widen to box when there is no path.
       let scope = deepScope;
       let cwdParam = cwd === "all" ? "" : cwd;
+
       if (scope === "workspace" && cwdParam === "") {
         const snap = ctx.sessions.list.getSnapshot();
         const openId = openSessionId(ctx);
         cwdParam = (openId ? snap?.byId[openId]?.cwd : "") ?? "";
-        if (cwdParam === "") scope = "box";
+
+        if (cwdParam === "") {
+          scope = "box";
+        }
       }
+
       const url = `${ROUTE}/search?q=${encodeURIComponent(query.trim())}&scope=${scope}&cwd=${encodeURIComponent(cwdParam)}`;
+
       const body = await readJson<{
         hits?: Array<{ id: string; snippet: string; count: number }>;
         scanned?: number;
@@ -462,11 +593,14 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
         truncated?: boolean;
         error?: string;
       }>(await fetch(url));
+
       if (body.error !== undefined) {
         setDeepNote(t("main.sessions.searchFailed", { error: body.error }));
         setDeep(null);
+
         return;
       }
+
       const hits = body.hits ?? [];
       setDeep(new Map(hits.map((h) => [h.id, { snippet: h.snippet, count: h.count }])));
       setDeepNote(
@@ -480,10 +614,10 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
               more: body.truncated === true ? t("main.sessions.deepMore") : "",
             }),
       );
-    } catch (e) {
+    } catch (error_) {
       setDeepNote(
         t("main.sessions.searchFailed", {
-          error: e instanceof Error ? e.message : t("main.sessions.unknownError"),
+          error: error_ instanceof Error ? error_.message : t("main.sessions.unknownError"),
         }),
       );
       setDeep(null);
@@ -500,6 +634,7 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
   const moreKey = box === "all" ? "all" : box;
   const more = paged.hidden[moreKey] ?? 0;
   const grown = (shown[moreKey] ?? PAGE) > PAGE;
+
   return (
     <div>
       <div
@@ -672,9 +807,12 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
         {rows.map((r) => {
           const isLocal = r.g.key === "local";
           const isSsh = r.g.sshBox === true;
+
           const opened =
             (isLocal || isSsh) && Boolean(known[r.s.dsh?.id ?? r.s.id]) && !r.s.dsh?.archived;
+
           const busy = busyId === r.s.id;
+
           const label = busy
             ? t("main.sessions.opening")
             : !isLocal && !isSsh
@@ -684,6 +822,7 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
                 : r.s.dsh?.archived
                   ? t("main.sessions.restore")
                   : t("main.sessions.open");
+
           return (
             <div
               key={rowKey(r)}
@@ -701,8 +840,13 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
                 onChange={(e) =>
                   setPicked((set) => {
                     const next = new Set(set);
-                    if (e.target.checked) next.add(rowKey(r));
-                    else next.delete(rowKey(r));
+
+                    if (e.target.checked) {
+                      next.add(rowKey(r));
+                    } else {
+                      next.delete(rowKey(r));
+                    }
+
                     return next;
                   })
                 }
@@ -791,7 +935,8 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
                 type="button"
                 style={opened ? btn : btnPrimary}
                 disabled={busy}
-                onClick={() => open(r)}
+                // open reports its own failure on the row, so nothing awaits it.
+                onClick={() => void open(r)}
               >
                 {label}
               </button>

@@ -5,13 +5,16 @@
 // `project` in the `.mcp.json` of the session's directory and of every directory above it. The MCP
 // tab shows these beside the servers the running process has, so a server added a moment ago has a
 // row before Claude next starts.
+import { parsedWith } from "./schema-fits.js";
 import { dirname, join } from "node:path";
 import z from "@deepseek-ai/schemastery";
-import { type FsBox, readTextAt } from "./remote-fs.js";
+import { readTextAt } from "./remote-fs.js";
+import type { FsBox } from "./remote-fs.js";
 import { projectKey, repoRoot } from "./repo.js";
 
 /** HTTP header name for the MCP bridge authentication key. */
 export const KEY_HEADER = "x-dsh-oh-my-claude-key";
+
 /** The environment variable a local `claude` receives the bridge key in. The `--mcp-config`
  *  argument names it as `${...}` and the CLI fills it in (seen on 2.1.322), so the key stays out of
  *  the command line, which every local user can read with `ps`; a process's environment is its
@@ -38,29 +41,27 @@ export interface ConfiguredMcp {
 // some out per transport, and a file that fails the schema reads as holding nothing.
 const Entry = z.object({ command: z.string(), args: z.array(z.string()), url: z.string() });
 const Servers = z.dict(Entry);
+
 const ClaudeJson = z.object({
   mcpServers: Servers,
   projects: z.dict(z.object({ mcpServers: Servers })),
 });
+
 const McpJson = z.object({ mcpServers: Servers });
+
 type ServerMap = ReturnType<typeof Servers>;
 
 /** Rows for one `mcpServers` map under `scope`. */
-const rowsOf = (servers: ServerMap | undefined, scope: ConfiguredMcp["scope"]): ConfiguredMcp[] =>
+const rowsOf = (
+  servers: ServerMap | undefined,
+  scope: ConfiguredMcp["scope"],
+): Array<ConfiguredMcp> =>
   Object.entries(servers ?? {}).map(([name, e]) => ({
     name,
     scope,
     summary: e.url ?? `${e.command ?? ""} ${(e.args ?? []).join(" ")}`.trim(),
   }));
 
-/** A schema call that throws on an off-shape file reads as no file. */
-const safe = <T>(read: () => T): T | null => {
-  try {
-    return read();
-  } catch {
-    return null;
-  }
-};
 /**
  * Rows from the files' text. Pure, so the listing is checked without a filesystem: `claudeJson` is
  * `.claude.json`, and `mcpJsons` are the `.mcp.json` files from the session's directory upwards,
@@ -70,18 +71,23 @@ const safe = <T>(read: () => T): T | null => {
  */
 export function configuredFrom(
   claudeJson: string | null,
-  mcpJsons: readonly (string | null)[],
+  mcpJsons: ReadonlyArray<string | null>,
   key: string,
-): ConfiguredMcp[] {
-  // JSON.parse feeds the schema call as it does elsewhere in this plugin; either throwing reads
-  // as no file.
-  const top = claudeJson === null ? null : safe(() => ClaudeJson(JSON.parse(claudeJson)));
+): Array<ConfiguredMcp> {
+  // Text that is not JSON, or JSON of another shape, reads as no file.
+  const top = claudeJson === null ? null : (parsedWith(ClaudeJson, claudeJson) ?? null);
   const project = new Map<string, ConfiguredMcp>();
+
   for (const text of mcpJsons) {
-    const file = text === null ? null : safe(() => McpJson(JSON.parse(text)));
-    for (const row of rowsOf(file?.mcpServers, "project"))
-      if (!project.has(row.name)) project.set(row.name, row);
+    const file = text === null ? null : (parsedWith(McpJson, text) ?? null);
+
+    for (const row of rowsOf(file?.mcpServers, "project")) {
+      if (!project.has(row.name)) {
+        project.set(row.name, row);
+      }
+    }
   }
+
   return [
     ...rowsOf(top?.mcpServers, "user"),
     ...rowsOf(top?.projects?.[key]?.mcpServers, "local"),
@@ -103,15 +109,21 @@ export async function listConfiguredMcp(
   cwd: string,
   claudeJsonPath: string,
   box: FsBox = {},
-): Promise<ConfiguredMcp[]> {
+): Promise<Array<ConfiguredMcp>> {
   const [claudeJson, root] = await Promise.all([
     readTextAt(box, claudeJsonPath).catch(() => null),
     repoRoot(box, cwd),
   ]);
-  const mcpJsons: (string | null)[] = [];
+
+  const mcpJsons: Array<string | null> = [];
+
   for (let dir = cwd; ; dir = dirname(dir)) {
     mcpJsons.push(await readTextAt(box, join(dir, ".mcp.json")).catch(() => null));
-    if (dir === dirname(dir)) break;
+
+    if (dir === dirname(dir)) {
+      break;
+    }
   }
+
   return configuredFrom(claudeJson, mcpJsons, projectKey(box, root));
 }

@@ -1,7 +1,7 @@
 // The cards the panel and the dock draw: the starter slot, the draft relay, and the steer, compact,
 // limit, suggestion, login and Claude-update cards, plus the helpers they all share.
 import { t, useLocale } from "./i18n.js";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { IconPaperclipOutlineRegular } from "./icons.js";
 import {
   ROUTE,
@@ -11,11 +11,16 @@ import {
   readJson,
   ACCENT,
   claudeProviderOf,
-  type ClientCtx,
+  errorText,
+  isJsonObject,
+  isJsonString,
+  parseJson,
 } from "./shared.js";
+import type { ClientCtx, Json } from "./shared.js";
 import type { LoginNeed, SteerAttachmentRow, SteerCardData } from "./events.js";
 import { Spark } from "./spark.js";
-import { limitFor, type worstLimit } from "./limits.js";
+import { limitFor } from "./limits.js";
+import type { worstLimit } from "./limits.js";
 import { noteWithdrawn } from "./steer-restore.js";
 import { takeDraft, subscribeDraft, noteDraft } from "./draft.js";
 import { useHintFlag } from "./hints.js";
@@ -24,7 +29,9 @@ import { ACCOUNT_LOGIN } from "./accounts.js";
 import { size } from "./sessions-tab.js";
 import { kTokens, loadUsage, resetText, sessionModelOf } from "./context-meter.js";
 import { StarterCard } from "./settings-card.js";
-import { holdTimer, type HoldTimer } from "./hold-timer.js";
+import { holdTimer } from "./hold-timer.js";
+import type { HoldTimer } from "./hold-timer.js";
+import { isNode } from "./dom-guards.js";
 
 /** Slot wrapper: reads the live draft through dsh's own input hook before handing the card its props.
  *  The hook comes in as a prop, so the read has to happen in a component dsh renders, not in the
@@ -40,9 +47,14 @@ export function StarterSlot({
   inputActions?: { setDraft: (text: string) => void };
   useInput?: <T>(select: (state: { draft: string }) => T) => T;
 }) {
+  // oxlint-disable-next-line react/hooks -- dsh hands its selector hooks in as slot props (SessionStandardProps), and one slot mount always gets the same hook.
   const draft = useInput?.((state) => state.draft) ?? "";
   const [off] = useHintFlag("starterOff");
-  if (off || sessionId === undefined || inputActions === undefined) return null;
+
+  if (off || sessionId === undefined || inputActions === undefined) {
+    return null;
+  }
+
   return (
     <StarterCard
       sessionId={sessionId}
@@ -52,6 +64,25 @@ export function StarterSlot({
     />
   );
 }
+
+/** Writes each draft the panel queues for `sessionId` into the composer, one already waiting
+ *  first; returns the unsubscribe. */
+const relayDrafts = (
+  sessionId: string,
+  inputActions: { setDraft: (text: string) => void },
+): (() => void) => {
+  const flush = () => {
+    const text = takeDraft(sessionId);
+
+    if (text !== undefined) {
+      inputActions.setDraft(text);
+    }
+  };
+
+  flush(); // queued before this mounted, e.g. the panel closed on the same click
+
+  return subscribeDraft(flush);
+};
 
 /** Renderless: writes a draft the panel queued into the composer. The panel has no `setDraft` of its
  *  own, and this slot does, so Review my changes crosses here. */
@@ -66,20 +97,21 @@ export function DraftRelay({
 }) {
   // Mirrored out for the recap watcher, which is an interval and so cannot call a hook. Cleared on
   // unmount: a composer that is gone has no text in it, and a stale value would mute every recap.
+  // oxlint-disable-next-line react/hooks -- dsh hands its selector hooks in as slot props (SessionStandardProps), and one slot mount always gets the same hook.
   const draft = useInput?.((state) => state.draft) ?? "";
   useEffect(() => {
     noteDraft(draft);
+
     return () => noteDraft("");
   }, [draft]);
-  useEffect(() => {
-    if (sessionId === undefined || inputActions === undefined) return;
-    const flush = () => {
-      const text = takeDraft(sessionId);
-      if (text !== undefined) inputActions.setDraft(text);
-    };
-    flush(); // queued before this mounted, e.g. the panel closed on the same click
-    return subscribeDraft(flush);
-  }, [sessionId, inputActions]);
+  useEffect(
+    () =>
+      sessionId === undefined || inputActions === undefined
+        ? undefined
+        : relayDrafts(sessionId, inputActions),
+    [sessionId, inputActions],
+  );
+
   return null;
 }
 
@@ -127,6 +159,7 @@ export interface ClaudeUpdateCardData {
   latest: string;
   folded: boolean;
 }
+
 /** Compare two update-card data objects by identity or by host, installed and latest versions, so a
  *  re-rendered card matches the last drawn one. */
 export const sameCard = (a: ClaudeUpdateCardData | null, b: ClaudeUpdateCardData | null): boolean =>
@@ -141,7 +174,7 @@ export const sameCard = (a: ClaudeUpdateCardData | null, b: ClaudeUpdateCardData
 /** The release's entry on Claude Code's changelog page: its anchors are the version with dots as
  *  hyphens, `#2-1-277`. */
 const claudeReleaseNotes = (version: string): string =>
-  `https://code.claude.com/docs/en/changelog#${version.replace(/\./g, "-")}`;
+  `https://code.claude.com/docs/en/changelog#${version.replaceAll(".", "-")}`;
 
 /** The loudest plan limit the session's model counts against, rechecked every minute through the
  *  usage route's own one-minute cache, so a model switched mid-session is picked up on the next
@@ -150,38 +183,61 @@ export function useBindingLimit(sessionId: string, ctx: ClientCtx) {
   const [limit, setLimit] = useState<ReturnType<typeof worstLimit>>(undefined);
   useEffect(() => {
     let live = true;
+
     const read = () =>
       loadUsage(claudeProviderOf(ctx, sessionId)).then(
         (r) => live && setLimit(limitFor(r, sessionModelOf(ctx, sessionId))),
         () => {},
       );
+
     void read();
-    const timer = setInterval(read, 60_000);
+    // read never rejects: its rejection handler drops a failed read.
+    const timer = setInterval(() => void read(), 60_000);
     // A model switch changes which limits count, so it rereads at once rather than on the clock;
     // usage itself comes from the route's cache, so this costs no request.
     let off: (() => void) | undefined;
+
     try {
       off = ctx.modelDirectories.directoryFor(sessionId).store.subscribe(() => void read());
     } catch {
       // Not bound in this tab yet: the clock still covers it.
     }
+
     return () => {
       live = false;
       clearInterval(timer);
       off?.();
     };
   }, [sessionId, ctx]);
+
   return limit;
 }
 
 /** One request to the steer-edit route, as its validation accepts them. */
 type SteerAction =
-  | { action: "hold" | "remove" | "sendNow"; ids: string[] }
+  | { action: "hold" | "remove" | "sendNow"; ids: Array<string> }
   | { action: "save"; holdId: string; text: string }
   | { action: "restore" | "drop"; holdId: string };
 
 /** What the steer-edit route answers when it refuses. */
 type SteerEditFailure = { reason?: "sent" | "gone" | "error" | "relayed"; error?: string };
+
+/** Every `reason` the steer-edit route gives for an edit that did not happen. */
+const STEER_REASONS = ["sent", "gone", "error", "relayed"] as const;
+
+/** The steer-edit route's answer, read field by field: it answers 409 with the same shape when the
+ *  edit did not happen, so the body is read whatever the status. A field of the wrong type reads
+ *  as absent. */
+const readSteerEditReply = (body: Json): { ok: boolean } & SteerEditFailure => {
+  if (!isJsonObject(body)) {
+    return { ok: false };
+  }
+
+  const reason = STEER_REASONS.find((r) => r === body.reason);
+  const error = isJsonString(body.error) ? body.error : undefined;
+
+  return { ok: body.ok === true, reason, error };
+};
 
 /** The line under a row when an edit or removal did not happen, in the reader's language. */
 const steerFailureText = (f: SteerEditFailure): string =>
@@ -199,9 +255,13 @@ const chipSize = (bytes: number): string => (bytes < 1000 ? `${bytes} B` : size(
 /** The files and images on a waiting or held steer, as small chips in the order the message holds
  *  them: a file by name and size, an image by its name or the word for image. Draws nothing for a
  *  text-only message. */
-function SteerAttachments({ items }: { items: SteerAttachmentRow[] | undefined }) {
+function SteerAttachments({ items }: { items: Array<SteerAttachmentRow> | undefined }) {
   useLocale();
-  if (!items?.length) return null;
+
+  if (!items?.length) {
+    return null;
+  }
+
   return (
     <ul
       data-omc-steer-attachments=""
@@ -219,6 +279,7 @@ function SteerAttachments({ items }: { items: SteerAttachmentRow[] | undefined }
         const label = a.name ?? t("main.steer.image");
         // An older dsh's image reference may carry no size; the chip then names it alone.
         const sized = a.bytes > 0;
+
         return (
           <li
             key={`${label}:${i}`}
@@ -287,23 +348,35 @@ export function SteerCard({
 
   /** Post one action for the row or hold `id`, then re-poll; a refusal leaves its line under it. */
   const act = async (id: string, body: SteerAction) => {
-    if ("ids" in body) noteWithdrawn(body.ids);
+    if ("ids" in body) {
+      noteWithdrawn(body.ids);
+    }
+
     setBusy(id);
     setFailed(null);
-    if (body.action === "sendNow") setSendingFrom(new Set(steers.held.map((h) => h.id)));
+
+    if (body.action === "sendNow") {
+      setSendingFrom(new Set(steers.held.map((h) => h.id)));
+    }
+
     try {
       const r = await fetch(`${ROUTE}/steer-edit`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ session: sessionId, ...body }),
       });
-      // SAFETY: our own JSON route; both answers carry these optional fields
-      const reply = (await r.json()) as { ok?: boolean } & SteerEditFailure;
-      if (!reply.ok) setFailed({ id, text: steerFailureText(reply) });
-    } catch (e) {
+
+      const reply = readSteerEditReply(parseJson(await r.text()));
+
+      if (!reply.ok) {
+        setFailed({ id, text: steerFailureText(reply) });
+      }
+    } catch (error) {
       setFailed({
         id,
-        text: t("main.steer.error", { error: e instanceof Error ? e.message : String(e) }),
+        text: t("main.steer.error", {
+          error: error instanceof Error ? error.message : String(error),
+        }),
       });
     } finally {
       setBusy(null);
@@ -316,7 +389,10 @@ export function SteerCard({
    *  then goes alone. */
   const save = (holdId: string, fallback: string, hasFiles: boolean) => {
     const text = drafts[holdId] ?? fallback;
-    if (text.trim() !== "" || hasFiles) void act(holdId, { action: "save", holdId, text });
+
+    if (text.trim() !== "" || hasFiles) {
+      void act(holdId, { action: "save", holdId, text });
+    }
   };
 
   const buttonStyle = {
@@ -327,6 +403,7 @@ export function SteerCard({
     color: T.faint,
     fontSize: 12,
   } as const;
+
   /** The line under a row or hold when its last action was refused. */
   const failure = (id: string) =>
     failed?.id === id ? (
@@ -412,6 +489,7 @@ export function SteerCard({
         const disabled = busy === h.id;
         const value = drafts[h.id] ?? h.text;
         const hasFiles = Boolean(h.attachments?.length);
+
         return (
           <div key={h.id} data-omc-steer-hold={h.id} style={{ padding: "4px 0" }}>
             <SteerAttachments items={h.attachments} />
@@ -492,6 +570,7 @@ export function SteerCard({
       })}
       {steers.waiting.map((s) => {
         const disabled = busy !== null;
+
         return (
           <div
             key={s.id}
@@ -499,8 +578,8 @@ export function SteerCard({
             data-omc-steer-relayed={s.relayed ? "" : undefined}
             style={{ padding: "4px 0" }}
           >
-            {/* On a phone the text takes the full line and Edit, Remove and Send now wrap under
-                it (phone-style.ts); beside 44 px buttons it kept about 130 px at 390. */}
+            {/* On a phone the text takes the full line and Edit, Remove and Send now wrap below
+                the text (phone-style.ts); beside 44 px buttons it kept about 130 px at 390. */}
             <div data-omc-wrap="" style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
               <div data-omc-wrap-lead="" style={{ flex: 1, minWidth: 0 }}>
                 <SteerAttachments items={s.attachments} />
@@ -579,6 +658,7 @@ export function CompactCard({
   onDismiss: () => void;
 }) {
   useLocale();
+
   return (
     <div
       data-omc-compact-card=""
@@ -658,6 +738,7 @@ export function LimitCard({
   onDismiss: () => void;
 }) {
   useLocale();
+
   return (
     <div
       data-omc-limit-card=""
@@ -729,6 +810,7 @@ export function SuggestionCard({
   onDismiss: () => void;
 }) {
   useLocale();
+
   return (
     <div
       data-omc-suggestion-card=""
@@ -829,12 +911,15 @@ export function SuggestionCard({
 export function LoginCard({ need, onDismiss }: { need: LoginNeed; onDismiss: () => void }) {
   useLocale();
   const [done, setDone] = useState(false);
+
   // An account logs in through its own routes, by provider id; a box and this box by host.
   const { login, setLogin, startLogin, submitLogin } = useLoginFlow(
     () => setDone(true),
     need.provider ? ACCOUNT_LOGIN : undefined,
   );
+
   const where = need.host ? need.label : t("main.boxes.thisBoxLower");
+
   return (
     <div
       data-omc-login-card={need.provider ?? (need.host || "this-box")}
@@ -918,10 +1003,15 @@ export function ClaudeUpdateCard({
   // `host` is the box this card is about, so its Update button never lands on another one: the
   // card is drawn from the picked mount, and the run has to follow the card.
   const url = `${ROUTE}/claude-update?session=${encodeURIComponent(sessionId)}&host=${encodeURIComponent(update.host)}`;
-  const fail = (note: string) => {
-    setOutcome({ ok: false, from: update.installed, to: null, note });
-    setPhase("failed");
-  };
+
+  const fail = useCallback(
+    (note: string) => {
+      setOutcome({ ok: false, from: update.installed, to: null, note });
+      setPhase("failed");
+    },
+    [update.installed],
+  );
+
   const start = (body: { run: true; auto?: true }) => {
     onAct();
     setPhase("busy");
@@ -931,45 +1021,68 @@ export function ClaudeUpdateCard({
       body: JSON.stringify(body),
     })
       .then((r) => readJson<{ busy: boolean }>(r))
-      .catch((e: Error) => fail(e.message));
+      .catch((cause: unknown) => fail(errorText(cause)));
   };
+
   const dismiss = () => {
     onAct();
-    if (phase === "idle")
+
+    if (phase === "idle") {
       void fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ skip: update.latest }),
       }).catch(() => {});
+    }
+
     onGone();
   };
+
   // Follow the run: the GET until `busy` is false, then the newest log entry is the outcome.
   useEffect(() => {
-    if (phase !== "busy") return;
     let live = true;
     const startedAt = Date.now();
+
     const tick = async () => {
       try {
-        const s = await readJson<{ busy: boolean; log: UpdateOutcome[] }>(await fetch(url));
-        if (!live) return;
-        if (s.busy) {
-          if (Date.now() - startedAt > 200_000) fail(t("main.update.noAnswer200"));
+        const s = await readJson<{ busy: boolean; log: Array<UpdateOutcome> }>(await fetch(url));
+
+        if (!live) {
           return;
         }
-        const last = s.log[s.log.length - 1];
-        if (!last) return fail(t("main.update.noRun"));
+
+        if (s.busy) {
+          if (Date.now() - startedAt > 200_000) {
+            fail(t("main.update.noAnswer200"));
+          }
+
+          return;
+        }
+
+        const last = s.log.at(-1);
+
+        if (!last) {
+          fail(t("main.update.noRun"));
+
+          return;
+        }
+
         setOutcome(last);
         setPhase(last.ok ? "done" : last.to !== null && last.note ? "declined" : "failed");
       } catch {
         // a missed poll is retried on the next tick
       }
     };
-    const id = setInterval(() => void tick(), 3000);
+
+    // Polled only while the run is out; tick never rejects.
+    const id = phase === "busy" ? setInterval(() => void tick(), 3000) : undefined;
+
     return () => {
       live = false;
       clearInterval(id);
     };
-  }, [phase, url]);
+  }, [phase, url, fail]);
+
   const text =
     phase === "done"
       ? t("main.update.cardDone", {
@@ -982,7 +1095,9 @@ export function ClaudeUpdateCard({
         : phase === "failed"
           ? t("main.update.cardFailed", { note: outcome?.note ?? t("main.update.noAnswerShort") })
           : null;
+
   const narrow = useNarrow();
+
   const label =
     phase === "busy"
       ? t("main.update.updating")
@@ -993,13 +1108,21 @@ export function ClaudeUpdateCard({
           : phase === "failed"
             ? t("main.update.retryShort")
             : t("main.update.update");
+
   // Folded, the card is its header line, the way a side-question card folds: the label, the
   // chevron and the close. Open, the sentence and the buttons. A fold is recorded on the box for
   // this release, beside the skip: a session switch used to remount the card open (owner,
   // 2026-09-18), and a fold in one tab now reaches the others on the next poll. The close is what
   // records a skip until the next release.
   const [open, setOpen] = useState(!update.folded);
-  useEffect(() => setOpen(!update.folded), [update.folded]);
+  // A fold made in another tab reaches this one with the next poll's `folded`.
+  const [foldedSeen, setFoldedSeen] = useState(update.folded);
+
+  if (foldedSeen !== update.folded) {
+    setFoldedSeen(update.folded);
+    setOpen(!update.folded);
+  }
+
   const toggle = () => {
     const next = !open;
     setOpen(next);
@@ -1009,6 +1132,7 @@ export function ClaudeUpdateCard({
       body: JSON.stringify({ fold: next ? null : update.latest }),
     }).catch(() => {});
   };
+
   // After a success the card closes on its own: a thin accent bar along its bottom edge drains
   // over CLOSE_AFTER_S seconds as one CSS animation, so the close is seen coming without a number
   // ticking. The pointer over the card, or focus inside it, pauses the animation where it is (a
@@ -1019,29 +1143,51 @@ export function ClaudeUpdateCard({
   const [held, setHeld] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const goneRef = useRef(onGone);
-  goneRef.current = onGone;
+
   useEffect(() => {
-    if (!leaving) return;
-    const id = setTimeout(() => goneRef.current(), 250);
+    goneRef.current = onGone;
+  }, [onGone]);
+
+  useEffect(() => {
+    const id = leaving ? setTimeout(() => goneRef.current(), 250) : undefined;
+
     return () => clearTimeout(id);
   }, [leaving]);
   // Under reduced motion the bar stands still, so it has no end event to close on: a timer of the
   // same length closes the card instead, and hover or focus pauses it just as it pauses the bar.
   const reduced = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
   const timerRef = useRef<HoldTimer | undefined>(undefined);
+  // The pause state a timer made after it must start in.
+  const heldRef = useRef(held);
+
   useEffect(() => {
-    if (!reduced || phase !== "done") return;
-    const timer = holdTimer(CLOSE_AFTER_S * 1000, () => setLeaving(true));
+    const timer =
+      reduced && phase === "done"
+        ? holdTimer(CLOSE_AFTER_S * 1000, () => setLeaving(true))
+        : undefined;
+
     timerRef.current = timer;
+
+    if (timer && !heldRef.current) {
+      timer.run();
+    }
+
     return () => {
-      timer.stop();
+      timer?.stop();
       timerRef.current = undefined;
     };
   }, [reduced, phase]);
+
   useEffect(() => {
-    if (held) timerRef.current?.pause();
-    else timerRef.current?.run();
-  }, [held, reduced, phase]);
+    heldRef.current = held;
+
+    if (held) {
+      timerRef.current?.pause();
+    } else {
+      timerRef.current?.run();
+    }
+  }, [held]);
+
   return (
     // oxlint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- hover and focus only pause the auto-dismiss; every action is a real button inside
     <div
@@ -1054,8 +1200,9 @@ export function ClaudeUpdateCard({
       // Focus holds the card too, so someone tabbing to its buttons is not raced by the timer.
       onFocus={() => setHeld(true)}
       onBlur={(e) => {
-        if (!(e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)))
+        if (!(isNode(e.relatedTarget) && e.currentTarget.contains(e.relatedTarget))) {
           setHeld(false);
+        }
       }}
       style={{
         position: "relative",

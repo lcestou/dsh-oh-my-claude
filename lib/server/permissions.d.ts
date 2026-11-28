@@ -3,7 +3,7 @@ import type { JsonValue } from "./dsh.js";
 export declare const PERMISSION_KINDS: readonly ["allow", "deny", "ask"];
 export type PermissionKind = (typeof PERMISSION_KINDS)[number];
 export type PermissionRules = {
-    [K in PermissionKind]: string[];
+    [K in PermissionKind]: Array<string>;
 };
 /**
  * The rule that would have answered this request without asking. A Bash command becomes its own

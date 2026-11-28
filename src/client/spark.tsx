@@ -49,6 +49,7 @@ export function sparkNode(size = 14, color = ACCENT): SVGSVGElement {
   svg.style.cssText = `display:block;flex:0 0 auto;fill:${color}`;
   const path = document.createElementNS(ns, "path");
   path.setAttribute("d", PATH);
-  svg.appendChild(path);
+  svg.append(path);
+
   return svg;
 }

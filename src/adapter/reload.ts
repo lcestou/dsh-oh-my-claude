@@ -6,6 +6,7 @@
 // `agents`, `approval`, ...) throw "cannot get required service ... in inactive context" from then
 // on. These helpers let that instance find the context of the one that replaced it.
 import { ADAPTER_CURRENT } from "../dsh.js";
+import type { ClaudeCodeAdapter } from "./class.js";
 
 /** The slice of a cordis context read here. Mirrors: @deepseek-ai/cordis `Fiber.uid`, which is
  *  null once the fiber is disposed. The suites' fake contexts carry no fiber. */
@@ -22,10 +23,11 @@ export function contextActive(ctx: ScopedContext): boolean {
 
 /** The instance mounted for `providerId` right now, from the registry `apply` keeps on globalThis;
  *  undefined before the first mount. */
-export function mountedInstance<T>(providerId: string): T | undefined {
-  // SAFETY: the registry symbol is this plugin's own key on globalThis, filled only by `apply` and
-  // the SSH-box mounts with adapter instances, which is the T every caller names
-  const g = globalThis as typeof globalThis & { [ADAPTER_CURRENT]?: Map<string, T> };
+export function mountedInstance(providerId: string): ClaudeCodeAdapter | undefined {
+  // The registry symbol is this plugin's own key on globalThis, filled only by `apply` and the
+  // SSH-box mounts with adapter instances; the slot is optional, so this view needs no cast.
+  const g: typeof globalThis & { [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter> } = globalThis;
+
   return g[ADAPTER_CURRENT]?.get(providerId);
 }
 

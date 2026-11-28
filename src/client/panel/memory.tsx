@@ -1,6 +1,6 @@
 // The memory tab: Claude's auto-memory files for the current workspace, as the route lists them, with the
 // rows that show each file's front matter.
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   btn,
   btnPrimary,
@@ -14,9 +14,10 @@ import {
   ROUTE,
   ago,
   claudeProviderOf,
-  type ClientCtx,
   code,
+  errorText,
 } from "../shared.js";
+import type { ClientCtx } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
 import { shortPath } from "./shared.js";
 
@@ -39,7 +40,7 @@ interface MemoryFile {
 export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
-  const [files, setFiles] = useState<MemoryFile[]>([]);
+  const [files, setFiles] = useState<Array<MemoryFile>>([]);
   const [dir, setDir] = useState("");
   const [file, setFile] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -53,56 +54,78 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
   // Every call names the session's own mount, so a session on a box lists and edits that box's
   // memories rather than this PC's.
   const provider = claudeProviderOf(ctx, sessionId);
+
   const q = [
     cwd ? `cwd=${encodeURIComponent(cwd)}` : "",
     provider === undefined ? "" : `provider=${encodeURIComponent(provider)}`,
   ]
     .filter((p) => p !== "")
     .join("&");
-  const refresh = (signal?: AbortSignal) => {
-    if (!cwd) return;
-    fetch(`${ROUTE}/memory?${q}`, { signal })
-      .then((r) => readJson<{ dir?: string; files?: MemoryFile[] }>(r))
-      .then((b) => {
+
+  const refresh = useCallback(
+    (signal?: AbortSignal) => {
+      if (!cwd) {
+        return;
+      }
+
+      /** Puts the list on screen and clears an earlier error. */
+      const show = (b: { dir?: string; files?: Array<MemoryFile> }) => {
         setFiles(b.files ?? []);
         setDir(b.dir ?? "");
         setListError("");
-      })
-      // An in-flight list outlives the tab being closed, and its reply landed on a component that
-      // is gone: React drops the state write and the error branch painted an error nobody asked
-      // for. The abort is the teardown, and its own rejection is not a failure to report.
-      .catch((e: Error) => {
-        if (signal?.aborted !== true) setListError(e.message);
-      });
-  };
+      };
+
+      fetch(`${ROUTE}/memory?${q}`, { signal })
+        .then((r) => readJson<{ dir?: string; files?: Array<MemoryFile> }>(r))
+        .then(show)
+        // An in-flight list outlives the tab being closed, and its reply landed on a component that
+        // is gone: React drops the state write and the error branch painted an error nobody asked
+        // for. The abort is the teardown, and its own rejection is not a failure to report.
+        .catch((cause: unknown) => {
+          if (signal?.aborted !== true) {
+            setListError(errorText(cause));
+          }
+        });
+    },
+    [cwd, q],
+  );
+
   // Re-list every half minute: Claude writes memories mid-turn.
   useEffect(() => {
     const stop = new AbortController();
     refresh(stop.signal);
     const timer = setInterval(() => refresh(stop.signal), 30_000);
+
     return () => {
       clearInterval(timer);
       stop.abort();
     };
-  }, [q]);
+  }, [refresh]);
 
   const openFile = async (n: string) => {
     setError("");
+
     try {
       const body = await readJson<{ text: string }>(
         await fetch(`${ROUTE}/memory?${q}&name=${encodeURIComponent(n)}`),
       );
+
       setFile(n);
       setText(body.text);
       setSaved(body.text);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     }
   };
+
   const save = async () => {
-    if (!file) return;
+    if (!file) {
+      return;
+    }
+
     setBusy(true);
     setError("");
+
     try {
       await readJson(
         await fetch(`${ROUTE}/memory?${q}`, {
@@ -113,31 +136,39 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
       );
       setSaved(text);
       refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     } finally {
       setBusy(false);
     }
   };
+
   const remove = async () => {
-    if (!file || !window.confirm(t("panel.memory.deleteConfirm", { file }))) return;
+    if (!file || !window.confirm(t("panel.memory.deleteConfirm", { file }))) {
+      return;
+    }
+
     setBusy(true);
     setError("");
+
     try {
       await readJson(
         await fetch(`${ROUTE}/memory?${q}&name=${encodeURIComponent(file)}`, { method: "DELETE" }),
       );
       setFile(null);
       refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     } finally {
       setBusy(false);
     }
   };
 
-  if (!cwd) return <span style={stateText}>{t("panel.memory.noWorkspace")}</span>;
-  if (files.length === 0)
+  if (!cwd) {
+    return <span style={stateText}>{t("panel.memory.noWorkspace")}</span>;
+  }
+
+  if (files.length === 0) {
     return (
       <div style={bodyFlow} data-omc-memory-empty="">
         {listError ? (
@@ -160,7 +191,10 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
         )}
       </div>
     );
+  }
+
   const dirty = text !== saved;
+
   return (
     <div style={bodyFlow}>
       {file === null ? (
@@ -171,7 +205,8 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
             style={{
               ...rowBtn,
             }}
-            onClick={() => openFile(f.name)}
+            // Each file action reports its own failure in the panel, so nothing awaits it.
+            onClick={() => void openFile(f.name)}
           >
             <span
               // Shrinks before the summary does (auto basis against the summary's zero), so a
@@ -211,13 +246,13 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
               ‹ {t("panel.back")}
             </button>
             <span style={{ flex: 1, fontFamily: T.mono, fontSize: 12 }}>{file}</span>
-            <button type="button" style={btn} onClick={remove} disabled={busy}>
+            <button type="button" style={btn} onClick={() => void remove()} disabled={busy}>
               {t("panel.delete")}
             </button>
             <button
               type="button"
               style={dirty ? btnPrimary : btn}
-              onClick={save}
+              onClick={() => void save()}
               disabled={busy || !dirty}
             >
               {t("save")}
@@ -232,7 +267,9 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
             autoFocus
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") save();
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                void save();
+              }
             }}
             style={{ ...code, minHeight: 300, resize: "vertical", whiteSpace: "pre-wrap" }}
           />

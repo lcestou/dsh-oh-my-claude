@@ -14,6 +14,7 @@ import {
   readJson,
   ROUTE,
   ago,
+  errorText,
 } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
 
@@ -52,27 +53,40 @@ const asidePill = (color: string): CSSProperties => ({
  *  line, a loading line, or an empty note when there are none. */
 export function AsidesBody({ sessionId }: { sessionId: string }) {
   useLocale();
-  const [items, setItems] = useState<AsideRow[] | null>(null);
+  const [items, setItems] = useState<Array<AsideRow> | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
+
+    /** Puts the list on screen, or the route's refusal in the error line. */
+    const show = (b: { items: Array<AsideRow> } | { error: string }) => {
+      if ("error" in b) {
+        setError(b.error);
+      } else {
+        setItems(b.items ?? []);
+      }
+    };
+
     fetch(`${ROUTE}/side-questions?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => readJson<{ items: AsideRow[] } | { error: string }>(r))
-      .then((b) => {
-        if (!live) return;
-        if ("error" in b) setError(b.error);
-        else setItems(b.items ?? []);
-      })
-      .catch((e: Error) => live && setError(e.message));
+      .then((r) => readJson<{ items: Array<AsideRow> } | { error: string }>(r))
+      .then((b) => live && show(b))
+      .catch((cause: unknown) => live && setError(errorText(cause)));
+
     return () => {
       live = false;
     };
   }, [sessionId]);
 
-  if (error !== null) return <span style={errText}>{error}</span>;
-  if (items === null) return <span style={stateText}>{t("loading")}</span>;
+  if (error !== null) {
+    return <span style={errText}>{error}</span>;
+  }
+
+  if (items === null) {
+    return <span style={stateText}>{t("loading")}</span>;
+  }
+
   if (items.length === 0) {
     return (
       <div style={{ ...meta, paddingBottom: 4, fontSize: 12, whiteSpace: "normal" }}>
@@ -86,10 +100,19 @@ export function AsidesBody({ sessionId }: { sessionId: string }) {
   // answer is still pending. A dismissed card lives only here, so this is where it gets copied from.
   const copy = (it: AsideRow) => {
     const text = it.answer ?? it.error ?? it.question;
-    void navigator.clipboard?.writeText(text).then(() => {
+    // A refused clipboard write shows no Copied mark and nothing else.
+    void (async () => {
+      try {
+        // No `?.`: a page without the clipboard API (plain http off localhost) throws here and
+        // shows no mark, the same as a refused write.
+        await navigator.clipboard.writeText(text);
+      } catch {
+        return;
+      }
+
       setCopied(it.id);
       setTimeout(() => setCopied((cur) => (cur === it.id ? null : cur)), 1200);
-    });
+    })();
   };
 
   // An accordion of native <details>: the question is the row, the answer opens under it, and only

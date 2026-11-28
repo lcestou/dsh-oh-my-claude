@@ -5,11 +5,17 @@
 import { strict as assert } from "node:assert";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import type { Agent, PluginContext } from "../dsh.js";
+import { asSessionId } from "../dsh.js";
+import type { Agent, OptionalServices, SessionEvent } from "../dsh.js";
+import {
+  fakeAgent,
+  fakeClaudeProcess,
+  fakePluginContext,
+  fakeSessionController,
+} from "../test-context.js";
 import { markBusy } from "../state.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
-import { ClaudeProcess } from "../process.js";
 import {
   childrenContinuedText,
   finishedTasksText,
@@ -28,33 +34,46 @@ interface Sent {
 function world(
   options: {
     parentLive?: boolean;
-    childEvents?: unknown[];
+    childEvents?: Array<SessionEvent>;
     subagents?: boolean;
     headers?: Record<string, { parentSession?: string; origin?: string }>;
   } = {},
 ) {
-  const sent: Sent[] = [];
-  const followups: Array<{ id: string; content: Array<{ text: string }> }> = [];
-  const resolved: string[] = [];
+  const sent: Array<Sent> = [];
+  const followups: Array<{ id: string; content: Array<string | undefined> }> = [];
+  const resolved: Array<string> = [];
+
   const headers: Record<string, { parentSession?: string; origin?: string }> = {
     p1: {},
     c1: { parentSession: "p1", origin: "subagent" },
     ...options.headers,
   };
-  const agent = (id: string) => ({
-    id,
-    status: "idle",
-    followup(m: { content: Array<{ text: string }> }) {
-      followups.push({ id, content: m.content });
-    },
-  });
-  const live = new Map<string, ReturnType<typeof agent>>();
-  if (options.parentLive) live.set("p1", agent("p1"));
-  const services: Record<string, unknown> = {
+
+  /** A live, idle agent for `id` whose followups are recorded by their text blocks. */
+  const agent = (id: string) =>
+    fakeAgent({
+      id: asSessionId(id),
+      status: "idle",
+      followup(m) {
+        followups.push({ id, content: m.content.map((b) => ("text" in b ? b.text : undefined)) });
+      },
+    });
+
+  const live = new Map<string, Agent>();
+
+  if (options.parentLive) {
+    live.set("p1", agent("p1"));
+  }
+
+  const services: Partial<OptionalServices> = {
     sessionQuery: {
-      observeSession: async (id: string) => {
+      observeSession: async (id) => {
         const header = headers[id];
-        if (!header) throw new Error(`session "${id}" not found`);
+
+        if (!header) {
+          throw new Error(`session "${id}" not found`);
+        }
+
         return {
           header,
           events: id === "c1" ? (options.childEvents ?? []) : [],
@@ -63,43 +82,56 @@ function world(
       },
     },
   };
-  if (options.subagents !== false)
+
+  if (options.subagents !== false) {
     services.subagents = {
-      sendMessage: async (
-        sender: Agent,
-        target: string,
-        content: Array<{ text: string }>,
-        opts: { signal: AbortSignal },
-      ) => {
-        assert.ok(opts.signal instanceof AbortSignal, "a signal bounds the send");
-        sent.push({ sender: String(sender.id), target, text: content.map((b) => b.text).join("") });
+      sendMessage: async (sender, target, content, opts) => {
+        assert.equal(
+          Object.prototype.toString.call(opts.signal),
+          "[object AbortSignal]",
+          "a signal bounds the send",
+        );
+        sent.push({
+          sender: sender.id,
+          target,
+          text: content.map((b) => ("text" in b ? b.text : "")).join(""),
+        });
+
         return "m1";
       },
     };
-  // SAFETY: partial fake; wake reads sessions, agents and get(sessionQuery | subagents)
-  const ctx = {
+  }
+
+  // Wake reads sessions, agents and get(sessionQuery | subagents).
+  const ctx = fakePluginContext({
     on() {},
-    get: (name: string) => services[name],
+    services,
     sessions: { get: () => undefined },
-    agents: { get: (id: string) => live.get(id) },
-  } as unknown as PluginContext;
+    agents: { get: (id) => live.get(id) },
+  });
+
   // The double-wake guard and the continued-children map are process-wide; each block starts clean.
   ClaudeCodeAdapter.wokeThroughParent.clear();
   ClaudeCodeAdapter.continuedChildren.clear();
   const adapter = new ClaudeCodeAdapter(ctx, Config({}));
-  adapter.sessionController = {
-    resolveAgent: async (id: string) => {
+  // The rest of the controller is not reached by a wake.
+  adapter.sessionController = fakeSessionController({
+    resolveAgent: async (id) => {
       resolved.push(id);
       const header = headers[id];
-      if (header?.origin === "subagent")
+
+      if (header?.origin === "subagent") {
         return { error: new Error(`session "${id}" is owned by subagent routing`) };
+      }
+
       const a = agent(id);
       live.set(id, a);
-      // SAFETY: partial Agent; wake reads id, status and followup
-      return { agent: a as unknown as Agent };
+
+      // Wake reads id, status and followup.
+      return { agent: a };
     },
-    // SAFETY: the rest of the controller is not reached by a wake
-  } as unknown as ClaudeCodeAdapter["sessionController"];
+  });
+
   return { adapter, sent, followups, resolved };
 }
 
@@ -114,7 +146,7 @@ function world(
   // The parent's own restart notice names the child once, in a block of its own.
   assert.equal(await w.adapter.wake("p1", undefined, RESTART_TEXT), true);
   assert.deepEqual(
-    w.followups.map((f) => f.content.map((b) => b.text)),
+    w.followups.map((f) => f.content),
     [[RESTART_TEXT, childrenContinuedText(["c1"])]],
   );
   assert.equal(ClaudeCodeAdapter.continuedChildren.has("p1"), false, "named once, then forgotten");
@@ -136,11 +168,13 @@ function world(
   // The finished task is named beside the notice, in the same message through the parent.
   const w = world({ parentLive: true });
   w.adapter.noteTask("c1", "t1", { description: "Run the test suite", status: "running" });
-  // SAFETY: partial fake; wake reads busy and the queued task notifications
-  const proc = {
+
+  // Wake reads busy and the queued task notifications.
+  const proc = fakeClaudeProcess({
     busy: false,
     finishedTasks: () => [{ taskId: "t1", status: "completed", summary: "exit 0" }],
-  } as unknown as ClaudeProcess;
+  });
+
   assert.equal(await w.adapter.wake("c1", proc, WAKE_TEXT), true);
   assert.equal(
     w.sent[0]?.text,
@@ -152,18 +186,22 @@ function world(
   // Two wakes in the same moment (an adopted keeper's drain and its idle result) send once, also
   // while the parent is still being loaded.
   const w = world();
+
   const both = await Promise.all([
     w.adapter.wake("c1", undefined, WAKE_TEXT),
     w.adapter.wake("c1", undefined, WAKE_TEXT),
   ]);
+
   assert.deepEqual(both, [true, true]);
   assert.equal(w.sent.length, 1, "one message through the parent");
 }
 
 {
   // A restart notice already waits in the child's inbox (an earlier boot sent it): not stacked.
-  const pending = {
+  const pending: SessionEvent = {
     type: "agent/inbox/spliced",
+    seq: 0,
+    time: 0,
     data: {
       target: "next-turn",
       inserted: [
@@ -177,6 +215,7 @@ function world(
       ],
     },
   };
+
   const w = world({ childEvents: [pending] });
   assert.equal(await w.adapter.wake("c1", undefined, RESTART_TEXT), true);
   assert.equal(w.sent.length, 0, "nothing sent on top of the pending notice");
@@ -233,7 +272,9 @@ function world(
       { type: "text" as const, text: WAKE_TEXT },
     ],
   };
+
   assert.equal(wakeOnlyTurn([relayed]), true);
+
   const named = {
     ...relayed,
     content: [
@@ -241,10 +282,12 @@ function world(
       { type: "text" as const, text: finishedTasksText([{ name: "build", status: "failed" }]) },
     ],
   };
+
   assert.equal(wakeOnlyTurn([named]), true, "the line naming the task leaves it a wake");
   const prompt = { ...relayed, content: [{ type: "text" as const, text: "do more" }] };
   assert.equal(wakeOnlyTurn([prompt]), false, "a real message from the parent is a prompt");
 }
 
 console.log("wake-subagent ok");
+
 process.exit(0);

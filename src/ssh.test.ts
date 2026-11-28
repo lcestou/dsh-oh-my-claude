@@ -7,7 +7,7 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
 {
   assert.equal(shq("claude"), "'claude'");
   assert.equal(shq("/a b/c"), "'/a b/c'");
-  assert.equal(shq("it's"), "'it'\\''s'");
+  assert.equal(shq("it's"), String.raw`'it'\''s'`);
   assert.equal(shq(""), "''");
 }
 
@@ -19,6 +19,7 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
   /** The far script for one spawn with `far` added to its environment. */
   const script = (far: Parameters<typeof sshInvocation>[4]) =>
     sshInvocation("nova", "claude", ["-p"], "/w", far).args.at(-1) ?? "";
+
   const direct = script({ token: "tok-SECRET", window: undefined });
   // The token never rides in argv (`ps` on both boxes shows it); the far sh reads it off stdin.
   const directInv = sshInvocation("nova", "claude", ["-p"], "/w", { token: "tok-SECRET" });
@@ -43,6 +44,7 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
   assert.doesNotMatch(script({ window: 262_144 }), /CLAUDE_CODE_DISABLE_1M_CONTEXT/);
   assert.doesNotMatch(direct, /CLAUDE_CODE_DISABLE_1M_CONTEXT/);
 }
+
 {
   const inv = sshInvocation("nova", "claude", ["-p", "--input-format", "stream-json"], "/home/u/w");
   assert.equal(inv.command, "ssh");
@@ -50,6 +52,7 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
   // by index, so adding one does not move the two words that matter.
   assert.equal(inv.args.at(-2), "nova");
   const opts = inv.args.slice(0, -2).join(" ");
+
   for (const opt of [
     "BatchMode=yes",
     "ConnectTimeout=10",
@@ -58,8 +61,10 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
     "ControlPersist=60",
     "ServerAliveInterval=15",
     "ServerAliveCountMax=4",
-  ])
+  ]) {
     assert.match(opts, new RegExp(`-o ${opt.replace("=", "=")}`), `ssh carries ${opt}`);
+  }
+
   // One shared connection for every read of a box: the CLAUDE.md walk alone is ~25 of them.
   const control = /ControlPath=(\S+)cm-%C/.exec(opts);
   assert.ok(control, "ssh carries a ControlPath");
@@ -98,6 +103,7 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
     { name: "Nova", host: "nova" },
     { name: "Prod", host: "u@h" },
   ]);
+
   assert.deepEqual(ok.boxes, [
     { name: "Nova", host: "nova" },
     { name: "Prod", host: "u@h" },
@@ -132,6 +138,7 @@ import { sshBoxProviderId, validateRemoteWorkspaceInput, validateSshBoxes } from
     host: "nova",
     remoteCwd: "/home/u/foo",
   });
+
   assert.deepEqual(ok.value, {
     name: "Foo",
     host: "nova",
@@ -174,7 +181,7 @@ console.log("ok ssh");
 
 // The socket directory: short enough for a `%C` name, or nothing rather than a failing ssh.
 {
-  const made: string[] = [];
+  const made: Array<string> = [];
   const make = (dir: string) => made.push(dir);
   const state = "/home/someone/.local/state/dsh-oh-my-claude";
   // The runtime dir wins: it is short, on tmpfs, and cleared at logout.
@@ -189,7 +196,10 @@ console.log("ok ssh");
   // An unwritable runtime dir falls through to the state dir instead of failing every ssh.
   assert.equal(
     controlSocketDir("/run/user/1000", "/home/u/.local/state/omc", (dir) => {
-      if (dir.startsWith("/run")) throw new Error("read-only");
+      if (dir.startsWith("/run")) {
+        throw new Error("read-only");
+      }
+
       made.push(dir);
     }),
     "/home/u/.local/state/omc/ssh",
@@ -200,4 +210,5 @@ console.log("ok ssh");
     "/home/u/.local/state/omc/ssh",
   ]);
 }
+
 console.log("ssh control socket ok");

@@ -1,11 +1,11 @@
-import { type FSWatcher } from "node:fs";
-import { type FsBox } from "../remote-fs.js";
-import { type WatchRecord } from "../state.js";
-import { type FoldedTurn } from "../transcript.js";
+import type { FSWatcher } from "node:fs";
+import type { FsBox } from "../remote-fs.js";
+import type { WatchRecord } from "../state.js";
+import type { FoldedTurn } from "../transcript.js";
 /** Deterministic UUID for a dsh session id, so a reopened dsh session resumes the same Claude session. */
 /** Terminal exchanges waiting to be shown in a dsh session, and the one whose turn is open. */
 export interface MirrorQueue {
-    queue: FoldedTurn[];
+    queue: Array<FoldedTurn>;
     inFlight?: {
         id: string;
         turn: FoldedTurn;

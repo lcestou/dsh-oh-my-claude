@@ -4,27 +4,10 @@
 // handled by each feature's own listener (`recall.ts`, `history-search.tsx`, `edit-last.ts`),
 // not dispatched by dsh, so a row here says what the plugin does, it does not make it do it.
 import { HINTS_EVENT, loadHints } from "./hints.js";
-import { t, type OmcKey } from "./i18n.js";
-import type { ClientCtx } from "./shared.js";
-
-/** One physical combination, as dsh's shortcuts service takes it. */
-interface Binding {
-  code: string;
-  modifiers: readonly ("control" | "alt" | "shift" | "meta")[];
-}
-
-/** The slice of dsh's `shortcuts` service this file calls (dsh-client-shortcuts `Shortcuts`),
- *  read with `ctx.get` since a dsh without the service answers undefined. */
-interface Shortcuts {
-  registerFixed(command: {
-    id: string;
-    label: () => string;
-    keys: readonly string[];
-    bindings: readonly [Binding, ...Binding[]];
-    group: "input";
-  }): () => void;
-  describeBinding(binding: Binding): { keys: readonly string[] };
-}
+import { t } from "./i18n.js";
+import type { OmcKey } from "./i18n.js";
+import type { ClientCtx, ShortcutBinding as Binding } from "./shared.js";
+import { reportWarning } from "./console-report.js";
 
 /** One row: the hint that switches the feature off, its label, and its keys in the order a
  *  person presses them (a repeated step repeats its binding, as dsh's own Esc Esc row does). */
@@ -32,11 +15,11 @@ interface Row {
   id: string;
   hint: string;
   label: OmcKey;
-  presses: readonly [Binding, ...Binding[]];
+  presses: readonly [Binding, ...Array<Binding>];
 }
 
 /** The three composer gestures the plugin adds, in the order the Settings card lists them. */
-export const ROWS: readonly Row[] = [
+export const ROWS: ReadonlyArray<Row> = [
   {
     id: "omc.recall",
     hint: "recallOff",
@@ -71,46 +54,64 @@ export const ROWS: readonly Row[] = [
  * still mounts. Returns the disposer that removes every row.
  */
 export function mountShortcutRows(ctx: ClientCtx): () => void {
-  const shortcuts = ctx.get?.<Shortcuts>("shortcuts");
-  if (!shortcuts) return () => {};
+  const shortcuts = ctx.get?.("shortcuts");
+
+  if (!shortcuts) {
+    return () => {};
+  }
+
   const live = new Map<string, () => void>();
   // A hints read still in flight when the plugin is disposed must not register rows nobody will
   // remove.
   let disposed = false;
-  const sync = () =>
-    loadHints().then((hints) => {
-      if (disposed) return;
-      for (const row of ROWS) {
-        const on = hints[row.hint] !== true;
-        const had = live.get(row.id);
-        if (on && !had) {
-          try {
-            live.set(
-              row.id,
-              shortcuts.registerFixed({
-                id: row.id,
-                label: () => t(row.label),
-                keys: row.presses.flatMap((b) => shortcuts.describeBinding(b).keys),
-                bindings: row.presses,
-                group: "input",
-              }),
-            );
-          } catch (e) {
-            console.warn(`oh-my-claude: shortcut row ${row.id} not listed:`, e);
-          }
-        } else if (!on && had) {
-          had();
-          live.delete(row.id);
+
+  /** Lists the rows switched on and removes the rows switched off. Never rejects: a failed hints
+   *  read answers `{}`, which lists every row. */
+  const sync = async () => {
+    const hints = await loadHints();
+
+    if (disposed) {
+      return;
+    }
+
+    for (const row of ROWS) {
+      const on = hints[row.hint] !== true;
+      const had = live.get(row.id);
+
+      if (on && !had) {
+        try {
+          live.set(
+            row.id,
+            shortcuts.registerFixed({
+              id: row.id,
+              label: () => t(row.label),
+              keys: row.presses.flatMap((b) => shortcuts.describeBinding(b).keys),
+              bindings: row.presses,
+              group: "input",
+            }),
+          );
+        } catch (error) {
+          reportWarning(`oh-my-claude: shortcut row ${row.id} not listed:`, error);
         }
+      } else if (!on && had) {
+        had();
+        live.delete(row.id);
       }
-    });
+    }
+  };
+
   const onHints = () => void sync();
   void sync();
   window.addEventListener(HINTS_EVENT, onHints);
+
   return () => {
     disposed = true;
     window.removeEventListener(HINTS_EVENT, onHints);
-    for (const off of live.values()) off();
+
+    for (const off of live.values()) {
+      off();
+    }
+
     live.clear();
   };
 }

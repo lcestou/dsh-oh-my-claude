@@ -5,20 +5,27 @@ import { strict as assert } from "node:assert";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import type { PluginContext } from "../dsh.js";
 import { sshTokenPath, THIS_BOX } from "../ssh-login.js";
 import { countsForWorkspaceMemory, STATE_DIR } from "../state.js";
 import { tempDir } from "../test-tmp.js";
 import { resolveModelInfo } from "./catalog.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
+import {
+  fakeClaudeProcess,
+  fakePluginContext,
+  fakeSpec,
+  fieldsOf,
+  parseJson,
+} from "../test-context.js";
 
-// SAFETY: partial fake; these cases read the event hook and nothing else of the context
-const ctx = { on() {} } as unknown as PluginContext;
+const ctx = fakePluginContext({ on() {} });
+
 /** A fresh adapter with its own state dir. */
 const adapterHere = () => {
   const a = new ClaudeCodeAdapter(ctx, Config({}));
   a.stateDir = tempDir("omc-routed-");
+
   return a;
 };
 
@@ -32,6 +39,7 @@ assert.equal(
   }),
   false,
 );
+
 assert.equal(
   countsForWorkspaceMemory({ model: "claude-fable-5-2", temporary: false, origin: undefined }),
   true,
@@ -43,20 +51,26 @@ assert.equal(
   const window = () => resolveModelInfo("claude-code", "claude-opus-5-5").context?.contextWindow;
   const before = window();
   const a = adapterHere();
+
   /** A live process that answers `get_context_usage` with a 123,456 window. */
   const procWith = (via: string | undefined) => {
-    // SAFETY: partial fake of the process; the read uses these fields and the control listener
-    const proc: any = {
-      alive: true,
+    // The read uses these fields and the control listener.
+    const proc = fakeClaudeProcess({
       busy: false,
       spec: { model: "claude-opus-5-5" },
-      prep: { via },
-      steers: new Map(),
+      prep: {
+        input: null,
+        spec: fakeSpec({ model: "claude-opus-5-5" }),
+        cwd: "/tmp",
+        args: [],
+        via,
+      },
       controlListener: undefined,
       write(line: string) {
-        const req = JSON.parse(line);
+        const req = fieldsOf(parseJson(line), { request_id: "string" });
+
         setTimeout(() => {
-          proc.controlListener({
+          proc.controlListener?.({
             type: "control_response",
             request_id: req.request_id,
             response: {
@@ -66,11 +80,14 @@ assert.equal(
             },
           });
         }, 0);
+
         return true;
       },
-    };
+    });
+
     return proc;
   };
+
   a.processes.set("claude-code:routed", procWith("127.0.0.1:15721"));
   assert.equal((await a.contextUsage("routed")).ok, true);
   assert.equal(window(), before, "a routed read leaves Claude Opus's remembered window alone");
@@ -82,15 +99,21 @@ assert.equal(
 // A wait for Claude's limit to lift does not wake the session once the box talks to a router.
 {
   const a = adapterHere();
-  const woken: string[] = [];
+  const woken: Array<string> = [];
   a.sessionProvider = () => undefined;
   a.wake = async (sessionId: string) => {
     woken.push(sessionId);
+
     return true;
   };
-  // SAFETY: the probe's reply shape, as far as `stillLimitedUntil` reads it
+
   /** A usage answer with no window at its cap. */
-  const lifted = (async () => ({ ok: true, fetchedAt: 0, windows: [] })) as any;
+  const lifted: Parameters<typeof a.continueAfterLimit>[1] = async () => ({
+    ok: true,
+    fetchedAt: 0,
+    windows: [],
+  });
+
   a.route = async () => ({ state: "routed", host: "127.0.0.1:15721" });
   await a.continueAfterLimit("s1", lifted);
   assert.deepEqual(woken, [], "the local model is not told to continue Claude's work");
@@ -133,4 +156,5 @@ assert.equal(
 }
 
 console.log("routed isolation ok");
+
 process.exit(0);

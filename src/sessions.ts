@@ -2,6 +2,9 @@
 // one into a cold dsh session whose id is the Claude session id, so the adapter resumes it as-is.
 // Served under /dsh-oh-my-claude/*, guarded by dsh's own request policy (trusted host + login cookie).
 // This is an I/O boundary: HTTP bodies, probe output and JSON files are decoded here.
+import type { SteerEditReply, TurnRecord } from "./adapter.js";
+import type { SpawnModeInfo } from "./adapter/spawn-mode.js";
+import { stringOf, isRec } from "./decode.js";
 import { livingModelId } from "./model-ids.js";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -27,20 +30,14 @@ import {
   readTranscript,
   settingsEvents,
   toSessionEvents,
-  type FoldedTranscript,
-  type FoldedTurn,
 } from "./transcript.js";
+import type { FoldedTranscript, FoldedTurn } from "./transcript.js";
 import { shq, sshArgs } from "./process.js";
-import {
-  dshFloor,
-  latestRelease,
-  profileFromPath,
-  updateCommand,
-  updateOffer,
-  type UpdateOffer,
-} from "./update.js";
+import { dshFloor, latestRelease, profileFromPath, updateCommand, updateOffer } from "./update.js";
+import type { UpdateOffer } from "./update.js";
 import { stars } from "./stars.js";
-import { ClaudeUpdater, newer, type Exec } from "./claude-update.js";
+import { ClaudeUpdater, newer } from "./claude-update.js";
+import type { Exec } from "./claude-update.js";
 import {
   classifyReach,
   loginUrlIn,
@@ -48,8 +45,8 @@ import {
   tailscaleStatus,
   validateTailnetJoin,
   wireguardPeers,
-  type Reach,
 } from "./reach.js";
+import type { Reach } from "./reach.js";
 import { spawn } from "node:child_process";
 import {
   childPath,
@@ -59,22 +56,22 @@ import {
   makeDirAt,
   readAt,
   writeAt,
-  type FsBox,
 } from "./remote-fs.js";
+import type { FsBox } from "./remote-fs.js";
 import type { TranscriptListItem } from "./transcript.js";
 import { isMemoryName } from "./memory.js";
 import { localSettingsRoot, repoRoot } from "./repo.js";
 import { managedDir } from "./instructions.js";
-import { asSessionId, CLAUDE_UPDATERS, CLAUDE_UPDATE_TICK } from "./dsh.js";
+import { asSessionId, asWorkspaceId, CLAUDE_UPDATERS, CLAUDE_UPDATE_TICK } from "./dsh.js";
 import {
   deleteSshToken,
   readSshToken,
   THIS_BOX,
   startSshLogin,
-  type LoginOutcome,
   pollSshLogin,
   submitSshLoginCode,
 } from "./ssh-login.js";
+import type { LoginOutcome } from "./ssh-login.js";
 import type {
   JsonValue,
   PluginContext,
@@ -83,20 +80,17 @@ import type {
   WorkspaceRegistry,
 } from "./dsh.js";
 import type { FallbackRecord, HookRun, LiveTask } from "./translator.js";
-import { errorText, type SteerAttachment } from "./process.js";
+import { errorText } from "./process.js";
+import type { SteerAttachment } from "./process.js";
 import { currentLogVersion, loadSessionCatalog } from "./rows-probe.js";
 import { serverText } from "./locale.js";
 import { knownRefusal } from "./session-repair.js";
-import {
-  healLog,
-  probeLoad,
-  rawLogPath,
-  sweepRefusedLogs,
-  type HealHost,
-  type RepairsSummary,
-} from "./session-heal.js";
+import { healLog, probeLoad, rawLogPath, sweepRefusedLogs } from "./session-heal.js";
+import type { HealHost, RepairsSummary } from "./session-heal.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
-import { isPluginScope, pluginScopeNeedsCwd, type PluginLoadError } from "./plugins.js";
+import { isPluginScope, pluginScopeNeedsCwd } from "./plugins.js";
+import type { PluginScope } from "./plugins.js";
+import type { PluginLoadError } from "./plugins.js";
 import {
   CLAUDE_HOME,
   STATE_DIR,
@@ -105,8 +99,10 @@ import {
   trace,
   writeJson,
 } from "./state.js";
-import { boxProviderId, type Account } from "./accounts.js";
-import { accountsRoutes, type LocalMount, readAccounts } from "./routes/accounts.js";
+import { boxProviderId } from "./accounts.js";
+import type { Account } from "./accounts.js";
+import { accountsRoutes, readAccounts } from "./routes/accounts.js";
+import type { LocalMount } from "./routes/accounts.js";
 import { EFFORTS_ALL } from "./adapter/catalog.js";
 import type { CustomModel } from "./adapter/config.js";
 import type { Route } from "./adapter/routing.js";
@@ -129,7 +125,7 @@ import type {
   LiveTurnReply,
 } from "./adapter/types.js";
 import type { TurnsReply, LiveTurn } from "./adapter/turn.js";
-import { type EventHub, type OmcEvent } from "./events.js";
+import type { EventHub, OmcEvent } from "./events.js";
 import { UNHANDLED } from "./routes/context.js";
 import { transcriptsRoutes } from "./routes/transcripts.js";
 import { filesRoutes } from "./routes/files.js";
@@ -142,19 +138,25 @@ import { notifyRoutes, PUSH_SW_PATH, servePushSw } from "./routes/notify.js";
 import { secondOpinionRoutes } from "./routes/second-opinion.js";
 
 const ROUTE_PREFIX = "/dsh-oh-my-claude";
+
 /** This plugin's own key on globalThis, so a hot reload does not start a second heal sweep. */
 const HEAL_SWEEP = Symbol.for("dsh-oh-my-claude.healSweep");
+
 /** After the adapter's resume delay (10 s), so the boot's wakes run first and take the wake
  *  path's heal for the one session the sweep cannot reach. */
 const HEAL_SWEEP_DELAY_MS = 15_000;
+
 /** How long a thinking figure counts as current. The CLI sends one frame per delta while the model
  *  thinks, so anything older than a beat or two means it stopped and the status row should stop
  *  saying so. Generous enough to survive a slow delta, short enough that the word does not linger. */
 const BODY_LIMIT = 64 * 1024;
+
 /** Longest selected passage `POST /side-questions` passes on; matches QUOTE_MAX in client/selection.ts. */
 const SELECTION_QUOTE_MAX = 4000;
+
 /** An imported transcript is a whole conversation, not a form field: megabytes, not kilobytes. */
 const IMPORT_LIMIT = 32 * 1024 * 1024;
+
 /** A search hit, joined to its transcript's listing metadata for the title and modification time. */
 export interface SearchHit {
   id: string;
@@ -166,12 +168,15 @@ export interface SearchHit {
   role: "user" | "assistant";
   snippet: string;
 }
+
 /** How many transcript files one scan reads and parses. grep already narrowed the list to files
  *  that mention the query, but a query can still match hundreds, and reading them all holds them
  *  all in memory at once; 400 keeps one scan well under the cost of reading every transcript. */
 const SEARCH_MAX_FILES = 400;
+
 /** Maximum hits returned per search; more matches are dropped and the reply flags this via `truncated`. */
 const SEARCH_LIMIT = 100;
+
 /** The basename of a path: everything after its last `/` or `\\`, so a Windows path splits too. A
  *  transcript id is the basename without `.jsonl`, and this joins a search hit to its listing. */
 const baseName = (path: string): string =>
@@ -185,13 +190,18 @@ const baseName = (path: string): string =>
  * matches a second time. Fine for the hundreds of files a box holds; stream them if a Windows box
  * with thousands of transcripts makes search slow.
  */
-async function filesMentioning(files: readonly string[], word: string): Promise<string[]> {
+async function filesMentioning(files: ReadonlyArray<string>, word: string): Promise<Array<string>> {
   const needle = word.toLowerCase();
-  const found: string[] = [];
+  const found: Array<string> = [];
+
   for (const file of files) {
     const text = await readFile(file, "utf8").catch(() => "");
-    if (text.toLowerCase().includes(needle)) found.push(file);
+
+    if (text.toLowerCase().includes(needle)) {
+      found.push(file);
+    }
   }
+
   return found;
 }
 
@@ -206,6 +216,9 @@ const json = (res: ServerResponse, status: number, value: unknown) => {
   res.end(JSON.stringify(value));
 };
 
+/** The JSON replier the route groups are handed; any value JSON.stringify takes goes out. */
+export type JsonReply = typeof json;
+
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
 
@@ -218,10 +231,16 @@ const isJsonObject = (v: unknown): v is JsonObject =>
 export const readBody = (req: IncomingMessage, limit = BODY_LIMIT): Promise<JsonObject> =>
   new Promise((resolve, reject) => {
     let size = 0;
-    const chunks: Buffer[] = [];
+    const chunks: Array<Buffer> = [];
     req.on("data", (c: Buffer) => {
       size += c.length;
-      if (size <= limit) return chunks.push(c);
+
+      if (size <= limit) {
+        chunks.push(c);
+
+        return;
+      }
+
       reject(new Error("body too large"));
       req.destroy();
     });
@@ -230,9 +249,10 @@ export const readBody = (req: IncomingMessage, limit = BODY_LIMIT): Promise<Json
         const parsed: unknown = chunks.length
           ? JSON.parse(Buffer.concat(chunks).toString("utf8"))
           : {};
+
         resolve(isJsonObject(parsed) ? parsed : {});
-      } catch (e) {
-        reject(e);
+      } catch (error) {
+        reject(error);
       }
     });
     req.on("error", reject);
@@ -242,9 +262,11 @@ export const readBody = (req: IncomingMessage, limit = BODY_LIMIT): Promise<Json
  *  stays unknown, so the caller refuses it rather than using a name it would later reject. */
 const validMemoryName = (name: unknown): name is string =>
   typeof name === "string" && isMemoryName(name);
+
 /** Narrows an unknown value to a string only when it is a 36-character lowercase-hex UUID; a
  *  malformed id fails closed and is refused rather than used as a session id. */
 const validId = (id: unknown): id is string => typeof id === "string" && /^[0-9a-f-]{36}$/.test(id);
+
 /** A dsh session id as the repairs record keys it: the uuid, with dsh's `session-` prefix or
  *  without (a child agent's id has none). The reseed route takes this form, since its record is
  *  keyed by the dsh id rather than the transcript's. */
@@ -258,14 +280,22 @@ export type ParsedSettings =
 
 /** settings.json must be one JSON object; anything else Claude Code would reject or ignore. */
 export function parseSettingsText(text: unknown): ParsedSettings {
-  if (typeof text !== "string") return { error: "text must be a string" };
+  if (typeof text !== "string") {
+    return { error: "text must be a string" };
+  }
+
   let value: unknown;
+
   try {
     value = JSON.parse(text);
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "invalid JSON" };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "invalid JSON" };
   }
-  if (!isJsonObject(value)) return { error: "settings.json must be a JSON object" };
+
+  if (!isJsonObject(value)) {
+    return { error: "settings.json must be a JSON object" };
+  }
+
   return { value };
 }
 
@@ -278,25 +308,16 @@ export function parseSettingsText(text: unknown): ParsedSettings {
  */
 const run = (
   cmd: string,
-  args: string[],
+  args: Array<string>,
   env?: NodeJS.ProcessEnv,
   cwd?: string,
   timeout = 8000,
 ): Promise<{ out: string; error?: string }> =>
-  new Promise((resolve) =>
+  new Promise((resolve) => {
     execFile(cmd, args, { timeout, windowsHide: true, env, cwd }, (e, out, err) =>
-      resolve(
-        e
-          ? {
-              out: String(out ?? ""),
-              error: String(err || e.message)
-                .trim()
-                .slice(0, 300),
-            }
-          : { out: String(out) },
-      ),
-    ),
-  );
+      resolve(e ? { out, error: (err || e.message).trim().slice(0, 300) } : { out }),
+    );
+  });
 
 /** A file at the plugin's root. Source runs from src/, the tsc build from lib/server/, so the
  *  root is one or two levels up: try the nearer first and fall back to the farther. */
@@ -304,23 +325,31 @@ const readPluginFile = (name: string): Promise<string> =>
   readFile(new URL(`../${name}`, import.meta.url), "utf8").catch(() =>
     readFile(new URL(`../../${name}`, import.meta.url), "utf8"),
   );
+
 const packageJsonText = await readPluginFile("package.json");
 const packageJson: unknown = JSON.parse(packageJsonText);
+
 /** The lowest dsh this build runs on, off its own peer range; reported on `/status`. */
 const DSH_FLOOR = dshFloor(packageJsonText);
+
 const PLUGIN_VERSION =
   isJsonObject(packageJson) && typeof packageJson.version === "string" ? packageJson.version : "";
+
 const PLUGIN_NAME =
   isJsonObject(packageJson) && typeof packageJson.name === "string" ? packageJson.name : "";
+
 /** Mirrors bugs.url in package.json; the report's Open issue link. */
 const ISSUES_URL = "https://github.com/lcestou/dsh-oh-my-claude/issues/new";
+
 /** How many releases the Settings card lists; the rest is a link to the file on GitHub. The card's
  *  summary line in `src/client/index.tsx` says "five", so a change here changes that too. */
 const CHANGELOG_RELEASES = 5;
+
 /** The one `dsh plugin ... update` line for this install; the profile is read off this file's path.
  *  Undefined under DSH Desktop, which updates plugins from its own Plugins page, so the pill offers
  *  that page and no command. */
 const UPDATE_COMMAND = updateCommand(PLUGIN_NAME, profileFromPath(import.meta.url));
+
 /** The box-wide booleans and non-negative numbers under `hints.json`: one-time hints and the
  *  settings switches. Only `true` and finite non-negative numbers are kept, so a missing or
  *  unreadable file reads as every switch at its default. */
@@ -331,30 +360,45 @@ export async function readHints(hintsPath: string): Promise<Record<string, boole
   const mtime = await stat(hintsPath)
     .then((st) => st.mtimeMs)
     .catch(() => -1);
+
   const cached = hintsCache.get(hintsPath);
+
   // A copy each time, as the old read built a fresh object: a caller that edits its answer must
   // not edit the cache.
-  if (cached && cached.mtime === mtime) return { ...cached.value };
+  if (cached && cached.mtime === mtime) {
+    return { ...cached.value };
+  }
+
   const parsed: unknown =
     mtime < 0
       ? null
       : await readFile(hintsPath, "utf8")
-          .then((t) => JSON.parse(t))
+          .then((t): unknown => JSON.parse(t))
           .catch(() => null);
+
   const out: Record<string, boolean | number> = {};
-  if (isJsonObject(parsed))
+
+  if (isJsonObject(parsed)) {
     for (const [k, v] of Object.entries(parsed)) {
-      if (v === true) out[k] = true;
-      else if (typeof v === "number" && Number.isFinite(v) && v >= 0) out[k] = v;
+      if (v === true) {
+        out[k] = true;
+      } else if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
+        out[k] = v;
+      }
     }
+  }
+
   hintsCache.set(hintsPath, { mtime, value: out });
+
   return { ...out };
 }
+
 /** The last parse of each hints file, keyed by path, with the mtime it was read at. `updateHints`
  *  refreshes it after every write, since two writes inside one millisecond share an mtime. */
 const hintsCache = new Map<string, { mtime: number; value: Record<string, boolean | number> }>();
 
 let hintsChain: Promise<unknown> = Promise.resolve();
+
 /**
  * Apply one patch to the hints store, serialized against every other patch.
  *
@@ -374,16 +418,25 @@ export function updateHints(
   const next = hintsChain.then(async () => {
     const current = await readHints(hintsPath);
     const merged = { ...current };
+
     for (const [k, v] of Object.entries(patch)) {
       // A letter first keeps `__proto__` and friends out. The rest is anything without whitespace:
       // a scoped key ends in a model id (`hideModel:claude-code-lilly:claude-opus-5`), and an id may
       // hold a slash, an at sign or the CLI's `[1m]` mark and run to 200 characters. A narrower
       // rule dropped those keys in silence, so the switch for such a model flipped back on.
-      if (!/^[a-zA-Z]\S{0,300}$/.test(k)) continue;
-      if (v === true) merged[k] = true;
-      else if (typeof v === "number" && Number.isFinite(v) && v >= 0) merged[k] = v;
-      else if (v === false || v === null) delete merged[k];
+      if (!/^[a-zA-Z]\S{0,300}$/.test(k)) {
+        continue;
+      }
+
+      if (v === true) {
+        merged[k] = true;
+      } else if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
+        merged[k] = v;
+      } else if (v === false || v === null) {
+        delete merged[k];
+      }
     }
+
     await writeJson(hintsPath, merged);
     hintsCache.set(hintsPath, {
       mtime: await stat(hintsPath)
@@ -391,10 +444,13 @@ export function updateHints(
         .catch(() => -1),
       value: merged,
     });
+
     return merged;
   });
+
   // The chain must survive a failed patch, or one unwritable moment stops every later write.
   hintsChain = next.catch(() => {});
+
   return next;
 }
 
@@ -406,15 +462,24 @@ async function pluginUpdate(
   hintsPath: string,
   dsh: string | null | undefined,
 ): Promise<UpdateOffer | undefined> {
-  if (!PLUGIN_NAME || !PLUGIN_VERSION) return undefined;
-  if ((await readHints(hintsPath)).updateCheckOff === true) return undefined;
+  if (!PLUGIN_NAME || !PLUGIN_VERSION) {
+    return undefined;
+  }
+
+  if ((await readHints(hintsPath)).updateCheckOff === true) {
+    return undefined;
+  }
+
   return updateOffer(PLUGIN_VERSION, await latestRelease(PLUGIN_NAME), dsh, UPDATE_COMMAND);
 }
 
 /** The repo's star count for the nudge in Settings, this box only. The dismiss flag (`starOff` in
  *  the hints store) turns the read off, so a person who hid the line pays no GitHub call. */
 async function pluginStars(hintsPath: string): Promise<number | undefined> {
-  if ((await readHints(hintsPath)).starOff === true) return undefined;
+  if ((await readHints(hintsPath)).starOff === true) {
+    return undefined;
+  }
+
   return stars();
 }
 
@@ -429,7 +494,7 @@ export interface Box {
 
 /** What validateBoxes hands back: the cleaned list, or why the input is not one. */
 export type ValidatedBoxes =
-  | { boxes: Box[]; error?: undefined }
+  | { boxes: Array<Box>; error?: undefined }
   | { error: string; boxes?: undefined };
 
 /**
@@ -438,40 +503,68 @@ export type ValidatedBoxes =
  * token, kept so a browser without its cookie can still open it (same trick as the NPM proxy).
  */
 export function validateBoxes(input: unknown): ValidatedBoxes {
-  if (!Array.isArray(input)) return { error: "boxes must be an array" };
-  if (input.length > MAX_BOXES) return { error: `at most ${MAX_BOXES} boxes` };
-  const boxes: Box[] = [];
+  if (!Array.isArray(input)) {
+    return { error: "boxes must be an array" };
+  }
+
+  if (input.length > MAX_BOXES) {
+    return { error: `at most ${MAX_BOXES} boxes` };
+  }
+
+  const boxes: Array<Box> = [];
   const seen = new Set<string>();
+
   for (const raw of input) {
     const b = isJsonObject(raw) ? raw : {};
-    const name = String(b.name ?? "").trim();
-    const url = String(b.url ?? "")
-      .trim()
-      .replace(/\/+$/, "");
-    const token = b.token === undefined || b.token === null ? "" : String(b.token).trim();
-    if (!name || name.length > 40) return { error: "each box needs a name (1-40 chars)" };
+    const name = (stringOf(b.name) ?? "").trim();
+
+    const url = (stringOf(b.url) ?? "").trim().replace(/\/+$/, "");
+
+    const token = (stringOf(b.token) ?? "").trim();
+
+    if (!name || name.length > 40) {
+      return { error: "each box needs a name (1-40 chars)" };
+    }
+
     let parsed: URL;
+
     try {
       parsed = new URL(url);
     } catch {
       return { error: `"${name}": url must be absolute http(s)` };
     }
-    if (!/^https?:$/.test(parsed.protocol)) return { error: `"${name}": url must be http(s)` };
-    if (token.length > 200) return { error: `"${name}": token too long` };
-    if (seen.has(url)) return { error: `"${name}": duplicate url` };
+
+    if (!/^https?:$/.test(parsed.protocol)) {
+      return { error: `"${name}": url must be http(s)` };
+    }
+
+    if (token.length > 200) {
+      return { error: `"${name}": token too long` };
+    }
+
+    if (seen.has(url)) {
+      return { error: `"${name}": duplicate url` };
+    }
+
     seen.add(url);
     const box: Box = { name, url };
-    if (token) box.token = token;
+
+    if (token) {
+      box.token = token;
+    }
+
     boxes.push(box);
   }
+
   return { boxes };
 }
 
 /** Read the local boxes file and return the validated list, or [] when it is missing, corrupt or
  *  not an array, so a box list never throws on a gone or malformed file. */
-async function readBoxes(path: string): Promise<Box[]> {
+async function readBoxes(path: string): Promise<Array<Box>> {
   try {
     const v = validateBoxes(JSON.parse(await readFile(path, "utf8")));
+
     return v.boxes ?? [];
   } catch {
     return [];
@@ -496,44 +589,72 @@ export function sshBoxProviderId(name: string): string {
 
 /** What validateSshBoxes hands back: the cleaned list, or why the input is not one. */
 export type ValidatedSshBoxes =
-  | { boxes: SshBox[]; error?: undefined }
+  | { boxes: Array<SshBox>; error?: undefined }
   | { error: string; boxes?: undefined };
 
 /** Coerces each entry to a plain object and returns a structured error instead of throwing,
  *  enforcing the box-count cap and per-box name and host rules. */
 export function validateSshBoxes(input: unknown): ValidatedSshBoxes {
-  if (!Array.isArray(input)) return { error: "SSH boxes must be an array" };
-  if (input.length > MAX_BOXES) return { error: `at most ${MAX_BOXES} SSH boxes` };
-  const boxes: SshBox[] = [];
+  if (!Array.isArray(input)) {
+    return { error: "SSH boxes must be an array" };
+  }
+
+  if (input.length > MAX_BOXES) {
+    return { error: `at most ${MAX_BOXES} SSH boxes` };
+  }
+
+  const boxes: Array<SshBox> = [];
   const ids = new Set<string>();
   const hosts = new Set<string>();
+
   for (const raw of input) {
     const b = isJsonObject(raw) ? raw : {};
-    const name = String(b.name ?? "").trim();
-    const host = String(b.host ?? "").trim();
-    if (!name || name.length > 40) return { error: "each SSH box needs a name (1-40 chars)" };
+    const name = (stringOf(b.name) ?? "").trim();
+    const host = (stringOf(b.host) ?? "").trim();
+
+    if (!name || name.length > 40) {
+      return { error: "each SSH box needs a name (1-40 chars)" };
+    }
+
     // The name has to slug to a non-empty, unique provider id, else two boxes would collide on one
     // instance. `[user@]host[:port]` and config aliases only; no shell metacharacters near ssh.
     const id = sshBoxProviderId(name);
-    if (id === "claude-code-") return { error: `"${name}": name needs a letter or digit` };
-    if (ids.has(id)) return { error: `"${name}": another box already uses that name` };
-    if (!host || host.length > 200) return { error: `"${name}": host is required (1-200 chars)` };
-    if (!/^[A-Za-z0-9][A-Za-z0-9._@:%+-]*$/.test(host))
+
+    if (id === "claude-code-") {
+      return { error: `"${name}": name needs a letter or digit` };
+    }
+
+    if (ids.has(id)) {
+      return { error: `"${name}": another box already uses that name` };
+    }
+
+    if (!host || host.length > 200) {
+      return { error: `"${name}": host is required (1-200 chars)` };
+    }
+
+    if (!/^[A-Za-z0-9][A-Za-z0-9._@:%+-]*$/.test(host)) {
       return { error: `"${name}": host has invalid characters` };
-    if (hosts.has(host)) return { error: `"${name}": duplicate host ${host}` };
+    }
+
+    if (hosts.has(host)) {
+      return { error: `"${name}": duplicate host ${host}` };
+    }
+
     ids.add(id);
     hosts.add(host);
     const via = b.via === "tailscale" || b.via === "wireguard" ? b.via : undefined;
     boxes.push(via === undefined ? { name, host } : { name, host, via });
   }
+
   return { boxes };
 }
 
 /** Read the SSH-boxes file and return the validated list, or [] when it is missing or corrupt, so
  *  a box list never throws on a gone or malformed file. */
-export async function readSshBoxes(path: string): Promise<SshBox[]> {
+export async function readSshBoxes(path: string): Promise<Array<SshBox>> {
   try {
     const v = validateSshBoxes(JSON.parse(await readFile(path, "utf8")));
+
     return v.boxes ?? [];
   } catch {
     return [];
@@ -559,14 +680,22 @@ export const slugForDir = (s: string): string => {
   const base =
     s
       .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
+      .replaceAll(/[^a-z0-9]+/g, "-")
+      .replaceAll(/^-+|-+$/g, "")
       .slice(0, 48) || "x";
+
   // Two long cwds sharing a 48-char prefix would collide onto one workspace dir; when the slug
   // was actually truncated, suffix a hash of the full string so distinct inputs stay distinct.
-  if (base.length < 48) return base;
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  if (base.length < 48) {
+    return base;
+  }
+
+  let h = 0x81_1c_9d_c5;
+
+  for (let i = 0; i < s.length; i++) {
+    h = Math.imul(h ^ s.charCodeAt(i), 0x01_00_01_93);
+  }
+
   return `${base}-${(h >>> 0).toString(36)}`;
 };
 
@@ -579,37 +708,61 @@ export type ValidatedRemoteWorkspace =
  *  so a bad name or relative path cannot seed a placeholder directory. */
 export function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWorkspace {
   const b = isJsonObject(input) ? input : {};
-  const name = String(b.name ?? "").trim();
-  const host = String(b.host ?? "").trim();
-  const remoteCwd = String(b.remoteCwd ?? "").trim();
-  if (!name || name.length > 40) return { error: "name is required (1-40 chars)" };
-  if (!host || host.length > 200 || !/^[A-Za-z0-9][A-Za-z0-9._@:%+-]*$/.test(host))
+  const name = (stringOf(b.name) ?? "").trim();
+  const host = (stringOf(b.host) ?? "").trim();
+  const remoteCwd = (stringOf(b.remoteCwd) ?? "").trim();
+
+  if (!name || name.length > 40) {
+    return { error: "name is required (1-40 chars)" };
+  }
+
+  if (!host || host.length > 200 || !/^[A-Za-z0-9][A-Za-z0-9._@:%+-]*$/.test(host)) {
     return { error: "a valid ssh host is required" };
+  }
+
   // remoteCwd is single-quoted into a remote `cd`, so a newline or NUL is the only break-out risk;
   // require an absolute path since a quoted `~` does not expand.
-  if (!remoteCwd || remoteCwd.length > 4096) return { error: "remote path is required" };
-  if (/[\n\r\0]/.test(remoteCwd)) return { error: "remote path has invalid characters" };
-  if (!remoteCwd.startsWith("/")) return { error: "remote path must be absolute (start with /)" };
+  if (!remoteCwd || remoteCwd.length > 4096) {
+    return { error: "remote path is required" };
+  }
+
+  if (/[\n\r\0]/.test(remoteCwd)) {
+    return { error: "remote path has invalid characters" };
+  }
+
+  if (!remoteCwd.startsWith("/")) {
+    return { error: "remote path must be absolute (start with /)" };
+  }
+
   return { value: { name, host, remoteCwd } };
 }
 
 /** Read the placeholder-workspaces file and return its rows, or [] when it is missing, corrupt or
  *  not an array, so a reconcile never throws on a gone or malformed file. */
-export async function readRemoteWorkspaces(path: string): Promise<RemoteWorkspace[]> {
+export async function readRemoteWorkspaces(path: string): Promise<Array<RemoteWorkspace>> {
   try {
-    const raw = JSON.parse(await readFile(path, "utf8"));
-    if (!Array.isArray(raw)) return [];
-    const out: RemoteWorkspace[] = [];
-    for (const r of raw) {
-      const b = isJsonObject(r) ? r : {};
-      const name = String(b.name ?? "");
-      const host = String(b.host ?? "");
-      const remoteCwd = String(b.remoteCwd ?? "");
-      const p = String(b.path ?? "");
-      const workspaceId = String(b.workspaceId ?? "");
-      if (name && host && remoteCwd && p && workspaceId)
-        out.push({ name, host, remoteCwd, path: p, workspaceId });
+    const raw: unknown = JSON.parse(await readFile(path, "utf8"));
+
+    if (!Array.isArray(raw)) {
+      return [];
     }
+
+    const rows: ReadonlyArray<unknown> = raw;
+    const out: Array<RemoteWorkspace> = [];
+
+    for (const r of rows) {
+      const b = isJsonObject(r) ? r : {};
+      const name = stringOf(b.name) ?? "";
+      const host = stringOf(b.host) ?? "";
+      const remoteCwd = stringOf(b.remoteCwd) ?? "";
+      const p = stringOf(b.path) ?? "";
+      const workspaceId = stringOf(b.workspaceId) ?? "";
+
+      if (name && host && remoteCwd && p && workspaceId) {
+        out.push({ name, host, remoteCwd, path: p, workspaceId });
+      }
+    }
+
     return out;
   } catch {
     return [];
@@ -624,24 +777,35 @@ export async function syncRemoteWorkspaces(
   path: string,
   reg: Pick<WorkspaceRegistry, "get"> | undefined,
   log: (level: string, msg: string) => void = () => {},
-): Promise<{ workspaces: RemoteWorkspace[]; dropped: RemoteWorkspace[] }> {
+): Promise<{ workspaces: Array<RemoteWorkspace>; dropped: Array<RemoteWorkspace> }> {
   const rows = await readRemoteWorkspaces(path);
-  if (!reg) return { workspaces: rows, dropped: [] };
+
+  if (!reg) {
+    return { workspaces: rows, dropped: [] };
+  }
+
   // SAFETY: workspaceId came from registry.create and is stored verbatim; get() answers undefined
   // for an id it does not know, which is the whole test.
-  const dropped = rows.filter((w) => reg.get(w.workspaceId as WorkspaceId) === undefined);
-  if (dropped.length === 0) return { workspaces: rows, dropped };
+  const dropped = rows.filter((w) => reg.get(asWorkspaceId(w.workspaceId)) === undefined);
+
+  if (dropped.length === 0) {
+    return { workspaces: rows, dropped };
+  }
+
   const workspaces = rows.filter((w) => !dropped.includes(w));
   await writeJson(path, workspaces, { pretty: true });
+
   for (const w of dropped) {
     await rm(w.path, { recursive: true, force: true }).catch(() => {});
     log("info", `remote workspace ${w.name} on ${w.host} dropped: dsh no longer lists it`);
   }
+
   return { workspaces, dropped };
 }
 
 /** The instance whose local spawns take this box's panel login. */
 const DEFAULT_PROVIDER = "claude-code";
+
 /** `authMethod` a status reports when the login is a token the panel minted, not the CLI's own. */
 export const PANEL_TOKEN = "panel token";
 
@@ -681,24 +845,18 @@ export interface RuntimeStatus {
  * text: 255 is ssh's own failure, anything else is the far shell's.
  */
 const probeReach = (host: string, command: string, timeout = 12_000): Promise<Reach> =>
-  new Promise((resolve) =>
+  new Promise((resolve) => {
     execFile(
       "ssh",
       sshArgs(host, reachScript(command)),
       { timeout, windowsHide: true },
       (e, out, err) => {
-        // SAFETY: execFile's error carries the child's exit code as `code` when it exited
-        const code = e ? ((e as { code?: unknown }).code ?? null) : 0;
-        resolve(classifyReach(typeof code === "number" ? code : null, String(err), String(out)));
+        // execFile's error carries the child's exit code as `code` when it exited.
+        const code = e ? e.code : 0;
+        resolve(classifyReach(typeof code === "number" ? code : null, err, out));
       },
-    ),
-  );
-
-/** A box's `/sessions?all=1` answer. */
-interface BoxSessions {
-  host: string;
-  sessions: TranscriptListItem[];
-}
+    );
+  });
 
 /** One probe's outcome: the decoded body, or why the box could not be reached. */
 export type Probe<T> = { ok: true; status: T } | { ok: false; error: string };
@@ -730,25 +888,39 @@ export async function cappedText(
   r: { text(): Promise<string>; body?: ReadableStream<Uint8Array> | null },
   max = PROBE_REPLY_MAX,
 ): Promise<string> {
-  const tooBig = () => new Error(`reply larger than ${max / 1048576} MB, not read`);
+  const tooBig = () => new Error(`reply larger than ${max / 1_048_576} MB, not read`);
+
   if (!r.body) {
     const text = await r.text();
-    if (Buffer.byteLength(text) > max) throw tooBig();
+
+    if (Buffer.byteLength(text) > max) {
+      throw tooBig();
+    }
+
     return text;
   }
+
   const reader = r.body.getReader();
-  const parts: Uint8Array[] = [];
+  const parts: Array<Uint8Array> = [];
   let size = 0;
+
   for (;;) {
     const { done, value } = await reader.read();
-    if (done) break;
+
+    if (done) {
+      break;
+    }
+
     size += value.byteLength;
+
     if (size > max) {
       await reader.cancel().catch(() => {});
       throw tooBig();
     }
+
     parts.push(value);
   }
+
   return Buffer.concat(parts).toString("utf8");
 }
 
@@ -770,28 +942,48 @@ const cookieOf = (r: { headers: { get(name: string): string | null } }) =>
  * Log into a box like a browser would (dsh's `/?token=` sets the auth cookie; an NPM-style proxy
  * redirects to that URL by itself) and read its plugin status. Never throws: the panel shows why.
  */
-export async function probeBox<T = RuntimeStatus>(
+export async function probeBox(
   box: Box,
   fetchImpl: FetchLike = fetch,
   path = "status",
   init?: { method?: string; body?: string },
-): Promise<Probe<T>> {
+): Promise<Probe<JsonObject>> {
   const { url, token } = box;
-  const signal = AbortSignal.timeout(path === "status" ? 6000 : 12000);
+  const signal = AbortSignal.timeout(path === "status" ? 6000 : 12_000);
+
   /** Fetch the box's plugin route with the login cookie and any proxy method or body attached, so
    *  the same call works with or without a token-injecting proxy in front. */
   const status = (cookie: string) => {
     const fetchHeaders: Record<string, string> = {};
-    if (cookie) fetchHeaders.cookie = cookie;
-    if (init?.body !== undefined) fetchHeaders["content-type"] = "application/json";
+
+    if (cookie) {
+      fetchHeaders.cookie = cookie;
+    }
+
+    if (init?.body !== undefined) {
+      fetchHeaders["content-type"] = "application/json";
+    }
+
     const opts: ProbeFetchOpts = { redirect: "manual", signal };
-    if (Object.keys(fetchHeaders).length) opts.headers = fetchHeaders;
-    if (init?.method !== undefined) opts.method = init.method;
-    if (init?.body !== undefined) opts.body = init.body;
+
+    if (Object.keys(fetchHeaders).length) {
+      opts.headers = fetchHeaders;
+    }
+
+    if (init?.method !== undefined) {
+      opts.method = init.method;
+    }
+
+    if (init?.body !== undefined) {
+      opts.body = init.body;
+    }
+
     return fetchImpl(`${url}/dsh-oh-my-claude/${path}`, opts);
   };
+
   try {
     let cookie = "";
+
     if (token) {
       cookie = cookieOf(
         await fetchImpl(`${url}/?token=${encodeURIComponent(token)}`, {
@@ -800,15 +992,20 @@ export async function probeBox<T = RuntimeStatus>(
         }),
       );
     }
+
     let r = await status(cookie);
+
     if (!cookie && (r.status === 401 || (r.status >= 300 && r.status < 400))) {
       // A token-injecting proxy answers the front page with a redirect or a tiny page whose
       // only job is to navigate to /?token=…; take the token from either and log in with it.
       const front = await fetchImpl(`${url}/`, { redirect: "manual", signal });
+
       const hint =
         (front.headers.get("location") ?? "") +
         (front.status === 200 ? (await cappedText(front)).slice(0, 4000) : "");
+
       const found = /[?&]token=([A-Za-z0-9_.~-]+)/.exec(hint);
+
       if (found) {
         cookie = cookieOf(
           await fetchImpl(`${url}/?token=${found[1]}`, { redirect: "manual", signal }),
@@ -816,17 +1013,31 @@ export async function probeBox<T = RuntimeStatus>(
         r = await status(cookie);
       }
     }
-    if (r.status === 401 || r.status === 403)
+
+    if (r.status === 401 || r.status === 403) {
       return { ok: false, error: "login required: add this box's dsh token" };
-    if (r.status === 404)
+    }
+
+    if (r.status === 404) {
       return { ok: false, error: "dsh-oh-my-claude missing or too old on this box" };
-    if (!r.ok) return { ok: false, error: `HTTP ${r.status}` };
-    // SAFETY: the body is another instance of this plugin answering the same route; the caller
-    // names which route it asked and only reads the fields that route publishes
-    return { ok: true, status: JSON.parse(await cappedText(r)) as T };
-  } catch (e) {
-    const cause = e instanceof Error && e.cause instanceof Error ? e.cause.message : undefined;
-    return { ok: false, error: String(cause ?? errorText(e)).slice(0, 200) };
+    }
+
+    if (!r.ok) {
+      return { ok: false, error: `HTTP ${r.status}` };
+    }
+
+    // The body is another instance of this plugin answering the same route with a JSON object;
+    // the caller reads only the fields that route publishes, each checked.
+    const answer: unknown = JSON.parse(await cappedText(r));
+
+    return isJsonObject(answer)
+      ? { ok: true, status: answer }
+      : { ok: false, error: "the box answered with something other than a JSON object" };
+  } catch (error) {
+    const cause =
+      error instanceof Error && error.cause instanceof Error ? error.cause.message : undefined;
+
+    return { ok: false, error: (cause ?? errorText(error)).slice(0, 200) };
   }
 }
 
@@ -846,14 +1057,20 @@ export function authFromStatus(text: string): AuthStatus {
   try {
     const parsed: unknown = JSON.parse(text);
     const j = isJsonObject(parsed) ? parsed : {};
+
     const auth: AuthStatus = {
       loggedIn: j.loggedIn === true,
       authMethod: typeof j.authMethod === "string" ? j.authMethod : null,
       email: typeof j.email === "string" ? j.email : null,
       projectsDirectory: typeof j.projectsDirectory === "string" ? j.projectsDirectory : null,
     };
+
     const ends = typeof j.loginExpiresAt === "string" ? Date.parse(j.loginExpiresAt) : Number.NaN;
-    if (Number.isFinite(ends)) auth.loginEndsAt = ends;
+
+    if (Number.isFinite(ends)) {
+      auth.loginEndsAt = ends;
+    }
+
     return auth;
   } catch {
     return { loggedIn: /logged in/i.test(text) && !/not logged in/i.test(text), authMethod: null };
@@ -868,13 +1085,16 @@ export interface AccountIdentity {
   /** When this login ends, when the CLI says (`AuthStatus.loginEndsAt`). */
   loginEndsAt?: number;
 }
+
 /** Per config dir: a second plugin instance has its own login, so its own answer. */
 const identityCache = new Map<string, { at: number; value: AccountIdentity }>();
+
 /** A panel login or logout changed who a box is: the next ask reads the CLI again. */
 export function forgetIdentity(): void {
   identityCache.clear();
   statusCache.clear();
 }
+
 /** Answers who is logged in on a box, shelling out to `claude auth status` (over ssh for a remote
  *  box, where a local configDir is meaningless) and caching the answer per config dir for ten
  *  minutes. */
@@ -885,20 +1105,31 @@ export async function accountIdentity(
 ): Promise<AccountIdentity> {
   const key = `${sshHost}\0${configDir ?? ""}`;
   const hit = identityCache.get(key);
-  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.value;
+
+  if (hit && Date.now() - hit.at < 10 * 60_000) {
+    return hit.value;
+  }
+
   // A remote box reports its own login over ssh (its own `~/.claude`); a local configDir would be
   // meaningless there, so it is never sent.
   const status = sshHost
     ? await run("ssh", sshArgs(sshHost, `${shq(command)} auth status`))
     : await run(command, ["auth", "status"], cliEnvFor(configDir));
+
   const auth = authFromStatus(status.out);
+
   const value: AccountIdentity = {
     host: sshHost || hostname(),
     email: auth.email ?? null,
     loggedIn: auth.loggedIn,
   };
-  if (auth.loginEndsAt !== undefined) value.loginEndsAt = auth.loginEndsAt;
+
+  if (auth.loginEndsAt !== undefined) {
+    value.loginEndsAt = auth.loginEndsAt;
+  }
+
   identityCache.set(key, { at: Date.now(), value });
+
   return value;
 }
 
@@ -931,9 +1162,14 @@ async function runtimeStatus(
   // rest, an update run in a terminal on the box included.
   const key = `${configDir}\0${command}\0${sshHost}`;
   const hit = statusCache.get(key);
-  if (hit && Date.now() - hit.at < STATUS_TTL_MS) return structuredClone(await hit.value);
+
+  if (hit && Date.now() - hit.at < STATUS_TTL_MS) {
+    return structuredClone(await hit.value);
+  }
+
   const value = probeRuntime(configDir, command, sshHost);
   statusCache.set(key, { at: Date.now(), value });
+
   try {
     return structuredClone(await value);
   } catch (error) {
@@ -941,7 +1177,9 @@ async function runtimeStatus(
     throw error;
   }
 }
+
 const STATUS_TTL_MS = 60_000;
+
 /**
  * Whether a probe command names a file by path on a Windows host. `where` reads the colon of a
  * drive letter as `path:pattern` and exits 2 with "Invalid pattern", so asking it about
@@ -949,12 +1187,15 @@ const STATUS_TTL_MS = 60_000;
  */
 export const isWindowsPathCommand = (command: string, platform = process.platform): boolean =>
   platform === "win32" && /[\\/]/.test(command);
+
 /** What one probe command answered: its stdout, and the failure text when it did not run. */
 interface ProbeOutput {
   out: string;
   error?: string;
 }
+
 const statusCache = new Map<string, { at: number; value: Promise<RuntimeStatus> }>();
+
 /** The probes behind `runtimeStatus`, uncached. Exported for its test only. */
 export async function probeRuntime(
   configDir: string,
@@ -964,10 +1205,12 @@ export async function probeRuntime(
   let which: ProbeOutput;
   let version: ProbeOutput;
   let status: ProbeOutput;
+
   if (sshHost) {
     // One ssh connection for the three answers, split on a marker the CLI never prints: three
     // connections per box, per refresh, was the cost that grew with every box added.
     const sep = "__OMC_SPLIT__";
+
     const script = [
       `command -v ${shq(command)}`,
       `printf '\\n${sep}\\n'`,
@@ -975,11 +1218,16 @@ export async function probeRuntime(
       `printf '\\n${sep}\\n'`,
       `${shq(command)} auth status`,
     ].join("; ");
+
     const all = await run("ssh", sshArgs(sshHost, script));
     const [w = "", v = "", st = ""] = all.out.split(sep);
     which = { out: w };
     version = { out: v };
-    if (all.error && !v.trim()) version.error = all.error;
+
+    if (all.error && !v.trim()) {
+      version.error = all.error;
+    }
+
     status = { out: st };
   } else {
     [which, version, status] = await Promise.all([
@@ -995,6 +1243,7 @@ export async function probeRuntime(
       run(command, ["auth", "status"], cliEnvFor(configDir)),
     ]);
   }
+
   const out: RuntimeStatus = {
     host: sshHost || hostname(),
     plugin: PLUGIN_VERSION,
@@ -1003,22 +1252,36 @@ export async function probeRuntime(
     configDir: sshHost ? "(remote ~/.claude)" : configDir,
     ...authFromStatus(status.out),
   };
-  if (version.error) out.error = version.error;
+
+  if (version.error) {
+    out.error = version.error;
+  }
+
   // Only when something is wrong, and only over ssh: the stage names the fix the row shows.
-  if (sshHost && (version.error || !out.binary)) out.reach = await probeReach(sshHost, command);
+  if (sshHost && (version.error || !out.binary)) {
+    out.reach = await probeReach(sshHost, command);
+  }
+
   return out;
 }
 
 /** Every transcript under the Claude projects dir, each with the cwd its records name. */
 async function listAllTranscripts(
-  projectsDirs: string[],
+  projectsDirs: Array<string>,
   hidden: Set<string>,
-): Promise<TranscriptListItem[]> {
-  const dirs: string[] = [];
-  for (const root of projectsDirs)
-    for (const entry of await readdir(root, { withFileTypes: true }).catch(() => []))
-      if (entry.isDirectory()) dirs.push(join(root, entry.name));
+): Promise<Array<TranscriptListItem>> {
+  const dirs: Array<string> = [];
+
+  for (const root of projectsDirs) {
+    for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+      if (entry.isDirectory()) {
+        dirs.push(join(root, entry.name));
+      }
+    }
+  }
+
   const lists = await Promise.all(dirs.map((dir) => listTranscripts(dir, hidden).catch(() => [])));
+
   return lists.flat();
 }
 
@@ -1092,20 +1355,29 @@ process.stdout.write(JSON.stringify(out));
 /** List an SSH box's Claude transcripts by running {@link SSH_TRANSCRIPT_LISTER} on it over ssh. */
 async function sshTranscripts(
   host: string,
-): Promise<{ ok: true; sessions: TranscriptListItem[] } | { ok: false; error: string }> {
+): Promise<{ ok: true; sessions: Array<TranscriptListItem> } | { ok: false; error: string }> {
   const r = await run(
     "ssh",
     sshArgs(host, `node -e ${shq(SSH_TRANSCRIPT_LISTER)}`),
     undefined,
     undefined,
-    15000,
+    15_000,
   );
-  if (r.error) return { ok: false, error: r.error };
+
+  if (r.error) {
+    return { ok: false, error: r.error };
+  }
+
   try {
     const parsed: unknown = JSON.parse(r.out);
-    if (!Array.isArray(parsed)) return { ok: false, error: "unexpected remote output" };
-    // SAFETY: our own lister prints TranscriptListItem[]; the client re-reads each field defensively.
-    return { ok: true, sessions: parsed as TranscriptListItem[] };
+
+    if (!Array.isArray(parsed)) {
+      return { ok: false, error: "unexpected remote output" };
+    }
+
+    // Our own lister prints TranscriptListItem[]; a row without an id is dropped, and the client
+    // re-reads each other field defensively.
+    return { ok: true, sessions: parsed.filter(isListItem) };
   } catch {
     return { ok: false, error: "unparseable remote output" };
   }
@@ -1122,6 +1394,7 @@ export interface SettingsFile {
 /** Read Claude Code's settings file on the session's own box; a missing file reads as an empty object. */
 async function readSettings(box: FsBox, path: string): Promise<SettingsFile> {
   const file = await readAt(box, path);
+
   return file === null
     ? { path, exists: false, text: "{}\n", mtime: 0 }
     : { path, exists: true, text: file.text, mtime: file.mtimeMs };
@@ -1139,6 +1412,7 @@ async function scopePathAt(
   cwd: string | null,
 ): Promise<string | undefined> {
   const localDir = scope === "local" && cwd !== null ? await localSettingsRoot(box, cwd) : cwd;
+
   return settingsScopePath(scope, userPath, cwd, managedDir(box), localDir);
 }
 
@@ -1152,25 +1426,42 @@ async function settingsTexts(
   cwd: string | null,
 ): Promise<Array<{ scope: string; text: string }>> {
   const texts: Array<{ scope: string; text: string }> = [];
+
   for (const scope of SETTINGS_SCOPES) {
     const path = await scopePathAt(box, scope, userPath, cwd);
-    if (path === undefined) continue;
+
+    if (path === undefined) {
+      continue;
+    }
+
     // A file the box cannot answer for is a fault, not an empty one: reading it as empty shows
     // every key it sets as unset, and the roster built from that says a plugin is off when it is
     // on. Only the managed file, which is root-owned by design, is allowed to drop out of the merge.
-    const file = await readSettings(box, path).catch((e: unknown) => {
-      if (scope !== "managed") throw e;
+    const file = await readSettings(box, path).catch((error: unknown) => {
+      if (scope !== "managed") {
+        throw error;
+      }
+
       return null;
     });
-    if (file?.exists === true) texts.push({ scope, text: file.text });
+
+    if (file?.exists === true) {
+      texts.push({ scope, text: file.text });
+    }
+
     // In a subdirectory or a worktree the CLI's local file is the repository root's, and it still
     // reads the session directory's own file below that one. Both count; the root's goes first.
     const own = scope === "local" ? settingsScopePath("local", userPath, cwd) : undefined;
+
     if (own !== undefined && own !== path) {
       const below = await readSettings(box, own);
-      if (below.exists) texts.push({ scope, text: below.text });
+
+      if (below.exists) {
+        texts.push({ scope, text: below.text });
+      }
     }
   }
+
   return texts;
 }
 
@@ -1181,7 +1472,7 @@ export interface PickerOption {
   model: string;
   label?: string;
   contextWindow?: number;
-  efforts?: string[];
+  efforts?: Array<string>;
   /** True for a row the plugin added (`customModels`, the Settings form), unset for one
    *  settings.json's own `modelPicker.options` names. Only the first kind follows the router
    *  state: see `mergeCatalog`. */
@@ -1189,6 +1480,7 @@ export interface PickerOption {
 }
 
 type EffortLevel = (typeof EFFORTS_ALL)[number];
+
 /** True only when the value is one of the CLI's effort levels; an unknown string is not a level, so
  *  a settings file cannot offer an effort the picker cannot name. */
 const isEffortLevel = (v: unknown): v is EffortLevel =>
@@ -1211,9 +1503,9 @@ export interface PickerRow {
 /** The two settings.json keys that shape Claude Code's own `/model` picker. */
 export interface PickerSettings {
   /** Allowlist entries: a family alias, a version prefix or a full id. Absent means no allowlist. */
-  availableModels?: string[];
+  availableModels?: Array<string>;
   /** Extra rows, in the order the CLI shows them after its built-in lineup. */
-  options: PickerOption[];
+  options: Array<PickerOption>;
   /** The CLI keeps only the Default row and those extra rows. */
   replaceBuiltInOptions: boolean;
   /** settings.json `maxEffortLevel`: the highest effort the pickers offer. Absent means no cap. */
@@ -1247,11 +1539,15 @@ export function aliasNamesIn(
 ) {
   const out: AliasNames = {};
   const pattern = new RegExp(`^ANTHROPIC_DEFAULT_([A-Z]+)_MODEL${suffix}$`);
+
   for (const [key, value] of Object.entries(env)) {
     const alias = pattern.exec(key)?.[1];
-    if (alias !== undefined && value !== undefined && value.trim() !== "")
+
+    if (alias !== undefined && value !== undefined && value.trim() !== "") {
       out[alias.toLowerCase()] = value.trim();
+    }
   }
+
   return out;
 }
 
@@ -1273,6 +1569,7 @@ export async function settingsEnvAt(userPath: string, cwd: string | null): Promi
   const texts = await settingsTexts({}, userPath, cwd)
     .catch(() => settingsTexts({}, userPath, null))
     .catch(() => []);
+
   return settingsEnvIn(texts);
 }
 
@@ -1294,18 +1591,29 @@ export function settingsEnvIn(texts: ReadonlyArray<{ scope: string; text: string
   const env: Record<string, string> = {};
   const from: Record<string, string> = {};
   let autoCompactWindow: number | undefined;
+
   // Assigning lowest first lets each scope overwrite the ones it outranks.
   for (const { scope, text } of texts.toReversed()) {
     const value = parseSettingsText(text).value;
-    if (typeof value?.autoCompactWindow === "number") autoCompactWindow = value.autoCompactWindow;
+
+    if (typeof value?.autoCompactWindow === "number") {
+      autoCompactWindow = value.autoCompactWindow;
+    }
+
     const block = value?.env;
-    if (!isJsonObject(block)) continue;
-    for (const [k, v] of Object.entries(block))
+
+    if (!isJsonObject(block)) {
+      continue;
+    }
+
+    for (const [k, v] of Object.entries(block)) {
       if (typeof v === "string") {
         env[k] = v;
         from[k] = scope;
       }
+    }
   }
+
   return autoCompactWindow === undefined ? { env, from } : { env, from, autoCompactWindow };
 }
 
@@ -1316,46 +1624,91 @@ export function settingsEnvIn(texts: ReadonlyArray<{ scope: string; text: string
  */
 export async function readPickerSettings(path: string): Promise<PickerSettings | undefined> {
   const file = await readSettings({}, path).catch(() => undefined);
-  if (!file?.exists) return undefined;
+
+  if (!file?.exists) {
+    return undefined;
+  }
+
   const { value } = parseSettingsText(file.text);
-  if (!value) return undefined;
+
+  if (!value) {
+    return undefined;
+  }
+
   const picker = value.modelPicker;
   const allowed = value.availableModels;
   const cap = value.maxEffortLevel;
   const modelSettings = value.modelSettings;
   const named: Record<string, string> = {};
-  if (isJsonObject(value.env))
-    for (const [k, v] of Object.entries(value.env)) if (typeof v === "string") named[k] = v;
+
+  if (isJsonObject(value.env)) {
+    for (const [k, v] of Object.entries(value.env)) {
+      if (typeof v === "string") {
+        named[k] = v;
+      }
+    }
+  }
+
   const aliasNames = aliasNamesIn(named);
+
   if (
     !Array.isArray(allowed) &&
     !isJsonObject(picker) &&
     !isEffortLevel(cap) &&
     !isJsonObject(modelSettings) &&
     Object.keys(aliasNames).length === 0
-  )
+  ) {
     return undefined;
+  }
+
   const out: PickerSettings = { options: [], replaceBuiltInOptions: false };
-  if (Object.keys(aliasNames).length > 0) out.aliasNames = aliasNames;
-  if (Array.isArray(allowed))
+
+  if (Object.keys(aliasNames).length > 0) {
+    out.aliasNames = aliasNames;
+  }
+
+  if (Array.isArray(allowed)) {
     out.availableModels = allowed.filter((m): m is string => typeof m === "string");
+  }
+
   if (isJsonObject(picker)) {
     out.replaceBuiltInOptions = picker.replaceBuiltInOptions === true;
-    if (Array.isArray(picker.options))
+
+    if (Array.isArray(picker.options)) {
       for (const row of picker.options) {
-        if (!isJsonObject(row) || typeof row.model !== "string") continue;
+        if (!isJsonObject(row) || typeof row.model !== "string") {
+          continue;
+        }
+
         const option: PickerOption = { model: row.model };
-        if (typeof row.label === "string") option.label = row.label;
+
+        if (typeof row.label === "string") {
+          option.label = row.label;
+        }
+
         out.options.push(option);
       }
+    }
   }
-  if (isEffortLevel(cap)) out.maxEffortLevel = cap;
+
+  if (isEffortLevel(cap)) {
+    out.maxEffortLevel = cap;
+  }
+
   if (isJsonObject(modelSettings)) {
     const caps: Record<string, EffortLevel> = {};
-    for (const [id, cfg] of Object.entries(modelSettings))
-      if (isJsonObject(cfg) && isEffortLevel(cfg.maxEffortLevel)) caps[id] = cfg.maxEffortLevel;
-    if (Object.keys(caps).length > 0) out.modelEffortCaps = caps;
+
+    for (const [id, cfg] of Object.entries(modelSettings)) {
+      if (isJsonObject(cfg) && isEffortLevel(cfg.maxEffortLevel)) {
+        caps[id] = cfg.maxEffortLevel;
+      }
+    }
+
+    if (Object.keys(caps).length > 0) {
+      out.modelEffortCaps = caps;
+    }
   }
+
   return out;
 }
 
@@ -1379,23 +1732,32 @@ async function writeWithBackup(
     // Compared exactly: the value the editor sends is the one a read answered, and it survives
     // JSON unchanged. Rounding it would only widen the window in which two writes look alike.
     const now = (await readAt(box, path))?.mtimeMs ?? 0;
-    if (now !== expect)
+
+    if (now !== expect) {
       throw new Error(`${path} changed since it was opened; reopen it and redo the edit`);
+    }
   }
+
   // A box's file is written by the same script that reads it, backup and temp file included, so a
   // dropped connection cannot leave half a settings file behind.
-  if (box.sshHost) return { path, backup: `${path}.bak`, mtime: await writeAt(box, path, text) };
+  if (box.sshHost) {
+    return { path, backup: `${path}.bak`, mtime: await writeAt(box, path, text) };
+  }
+
   // A project that has never had settings has no `.claude/` yet; every other target dir exists.
   await mkdir(dirname(path), { recursive: true });
   const backup = `${path}.bak`;
-  await copyFile(path, backup).catch((e: unknown) => {
-    if (!isEnoent(e)) throw e;
+  await copyFile(path, backup).catch((error: unknown) => {
+    if (!isEnoent(error)) {
+      throw error;
+    }
   });
   // Two writes to one path race otherwise: both would use this name, the loser's rename finds it
   // gone, and its backup copy can land after the winner's rename and overwrite the pre-edit copy.
   const tmp = `${path}.tmp-${randomUUID()}`;
   await writeFile(tmp, text.endsWith("\n") ? text : `${text}\n`, "utf8");
   await rename(tmp, path);
+
   return { path, backup, mtime: (await stat(path)).mtimeMs };
 }
 
@@ -1405,8 +1767,8 @@ async function writeWithBackup(
  * listing: not this cwd's, not every cwd's, not a box's.
  */
 export const withoutSubagents = <T extends { id: string; dsh?: { subagent?: boolean } }>(
-  rows: T[],
-): T[] => rows.filter((s) => !s.dsh?.subagent);
+  rows: Array<T>,
+): Array<T> => rows.filter((s) => !s.dsh?.subagent);
 
 /** A dsh session a transcript belongs to, and whether it is archived. */
 export interface OwnedSession {
@@ -1425,38 +1787,60 @@ export interface OwnedSession {
 /** dsh 0.1.5's `sessionPersistence.list()` answers snapshots that wrap the header; before that the
  *  entries were the headers. Either way in, a header out. */
 type StoredHeader = { id: string; cwd?: string; origin?: string };
+
+/** True for a row of a box's transcript listing that has its id; its other fields are read
+ *  defensively by the client. */
+const isListItem = (v: unknown): v is TranscriptListItem =>
+  isJsonObject(v) && typeof v.id === "string";
+
 /** Pull the bare session header out of a persistence entry, unwrapping dsh 0.1.5's wrapped shape so
  *  both the newest and the oldest entries answer the same header. */
-const headerOf = (entry: StoredHeader | { header: StoredHeader }): StoredHeader => {
-  if ("header" in entry && entry.header !== undefined) return entry.header;
-  // SAFETY: no `header` member means the entry is the bare header shape of the union
-  return entry as StoredHeader;
-};
+const headerOf = (entry: StoredHeader | { header: StoredHeader }): StoredHeader =>
+  isWrapped(entry) ? entry.header : entry;
+
+/** True for dsh 0.1.5's wrapped entry: one with a `header` member that is set. Anything else is
+ *  the bare header shape of the union. */
+const isWrapped = (
+  entry: StoredHeader | { header: StoredHeader },
+): entry is { header: StoredHeader } => "header" in entry && entry.header !== undefined;
 
 /** Builds a lookup that indexes each session under both its dsh id and its claude id, so a session
  *  is found by whichever id a caller has. */
 export function dshSessionsFor(
-  entries: readonly (StoredHeader | { header: StoredHeader })[],
+  entries: ReadonlyArray<StoredHeader | { header: StoredHeader }>,
   cwd: string | null,
   claudeIdOf: (id: string) => string,
   archived: Set<string> = new Set(),
 ): Map<string, OwnedSession> {
   const map = new Map<string, OwnedSession>();
+
   for (const h of entries.map(headerOf)) {
-    if (cwd !== null && h.cwd !== cwd) continue;
-    const id = String(h.id);
+    if (cwd !== null && h.cwd !== cwd) {
+      continue;
+    }
+
+    const id = h.id;
     const entry: OwnedSession = { id, archived: archived.has(id) };
-    if (h.origin === "subagent") entry.subagent = true;
+
+    if (h.origin === "subagent") {
+      entry.subagent = true;
+    }
+
     map.set(id, entry);
     map.set(claudeIdOf(id), entry);
   }
+
   return map;
 }
+
 /** Narrows an unknown value to an absolute path string with no NUL; a relative or control-char path
  *  is refused rather than used as a directory. On a Windows host a drive path (`C:\…`, `C:/…`)
  *  counts too, since that is what dsh hands over there; a drive-relative `C:x`, a UNC share and a
  *  `\\?\` device path stay refused, so a request cannot point a read at another machine. */
-export const validCwd = (cwd: unknown, platform: string = process.platform): cwd is string =>
+export const validCwd = (
+  cwd: JsonValue | undefined | null,
+  platform: string = process.platform,
+): cwd is string =>
   typeof cwd === "string" &&
   !cwd.includes("\0") &&
   (cwd.startsWith("/") || (platform === "win32" && /^[A-Za-z]:[\\/]/.test(cwd)));
@@ -1508,7 +1892,7 @@ export interface RouteCtx {
   awaiting: SessionRouteOptions["awaiting"];
   baseName: typeof baseName;
   boxOf: (url: URL) => MountBox;
-  boxTranscripts: (ws: RemoteWorkspace, hidden: Set<string>) => Promise<TranscriptListItem[]>;
+  boxTranscripts: (ws: RemoteWorkspace, hidden: Set<string>) => Promise<Array<TranscriptListItem>>;
   cacheBoxTranscript: (ws: RemoteWorkspace, id: string) => Promise<void>;
   claudeHomeOf: typeof claudeHomeOf;
   claudeIdOf: SessionRouteOptions["claudeIdOf"];
@@ -1560,10 +1944,11 @@ export interface RouteCtx {
   persistAsides: SessionRouteOptions["persistAsides"];
   pickFor: (cwd: string) => PickSettings;
   pluginErrors: SessionRouteOptions["pluginErrors"];
+  /** The checked scope and the cwd a `project` or `local` scope needs, or the reason it failed. */
   pluginScopeCwd: (
     scope: unknown,
     session: JsonValue | undefined,
-  ) => Promise<{ cwd: string | undefined } | { error: string }>;
+  ) => Promise<{ scope: PluginScope; cwd: string | undefined } | { error: string }>;
   pluginStars: typeof pluginStars;
   pluginUpdate: typeof pluginUpdate;
   pluginWarnings: SessionRouteOptions["pluginWarnings"];
@@ -1597,13 +1982,16 @@ export interface RouteCtx {
   starters: SessionRouteOptions["starters"];
   steersFor: SessionRouteOptions["steersFor"];
   stopTask: SessionRouteOptions["stopTask"];
-  targetOf: <T extends string | null>(url: URL, cwd: T) => CwdTarget<T>;
+  targetOf: {
+    (url: URL, cwd: string): CwdTarget<string>;
+    (url: URL, cwd: string | null): CwdTarget<string | null>;
+  };
   taskOutput: SessionRouteOptions["taskOutput"];
   spawnMode: SessionRouteOptions["spawnMode"];
   terminalSync: SessionRouteOptions["terminalSync"];
   thinking: SessionRouteOptions["thinking"];
   toolMode: SessionRouteOptions["toolMode"];
-  transcriptDirs: (cwd: string) => string[];
+  transcriptDirs: (cwd: string) => Array<string>;
   turnRecords: SessionRouteOptions["turnRecords"];
   updateBoxOf: (url: URL, sessionId: string | null) => { host: string; label: string };
   updateHints: typeof updateHints;
@@ -1640,26 +2028,46 @@ const idIn = (text: string): string | undefined =>
  */
 async function idTaken(
   live: (id: string) => boolean,
-  projectsDirs: string[],
+  projectsDirs: Array<string>,
   importedDir: string,
   id: string,
 ): Promise<boolean> {
-  if (live(id)) return true;
+  if (live(id)) {
+    return true;
+  }
+
   const here = [importedDir];
-  for (const root of projectsDirs)
-    for (const entry of await readdir(root, { withFileTypes: true }).catch(() => []))
-      if (entry.isDirectory()) here.push(join(root, entry.name));
-  for (const dir of here)
-    if ((await stat(join(dir, `${id}.jsonl`)).catch(() => null)) !== null) return true;
+
+  for (const root of projectsDirs) {
+    for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+      if (entry.isDirectory()) {
+        here.push(join(root, entry.name));
+      }
+    }
+  }
+
+  for (const dir of here) {
+    if ((await stat(join(dir, `${id}.jsonl`)).catch(() => null)) !== null) {
+      return true;
+    }
+  }
+
   return false;
 }
 
 /** The transcript for `id` from the first of `dirs` that holds it, folded ready to seed a session. */
-async function firstTranscript(dirs: string[], id: string): Promise<FoldedTranscript | undefined> {
+async function firstTranscript(
+  dirs: Array<string>,
+  id: string,
+): Promise<FoldedTranscript | undefined> {
   for (const dir of dirs) {
     const folded = await readTranscript({}, join(dir, `${id}.jsonl`));
-    if (folded !== undefined) return folded;
+
+    if (folded !== undefined) {
+      return folded;
+    }
   }
+
   return undefined;
 }
 
@@ -1681,8 +2089,8 @@ const promptTextOf = (t: FoldedTurn): string => assistantMessageText(t.content);
  *  line, so the same words compare equal however the CLI and dsh each spaced them. */
 const spaced = (text: string): string =>
   text
-    .replace(/[ \t]+/g, " ")
-    .replace(/ ?\n ?/g, "\n")
+    .replaceAll(/[ \t]+/g, " ")
+    .replaceAll(/ ?\n ?/g, "\n")
     .trim();
 
 /** Whether a transcript prompt is one the stored log already holds: the stored text, alone or
@@ -1700,8 +2108,17 @@ const spaced = (text: string): string =>
  *  @param texts stored user texts, each already through `spaced` */
 export const storedHolds = (texts: ReadonlySet<string>, prompt: string): boolean => {
   const p = spaced(prompt);
-  if (texts.has(p)) return true;
-  for (const t of texts) if (t !== "" && p.startsWith(t + "\n")) return true;
+
+  if (texts.has(p)) {
+    return true;
+  }
+
+  for (const t of texts) {
+    if (t !== "" && p.startsWith(t + "\n")) {
+      return true;
+    }
+  }
+
   return false;
 };
 
@@ -1716,74 +2133,110 @@ export const storedHolds = (texts: ReadonlySet<string>, prompt: string): boolean
  *  loading), or when the transcript is not on this box. Returns the turns added. */
 async function foldTranscriptDelta(
   ctx: RouteHost,
-  dirs: string[],
+  dirs: Array<string>,
   cwd: string,
   dshId: string,
   transcriptId: string,
 ): Promise<number> {
   const folded = await firstTranscript(dirs, transcriptId);
-  if (folded === undefined || folded.turns.length === 0) return 0;
+
+  if (folded === undefined || folded.turns.length === 0) {
+    return 0;
+  }
+
   let handle: Awaited<ReturnType<RouteHost["sessionPersistence"]["open"]>>;
+
   try {
     handle = await ctx.sessionPersistence.open(asSessionId(dshId), "write");
-  } catch (err) {
-    if (err instanceof Error && err.name === "SessionAlreadyOwnedError") {
+  } catch (error) {
+    if (error instanceof Error && error.name === "SessionAlreadyOwnedError") {
       await trace(`fold ${dshId}: owned elsewhere, skipped`);
+
       return 0;
     }
-    throw err;
+
+    throw error;
   }
+
   try {
     const { events } = await handle.read(0);
     const ids = new Set<string>();
     const texts = new Set<string>();
     let lastTurn = 0;
     let openTurn = false;
+
     for (const e of events) {
       if (e.type === "turn/start") {
         lastTurn = Math.max(lastTurn, turnOf(e));
         openTurn = true;
       }
-      if (e.type === "turn/end") openTurn = false;
-      if (e.type !== "user/message") continue;
+
+      if (e.type === "turn/end") {
+        openTurn = false;
+      }
+
+      if (e.type !== "user/message") {
+        continue;
+      }
+
       const m = userMessageOf(e);
-      if (m.id) ids.add(m.id);
-      if (m.text) texts.add(spaced(m.text));
+
+      if (m.id) {
+        ids.add(m.id);
+      }
+
+      if (m.text) {
+        texts.add(spaced(m.text));
+      }
     }
+
     if (openTurn) {
       await trace(`fold ${dshId}: tail turn ${lastTurn} open, skipped`);
+
       return 0;
     }
+
     const fresh = folded.turns.filter((t) => {
       const text = promptTextOf(t);
+
       return !ids.has(t.id) && !CLI_ECHO.test(text) && !storedHolds(texts, text);
     });
-    if (fresh.length === 0) return 0;
+
+    if (fresh.length === 0) {
+      return 0;
+    }
+
     // A copy of the log before the append, so a fold that turns out wrong is one file move away
     // from undone; the trace line names it.
     // dsh's locate needs the cwd as well as the id to name the log's directory.
     const located = ctx.sessionPersistence.locate?.({ id: dshId, cwd })?.path;
     let bak = "";
+
     if (located !== undefined) {
       bak = `${located}.bak-${Date.now()}`;
       await copyFile(located, bak).catch(() => {
         bak = "";
       });
     }
+
     if (bak === "") {
       // No copy, no append: the promise that a wrong fold is one file move from undone holds or
       // the fold waits (a dsh without `locate`, a disk that refused the copy).
       await trace(`fold ${dshId}: no backup could be written, skipped`);
+
       return 0;
     }
+
     const delta = toSessionEvents(
       { ...folded, turns: fresh, title: undefined },
       handle.header.version,
       { seq: events.length, turn: lastTurn },
     );
+
     await handle.append(delta);
     await handle.flush();
     await trace(`fold ${dshId}: +${fresh.length} turns${bak ? ` (before: ${bak})` : ""}`);
+
     return fresh.length;
   } finally {
     await handle.close();
@@ -1799,7 +2252,7 @@ export type PickSettings = (
 /** Same id opened twice at once (double click, two tabs) shares one creation. */
 function openTranscript(
   ctx: RouteHost,
-  dirs: string[],
+  dirs: Array<string>,
   cwd: string,
   id: string,
   claudeIdOf: (id: string) => string,
@@ -1808,6 +2261,7 @@ function openTranscript(
   pickSettings?: PickSettings,
 ): Promise<Opened> {
   let job = opening.get(id);
+
   if (!job) {
     job = openTranscriptOnce(
       ctx,
@@ -1822,6 +2276,7 @@ function openTranscript(
     ).finally(() => opening.delete(id));
     opening.set(id, job);
   }
+
   return job;
 }
 
@@ -1836,11 +2291,17 @@ export async function createVersion(persistence: {
   list: SessionPersistence["list"];
 }): Promise<number> {
   const fromCatalog = await currentLogVersion();
-  if (fromCatalog !== undefined) return fromCatalog;
+
+  if (fromCatalog !== undefined) {
+    return fromCatalog;
+  }
+
   const listed = await persistence.list().catch(() => []);
+
   const current = listed.flatMap((e) =>
     "header" in e && e.formatStatus === "current" ? [e.header.version] : [],
   );
+
   return current.length > 0 ? Math.max(...current) : 4;
 }
 
@@ -1850,7 +2311,7 @@ export async function createVersion(persistence: {
  */
 export async function openTranscriptOnce(
   ctx: RouteHost,
-  dirs: string[],
+  dirs: Array<string>,
   cwd: string,
   id: string,
   claudeIdOf: (id: string) => string,
@@ -1867,22 +2328,32 @@ export async function openTranscriptOnce(
   // `sessionId` is dsh's id for the session. A row's `id` is the transcript's, which differs
   // for a session the plugin started (see `claudeIdOf`), and dsh knows only its own.
   const attach = async (sessionId: string) => {
-    if (!registry) return;
+    if (!registry) {
+      return;
+    }
+
     const ws = (await registry.resolveByPath(cwd)) ?? (await registry.create(cwd));
     await ws.attachSession(asSessionId(sessionId));
   };
+
   // Through dsh's own `unarchiveSession`, which edits under the registry's lock. Every path that
   // opens a row runs it: an archived session the store still holds took the early return below and stayed
   // archived, and the client hides archived sessions, so Restore opened nothing.
   const unarchive = async (sessionId: string) => {
-    if (!registry?.archivedSessionIds.includes(asSessionId(sessionId))) return;
+    if (!registry?.archivedSessionIds.includes(asSessionId(sessionId))) {
+      return;
+    }
+
     await registry.unarchiveSession(asSessionId(sessionId));
   };
+
   if (ctx.sessions.get(asSessionId(id))) {
     await unarchive(id);
     await attach(id);
+
     return { id, existed: true };
   }
+
   // Owned by id across every workspace, not just this `cwd`: an SSH-box session is stored under a
   // local placeholder cwd, not the transcript's own path, so filtering by `cwd` would miss it and
   // fall through to a local transcript read that ENOENTs (the body lives on the box). `cwd` is only
@@ -1891,6 +2362,7 @@ export async function openTranscriptOnce(
   // create path below is the point of the call. `reseedFrom` is the transcript to seed from: for a
   // dsh-started session that is the hash of the dsh id, while the session keeps its own id.
   const reseed = reseedFrom !== undefined;
+
   const owned = reseed
     ? undefined
     : dshSessionsFor(
@@ -1899,21 +2371,27 @@ export async function openTranscriptOnce(
         claudeIdOf,
         new Set(registry?.archivedSessionIds ?? []),
       ).get(id);
+
   if (owned) {
     // The stored log is the session, so make sure dsh can load it before handing it over: a log
     // refused for one of the reasons the plugin mends is healed here, and one refused for any
     // other reason is answered as an error instead of a silent "did not appear" (dsh's own
     // resume 500s later, out of this route's sight). No heal host (the old signature) skips it.
     const refusal = heal ? await probeLoad(heal, owned.id) : undefined;
+
     if (heal && refusal !== undefined) {
       const path = heal.persistence.locate?.({ id: owned.id, cwd }).path ?? rawLogPath(refusal);
+
       const verdict =
         path !== undefined && knownRefusal(refusal)
           ? (await healLog(heal, owned.id, path, refusal)).verdict
           : "unknown";
-      if (verdict !== "healed")
+
+      if (verdict !== "healed") {
         throw new Error(serverText("logRefused", { reason: refusal.slice(0, 200) }));
+      }
     }
+
     // A session driven from the terminal since it was last in dsh has transcript turns the stored
     // log lacks; append them now, before the tab reads the log, so the reopen shows the whole
     // conversation rather than the count it had when first restored.
@@ -1922,18 +2400,28 @@ export async function openTranscriptOnce(
     // Persisted but not in the store (a restart unloads it): the workspace list is the only way it
     // reaches the sidebar, and dsh reads its header from persistence, which lists it by now.
     await attach(owned.id);
+
     return { id: owned.id, existed: true, healed: refusal !== undefined, turnsAdded };
   }
+
   // This PC: the archive lists only local transcripts, so an opened one is always here. An
   // imported one is not under `projects/` at all, which is why the caller passes both dirs.
   const folded = await firstTranscript(dirs, reseedFrom ?? id);
-  if (folded === undefined) throw new Error("transcript not found");
-  if (folded.turns.length === 0) throw new Error("transcript has no completed turn");
+
+  if (folded === undefined) {
+    throw new Error("transcript not found");
+  }
+
+  if (folded.turns.length === 0) {
+    throw new Error("transcript has no completed turn");
+  }
+
   // The version this dsh writes decides both the header below and the shape of every tool result.
   const logVersion = await createVersion(ctx.sessionPersistence);
   const seed = toSessionEvents(folded, logVersion);
   const pick = await pickSettings?.(folded);
-  if (pick)
+
+  if (pick) {
     seed.push(
       ...settingsEvents(
         { ...pick, permissionMode: folded.permissionMode },
@@ -1941,12 +2429,15 @@ export async function openTranscriptOnce(
         seed.length,
       ),
     );
+  }
+
   // A session's log reaches disk only through the persistence write handle its creator opens
   // (dsh 0.1.5 does this in the agent-loop creation transaction). The store's own
   // prepare/enter/announce/flush owns no handle, so `session/flush` found no writer for this id and
   // answered nothing: the seed was dropped silently, and the client's adopting `sessions.create`
   // then found no stored session and made a blank one under the same id. Write the log here.
   let handle: Awaited<ReturnType<typeof ctx.sessionPersistence.create>>;
+
   try {
     handle = await ctx.sessionPersistence.create({
       // The version the installed dsh reads: since 0.1.7 dsh writes v4 files and refuses one whose
@@ -1958,26 +2449,33 @@ export async function openTranscriptOnce(
       cwd,
       isSeeded: false,
     });
-  } catch (err) {
+  } catch (error) {
     // create() scans the disk and throws SessionAlreadyExistsError when the log is already there,
     // even though neither ctx.sessions nor the persistence list this route read had it loaded: a
     // session dropped from the running catalog whose file survived (a failed load, a log restored
     // by hand), or a create racing another open. Reseeding would collide and the stored log IS the
     // session, so surface it instead of answering 500 "already exists": unarchive, attach to the
     // workspace, open it. Match the class by name so no persistence-internal import is needed.
-    // SAFETY: err is unknown from catch; only its optional `name` string is read, any other value narrows to undefined and rethrows
-    if ((err as { name?: string })?.name !== "SessionAlreadyExistsError") throw err;
+    // Only the error's `name` is read; any other value rethrows.
+    if (!isRec(error) || error.name !== "SessionAlreadyExistsError") {
+      throw error;
+    }
+
     await unarchive(id);
     await attach(id);
+
     return { id, existed: true };
   }
+
   try {
     await handle.append(seed);
     await handle.flush();
   } finally {
     await handle.close();
   }
+
   await attach(id);
+
   return {
     id,
     existed: false,
@@ -2025,7 +2523,7 @@ const projectDirAt = async (box: MountBox, cwd: string): Promise<string> =>
 /** What the event stream needs from the adapter; see `SessionRouteOptions.events`. */
 export interface EventsDeps {
   hub: EventHub;
-  snapshot: (session: string | null) => OmcEvent[];
+  snapshot: (session: string | null) => Array<OmcEvent>;
   replies: {
     liveTurn: (sessionId: string) => LiveTurnReply | Record<string, never>;
     turns: (sessionId: string) => TurnsReply;
@@ -2046,9 +2544,9 @@ export interface SessionRouteOptions {
    * switch on it is the plugin's own store first and the real `~/.claude` second, so a session
    * started from a terminal is still listed and still opens.
    */
-  projectDir: (cwd: string) => string[];
+  projectDir: (cwd: string) => Array<string>;
   /** The parents of every project dir, same order. */
-  projectsDir: string[];
+  projectsDir: Array<string>;
   /** Claude session ids the adapter started itself. */
   startedIds: () => Promise<Iterable<string>>;
   claudeIdOf: (id: string) => string;
@@ -2060,23 +2558,23 @@ export interface SessionRouteOptions {
   /** State file holding the SSH boxes the panel manages; the adapter mounts one instance per box. */
   sshBoxesPath?: string;
   /** Mount or withdraw provider instances so they match the saved SSH-box list, without a restart. */
-  onSshBoxes?: (boxes: SshBox[]) => Promise<void> | void;
+  onSshBoxes?: (boxes: Array<SshBox>) => Promise<void> | void;
   /** The accounts beside this box's default login (Settings → Boxes, under This box). Absent in a
    *  registration that mounts none, such as the suite's. */
   accounts?: {
     /** `<STATE_DIR>/accounts.json`. */
     path: string;
     /** Mount or withdraw account instances to match the saved list, without a restart. */
-    onChange: (accounts: Account[]) => Promise<void> | void;
+    onChange: (accounts: Array<Account>) => Promise<void> | void;
     /** Every local mount other than the default, plugin-added or hand-written. */
-    localMounts: () => LocalMount[];
+    localMounts: () => Array<LocalMount>;
     /** Ids this plugin mounted from accounts.json. */
     mounted: () => Set<string>;
   };
   /** State file mapping placeholder workspaces to their box + real remote path. */
   remoteWorkspacesPath?: string;
   /** Refresh the adapter's live placeholder→remote-cwd map after the list changes, without a restart. */
-  onRemoteWorkspaces?: (workspaces: RemoteWorkspace[]) => Promise<void> | void;
+  onRemoteWorkspaces?: (workspaces: Array<RemoteWorkspace>) => Promise<void> | void;
   command?: string;
   /** The `command` as configured, before this box's PATH resolution. Work on another box is named
    *  this: an absolute path found here means nothing there, and probing a box with it left every
@@ -2106,7 +2604,7 @@ export interface SessionRouteOptions {
    *  logged-out box in the picker. */
   onLoginStatus?: (provider: string | null, loggedIn: boolean) => void;
   /** Per-session turn accounting buffer from the adapter. */
-  turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
+  turnRecords?: Map<string, Array<TurnRecord>>;
   /** dsh version read off the package this plugin loads beside; null when unavailable. */
   dshVersion?: string | null;
   /** The running turn's figures per session, for the status row; absent when no turn is running. */
@@ -2128,7 +2626,7 @@ export interface SessionRouteOptions {
     set(mode: ToolMode): Promise<ToolModeInfo>;
   };
   /** The keeper switch's facts: the config's `spawn` key and whether this platform runs a keeper. */
-  spawnMode?: { info(): import("./adapter/spawn-mode.js").SpawnModeInfo };
+  spawnMode?: { info(): SpawnModeInfo };
   /** Terminal sync: whether terminal `/resume` exchanges mirror into the dsh session. */
   terminalSync?: {
     info(): { enabled: boolean };
@@ -2152,7 +2650,7 @@ export interface SessionRouteOptions {
   /** Permission rules and hooks for a session with a live process. */
   permissionReadout?: (sessionId: string) => Promise<PermissionReadoutReply>;
   /** The hooks the session's CLI has run so far, oldest first, for the Diagnostics tab. */
-  hookRuns?: (sessionId: string) => HookRun[];
+  hookRuns?: (sessionId: string) => Array<HookRun>;
   /** MCP servers of a session's live process, and a reconnect for one of them. */
   mcp?: {
     status: (sessionId: string) => Promise<McpStatusReply>;
@@ -2170,7 +2668,7 @@ export interface SessionRouteOptions {
     ) => Promise<{ ok: boolean; authUrl?: string; error?: string }>;
   };
   /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
-  permissionAsks?: Map<string, string[]>;
+  permissionAsks?: Map<string, Array<string>>;
   /** Ask a side question over HTTP, optionally seeded with the working-tree diff. The answer lands
    *  in the ring `sideQuestions` serves, so the caller gets only whether the question went out. */
   askAside?: (
@@ -2179,9 +2677,9 @@ export interface SessionRouteOptions {
     seed: { withDiff: boolean; path: string; quote: string },
   ) => Promise<{ ok: boolean; error?: string }>;
   /** `/btw` side questions and their answers, per session; the client bubble reads them. */
-  sideQuestions?: Map<string, AsideEntry[]>;
+  sideQuestions?: Map<string, Array<AsideEntry>>;
   /** Claude's own live tasks for a session, for the Tasks tab. */
-  liveTasks?: (sessionId: string) => LiveTask[];
+  liveTasks?: (sessionId: string) => Array<LiveTask>;
   /** Ask the CLI to stop one of its tasks. */
   stopTask?: (sessionId: string, taskId: string) => Promise<{ ok: boolean; error?: string }>;
   /** Send `/compact` to the session as its next prompt, for the context nudge's button. */
@@ -2201,23 +2699,20 @@ export interface SessionRouteOptions {
       text: string;
       at: number;
       relayed?: true;
-      attachments?: SteerAttachment[];
+      attachments?: Array<SteerAttachment>;
     }>;
-    held: Array<{ id: string; text: string; attachments?: SteerAttachment[] }>;
+    held: Array<{ id: string; text: string; attachments?: Array<SteerAttachment> }>;
   };
   /** Take waiting steers back from Claude for an edit; the answer names the hold and its text. */
   holdSteers?: (
     sessionId: string,
-    ids: string[],
+    ids: Array<string>,
   ) => Promise<
     | { ok: true; holdId: string; text: string }
     | { ok: false; reason: "sent" | "gone" | "error" | "relayed"; error?: string }
   >;
   /** Cut the running turn short and send these waiting steers as the next turn. */
-  sendSteerNow?: (
-    sessionId: string,
-    ids: string[],
-  ) => Promise<import("./adapter.js").SteerEditReply>;
+  sendSteerNow?: (sessionId: string, ids: Array<string>) => Promise<SteerEditReply>;
   /** End a hold: put it back as it was, drop it, or send one message with new text in its place. */
   releaseHold?: (
     sessionId: string,
@@ -2265,8 +2760,8 @@ export interface SessionRouteOptions {
     Array<{
       provider: string;
       host: string | null;
-      models: PickerRow[];
-      custom: CustomModel[];
+      models: Array<PickerRow>;
+      custom: Array<CustomModel>;
       route: Route;
     }>
   >;
@@ -2275,8 +2770,8 @@ export interface SessionRouteOptions {
   /** Replaces the models added in Settings for one mount; `error` is the sentence to show. */
   setCustomModels?: (
     provider: string,
-    models: readonly CustomModel[],
-  ) => Promise<{ models: CustomModel[] } | { error: string }>;
+    models: ReadonlyArray<CustomModel>,
+  ) => Promise<{ models: Array<CustomModel> } | { error: string }>;
   /** The provider id this machine's Claude mounts under; a restored session is put on it. */
   providerId?: string;
   /** Re-read plugins into a session's live process after a plugin/marketplace mutation, so the
@@ -2287,10 +2782,10 @@ export interface SessionRouteOptions {
   reloadSkills?: (sessionId: string) => Promise<{ ok: boolean; live: boolean; error?: string }>;
   /** The plugins a session's live process failed to load, from its init frame. Empty when clean or
    *  when no process has run. */
-  pluginErrors?: (sessionId: string) => PluginLoadError[];
+  pluginErrors?: (sessionId: string) => Array<PluginLoadError>;
   /** The plugins a session's live process loaded with a warning, from its init frame. Empty when
    *  clean or when no process has run. */
-  pluginWarnings?: (sessionId: string) => PluginLoadError[];
+  pluginWarnings?: (sessionId: string) => Array<PluginLoadError>;
   /** Every session holding an open prompt, for the browser's background notices. */
   awaiting?: () => Record<
     string,
@@ -2310,8 +2805,12 @@ async function sessionTranscript(
 ): Promise<FoldedTranscript | undefined> {
   for (const id of [claudeIdOf(sessionId), sessionId]) {
     const folded = await readTranscript(box, join(dir, `${id}.jsonl`));
-    if (folded !== undefined) return folded;
+
+    if (folded !== undefined) {
+      return folded;
+    }
   }
+
   return undefined;
 }
 
@@ -2332,9 +2831,19 @@ const recapAsked = new Map<string, number>();
 /** True when this session already had one within the gap. Records the ask when it does not. */
 function recapIsRepeat(sessionId: string, now: number): boolean {
   const last = recapAsked.get(sessionId);
-  if (last !== undefined && now - last < RECAP_GAP_MS) return true;
-  for (const [id, at] of recapAsked) if (now - at >= RECAP_GAP_MS) recapAsked.delete(id);
+
+  if (last !== undefined && now - last < RECAP_GAP_MS) {
+    return true;
+  }
+
+  for (const [id, at] of recapAsked) {
+    if (now - at >= RECAP_GAP_MS) {
+      recapAsked.delete(id);
+    }
+  }
+
   recapAsked.set(sessionId, now);
+
   return false;
 }
 
@@ -2418,19 +2927,26 @@ export function registerSessionRoutes(
   // Claude Code updaters, one per box, on globalThis so a second registration in one process reuses
   // them rather than a stale closure (the WATCH_SWEEP pattern in adapter.ts). A headless claude never
   // updates itself; the tick below is the plugin standing in for the CLI's own terminal updater.
-  // SAFETY: the two symbol keys are this plugin's own, declared in dsh.ts; nothing else writes them.
-  const g = globalThis as typeof globalThis & {
+  // The two symbol keys are this plugin's own, declared in dsh.ts; nothing else writes them.
+  const g: typeof globalThis & {
     [CLAUDE_UPDATERS]?: Map<string, ClaudeUpdater>;
     [CLAUDE_UPDATE_TICK]?: { timer: ReturnType<typeof setInterval>; tick: () => Promise<void> };
-  };
+  } = globalThis;
+
   const updaters = (g[CLAUDE_UPDATERS] ??= new Map<string, ClaudeUpdater>());
+
   /** The updater for `host` ("" for this box), built on first sight. */
   const updaterFor = (host: string, label: string): ClaudeUpdater => {
     const have = updaters.get(host);
-    if (have) return have;
+
+    if (have) {
+      return have;
+    }
+
     // A box runs its own claude, by the configured name: this box's resolved absolute path
     // means nothing there, and probing with it left the box reading "no claude".
     const cli = (host ? (boxCommand ?? command) : command) ?? "claude";
+
     const exec: Exec = host
       ? (args, timeoutMs) =>
           run(
@@ -2441,6 +2957,7 @@ export function registerSessionRoutes(
             timeoutMs,
           )
       : (args, timeoutMs) => run(cli, args, cliEnvFor(configDir), undefined, timeoutMs);
+
     const made = new ClaudeUpdater({
       dir: STATE_DIR,
       host,
@@ -2456,56 +2973,80 @@ export function registerSessionRoutes(
         claudeUpdated?.(updated);
       },
     });
+
     updaters.set(host, made);
+
     return made;
   };
+
   /** The Settings switch for the whole feature (`claudeUpdateOff` in the hints store): off means
    *  no check, no card and no install; the Tune rows still show the history. */
   const updatesOff = async (): Promise<boolean> =>
     sshBoxesPath
       ? (await readHints(join(dirname(sshBoxesPath), "hints.json"))).claudeUpdateOff === true
       : false;
+
   /** Every box: this one plus each saved ssh box; a box removed in Settings drops out. */
   const tick = async () => {
-    if (await updatesOff()) return;
+    if (await updatesOff()) {
+      return;
+    }
+
     const boxes = sshBoxesPath ? await readSshBoxes(sshBoxesPath) : [];
     const keep = new Set([""]);
     updaterFor("", hostname());
+
     for (const b of boxes) {
       keep.add(b.host);
       updaterFor(b.host, b.name);
     }
-    for (const host of updaters.keys()) if (!keep.has(host)) updaters.delete(host);
+
+    for (const host of updaters.keys()) {
+      if (!keep.has(host)) {
+        updaters.delete(host);
+      }
+    }
+
     for (const u of updaters.values()) {
       const state = await u.check().catch(() => undefined);
+
       // The one place an install starts without a click.
-      if (state && state.auto && newer(state) && !state.busy)
+      if (state && state.auto && newer(state) && !state.busy) {
         void u
           .runUpdate("auto")
-          .catch((e) => log("warn", `claude update on ${u.state().label}: ${errorText(e)}`));
+          .catch((cause: unknown) =>
+            log("warn", `claude update on ${u.state().label}: ${errorText(cause)}`),
+          );
+      }
     }
   };
+
   // The interval calls through the global, so a re-registration in one process (a re-mount after a
   // config change) swaps in its own `tick`, with its own `command` and env, instead of the first one's.
   if (boxOfSession) {
     const held = g[CLAUDE_UPDATE_TICK];
+
     // Nothing in a tick throws today (every read catches), but a timer callback has no caller to
     // reject to, so the one that ever does is logged rather than left as an unhandled rejection.
     const fire = () =>
       void g[CLAUDE_UPDATE_TICK]
         ?.tick()
-        .catch((e) => log("warn", `claude update tick: ${errorText(e)}`));
-    if (held) held.tick = tick;
-    else {
+        .catch((cause: unknown) => log("warn", `claude update tick: ${errorText(cause)}`));
+
+    if (held) {
+      held.tick = tick;
+    } else {
       setTimeout(fire, 60_000).unref?.();
       const timer = setInterval(fire, 30 * 60_000);
       timer.unref?.();
       g[CLAUDE_UPDATE_TICK] = { timer, tick };
     }
   }
+
   /** The box a request is about: the session's own mount when it named one, else this instance. */
   const boxOf = (url: URL): MountBox =>
     instanceFor?.(url.searchParams.get("provider")) ?? { configDir, command, sshHost };
+
   /**
    * The box whose Claude Code an update card is about: the mount the session's model picker names,
    * so the card and its Update button follow the CLI you chose.
@@ -2519,29 +3060,37 @@ export function registerSessionRoutes(
    */
   const updateBoxOf = (url: URL, sessionId: string | null) => {
     const named = url.searchParams.get("provider");
+
     if (named !== null) {
       const host = instanceFor?.(named)?.sshHost ?? "";
+
       // The box's saved name when an updater already knows it ("Lilly"), its ssh host otherwise.
       return host
         ? { host, label: updaters.get(host)?.state().label ?? host }
         : { host: "", label: hostname() };
     }
+
     const own = sessionId === null ? undefined : boxOfSession?.(sessionId);
+
     return own ?? { host: "", label: hostname() };
   };
+
   /** The remote workspaces, as the routes below last wrote them; seeded from disk at registration. */
-  let remoteWorkspaces: RemoteWorkspace[] = [];
+  let remoteWorkspaces: Array<RemoteWorkspace> = [];
   /** One writer at a time on remote-workspaces.json. POST, DELETE, a box removal and the GET
    *  reconcile each read the file, change the list and write it back, and the Boxes card refetches
    *  whenever dsh's workspace store changes, so two of them can overlap; unserialized, the second
    *  would write back a list that lacks the row the first just added. The seed read rides the same
    *  chain so it cannot land after a reconcile and put a dropped row back in memory. */
   let rwChain: Promise<unknown> = Promise.resolve();
+
   const withRwFile = <T>(fn: () => Promise<T>): Promise<T> => {
     const p = rwChain.then(fn, fn);
     rwChain = p.catch(() => {});
+
     return p;
   };
+
   if (remoteWorkspacesPath !== undefined) {
     const seedPath = remoteWorkspacesPath;
     void withRwFile(async () => {
@@ -2549,8 +3098,9 @@ export function registerSessionRoutes(
       // second read of its own could land after a reconcile and put a dropped row back.
       remoteWorkspaces = await readRemoteWorkspaces(seedPath);
       await onRemoteWorkspaces?.(remoteWorkspaces);
-    }).catch((e: unknown) => log("warn", `remote workspaces: ${errorText(e)}`));
+    }).catch((error: unknown) => log("warn", `remote workspaces: ${errorText(error)}`));
   }
+
   /**
    * Where a cwd-scoped read has to run, and under which path.
    *
@@ -2563,6 +3113,7 @@ export function registerSessionRoutes(
    */
   const workspaceAt = (cwd: string | null): RemoteWorkspace | undefined =>
     cwd === null ? undefined : remoteWorkspaces.find((w) => w.path === cwd);
+
   /** The model and mount a transcript restored into `cwd` opens on: the transcript's own last
    *  model, else the one this workspace last ran, in whatever form the lineup still offers (a
    *  retired model takes its family's). A box workspace never run in dsh has no known mount, so
@@ -2577,23 +3128,29 @@ export function registerSessionRoutes(
       // on either came back with no model at all.
       const list = offeredModels ? () => offeredModels(saved?.provider) : models;
       const offered = list ? (await list()).map((m) => m.id) : undefined;
+
       return {
         provider: saved?.provider ?? (workspaceAt(cwd) ? undefined : (providerId ?? "claude-code")),
         model: wanted && offered ? livingModelId(wanted, offered) : undefined,
       };
     };
+
   /** That workspace's own transcripts on its box, newest first; an unreachable box lists nothing. */
   const boxTranscripts = async (
     ws: RemoteWorkspace,
     hidden: Set<string>,
-  ): Promise<TranscriptListItem[]> => {
+  ): Promise<Array<TranscriptListItem>> => {
     const r = await sshTranscripts(ws.host);
+
     if (!r.ok) {
       log("warn", `transcripts on ${ws.host}: ${r.error}`);
+
       return [];
     }
+
     return r.sessions.filter((t) => t.cwd === ws.remoteCwd && !hidden.has(t.id));
   };
+
   /**
    * Bring a remote workspace's transcript to this disk so `open` can seed a dsh session from it.
    * The body lives on the box, dsh reads the seed from here, and the plugin's import dir is already
@@ -2601,30 +3158,47 @@ export function registerSessionRoutes(
    * through to whatever is on this disk, which is what it did before.
    */
   const cacheBoxTranscript = async (ws: RemoteWorkspace, id: string): Promise<void> => {
-    if (importedDir === undefined) return;
+    if (importedDir === undefined) {
+      return;
+    }
+
     const box = instanceForHost?.(ws.host) ?? { configDir, command, sshHost: ws.host };
     const path = join(await projectDirAt(box, ws.remoteCwd), `${id}.jsonl`);
     const read = await readAt(box, path).catch(() => null);
-    if (read === null) return;
+
+    if (read === null) {
+      return;
+    }
+
     await mkdir(importedDir, { recursive: true });
     await writeFile(join(importedDir, `${id}.jsonl`), read.text, "utf8");
   };
+
   /** Decide which box and path a cwd-scoped read runs against: a remote workspace's real remote
-   *  path, else the request's own mount. */
-  const targetOf = <T extends string | null>(url: URL, cwd: T): CwdTarget<T> => {
+   *  path, else the request's own mount. A string cwd answers a string one: a workspace is only
+   *  ever found for a non-null cwd, and its remote cwd is a string. */
+  function targetOf(url: URL, cwd: string): CwdTarget<string>;
+  function targetOf(url: URL, cwd: string | null): CwdTarget<string | null>;
+  function targetOf(url: URL, cwd: string | null): CwdTarget<string | null> {
     const ws = workspaceAt(cwd);
-    if (ws === undefined) return { box: boxOf(url), cwd };
+
+    if (ws === undefined) {
+      return { box: boxOf(url), cwd };
+    }
+
     const box = instanceForHost?.(ws.host) ?? { configDir, command, sshHost: ws.host };
-    // SAFETY: a workspace is only ever found for a non-null cwd, so T is string on this branch.
-    return { box, cwd: ws.remoteCwd as T };
-  };
+
+    return { box, cwd: ws.remoteCwd };
+  }
+
   /**
    * Where a transcript for this workspace can be: Claude's own project dir, then the plugin's
    * import dir. An imported file is deliberately not written into `projects/`, so every read that
    * takes an id has to look in both.
    */
-  const transcriptDirs = (cwd: string): string[] =>
+  const transcriptDirs = (cwd: string): Array<string> =>
     importedDir === undefined ? projectDir(cwd) : [...projectDir(cwd), importedDir];
+
   /**
    * Where that box keeps the user-scope settings file. A mount's `configDir` is resolved against
    * this PC's home, so a remote box's path has to come from its own `$HOME` (asked once per host);
@@ -2632,6 +3206,7 @@ export function registerSessionRoutes(
    */
   const userSettingsPathOf = async (box: MountBox): Promise<string | undefined> =>
     box.sshHost ? `${await claudeHomeOf(box)}/settings.json` : settingsPath;
+
   /**
    * Where that box's CLI keeps a workspace's auto-memory. Not the transcript directory: memory is
    * keyed by repository (`repoRoot`), and `autoMemoryDirectory` in the managed or the user
@@ -2645,39 +3220,55 @@ export function registerSessionRoutes(
    */
   const memoryDirAt = async (box: MountBox, cwd: string): Promise<string> => {
     const userPath = await userSettingsPathOf(box);
+
     for (const { text } of userPath ? await settingsTexts(box, userPath, null) : []) {
       const set = parseSettingsText(text).value?.autoMemoryDirectory;
-      if (set === undefined || set === null) continue;
+
+      if (set === undefined || set === null) {
+        continue;
+      }
+
       const dir =
         typeof set === "string" && /^~[/\\]/.test(set)
           ? join(await homeAt(box), set.slice(2))
           : set;
-      if (validCwd(dir, box.sshHost ? "linux" : process.platform)) return dir;
+
+      if (validCwd(dir, box.sshHost ? "linux" : process.platform)) {
+        return dir;
+      }
+
       break;
     }
+
     return join(await projectDirAt(box, await repoRoot(box, cwd)), "memory");
   };
+
   // Optional: stock dsh has it; without it archived sessions list but cannot be restored. The
   // routes can serve before it mounts. A request in the first seconds after a restart found no
   // registry and skipped the workspace attach silently, so the session it had just written was
   // nowhere in the sidebar. Hence the live `get` alongside the injected handle.
   let injectedRegistry: WorkspaceRegistry | undefined;
+
   /** The workspace registry dsh provides, whether injected or looked up on demand, so routes can
    *  serve even before it mounts. */
   const workspaceRegistry = (): WorkspaceRegistry | undefined =>
     injectedRegistry ?? ctx.get?.("workspaceRegistry");
+
   /** The remote-workspace rows dsh's registry still backs, the file and the adapter's redirect map
    *  brought in line when a row was dropped. Declared ahead of the inject below, which may call it
    *  at once. */
-  const reconcileRemoteWorkspaces = (path: string): Promise<RemoteWorkspace[]> =>
+  const reconcileRemoteWorkspaces = (path: string): Promise<Array<RemoteWorkspace>> =>
     withRwFile(async () => {
       const { workspaces, dropped } = await syncRemoteWorkspaces(path, workspaceRegistry(), log);
+
       if (dropped.length > 0) {
         remoteWorkspaces = workspaces;
         await onRemoteWorkspaces?.(workspaces);
       }
+
       return workspaces;
     });
+
   /** Take one remote workspace out of dsh and off disk; answers whether dsh let it go. A row whose
    *  registry delete threw stays whole, row and placeholder both: the sidebar still draws it, and
    *  the reconcile above only ever drops rows the registry lacks, so a row removed here while dsh
@@ -2686,27 +3277,49 @@ export function registerSessionRoutes(
     try {
       // SAFETY: workspaceId was returned by registry.create as a WorkspaceId and stored verbatim;
       // delete ignores an unknown id, so a stale value is harmless.
-      await workspaceRegistry()?.delete(w.workspaceId as WorkspaceId);
-    } catch (e) {
-      log("warn", `remote-workspace delete: ${errorText(e)}`);
+      await workspaceRegistry()?.delete(asWorkspaceId(w.workspaceId));
+    } catch (error) {
+      log("warn", `remote-workspace delete: ${errorText(error)}`);
+
       return false;
     }
+
     await rm(w.path, { recursive: true, force: true }).catch(() => {});
+
     return true;
   };
+
   ctx.inject?.(["workspaceRegistry"], (host) => {
     injectedRegistry = host.workspaceRegistry;
+
     // cordis calls this once the registry is active, its records loaded, so a row it cannot find
     // was deleted (from the sidebar, while this plugin was not looking) and not merely unread.
-    if (remoteWorkspacesPath !== undefined)
-      void reconcileRemoteWorkspaces(remoteWorkspacesPath).catch((e: unknown) =>
-        log("warn", `remote workspaces sync: ${errorText(e)}`),
+    if (remoteWorkspacesPath !== undefined) {
+      void reconcileRemoteWorkspaces(remoteWorkspacesPath).catch((error: unknown) =>
+        log("warn", `remote workspaces sync: ${errorText(error)}`),
       );
+    }
   });
+
+  // The CLI wrote the plugin change to settings; ask this session's live process to re-read it so
+  // it applies now. Returns whether a live process took it. False (next spawn) when none is up.
+  const applyReload = async (session: JsonValue | undefined): Promise<boolean> => {
+    if (!reloadPlugins || typeof session !== "string") {
+      return false;
+    }
+
+    return (await reloadPlugins(session)).live;
+  };
+
   ctx.inject?.(["webServer", "connection", "sessions", "sessionPersistence"], (host) => {
     const { webServer, connection, sessions, sessionPersistence } = host;
-    if (!webServer || !connection || !sessionPersistence) return;
+
+    if (!webServer || !connection || !sessionPersistence) {
+      return;
+    }
+
     const routeHost: RouteHost = { webServer, connection, sessions, sessionPersistence };
+
     // What the heal needs from dsh: its persistence (read-open never takes the write lock), its
     // catalog, and this plugin's state dir. Shared with the adapter's wake path through onHeal.
     const heal: HealHost = {
@@ -2715,30 +3328,42 @@ export function registerSessionRoutes(
       stateDir: STATE_DIR,
       log,
     };
+
     onHeal?.(heal);
     // One sweep per process, after the resume delay, so a boot is not slowed by it and a hot
     // reload does not start a second. Heals the logs dsh refuses for the reasons the plugin
     // knows; anything else is recorded and shown, never touched.
-    // SAFETY: the symbol is this plugin's own key on globalThis, typed here once
-    const sweepFlag = globalThis as typeof globalThis & { [HEAL_SWEEP]?: true };
+    // The symbol is this plugin's own key on globalThis, typed here once
+    const sweepFlag: typeof globalThis & { [HEAL_SWEEP]?: true } = globalThis;
+
     if (!sweepFlag[HEAL_SWEEP]) {
       sweepFlag[HEAL_SWEEP] = true;
       setTimeout(() => {
-        void sweepRefusedLogs(heal).catch((e) => log("warn", `heal sweep: ${errorText(e)}`));
+        void sweepRefusedLogs(heal).catch((cause: unknown) =>
+          log("warn", `heal sweep: ${errorText(cause)}`),
+        );
       }, HEAL_SWEEP_DELAY_MS).unref?.();
     }
+
     // Shared by the plugin-manager routes: check the scope and resolve the session's directory,
     // which is where a `project` or `local` write lands (a `user` write goes to configDir).
     const pluginScopeCwd = async (
       scope: unknown,
       session: JsonValue | undefined,
-    ): Promise<{ cwd: string | undefined } | { error: string }> => {
-      if (!isPluginScope(scope)) return { error: "scope is user, project or local" };
+    ): Promise<{ scope: PluginScope; cwd: string | undefined } | { error: string }> => {
+      if (!isPluginScope(scope)) {
+        return { error: "scope is user, project or local" };
+      }
+
       const cwd = await sessionCwd(session, sessionPersistence);
-      if (pluginScopeNeedsCwd(scope) && cwd === null)
+
+      if (pluginScopeNeedsCwd(scope) && cwd === null) {
         return { error: `${scope} scope needs a session open in a directory` };
-      return { cwd: cwd ?? undefined };
+      }
+
+      return { scope, cwd: cwd ?? undefined };
     };
+
     // Every `claude plugin` and `claude mcp` mutation below runs on this PC, with the binary and
     // config dir of the session's own mount (an account's change lands in the account's dir, not
     // This box's), while the rosters they act on are read from the session's own box. On a session
@@ -2750,20 +3375,23 @@ export function registerSessionRoutes(
     // placeholder dir, and report success for a box that never changed.
     const notOnBox = (url: URL, what: string, cwd: string | null = null): string | undefined =>
       targetOf(url, cwd).box.sshHost ? `${what} do not reach an SSH box yet` : undefined;
-    // The CLI wrote the plugin change to settings; ask this session's live process to re-read it so
-    // it applies now. Returns whether a live process took it. False (next spawn) when none is up.
-    const applyReload = async (session: JsonValue | undefined): Promise<boolean> => {
-      if (!reloadPlugins || typeof session !== "string") return false;
-      return (await reloadPlugins(session)).live;
-    };
+
     // A reload the live process refused counts as not applied: the file is written, the next
     // spawn reads it, and the note says so rather than claiming it landed.
     const applyReloadSkills = async (session: JsonValue | undefined): Promise<boolean> => {
-      if (!reloadSkills || typeof session !== "string") return false;
+      if (!reloadSkills || typeof session !== "string") {
+        return false;
+      }
+
       const r = await reloadSkills(session);
-      if (!r.ok) log("warn", `reload_skills refused for ${session}: ${r.error ?? "unknown"}`);
+
+      if (!r.ok) {
+        log("warn", `reload_skills refused for ${session}: ${r.error ?? "unknown"}`);
+      }
+
       return r.ok && r.live;
     };
+
     // The route groups, built once per registration, in the chain's order; the boxes routes stay
     // inline between them because they reassign this closure's remote-workspace list.
     const routeCtx: RouteCtx = {
@@ -2895,6 +3523,7 @@ export function registerSessionRoutes(
       workspaceRegistry,
       writeWithBackup,
     };
+
     const beforeBoxes = [
       transcriptsRoutes(routeCtx),
       filesRoutes(routeCtx),
@@ -2905,7 +3534,8 @@ export function registerSessionRoutes(
       testGateRoutes({ ROUTE_PREFIX, stateDir: STATE_DIR, json, readBody }),
       secondOpinionRoutes(routeCtx),
     ];
-    if (accounts)
+
+    if (accounts) {
       beforeBoxes.push(
         accountsRoutes({
           ROUTE_PREFIX,
@@ -2935,6 +3565,8 @@ export function registerSessionRoutes(
           log,
         }),
       );
+    }
+
     const afterBoxes = [tasksRoutes(routeCtx)];
     host.effect?.(() => {
       // Exact beats prefix, so this one path skips the login the prefix route requires. Registered
@@ -2942,6 +3574,7 @@ export function registerSessionRoutes(
       // A throw here (a duplicate path) must not cost the prefix route below: without the worker
       // only phone notices' Web Push is missing, without the prefix every plugin route is.
       let disposeSw: (() => void) | undefined;
+
       try {
         disposeSw = webServer.register({
           kind: "exact",
@@ -2949,24 +3582,41 @@ export function registerSessionRoutes(
           auth: "anonymous",
           handler: servePushSw,
         });
-      } catch (e) {
-        log("warn", `phone notices: worker route not registered: ${errorText(e)}`);
+      } catch (error) {
+        log("warn", `phone notices: worker route not registered: ${errorText(error)}`);
       }
+
       const dispose = webServer.register({
         kind: "prefix",
         path: ROUTE_PREFIX,
         handler: async (req: IncomingMessage, res: ServerResponse) => {
           const rejection = connection.requestRejection?.(req);
-          if (rejection !== undefined) return json(res, rejection, { error: "forbidden" });
+
+          if (rejection !== undefined) {
+            return json(res, rejection, { error: "forbidden" });
+          }
+
           const url = new URL(req.url ?? "/", "http://dsh");
+
           try {
-            for (const route of beforeBoxes) if ((await route(req, res, url)) !== UNHANDLED) return;
+            for (const route of beforeBoxes) {
+              if ((await route(req, res, url)) !== UNHANDLED) {
+                return;
+              }
+            }
+
             if (boxesPath && url.pathname === `${ROUTE_PREFIX}/boxes`) {
-              if (req.method === "GET")
+              if (req.method === "GET") {
                 return json(res, 200, { boxes: await readBoxes(boxesPath) });
+              }
+
               if (req.method === "PUT") {
                 const v = validateBoxes((await readBody(req)).boxes);
-                if (v.error !== undefined) return json(res, 400, { error: v.error });
+
+                if (v.error !== undefined) {
+                  return json(res, 400, { error: v.error });
+                }
+
                 // Owner-only. A saved box carries that remote dsh's launch token in plain text,
                 // and the default mode left it readable by every account on the machine, which
                 // is a login to the other box for any of them. `mode` applies on create only, so
@@ -2974,36 +3624,48 @@ export function registerSessionRoutes(
                 await writeJson(boxesPath, v.boxes, { pretty: true, mode: 0o600 });
                 // Logged, not swallowed: if the chmod fails the token stays readable, and a
                 // hardening step that quietly does nothing is worse than one that says so.
-                await chmod(boxesPath, 0o600).catch((e: unknown) =>
-                  log("warn", `boxes file left readable by others: ${errorText(e)}`),
+                await chmod(boxesPath, 0o600).catch((error: unknown) =>
+                  log("warn", `boxes file left readable by others: ${errorText(error)}`),
                 );
+
                 return json(res, 200, { boxes: v.boxes });
               }
             }
+
             if (sshBoxesPath && url.pathname === `${ROUTE_PREFIX}/ssh-boxes`) {
               // Each row carries the provider id its box mounts under, so a client that edits a
               // box's settings.json (the update channel in Settings) can name the mount.
-              if (req.method === "GET")
+              if (req.method === "GET") {
                 return json(res, 200, {
                   boxes: (await readSshBoxes(sshBoxesPath)).map((b) => ({
                     ...b,
                     provider: sshBoxProviderId(b.name),
                   })),
                 });
+              }
+
               if (req.method === "PUT") {
                 const v = validateSshBoxes((await readBody(req)).boxes);
-                if (v.error !== undefined) return json(res, 400, { error: v.error });
+
+                if (v.error !== undefined) {
+                  return json(res, 400, { error: v.error });
+                }
+
                 // Boxes and accounts share one id namespace: the id names the mount.
                 const accountIds = new Set(
                   (accounts ? await readAccounts(accounts.path, homedir(), CLAUDE_HOME) : []).map(
                     (a) => boxProviderId(a.name),
                   ),
                 );
+
                 const clash = v.boxes.find((b) => accountIds.has(sshBoxProviderId(b.name)));
-                if (clash)
+
+                if (clash) {
                   return json(res, 400, {
                     error: serverText("accountTaken", { name: clash.name }),
                   });
+                }
+
                 const before = await readSshBoxes(sshBoxesPath);
                 await writeJson(sshBoxesPath, v.boxes, { pretty: true });
                 // A box takes its remote workspaces with it: their sessions ran over that box's
@@ -3013,72 +3675,100 @@ export function registerSessionRoutes(
                 // host no box names, which the card still lists and its Remove still clears.
                 const kept = new Set(v.boxes.map((b) => b.host));
                 const gone = new Set(before.map((b) => b.host).filter((h) => !kept.has(h)));
+
                 // A box takes its Models switches with it: its `hideModel:<provider>:` hints would
                 // otherwise sit in the store for good, and hide models on a box later added under
                 // the same name. Dropped by prefix; a failure is logged, the box is already gone.
                 if (gone.size > 0) {
                   const hintsPath = join(dirname(sshBoxesPath), "hints.json");
+
                   const prefixes = before
                     .filter((b) => gone.has(b.host))
                     .map((b) => `hideModel:${sshBoxProviderId(b.name)}:`);
+
                   await readHints(hintsPath)
                     .then((hints) => {
                       const drop = Object.keys(hints).filter((k) =>
                         prefixes.some((p) => k.startsWith(p)),
                       );
+
                       return drop.length === 0
                         ? undefined
                         : updateHints(hintsPath, Object.fromEntries(drop.map((k) => [k, false])));
                     })
-                    .catch((e: unknown) => log("warn", `box removal, hints: ${errorText(e)}`));
+                    .catch((error: unknown) =>
+                      log("warn", `box removal, hints: ${errorText(error)}`),
+                    );
+
                   // And the models added for it in Settings, for the same reason.
-                  for (const b of before.filter((x) => gone.has(x.host)))
+                  for (const b of before.filter((x) => gone.has(x.host))) {
                     await saveCustomModels(
                       dirname(sshBoxesPath),
                       sshBoxProviderId(b.name),
                       [],
-                    ).catch((e: unknown) =>
-                      log("warn", `box removal, added models: ${errorText(e)}`),
+                    ).catch((error: unknown) =>
+                      log("warn", `box removal, added models: ${errorText(error)}`),
                     );
+                  }
                 }
+
                 if (remoteWorkspacesPath && gone.size > 0) {
                   const rwPath = remoteWorkspacesPath;
+
                   const removed = await withRwFile(async () => {
                     const existing = await readRemoteWorkspaces(rwPath);
-                    const out: RemoteWorkspace[] = [];
-                    for (const w of existing.filter((row) => gone.has(row.host)))
-                      if (await dropRemoteWorkspace(w)) out.push(w);
-                    if (out.length === 0) return out;
+                    const out: Array<RemoteWorkspace> = [];
+
+                    for (const w of existing.filter((row) => gone.has(row.host))) {
+                      if (await dropRemoteWorkspace(w)) {
+                        out.push(w);
+                      }
+                    }
+
+                    if (out.length === 0) {
+                      return out;
+                    }
+
                     const next = existing.filter((w) => !out.includes(w));
                     await writeJson(rwPath, next, { pretty: true });
                     remoteWorkspaces = next;
                     await onRemoteWorkspaces?.(next);
+
                     return out;
-                  }).catch((e: unknown) => {
+                  }).catch((error: unknown) => {
                     // The box is already saved; its workspaces stay listed for a second try.
-                    log("warn", `box removal, remote workspaces: ${errorText(e)}`);
+                    log("warn", `box removal, remote workspaces: ${errorText(error)}`);
+
                     return [];
                   });
-                  if (removed.length > 0)
+
+                  if (removed.length > 0) {
                     log("info", `box removed: ${removed.length} remote workspace(s) went with it`);
+                  }
                 }
+
                 // Mount or withdraw the provider instances so the picker matches the saved list
                 // without a dsh restart; a mount failure is reported, the file already saved.
                 let live = true;
+
                 try {
                   await onSshBoxes?.(v.boxes);
-                } catch (e) {
+                } catch (error) {
                   live = false;
-                  log("warn", `ssh-boxes reconcile: ${errorText(e)}`);
+                  log("warn", `ssh-boxes reconcile: ${errorText(error)}`);
                 }
+
                 events?.hub.publish({ kind: "boxes", session: null, data: {} });
+
                 return json(res, 200, { boxes: v.boxes, live });
               }
             }
+
             // This node's tailnet state (or a box's, over ssh, with ?host=): installed, logged in,
             // who it is, and its peers. Not installed is a state, not an error.
             if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/tailscale/status`) {
               const boxHost = url.searchParams.get("host") ?? "";
+
               const r = boxHost
                 ? await run(
                     "ssh",
@@ -3088,8 +3778,10 @@ export function registerSessionRoutes(
                     12_000,
                   )
                 : await run("tailscale", ["status", "--json"], undefined, undefined, 5000);
+
               const parsed = r.error ? undefined : tailscaleStatus(r.out);
-              if (!parsed)
+
+              if (!parsed) {
                 return json(res, 200, {
                   installed: !/not found|ENOENT|no such file/i.test(r.error ?? ""),
                   state: "NoState",
@@ -3097,46 +3789,67 @@ export function registerSessionRoutes(
                   peers: [],
                   error: r.error?.split(/\r?\n/).at(-1),
                 });
+              }
+
               return json(res, 200, { installed: true, ...parsed });
             }
+
             // Join the tailnet from here (or a box, with {host}): `tailscale login` prints an
             // approval link and waits; the link is answered as soon as it appears and the command
             // is left running until the browser approves. Prefs need root, so passwordless sudo
             // is tried first, then the operator path; a refusal names the terminal command.
             if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/tailscale/login`) {
               const body = await readBody(req);
-              const boxHost = String(body.host ?? "").trim();
+              const boxHost = (stringOf(body.host) ?? "").trim();
               // A self-hosted tailnet (Headscale) is the same client pointed at another server;
               // a pre-auth key from that server joins with no browser at all. Both are optional
               // and both are checked before they reach a shell.
               const joinInput = validateTailnetJoin(body);
-              if (joinInput.error !== undefined || !joinInput.value)
+
+              if (joinInput.error !== undefined || !joinInput.value) {
                 return json(res, 400, { error: joinInput.error ?? "bad join" });
+              }
+
               const { loginServer, authKey } = joinInput.value;
               const flags = loginServer ? ` --login-server ${shq(loginServer)}` : "";
+
               if (authKey) {
                 // `up` with a key finishes on its own: answer the state it reached.
                 const up = `sudo -n tailscale up${flags} --auth-key ${shq(authKey)} --timeout 30s 2>&1 || tailscale up${flags} --auth-key ${shq(authKey)} --timeout 30s 2>&1`;
+
                 const r = boxHost
                   ? await run("ssh", sshArgs(boxHost, up), undefined, undefined, 45_000)
                   : await run("sh", ["-c", up], undefined, undefined, 45_000);
-                if (r.error) return json(res, 200, { error: r.error.split(/\r?\n/).at(-1) });
+
+                if (r.error) {
+                  return json(res, 200, { error: r.error.split(/\r?\n/).at(-1) });
+                }
+
                 return json(res, 200, { joined: true });
               }
+
               const script = `sudo -n tailscale login${flags} 2>&1 || tailscale login${flags} 2>&1`;
+
               const child = boxHost
                 ? spawn("ssh", sshArgs(boxHost, script), { stdio: ["ignore", "pipe", "pipe"] })
                 : spawn("sh", ["-c", script], { stdio: ["ignore", "pipe", "pipe"] });
+
               child.unref();
+
               const link = await new Promise<string | { error: string }>((resolve) => {
                 let text = "";
+
                 /** Accumulate the login command's output and resolve as soon as it prints an approval
                  *  link, so the browser can open it. */
                 const look = (chunk: Buffer | string) => {
                   text += String(chunk);
                   const found = loginUrlIn(text);
-                  if (found) resolve(found);
+
+                  if (found) {
+                    resolve(found);
+                  }
                 };
+
                 child.stdout?.on("data", look);
                 child.stderr?.on("data", look);
                 child.on("close", () =>
@@ -3150,17 +3863,25 @@ export function registerSessionRoutes(
                   15_000,
                 ).unref();
               });
-              if (typeof link === "string") return json(res, 200, { url: link });
+
+              if (typeof link === "string") {
+                return json(res, 200, { url: link });
+              }
+
               return json(res, 200, {
                 error: `${link.error}. Run \`sudo tailscale login\` in a terminal${boxHost ? ` on ${boxHost}` : ""}.`,
               });
             }
+
             // WireGuard peers this node can dial: `wg show all dump` needs root, so passwordless
             // sudo first, then plain (for a box where the user is in the wireguard group).
             if (req.method === "GET" && url.pathname === `${ROUTE_PREFIX}/wireguard/status`) {
               const which = await run("sh", ["-c", "command -v wg"], undefined, undefined, 3000);
-              if (which.error || !which.out.trim())
+
+              if (which.error || !which.out.trim()) {
                 return json(res, 200, { installed: false, peers: [] });
+              }
+
               const r = await run(
                 "sh",
                 ["-c", "sudo -n wg show all dump 2>/dev/null || wg show all dump"],
@@ -3168,12 +3889,14 @@ export function registerSessionRoutes(
                 undefined,
                 5000,
               );
+
               return json(res, 200, {
                 installed: true,
                 peers: r.error ? [] : wireguardPeers(r.out),
                 error: r.error?.split(/\r?\n/).at(-1),
               });
             }
+
             // Probe each ssh box's `claude` over ssh so the panel shows its login without leaving.
             if (
               sshBoxesPath &&
@@ -3181,38 +3904,61 @@ export function registerSessionRoutes(
               url.pathname === `${ROUTE_PREFIX}/ssh-boxes/status`
             ) {
               const boxes = await readSshBoxes(sshBoxesPath);
+
               const probed = await Promise.all(
                 boxes.map((b) => runtimeStatus("", boxCommand ?? command, b.host)),
               );
+
               // A panel login stores a CLAUDE_CODE_OAUTH_TOKEN the plugin injects at spawn; the box's
               // own `claude auth status` can't see it, so a stored token counts as logged in here.
               return json(res, 200, {
                 boxes: boxes.map((b, i) => {
                   const tokenLogin = !!readSshToken(dirname(sshBoxesPath), b.host);
                   const status = tokenLogin ? { ...probed[i], loggedIn: true } : probed[i];
-                  if (status) status.running = liveCount?.(b.host) ?? 0;
-                  if (status) onLoginStatus?.(sshBoxProviderId(b.name), status.loggedIn);
+
+                  if (status) {
+                    status.running = liveCount?.(b.host) ?? 0;
+                  }
+
+                  if (status) {
+                    onLoginStatus?.(sshBoxProviderId(b.name), status.loggedIn);
+                  }
+
                   return { name: b.name, host: b.host, status };
                 }),
               });
             }
+
             // One directory level on an SSH box, for the Add workspace dialog's box dropdown. dsh's
             // own picker lists this PC only (its listing seam takes a path and nothing else), so a
             // level on a box comes from here instead. The host must be a saved box, which is what
             // keeps this from being an ssh-anywhere route.
             if (sshBoxesPath && url.pathname === `${ROUTE_PREFIX}/box-dirs`) {
               const dirsHost = url.searchParams.get("host") ?? "";
-              if (!(await readSshBoxes(sshBoxesPath)).some((b) => b.host === dirsHost))
+
+              if (!(await readSshBoxes(sshBoxesPath)).some((b) => b.host === dirsHost)) {
                 return json(res, 400, { error: `unknown box ${dirsHost}` });
+              }
+
               const box: FsBox = { sshHost: dirsHost };
+
               if (req.method === "GET") {
                 const dir = url.searchParams.get("path") ?? "";
-                const level = await listDirsAt(box, dir).catch((e: unknown) => errorText(e));
-                if (typeof level === "string") return json(res, 502, { error: level });
-                if (level === null)
+
+                const level = await listDirsAt(box, dir).catch((error: unknown) =>
+                  errorText(error),
+                );
+
+                if (typeof level === "string") {
+                  return json(res, 502, { error: level });
+                }
+
+                if (level === null) {
                   return json(res, 404, {
                     error: `${dir || "~"}: no such directory on ${dirsHost}`,
                   });
+                }
+
                 // The same shape dsh's own listing answers in, so the dialog reads one type
                 // whichever box is picked (crumbs it builds from the path itself).
                 return json(res, 200, {
@@ -3225,56 +3971,82 @@ export function registerSessionRoutes(
                   })),
                 });
               }
+
               if (req.method === "POST") {
                 const body = await readBody(req);
-                const parent = String(body.path ?? "");
-                const name = String(body.name ?? "");
-                if (!parent.startsWith("/"))
+                const parent = stringOf(body.path) ?? "";
+                const name = stringOf(body.name) ?? "";
+
+                if (!parent.startsWith("/")) {
                   return json(res, 400, { error: "path must be an absolute directory" });
+                }
+
                 // A name is one path segment: a slash or a control byte would write outside the
                 // level the dialog is showing.
                 const segment =
                   name !== "" &&
                   name !== "." &&
                   name !== ".." &&
-                  ![...name].some((ch) => ch === "/" || ch < " ");
-                if (!segment) return json(res, 400, { error: `"${name}" is not a folder name` });
+                  !name.split("").some((ch) => ch === "/" || ch < " ");
+
+                if (!segment) {
+                  return json(res, 400, { error: `"${name}" is not a folder name` });
+                }
+
                 const dir = childPath(parent, name);
+
                 const failed = await makeDirAt(box, dir).then(
                   () => "",
-                  (e: unknown) => errorText(e),
+                  (error: unknown) => errorText(error),
                 );
-                if (failed) return json(res, 502, { error: failed });
+
+                if (failed) {
+                  return json(res, 502, { error: failed });
+                }
+
                 return json(res, 200, { path: dir });
               }
             }
+
             // A workspace pinned to a directory on an SSH box: dsh adopts a local placeholder, the
             // ssh spawner runs the far claude in the real remote path (see sshSpawner).
             if (remoteWorkspacesPath && url.pathname === `${ROUTE_PREFIX}/remote-workspaces`) {
-              if (req.method === "GET")
+              if (req.method === "GET") {
                 return json(res, 200, {
                   workspaces: await reconcileRemoteWorkspaces(remoteWorkspacesPath),
                 });
+              }
+
               if (req.method === "POST") {
                 const reg = workspaceRegistry();
-                if (!reg)
+
+                if (!reg) {
                   return json(res, 501, {
                     error: "workspaceRegistry is not available on this host",
                   });
+                }
+
                 const v = validateRemoteWorkspaceInput(await readBody(req));
-                if (v.error !== undefined) return json(res, 400, { error: v.error });
+
+                if (v.error !== undefined) {
+                  return json(res, 400, { error: v.error });
+                }
+
                 const { name, host: boxHost, remoteCwd } = v.value;
                 // Empty local placeholder dsh stat-checks and adopts; the far claude never sees it.
                 const base = join(dirname(remoteWorkspacesPath), "remote-workspaces");
                 const dir = join(base, `${slugForDir(boxHost)}__${slugForDir(remoteCwd)}`);
                 await mkdir(dir, { recursive: true });
                 let ws: { id: WorkspaceId; path: string };
+
                 try {
                   ws = await reg.create(dir, `${name} · ${boxHost}`);
-                } catch (e) {
-                  return json(res, 500, { error: `create workspace: ${errorText(e)}` });
+                } catch (error) {
+                  return json(res, 500, { error: `create workspace: ${errorText(error)}` });
                 }
+
                 const rwPath = remoteWorkspacesPath;
+
                 const entry: RemoteWorkspace = {
                   name,
                   host: boxHost,
@@ -3282,6 +4054,7 @@ export function registerSessionRoutes(
                   path: ws.path,
                   workspaceId: ws.id,
                 };
+
                 await withRwFile(async () => {
                   const existing = await readRemoteWorkspaces(rwPath);
                   const next = [...existing.filter((w) => w.path !== ws.path), entry];
@@ -3291,31 +4064,42 @@ export function registerSessionRoutes(
                   remoteWorkspaces = next;
                   await onRemoteWorkspaces?.(next);
                 });
+
                 return json(res, 200, { workspace: entry });
               }
+
               if (req.method === "DELETE") {
-                const target = String((await readBody(req)).path ?? "");
+                const target = stringOf((await readBody(req)).path) ?? "";
                 const rwPath = remoteWorkspacesPath;
+
                 const out = await withRwFile(async () => {
                   const existing = await readRemoteWorkspaces(rwPath);
                   const entry = existing.find((w) => w.path === target);
+
                   // A row dsh would not let go of stays in the file (see dropRemoteWorkspace).
-                  if (entry && !(await dropRemoteWorkspace(entry)))
+                  if (entry && !(await dropRemoteWorkspace(entry))) {
                     return { workspaces: existing, stuck: entry.name };
+                  }
+
                   const next = existing.filter((w) => w.path !== target);
                   await writeJson(rwPath, next, { pretty: true });
                   remoteWorkspaces = next;
                   await onRemoteWorkspaces?.(next);
+
                   return { workspaces: next, stuck: "" };
                 });
-                if (out.stuck)
+
+                if (out.stuck) {
                   return json(res, 502, {
                     error: `dsh refused to delete ${out.stuck}, so it is still in the sidebar. Try again.`,
                     workspaces: out.workspaces,
                   });
+                }
+
                 return json(res, 200, { workspaces: out.workspaces });
               }
             }
+
             // Log a box in from the panel: start runs `claude setup-token` there and returns the
             // OAuth URL it prints; code writes the pasted code back to the same process and
             // stores the minted token. The host must be a saved box, so this cannot ssh
@@ -3324,31 +4108,46 @@ export function registerSessionRoutes(
             /** The box's own `claude auth status`, the proof a login took once its process exits. */
             const verifyLogin = (loginHost: string) => async () => {
               const cli = (loginHost === THIS_BOX ? command : (boxCommand ?? command)) ?? "claude";
+
               const st =
                 loginHost === THIS_BOX
                   ? await run(cli, ["auth", "status"], cliEnvFor(boxOf(url).configDir))
                   : await run("ssh", sshArgs(loginHost, `${shq(cli)} auth status`));
+
               return authFromStatus(st.out).loggedIn;
             };
+
             /** Record a finished SSH login: forget the cached identity, tell the panel the box is
              *  logged in, and relist. A login that did not finish hands back its error. */
-            const storeLogin = (loginHost: string, loginBoxes: SshBox[], fin: LoginOutcome) => {
-              if (!fin.done) return { done: false, error: fin.error };
+            const storeLogin = (
+              loginHost: string,
+              loginBoxes: Array<SshBox>,
+              fin: LoginOutcome,
+            ) => {
+              if (!fin.done) {
+                return { done: false, error: fin.error };
+              }
+
               forgetIdentity();
               const loginName = loginBoxes.find((b) => b.host === loginHost)?.name;
               onLoginStatus?.(loginName === undefined ? null : sshBoxProviderId(loginName), true);
               loginDone?.(loginHost);
+
               return { done: true, loggedIn: true };
             };
+
             if (
               sshBoxesPath &&
               req.method === "POST" &&
               url.pathname === `${ROUTE_PREFIX}/ssh-boxes/login/start`
             ) {
-              const loginHost = String((await readBody(req)).host ?? "");
+              const loginHost = stringOf((await readBody(req)).host) ?? "";
               const loginBoxes = await readSshBoxes(sshBoxesPath);
-              if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost))
+
+              if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost)) {
                 return json(res, 400, { error: "unknown box" });
+              }
+
               // The box runs its own claude by the configured name; this box's resolved absolute
               // path means nothing there (a login on lilly ran /home/<me>/.local/bin/claude).
               return json(
@@ -3362,23 +4161,29 @@ export function registerSessionRoutes(
                 ),
               );
             }
+
             if (
               sshBoxesPath &&
               req.method === "POST" &&
               url.pathname === `${ROUTE_PREFIX}/ssh-boxes/login/code`
             ) {
               const body = await readBody(req);
-              const loginHost = String(body.host ?? "");
+              const loginHost = stringOf(body.host) ?? "";
               const loginBoxes = await readSshBoxes(sshBoxesPath);
-              if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost))
+
+              if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost)) {
                 return json(res, 400, { error: "unknown box" });
+              }
+
               const submit = await submitSshLoginCode(
                 loginHost,
-                String(body.code ?? ""),
+                stringOf(body.code) ?? "",
                 verifyLogin(loginHost),
               );
+
               return json(res, 200, storeLogin(loginHost, loginBoxes, submit));
             }
+
             // The panel asks this after showing the link: setup-token on a box that already has
             // a login finishes on its own, no code, so the token is stored the moment it lands.
             if (
@@ -3386,14 +4191,22 @@ export function registerSessionRoutes(
               req.method === "POST" &&
               url.pathname === `${ROUTE_PREFIX}/ssh-boxes/login/poll`
             ) {
-              const loginHost = String((await readBody(req)).host ?? "");
+              const loginHost = stringOf((await readBody(req)).host) ?? "";
               const loginBoxes = await readSshBoxes(sshBoxesPath);
-              if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost))
+
+              if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost)) {
                 return json(res, 400, { error: "unknown box" });
+              }
+
               const poll = await pollSshLogin(loginHost, verifyLogin(loginHost));
-              if (poll.pending) return json(res, 200, { pending: true });
+
+              if (poll.pending) {
+                return json(res, 200, { pending: true });
+              }
+
               return json(res, 200, storeLogin(loginHost, loginBoxes, poll));
             }
+
             // Drop a box's stored login token. Local only: the plugin forgets the token so it stops
             // injecting it; the token stays valid on Anthropic's side until revoked in the account.
             if (
@@ -3401,10 +4214,13 @@ export function registerSessionRoutes(
               req.method === "POST" &&
               url.pathname === `${ROUTE_PREFIX}/ssh-boxes/login/logout`
             ) {
-              const logoutHost = String((await readBody(req)).host ?? "");
+              const logoutHost = stringOf((await readBody(req)).host) ?? "";
               const logoutBoxes = await readSshBoxes(sshBoxesPath);
-              if (logoutHost !== THIS_BOX && !logoutBoxes.some((b) => b.host === logoutHost))
+
+              if (logoutHost !== THIS_BOX && !logoutBoxes.some((b) => b.host === logoutHost)) {
                 return json(res, 400, { error: "unknown box" });
+              }
+
               deleteSshToken(dirname(sshBoxesPath), logoutHost);
               // The box's own CLI login goes too, so Log out means logged out: with only the
               // panel token forgotten, a terminal login kept the row logged in and the click read
@@ -3422,8 +4238,10 @@ export function registerSessionRoutes(
                 logoutName === undefined ? null : sshBoxProviderId(logoutName),
                 false,
               );
+
               return json(res, 200, { loggedIn: false });
             }
+
             // SSH boxes list their transcripts over ssh, not HTTP: they run `claude` on their host
             // and their `~/.claude/projects` never reaches this box's disk. One group per box so
             // each appears as its own filter chip alongside the HTTP boxes.
@@ -3434,19 +4252,22 @@ export function registerSessionRoutes(
             ) {
               const boxes = await readSshBoxes(sshBoxesPath);
               const listed = await Promise.all(boxes.map((b) => sshTranscripts(b.host)));
+
               const owned = dshSessionsFor(
                 await sessionPersistence.list(),
                 null,
                 claudeIdOf,
                 new Set(workspaceRegistry()?.archivedSessionIds ?? []),
               );
+
               return json(res, 200, {
                 boxes: boxes.map((b, i) => {
                   const r = listed[i];
                   // The box's provider id lets the client bind a resumed transcript to this box's
                   // model directory, so opening one runs it back on the box, not the local claude.
                   const provider = sshBoxProviderId(b.name);
-                  if (!r || !r.ok)
+
+                  if (!r || !r.ok) {
                     return {
                       name: b.name,
                       host: b.host,
@@ -3454,41 +4275,53 @@ export function registerSessionRoutes(
                       ok: false,
                       error: r?.error ?? "no reply",
                     };
+                  }
+
                   const items = withoutSubagents(
                     r.sessions.map((s) => {
                       const d = owned.get(s.id);
+
                       return d ? { ...s, dsh: d } : s;
                     }),
                   );
+
                   return { name: b.name, host: b.host, provider, ok: true, sessions: items };
                 }),
               });
             }
+
             if (
               boxesPath &&
               req.method === "GET" &&
               url.pathname === `${ROUTE_PREFIX}/boxes/sessions`
             ) {
               const boxes = await readBoxes(boxesPath);
+
               const probed = await Promise.all(
-                boxes.map((b) => probeBox<BoxSessions>(b, fetch, "sessions?all=1")),
+                boxes.map((b) => probeBox(b, fetch, "sessions?all=1")),
               );
+
               return json(res, 200, {
                 boxes: boxes.map((b, i) => {
                   const p = probed[i];
-                  if (!p) return { name: b.name, url: b.url, ok: false, error: "not probed" };
+
+                  if (!p) {
+                    return { name: b.name, url: b.url, ok: false, error: "not probed" };
+                  }
+
                   return p.ok
                     ? {
                         name: b.name,
                         url: b.url,
                         ok: true,
-                        host: p.status.host,
-                        sessions: p.status.sessions ?? [],
+                        host: stringOf(p.status.host),
+                        sessions: Array.isArray(p.status.sessions) ? p.status.sessions : [],
                       }
                     : { name: b.name, url: b.url, ok: false, error: p.error };
                 }),
               });
             }
+
             if (
               boxesPath &&
               req.method === "GET" &&
@@ -3496,11 +4329,13 @@ export function registerSessionRoutes(
             ) {
               const boxes = await readBoxes(boxesPath);
               const probed = await Promise.all(boxes.map((b) => probeBox(b)));
+
               return json(res, 200, {
                 self: { plugin: PLUGIN_VERSION, host: hostname() },
                 boxes: boxes.map((b, i) => ({ name: b.name, url: b.url, ...probed[i] })),
               });
             }
+
             // A linked dsh box's login lives on that dsh: its own copy of this plugin runs the
             // same login routes for its own "this box", so these forward start, code, poll and
             // logout there with the box's token. The sign-in tab opens on that desktop, if any;
@@ -3508,53 +4343,88 @@ export function registerSessionRoutes(
             const loginProxy = /^\/boxes\/login\/(start|code|poll|logout)$/.exec(
               url.pathname.slice(ROUTE_PREFIX.length),
             );
+
             if (boxesPath && req.method === "POST" && loginProxy) {
               const body = await readBody(req);
-              const target = String(body.url ?? "");
+              const target = stringOf(body.url) ?? "";
               const box = (await readBoxes(boxesPath)).find((b) => b.url === target);
-              if (!box) return json(res, 400, { error: "unknown box" });
-              const p = await probeBox<Record<string, JsonValue>>(
-                box,
-                fetch,
-                `ssh-boxes/login/${loginProxy[1]}`,
-                { method: "POST", body: JSON.stringify({ host: "", code: body.code ?? "" }) },
-              );
+
+              if (!box) {
+                return json(res, 400, { error: "unknown box" });
+              }
+
+              const p = await probeBox(box, fetch, `ssh-boxes/login/${loginProxy[1]}`, {
+                method: "POST",
+                body: JSON.stringify({ host: "", code: body.code ?? "" }),
+              });
+
               return json(res, 200, p.ok ? p.status : { error: p.error });
             }
+
             if (boxesPath && url.pathname === `${ROUTE_PREFIX}/boxes/settings`) {
               const urlParam = url.searchParams.get("url");
-              if (!urlParam) return json(res, 400, { error: "url parameter required" });
+
+              if (!urlParam) {
+                return json(res, 400, { error: "url parameter required" });
+              }
+
               const boxes = await readBoxes(boxesPath);
               const box = boxes.find((b) => b.url === urlParam);
-              if (!box) return json(res, 404, { error: "unknown box" });
+
+              if (!box) {
+                return json(res, 404, { error: "unknown box" });
+              }
+
               if (req.method === "GET") {
                 const p = await probeBox(box, fetch, "settings", { method: "GET" });
-                if (!p.ok) return json(res, 502, { error: p.error });
+
+                if (!p.ok) {
+                  return json(res, 502, { error: p.error });
+                }
+
                 return json(res, 200, p.status);
               }
+
               if (req.method === "PUT") {
                 const body = await readBody(req, 1024 * 1024);
                 const parsed = parseSettingsText(body.text);
-                if (parsed.error !== undefined) return json(res, 400, { error: parsed.error });
+
+                if (parsed.error !== undefined) {
+                  return json(res, 400, { error: parsed.error });
+                }
+
                 const p = await probeBox(box, fetch, "settings", {
                   method: "PUT",
                   // The mtime rides along: the box's own route is what checks the file there has
                   // not moved since this tab read it, and dropping it here would waive the check.
                   body: JSON.stringify({ text: body.text, mtime: mtimeOf(body) }),
                 });
-                if (!p.ok) return json(res, 502, { error: p.error });
+
+                if (!p.ok) {
+                  return json(res, 502, { error: p.error });
+                }
+
                 return json(res, 200, p.status);
               }
+
               return json(res, 405, { error: "method not allowed" });
             }
-            for (const route of afterBoxes) if ((await route(req, res, url)) !== UNHANDLED) return;
+
+            for (const route of afterBoxes) {
+              if ((await route(req, res, url)) !== UNHANDLED) {
+                return;
+              }
+            }
+
             return json(res, 404, { error: "not found" });
-          } catch (e) {
-            log("warn", `session route failed: ${errorText(e)}`);
-            return json(res, 500, { error: errorText(e) });
+          } catch (error) {
+            log("warn", `session route failed: ${errorText(error)}`);
+
+            return json(res, 500, { error: errorText(error) });
           }
         },
       });
+
       // A reload or shutdown disposes the route; every open stream ends with it and each tab's
       // EventSource reconnects to the next bundle's route.
       return () => {
@@ -3593,8 +4463,7 @@ export interface SettingsScopeInfo extends SettingsFile {
 /** True only when the value is one of the four settings scopes the CLI merges; anything else is an
  *  unknown scope and is refused rather than written. */
 export function isSettingsScope(value: JsonValue | undefined): value is SettingsScope {
-  // SAFETY: the includes() call narrows nothing on its own; the signature is the narrowing.
-  return SETTINGS_SCOPES.includes(value as SettingsScope);
+  return SETTINGS_SCOPES.some((scope) => scope === value);
 }
 
 /**
@@ -3612,10 +4481,20 @@ export function settingsScopePath(
   managed: string = managedDir(),
   localDir: string | null = cwd,
 ): string | undefined {
-  if (scope === "user") return userPath;
-  if (scope === "managed") return join(managed, "managed-settings.json");
+  if (scope === "user") {
+    return userPath;
+  }
+
+  if (scope === "managed") {
+    return join(managed, "managed-settings.json");
+  }
+
   const dir = scope === "local" ? localDir : cwd;
-  if (dir === null) return undefined;
+
+  if (dir === null) {
+    return undefined;
+  }
+
   return join(dir, ".claude", scope === "local" ? "settings.local.json" : "settings.json");
 }
 
@@ -3627,8 +4506,12 @@ async function knownCwd(
   cwd: JsonValue | undefined | null,
   sessions: SessionPersistence,
 ): Promise<string | null> {
-  if (!validCwd(cwd)) return null;
+  if (!validCwd(cwd)) {
+    return null;
+  }
+
   const headers = (await sessions.list().catch(() => [])).map(headerOf);
+
   return headers.some((h) => h.cwd === cwd) ? cwd : null;
 }
 
@@ -3640,7 +4523,11 @@ async function sessionCwd(
   session: JsonValue | undefined,
   sessions: SessionPersistence,
 ): Promise<string | null> {
-  if (typeof session !== "string" || !session) return null;
+  if (typeof session !== "string" || !session) {
+    return null;
+  }
+
   const headers = (await sessions.list().catch(() => [])).map(headerOf);
+
   return headers.find((h) => h.id === session)?.cwd ?? null;
 }

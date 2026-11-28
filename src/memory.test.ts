@@ -7,10 +7,15 @@ import { tempDir } from "./test-tmp.js";
 
 // Names: bare .md files only, no paths.
 assert.equal(isMemoryName("MEMORY.md"), true);
+
 assert.equal(isMemoryName("feedback-no-trailers.md"), true);
+
 assert.equal(isMemoryName("../settings.json"), false);
+
 assert.equal(isMemoryName("a/b.md"), false);
+
 assert.equal(isMemoryName("notes.txt"), false);
+
 assert.equal(isMemoryName(".hidden.md"), false);
 
 // Summary comes from the frontmatter description, nothing else.
@@ -20,6 +25,7 @@ assert.equal(
   ),
   "never add trailers",
 );
+
 assert.equal(memorySummary("# Claude Memory Index\n- [a](a.md)"), "");
 
 // Index line removal keeps every other line, including ones naming a different file.

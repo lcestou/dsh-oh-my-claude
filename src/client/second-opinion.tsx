@@ -2,7 +2,7 @@
 // the last Claude turn's changes, and the Settings row that picks that model. Server side in
 // src/adapter/second-opinion.ts; the card follows the `second-opinion` event, the row the
 // `second-opinion-setting` one, so a change made in any tab shows in every other.
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { t, useLocale } from "./i18n.js";
 import {
   ACCENT,
@@ -16,10 +16,12 @@ import {
   rowBtn,
   select,
 } from "./shared.js";
-import { subscribe, type OpinionCardData, type OpinionSettingData } from "./events.js";
+import { subscribe } from "./events.js";
+import type { OpinionCardData, OpinionSettingData } from "./events.js";
 import { HEADER_TOGGLE, iconBtn } from "./cards.js";
 import { Chevron } from "./boxes.js";
-import { secondOpinionSteer, type OpinionFinding } from "../prompts.js";
+import { secondOpinionSteer } from "../prompts.js";
+import type { OpinionFinding } from "../prompts.js";
 
 /** The composer actions dsh hands a `conversation.input.dock` entry; only these two are used. */
 type Composer = {
@@ -60,76 +62,118 @@ export function SecondOpinionCard({
   // Findings already put in the composer, keyed by the card's turn and index, so a second press
   // cannot add the same text twice.
   const [sent, setSent] = useState<ReadonlySet<string>>(new Set());
-  const [, setTick] = useState(0);
+  // The clock the elapsed time is read against, moved on each second while a review runs.
+  const [now, setNow] = useState(() => Date.now());
   const running = card?.state === "running";
+  // A dock reused for another session must not show the last one's card while this one loads.
+  const [cardFor, setCardFor] = useState(sessionId);
+
+  if (cardFor !== sessionId) {
+    setCardFor(sessionId);
+    setCard(null);
+  }
+
   // Each review starts folded and with no stale error: the dock stays mounted between turns, so
   // without this one review opened would leave every later one open.
   const cardAt = card?.at;
-  useEffect(() => {
+  const [cardAtSeen, setCardAtSeen] = useState(cardAt);
+
+  if (cardAtSeen !== cardAt) {
+    setCardAtSeen(cardAt);
     setOpen(false);
     setFailed(false);
-  }, [cardAt]);
+  }
+
   useEffect(() => {
-    if (!running) return;
     // A local review takes minutes; the elapsed time redraws every second so the card is not
     // mistaken for hung. Outside the live region, so the ticks are not announced.
-    const timer = setInterval(() => setTick((n) => n + 1), 1000);
-    return () => clearInterval(timer);
+    const tick = () => setNow(Date.now());
+    const first = running ? setTimeout(tick, 0) : undefined;
+    const timer = running ? setInterval(tick, 1000) : undefined;
+
+    return () => {
+      clearTimeout(first);
+      clearInterval(timer);
+    };
   }, [running]);
   // dsh hands every composer slot `useInput`; without it the draft reads empty and a send fills
   // the box as if nothing were typed.
+  // oxlint-disable-next-line react/hooks -- dsh hands its selector hooks in as slot props (SessionStandardProps), and one slot mount always gets the same hook.
   const draft = useInput?.((s) => s.draft) ?? "";
   useEffect(() => {
     let live = true;
-    // A dock reused for another session must not show the last one's card while this one loads.
-    setCard(null);
     // Read once on mount, then follow the stream: every change to the card is published.
     fetch(`${ROUTE}/second-opinion?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<OpinionCardData>(r))
       .then((d) => live && setCard(d.card))
       .catch(() => {});
+
     const off = subscribe("second-opinion", (session, d) => {
-      if (live && session === sessionId) setCard(d.card);
+      if (live && session === sessionId) {
+        setCard(d.card);
+      }
     });
+
     return () => {
       live = false;
       off();
     };
   }, [sessionId]);
-  if (card === null) return null;
+
+  if (card === null) {
+    return null;
+  }
+
   const files = card.files.length;
+
   /** Adds the findings at `indexes` below the composer's draft (never over it) and marks them sent;
    *  ones already sent are skipped, and nothing is sent to Claude. */
-  const send = (indexes: readonly number[]) => {
-    if (!inputActions || card.state !== "done") return;
+  const send = (indexes: ReadonlyArray<number>) => {
+    if (!inputActions || card.state !== "done") {
+      return;
+    }
+
     const fresh = indexes.filter((i) => !sent.has(`${card.at}:${i}`));
     const findings = fresh.flatMap((i) => card.findings[i] ?? []);
-    if (findings.length === 0) return;
+
+    if (findings.length === 0) {
+      return;
+    }
+
     const text = secondOpinionSteer(card.model, findings);
     inputActions.setDraft(draft.trim() === "" ? text : `${draft.trimEnd()}\n\n${text}`);
     setSent(new Set([...sent, ...fresh.map((i) => `${card.at}:${i}`)]));
   };
+
   /** Posts Run, Cancel or Close; a refused post shows the alert line, the new card comes by event. */
   const act = (path: "run" | "cancel" | "dismiss") => {
     setFailed(false);
     void post(path, sessionId).then((ok) => setFailed(!ok));
   };
+
   let summary: string;
-  if (card.state === "ready") summary = t("secondOpinion.ready", { count: files });
-  else if (card.state === "running") summary = t("secondOpinion.running", { model: card.model });
-  else if (card.state === "failed")
+
+  if (card.state === "ready") {
+    summary = t("secondOpinion.ready", { count: files });
+  } else if (card.state === "running") {
+    summary = t("secondOpinion.running", { model: card.model });
+  } else if (card.state === "failed") {
     summary = t(`secondOpinion.fail.${card.reason}`, {
       model: card.model,
       detail: card.detail ?? "",
     });
-  else if (card.findings.length === 0) summary = t("secondOpinion.clean", { model: card.model });
-  else
+  } else if (card.findings.length === 0) {
+    summary = t("secondOpinion.clean", { model: card.model });
+  } else {
     summary = t("secondOpinion.found", {
       model: card.model,
       count: card.findings.length,
       took: fmtDuration(card.ms),
     });
+  }
+
   const foldable = card.state === "done" && card.findings.length > 0;
+
   return (
     <div {...{ [DOCK_ATTR]: "1" }} style={DOCK_CARD}>
       <section
@@ -182,7 +226,7 @@ export function SecondOpinionCard({
           </span>
           {card.state === "running" ? (
             <span data-omc-second-opinion-elapsed="" style={{ color: T.faint, fontSize: 11 }}>
-              {fmtDuration(Date.now() - card.startedAt)}
+              {fmtDuration(Math.max(0, now - card.startedAt))}
             </span>
           ) : null}
           {card.state === "ready" || card.state === "failed" ? (
@@ -305,49 +349,72 @@ type Choice = { provider: string; name: string; models: Array<{ id: string; name
  *  Writes on each change; a refused write shows under the row and keeps the old value. */
 export function SecondOpinionRow() {
   useLocale();
-  const [choices, setChoices] = useState<Choice[] | null>(null);
+  const [choices, setChoices] = useState<Array<Choice> | null>(null);
   const [setting, setSetting] = useState<OpinionSettingData["setting"]>(null);
   const [error, setError] = useState(false);
+
+  /** Puts a read's model list and saved value on screen. */
+  const showLoaded = useCallback((d: OpinionSettingData & { choices: Array<Choice> }) => {
+    setChoices(d.choices);
+    setSetting(d.setting);
+  }, []);
+
   /** Reads the saved value and dsh's model list. Runs on mount and again each time the list gets
    *  focus: a provider added in dsh's own settings has no event this row can hear, so opening the
    *  list is when it catches up. The server re-checks a pick on save, so a stale list cannot save
    *  a model dsh dropped. */
-  const load = () =>
-    fetch(`${ROUTE}/second-opinion/setting`)
-      .then((r) => readJson<OpinionSettingData & { choices: Choice[] }>(r))
-      .then((d) => {
-        setChoices(d.choices);
-        setSetting(d.setting);
-      })
-      .catch(() => setChoices((c) => c ?? []));
+  const load = useCallback(
+    () =>
+      fetch(`${ROUTE}/second-opinion/setting`)
+        .then((r) => readJson<OpinionSettingData & { choices: Array<Choice> }>(r))
+        .then(showLoaded)
+        .catch(() => setChoices((c) => c ?? [])),
+    [showLoaded],
+  );
+
   useEffect(() => {
     let live = true;
     void load();
+
     // The saved value follows a save made in any tab.
     const off = subscribe("second-opinion-setting", (_s, d) => {
-      if (live) setSetting(d.setting);
+      if (live) {
+        setSetting(d.setting);
+      }
     });
+
     return () => {
       live = false;
       off();
     };
-  }, []);
+  }, [load]);
+
   /** Writes the setting; a refused or failed write shows the alert and keeps the old value. */
   const save = (next: OpinionSettingData["setting"]) => {
     setError(false);
-    fetch(`${ROUTE}/second-opinion/setting`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(next ?? {}),
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error(String(r.status));
-        setSetting(next);
-      })
-      .catch(() => setError(true));
+    // Never rejects: a refused or failed write is the alert.
+    void (async () => {
+      try {
+        const r = await fetch(`${ROUTE}/second-opinion/setting`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(next ?? {}),
+        });
+
+        if (r.ok) {
+          setSetting(next);
+        } else {
+          setError(true);
+        }
+      } catch {
+        setError(true);
+      }
+    })();
   };
+
   const key = setting ? `${setting.provider}\n${setting.model}` : "";
   const listed = choices?.some((c) => c.models.some((m) => `${c.provider}\n${m.id}` === key));
+
   return (
     <div data-omc-second-opinion-row="" style={{ fontSize: 13, marginBottom: 12 }}>
       <div>{t("secondOpinion.title")}</div>

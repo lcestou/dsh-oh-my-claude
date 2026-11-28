@@ -1,5 +1,5 @@
-import { type LocaleSettingsReader } from "../locale.js";
-import { type LooseMessage } from "./prompt.js";
+import type { LocaleSettingsReader } from "../locale.js";
+import type { LooseMessage } from "./prompt.js";
 /** The name a pending line opens with when it is a command or skill line (`/name arguments`), read
  *  the way dsh's composer tells a command draft from plain text: leading space ignored, then a
  *  slash. Undefined for plain text, and for a bare `/`. */

@@ -51,6 +51,7 @@ export function RouteLine({
   // The sentence follows what is set aside right now; the switch stays up while it is on, with
   // nothing set aside, so it can be turned back off.
   const aside = routed && (waiting > 0 || claudeToo);
+
   const text = routed
     ? t(waiting > 0 ? "main.settingsUi.routeRoutedNamed" : "main.settingsUi.routeRoutedPlain", {
         host,
@@ -60,6 +61,7 @@ export function RouteLine({
       : route?.state === "unknown" && host !== ""
         ? t("main.settingsUi.routeQuiet", { host })
         : "";
+
   return (
     <div data-omc-route-line={route?.state ?? "unknown"} style={{ marginBottom: text ? 10 : 0 }}>
       <div aria-live="polite" style={{ color: T.muted, fontSize: 12 }}>

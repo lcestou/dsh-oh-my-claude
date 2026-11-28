@@ -2,7 +2,7 @@
  * Where Claude Code looks for `/command`: the project's `.claude/skills` and `.claude/commands`,
  * then the user's. A `plugin:skill` name has no file of its own here, so it gets no paths.
  */
-export declare function claudeCommandFiles(command: string, cwd: string | undefined, claudeHome: string): string[];
+export declare function claudeCommandFiles(command: string, cwd: string | undefined, claudeHome: string): Array<string>;
 /**
  * The first of those files that reads, without its frontmatter and with `$ARGUMENTS` filled in.
  * Undefined when none reads or every one is blank after that, which the caller treats as a

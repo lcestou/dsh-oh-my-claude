@@ -37,4 +37,5 @@ assert.deepEqual(
 );
 
 assert.deepEqual(foldHistory([]), []);
+
 console.log("history: ok");

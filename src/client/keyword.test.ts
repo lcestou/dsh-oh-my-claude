@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { keywordMatches } from "./shared.js";
 
-const spans = (text: string): [number, number][] =>
+const spans = (text: string): Array<[number, number]> =>
   keywordMatches(text, "ultracode").map((m) => [m.start, m.end]);
 
 // The plain word is painted; the same word in quotes, right beside it, is not.
@@ -19,8 +19,9 @@ for (const text of [
   "call (ultracode) later",
   "an <ultracode> tag",
   "the 'ultracode' word",
-])
+]) {
   assert.deepEqual(spans(text), [], text);
+}
 
 // A slash command is the CLI's own, not a keyword: nothing in the whole line.
 assert.deepEqual(spans("/effort ultracode"), []);
@@ -28,17 +29,19 @@ assert.deepEqual(spans("/effort ultracode"), []);
 // Glued to a path or a flag character, before or after.
 for (const text of [
   "src/ultracode",
-  "docs\\ultracode",
+  String.raw`docs\ultracode`,
   "non-ultracode",
   "ultracode/mode",
-  "ultracode\\mode",
+  String.raw`ultracode\mode`,
   "ultracode-mode",
   "ultracode?",
-])
+]) {
   assert.deepEqual(spans(text), [], text);
+}
 
 // A dotted member is a reference; a sentence's full stop is not.
 assert.deepEqual(spans("ultracode.run() next"), []);
+
 assert.deepEqual(spans("turn on ultracode. Then wait"), [[8, 17]]);
 
 // An apostrophe inside a word does not open a quotation, so what follows still counts.

@@ -59,7 +59,7 @@ export interface ContractProbe {
 export const TURN_STATUS_SELECTOR = '[data-chat-flow] [role="status"][aria-live="polite"]';
 
 /** Every DOM assumption this plugin makes about dsh's own markup. */
-export const DSH_CONTRACT: readonly ContractProbe[] = [
+export const DSH_CONTRACT: ReadonlyArray<ContractProbe> = [
   {
     id: "markdown-body",
     get breaks() {
@@ -122,6 +122,12 @@ export interface ContractResult {
   skipped: boolean;
 }
 
+/** What `checkContract` asks of the page: how many nodes match each probe's selector. A real
+ *  `Document` is one; a test passes a plain object. */
+export type ContractDocument = {
+  querySelectorAll(selectors: string): { readonly length: number };
+};
+
 /**
  * Run every probe against a document.
  *
@@ -138,14 +144,16 @@ export interface ContractResult {
  * than as a false alarm, and is the safe way to be wrong.
  */
 export function checkContract(
-  doc: Pick<Document, "querySelectorAll">,
-  probes: readonly ContractProbe[] = DSH_CONTRACT,
-): ContractResult[] {
+  doc: ContractDocument,
+  probes: ReadonlyArray<ContractProbe> = DSH_CONTRACT,
+): Array<ContractResult> {
   const counted = probes.map((probe) => ({
     probe,
     count: doc.querySelectorAll(probe.selector).length,
   }));
+
   const anyConversation = counted.some((c) => c.probe.scope === "conversation" && c.count > 0);
+
   return counted.map(({ probe, count }) => ({
     id: probe.id,
     breaks: probe.breaks,
@@ -156,16 +164,20 @@ export function checkContract(
 }
 
 /** The ones that should have been found and were not. */
-export const contractMisses = (results: readonly ContractResult[]): ContractResult[] =>
+export const contractMisses = (results: ReadonlyArray<ContractResult>): Array<ContractResult> =>
   results.filter((r) => !r.skipped && r.count === 0);
 
 /** One line for the panel: `dsh hooks: 5 of 5`, or the count that is missing. */
-export function contractSummary(results: readonly ContractResult[]): string {
+export function contractSummary(results: ReadonlyArray<ContractResult>): string {
   const checked = results.filter((r) => !r.skipped);
   const missing = contractMisses(results);
   const skipped = results.length - checked.length;
   const tail = skipped > 0 ? t("contract.notOnScreen", { n: skipped }) : "";
-  if (checked.length === 0) return t("contract.nothing");
+
+  if (checked.length === 0) {
+    return t("contract.nothing");
+  }
+
   return missing.length === 0
     ? t("contract.found", { n: checked.length, total: checked.length, tail })
     : t("contract.missing", { n: missing.length, total: checked.length, tail });

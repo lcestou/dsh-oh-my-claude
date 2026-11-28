@@ -21,9 +21,13 @@ export function holdTimer(ms: number, fire: () => void, now = () => Date.now()):
   let startedAt = 0;
   let id: ReturnType<typeof setTimeout> | undefined;
   let done = false;
+
   return {
     run() {
-      if (id !== undefined || done) return;
+      if (id !== undefined || done) {
+        return;
+      }
+
       startedAt = now();
       id = setTimeout(
         () => {
@@ -35,13 +39,19 @@ export function holdTimer(ms: number, fire: () => void, now = () => Date.now()):
       );
     },
     pause() {
-      if (id === undefined) return;
+      if (id === undefined) {
+        return;
+      }
+
       clearTimeout(id);
       id = undefined;
       left -= now() - startedAt;
     },
     stop() {
-      if (id !== undefined) clearTimeout(id);
+      if (id !== undefined) {
+        clearTimeout(id);
+      }
+
       id = undefined;
       done = true;
     },

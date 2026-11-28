@@ -18,4 +18,4 @@ export declare const HISTORY_MAX_PROMPTS = 500;
  * newest sending only. Exact text decides a repeat, so a prompt that differs by one character is
  * two entries, as in a shell. Input order does not matter.
  */
-export declare function foldHistory(prompts: ReadonlyArray<HistoryEntry>): HistoryEntry[];
+export declare function foldHistory(prompts: ReadonlyArray<HistoryEntry>): Array<HistoryEntry>;

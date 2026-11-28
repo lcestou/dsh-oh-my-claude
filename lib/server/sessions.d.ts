@@ -1,24 +1,27 @@
+import type { SteerEditReply, TurnRecord } from "./adapter.js";
+import type { SpawnModeInfo } from "./adapter/spawn-mode.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { type FoldedTranscript } from "./transcript.js";
-import { type UpdateOffer } from "./update.js";
+import type { FoldedTranscript } from "./transcript.js";
+import type { UpdateOffer } from "./update.js";
 import { ClaudeUpdater } from "./claude-update.js";
-import { type Reach } from "./reach.js";
-import { type FsBox } from "./remote-fs.js";
+import type { Reach } from "./reach.js";
+import type { FsBox } from "./remote-fs.js";
 import type { TranscriptListItem } from "./transcript.js";
 import type { JsonValue, PluginContext, SessionPersistence, WorkspaceRegistry } from "./dsh.js";
 import type { FallbackRecord, HookRun, LiveTask } from "./translator.js";
-import { type SteerAttachment } from "./process.js";
-import { type HealHost, type RepairsSummary } from "./session-heal.js";
+import type { SteerAttachment } from "./process.js";
+import type { HealHost, RepairsSummary } from "./session-heal.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
-import { type PluginLoadError } from "./plugins.js";
-import { type Account } from "./accounts.js";
-import { type LocalMount } from "./routes/accounts.js";
+import type { PluginScope } from "./plugins.js";
+import type { PluginLoadError } from "./plugins.js";
+import type { Account } from "./accounts.js";
+import type { LocalMount } from "./routes/accounts.js";
 import { EFFORTS_ALL } from "./adapter/catalog.js";
 import type { CustomModel } from "./adapter/config.js";
 import type { Route } from "./adapter/routing.js";
 import type { LoginNeed, PermissionModeInfo, PermissionModeReply, PermissionModeState, RewindReply, ContextUsageReply, SkillDoctorReply, WorkspaceDiffReply, PermissionReadoutReply, McpStatusReply, AsideEntry, AsidesReply, IdleReply, LiveTurnReply } from "./adapter/types.js";
 import type { TurnsReply, LiveTurn } from "./adapter/turn.js";
-import { type EventHub, type OmcEvent } from "./events.js";
+import type { EventHub, OmcEvent } from "./events.js";
 declare const ROUTE_PREFIX = "/dsh-oh-my-claude";
 /** Longest selected passage `POST /side-questions` passes on; matches QUOTE_MAX in client/selection.ts. */
 declare const SELECTION_QUOTE_MAX = 4000;
@@ -52,11 +55,13 @@ declare const baseName: (path: string) => string;
  * matches a second time. Fine for the hundreds of files a box holds; stream them if a Windows box
  * with thousands of transcripts makes search slow.
  */
-declare function filesMentioning(files: readonly string[], word: string): Promise<string[]>;
+declare function filesMentioning(files: ReadonlyArray<string>, word: string): Promise<Array<string>>;
 /** Answer an HTTP request as JSON with a no-store cache header. Every route in this file replies
  *  through it, so no browser or proxy can hand back a stale answer for a state that changes under
  *  it, such as a session list or a login. */
 declare const json: (res: ServerResponse, status: number, value: unknown) => void;
+/** The JSON replier the route groups are handed; any value JSON.stringify takes goes out. */
+export type JsonReply = typeof json;
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
 /** Parse a JSON request body, capped at `limit` bytes. A non-object body reads as an empty object. */
@@ -88,7 +93,7 @@ export declare function parseSettingsText(text: unknown): ParsedSettings;
  * status` prints its JSON and exits 1 on a logged-out box, and an ssh script exits with its last
  * command's status, so a combined probe that ends in it used to lose every answer before it.
  */
-declare const run: (cmd: string, args: string[], env?: NodeJS.ProcessEnv, cwd?: string, timeout?: number) => Promise<{
+declare const run: (cmd: string, args: Array<string>, env?: NodeJS.ProcessEnv, cwd?: string, timeout?: number) => Promise<{
     out: string;
     error?: string;
 }>;
@@ -136,7 +141,7 @@ export interface Box {
 }
 /** What validateBoxes hands back: the cleaned list, or why the input is not one. */
 export type ValidatedBoxes = {
-    boxes: Box[];
+    boxes: Array<Box>;
     error?: undefined;
 } | {
     error: string;
@@ -162,7 +167,7 @@ export interface SshBox {
 export declare function sshBoxProviderId(name: string): string;
 /** What validateSshBoxes hands back: the cleaned list, or why the input is not one. */
 export type ValidatedSshBoxes = {
-    boxes: SshBox[];
+    boxes: Array<SshBox>;
     error?: undefined;
 } | {
     error: string;
@@ -173,7 +178,7 @@ export type ValidatedSshBoxes = {
 export declare function validateSshBoxes(input: unknown): ValidatedSshBoxes;
 /** Read the SSH-boxes file and return the validated list, or [] when it is missing or corrupt, so
  *  a box list never throws on a gone or malformed file. */
-export declare function readSshBoxes(path: string): Promise<SshBox[]>;
+export declare function readSshBoxes(path: string): Promise<Array<SshBox>>;
 /** A dsh workspace this plugin points at a directory on an SSH box. dsh stores and stat-checks local
  * paths only, so each remote workspace owns an empty local placeholder dir that dsh adopts as an
  * ordinary workspace (`path`); at spawn the ssh spawner swaps `path` for `remoteCwd` on `host`, so the
@@ -206,14 +211,14 @@ export type ValidatedRemoteWorkspace = {
 export declare function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWorkspace;
 /** Read the placeholder-workspaces file and return its rows, or [] when it is missing, corrupt or
  *  not an array, so a reconcile never throws on a gone or malformed file. */
-export declare function readRemoteWorkspaces(path: string): Promise<RemoteWorkspace[]>;
+export declare function readRemoteWorkspaces(path: string): Promise<Array<RemoteWorkspace>>;
 /** The file, minus every row whose dsh workspace is gone. dsh's registry owns which workspaces
  *  exist (the sidebar's trash deletes there and never here), so a row the registry no longer
  *  lists is a ghost: dropped, its placeholder removed, the file rewritten. Without a registry (a
  *  dsh that lacks the service, or a request before it mounts) the file is answered as it is. */
 export declare function syncRemoteWorkspaces(path: string, reg: Pick<WorkspaceRegistry, "get"> | undefined, log?: (level: string, msg: string) => void): Promise<{
-    workspaces: RemoteWorkspace[];
-    dropped: RemoteWorkspace[];
+    workspaces: Array<RemoteWorkspace>;
+    dropped: Array<RemoteWorkspace>;
 }>;
 /** The instance whose local spawns take this box's panel login. */
 declare const DEFAULT_PROVIDER = "claude-code";
@@ -289,10 +294,10 @@ export declare function cappedText(r: {
  * Log into a box like a browser would (dsh's `/?token=` sets the auth cookie; an NPM-style proxy
  * redirects to that URL by itself) and read its plugin status. Never throws: the panel shows why.
  */
-export declare function probeBox<T = RuntimeStatus>(box: Box, fetchImpl?: FetchLike, path?: string, init?: {
+export declare function probeBox(box: Box, fetchImpl?: FetchLike, path?: string, init?: {
     method?: string;
     body?: string;
-}): Promise<Probe<T>>;
+}): Promise<Probe<JsonObject>>;
 /** The login half of `claude auth status` output. */
 export interface AuthStatus {
     loggedIn: boolean;
@@ -344,7 +349,7 @@ export declare const isWindowsPathCommand: (command: string, platform?: NodeJS.P
 /** The probes behind `runtimeStatus`, uncached. Exported for its test only. */
 export declare function probeRuntime(configDir: string, command: string, sshHost: string): Promise<RuntimeStatus>;
 /** Every transcript under the Claude projects dir, each with the cwd its records name. */
-declare function listAllTranscripts(projectsDirs: string[], hidden: Set<string>): Promise<TranscriptListItem[]>;
+declare function listAllTranscripts(projectsDirs: Array<string>, hidden: Set<string>): Promise<Array<TranscriptListItem>>;
 export declare const SSH_TRANSCRIPT_LISTER = "(function(){\nconst fs=require(\"fs\"),os=require(\"os\"),p=require(\"path\");\nconst root=p.join(os.homedir(),\".claude\",\"projects\");\nlet dirs=[];try{dirs=fs.readdirSync(root)}catch(e){process.stdout.write(\"[]\");return}\nconst out=[];\nfor(const d of dirs){\n const dir=p.join(root,d);let names;\n try{names=fs.readdirSync(dir)}catch(e){continue}\n for(const n of names){\n  const m=/^([0-9a-f-]{36})\\.jsonl$/.exec(n);if(!m)continue;\n  const fp=p.join(dir,n);let st;\n  try{st=fs.statSync(fp)}catch(e){continue}\n  const readHead=function(cap){\n   const buf=Buffer.alloc(cap);let bytes=0,fd;\n   try{fd=fs.openSync(fp,\"r\");bytes=fs.readSync(fd,buf,0,cap,0);fs.closeSync(fd)}catch(e){return null}\n   return {text:buf.slice(0,bytes).toString(\"utf8\"),partial:bytes>=cap};\n  };\n  const scan=function(head){\n   let cwd,summary,title=\"\",command=\"\",turns=0,answered=false,typed=false;\n   const first=function(x){return (x.replace(/<system-reminder>[\\s\\S]*?<\\/system-reminder>/g,\"\").replace(/\\[File \"((?:[^\"\\\\]|\\\\.)*)\" \\(\\d+ bytes[^\\n]*/g,\"$1\").trim().split(\"\\n\")[0]||\"\").replace(/\\s+/g,\" \").slice(0,120)};\n   for(const line of head.split(\"\\n\")){\n    if(!line)continue;let r;\n    try{r=JSON.parse(line)}catch(e){continue}\n    if(cwd===undefined&&typeof r.cwd===\"string\")cwd=r.cwd;\n    if(r.type===\"summary\"&&typeof r.summary===\"string\")summary=r.summary;\n    if(r.type===\"assistant\"&&!r.isSidechain)answered=true;\n    if(r.type!==\"user\"||r.isSidechain||r.isMeta)continue;\n    const c=r.message&&r.message.content;let t=\"\";\n    if(typeof c===\"string\")t=c;\n    else if(Array.isArray(c)){const a=[];for(const b of c){if(b&&b.type===\"text\"&&typeof b.text===\"string\")a.push(b.text)}t=a.join(\"\\n\")}\n    if(!t)continue;\n    if(turns===0&&t.indexOf(\"Generate the session title\")===0)break;\n    turns++;\n    const noise=/^\\s*<(command-|local-command|system-reminder)/.test(t);\n    if(!noise)typed=true;\n    if(title)continue;\n    let cmd=\"\";const n=/<command-name>\\s*([^<\\s]+)\\s*<\\/command-name>/.exec(t);\n    if(n){const a=/<command-args>([\\s\\S]*?)<\\/command-args>/.exec(t);\n     cmd=first((n[1]+\" \"+first((a?a[1]:\"\").replace(/(?:^|\\n\\n)Current runtime context\\.[\\s\\S]*$/,\"\"))).trim())}\n    if(cmd.indexOf(\" \")>=0)title=cmd;\n    else if(cmd){if(!command)command=cmd}\n    else if(!noise&&t.indexOf(\"[Request interrupted by user\")!==0)title=first(t);\n   }\n   return {cwd:cwd,summary:summary,title:title||command,turns:turns,dead:!typed&&!summary&&!answered};\n  };\n  let h=readHead(262144);if(!h)continue;\n  let f=scan(h.text);\n  // Same second look as listTranscripts: one huge opening record can push the first real turn past\n  // the head bound and make a live session read as empty. Only the files that found nothing pay it.\n  if(f.turns===0&&h.partial){const d2=readHead(2097152);if(d2){h=d2;f=scan(h.text)}}\n  if(f.turns===0)continue;\n  if(f.dead&&!h.partial)continue;\n  const item={id:m[1],title:f.summary||f.title,createdAt:st.mtimeMs,modifiedAt:st.mtimeMs,bytes:st.size,turns:f.turns,turnsPartial:h.partial};\n  if(f.cwd)item.cwd=f.cwd;\n  out.push(item);\n }\n}\nout.sort(function(a,b){return b.modifiedAt-a.modifiedAt});\nprocess.stdout.write(JSON.stringify(out));\n})();";
 /** Claude Code's settings file as the editor reads it. */
 export interface SettingsFile {
@@ -376,7 +381,7 @@ export interface PickerOption {
     model: string;
     label?: string;
     contextWindow?: number;
-    efforts?: string[];
+    efforts?: Array<string>;
     /** True for a row the plugin added (`customModels`, the Settings form), unset for one
      *  settings.json's own `modelPicker.options` names. Only the first kind follows the router
      *  state: see `mergeCatalog`. */
@@ -399,9 +404,9 @@ export interface PickerRow {
 /** The two settings.json keys that shape Claude Code's own `/model` picker. */
 export interface PickerSettings {
     /** Allowlist entries: a family alias, a version prefix or a full id. Absent means no allowlist. */
-    availableModels?: string[];
+    availableModels?: Array<string>;
     /** Extra rows, in the order the CLI shows them after its built-in lineup. */
-    options: PickerOption[];
+    options: Array<PickerOption>;
     /** The CLI keeps only the Default row and those extra rows. */
     replaceBuiltInOptions: boolean;
     /** settings.json `maxEffortLevel`: the highest effort the pickers offer. Absent means no cap. */
@@ -486,7 +491,7 @@ export declare const withoutSubagents: <T extends {
     dsh?: {
         subagent?: boolean;
     };
-}>(rows: T[]) => T[];
+}>(rows: Array<T>) => Array<T>;
 /** A dsh session a transcript belongs to, and whether it is archived. */
 export interface OwnedSession {
     id: string;
@@ -514,14 +519,14 @@ declare const headerOf: (entry: StoredHeader | {
 }) => StoredHeader;
 /** Builds a lookup that indexes each session under both its dsh id and its claude id, so a session
  *  is found by whichever id a caller has. */
-export declare function dshSessionsFor(entries: readonly (StoredHeader | {
+export declare function dshSessionsFor(entries: ReadonlyArray<StoredHeader | {
     header: StoredHeader;
-})[], cwd: string | null, claudeIdOf: (id: string) => string, archived?: Set<string>): Map<string, OwnedSession>;
+}>, cwd: string | null, claudeIdOf: (id: string) => string, archived?: Set<string>): Map<string, OwnedSession>;
 /** Narrows an unknown value to an absolute path string with no NUL; a relative or control-char path
  *  is refused rather than used as a directory. On a Windows host a drive path (`C:\…`, `C:/…`)
  *  counts too, since that is what dsh hands over there; a drive-relative `C:x`, a UNC share and a
  *  `\\?\` device path stay refused, so a request cannot point a read at another machine. */
-export declare const validCwd: (cwd: unknown, platform?: string) => cwd is string;
+export declare const validCwd: (cwd: JsonValue | undefined | null, platform?: string) => cwd is string;
 /** What /open answers: the dsh session id to open, and whether it existed before. */
 export interface Opened {
     id: string;
@@ -565,7 +570,7 @@ export interface RouteCtx {
     awaiting: SessionRouteOptions["awaiting"];
     baseName: typeof baseName;
     boxOf: (url: URL) => MountBox;
-    boxTranscripts: (ws: RemoteWorkspace, hidden: Set<string>) => Promise<TranscriptListItem[]>;
+    boxTranscripts: (ws: RemoteWorkspace, hidden: Set<string>) => Promise<Array<TranscriptListItem>>;
     cacheBoxTranscript: (ws: RemoteWorkspace, id: string) => Promise<void>;
     claudeHomeOf: typeof claudeHomeOf;
     claudeIdOf: SessionRouteOptions["claudeIdOf"];
@@ -617,7 +622,9 @@ export interface RouteCtx {
     persistAsides: SessionRouteOptions["persistAsides"];
     pickFor: (cwd: string) => PickSettings;
     pluginErrors: SessionRouteOptions["pluginErrors"];
+    /** The checked scope and the cwd a `project` or `local` scope needs, or the reason it failed. */
     pluginScopeCwd: (scope: unknown, session: JsonValue | undefined) => Promise<{
+        scope: PluginScope;
         cwd: string | undefined;
     } | {
         error: string;
@@ -655,13 +662,16 @@ export interface RouteCtx {
     starters: SessionRouteOptions["starters"];
     steersFor: SessionRouteOptions["steersFor"];
     stopTask: SessionRouteOptions["stopTask"];
-    targetOf: <T extends string | null>(url: URL, cwd: T) => CwdTarget<T>;
+    targetOf: {
+        (url: URL, cwd: string): CwdTarget<string>;
+        (url: URL, cwd: string | null): CwdTarget<string | null>;
+    };
     taskOutput: SessionRouteOptions["taskOutput"];
     spawnMode: SessionRouteOptions["spawnMode"];
     terminalSync: SessionRouteOptions["terminalSync"];
     thinking: SessionRouteOptions["thinking"];
     toolMode: SessionRouteOptions["toolMode"];
-    transcriptDirs: (cwd: string) => string[];
+    transcriptDirs: (cwd: string) => Array<string>;
     turnRecords: SessionRouteOptions["turnRecords"];
     updateBoxOf: (url: URL, sessionId: string | null) => {
         host: string;
@@ -689,9 +699,9 @@ declare const idIn: (text: string) => string | undefined;
  * dir, or an earlier import. An import that reused one would shadow the real conversation, so it
  * takes a fresh id instead; the original still sits inside the file's own records.
  */
-declare function idTaken(live: (id: string) => boolean, projectsDirs: string[], importedDir: string, id: string): Promise<boolean>;
+declare function idTaken(live: (id: string) => boolean, projectsDirs: Array<string>, importedDir: string, id: string): Promise<boolean>;
 /** The transcript for `id` from the first of `dirs` that holds it, folded ready to seed a session. */
-declare function firstTranscript(dirs: string[], id: string): Promise<FoldedTranscript | undefined>;
+declare function firstTranscript(dirs: Array<string>, id: string): Promise<FoldedTranscript | undefined>;
 /** Whether a transcript prompt is one the stored log already holds: the stored text, alone or
  *  followed by a line break. The adapter sends a typed prompt to the CLI with more after it that
  *  dsh does not store: its context blocks after a blank line (the runtime snapshot, instructions,
@@ -713,7 +723,7 @@ export type PickSettings = (folded: FoldedTranscript) => Promise<{
     model: string | undefined;
 }>;
 /** Same id opened twice at once (double click, two tabs) shares one creation. */
-declare function openTranscript(ctx: RouteHost, dirs: string[], cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined, heal?: HealHost, pickSettings?: PickSettings): Promise<Opened>;
+declare function openTranscript(ctx: RouteHost, dirs: Array<string>, cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined, heal?: HealHost, pickSettings?: PickSettings): Promise<Opened>;
 /**
  * The session format the installed dsh creates: its catalog's current version; without the
  * catalog, the version of a stored log dsh marks current; without either, 4, the only version a
@@ -728,7 +738,7 @@ export declare function createVersion(persistence: {
  * Loads a Claude Code transcript and creates a dsh session from it, or
  * returns the existing session if one with this id is already live.
  */
-export declare function openTranscriptOnce(ctx: RouteHost, dirs: string[], cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined, heal?: HealHost, reseedFrom?: string, pickSettings?: PickSettings): Promise<Opened>;
+export declare function openTranscriptOnce(ctx: RouteHost, dirs: Array<string>, cwd: string, id: string, claudeIdOf: (id: string) => string, registry: WorkspaceRegistry | undefined, heal?: HealHost, reseedFrom?: string, pickSettings?: PickSettings): Promise<Opened>;
 /** A cwd-scoped read's destination: the box it runs on, and the path to read there. */
 export interface CwdTarget<T extends string | null> {
     box: MountBox;
@@ -761,7 +771,7 @@ declare const projectDirAt: (box: MountBox, cwd: string) => Promise<string>;
 /** What the event stream needs from the adapter; see `SessionRouteOptions.events`. */
 export interface EventsDeps {
     hub: EventHub;
-    snapshot: (session: string | null) => OmcEvent[];
+    snapshot: (session: string | null) => Array<OmcEvent>;
     replies: {
         liveTurn: (sessionId: string) => LiveTurnReply | Record<string, never>;
         turns: (sessionId: string) => TurnsReply;
@@ -781,9 +791,9 @@ export interface SessionRouteOptions {
      * switch on it is the plugin's own store first and the real `~/.claude` second, so a session
      * started from a terminal is still listed and still opens.
      */
-    projectDir: (cwd: string) => string[];
+    projectDir: (cwd: string) => Array<string>;
     /** The parents of every project dir, same order. */
-    projectsDir: string[];
+    projectsDir: Array<string>;
     /** Claude session ids the adapter started itself. */
     startedIds: () => Promise<Iterable<string>>;
     claudeIdOf: (id: string) => string;
@@ -795,23 +805,23 @@ export interface SessionRouteOptions {
     /** State file holding the SSH boxes the panel manages; the adapter mounts one instance per box. */
     sshBoxesPath?: string;
     /** Mount or withdraw provider instances so they match the saved SSH-box list, without a restart. */
-    onSshBoxes?: (boxes: SshBox[]) => Promise<void> | void;
+    onSshBoxes?: (boxes: Array<SshBox>) => Promise<void> | void;
     /** The accounts beside this box's default login (Settings → Boxes, under This box). Absent in a
      *  registration that mounts none, such as the suite's. */
     accounts?: {
         /** `<STATE_DIR>/accounts.json`. */
         path: string;
         /** Mount or withdraw account instances to match the saved list, without a restart. */
-        onChange: (accounts: Account[]) => Promise<void> | void;
+        onChange: (accounts: Array<Account>) => Promise<void> | void;
         /** Every local mount other than the default, plugin-added or hand-written. */
-        localMounts: () => LocalMount[];
+        localMounts: () => Array<LocalMount>;
         /** Ids this plugin mounted from accounts.json. */
         mounted: () => Set<string>;
     };
     /** State file mapping placeholder workspaces to their box + real remote path. */
     remoteWorkspacesPath?: string;
     /** Refresh the adapter's live placeholder→remote-cwd map after the list changes, without a restart. */
-    onRemoteWorkspaces?: (workspaces: RemoteWorkspace[]) => Promise<void> | void;
+    onRemoteWorkspaces?: (workspaces: Array<RemoteWorkspace>) => Promise<void> | void;
     command?: string;
     /** The `command` as configured, before this box's PATH resolution. Work on another box is named
      *  this: an absolute path found here means nothing there, and probing a box with it left every
@@ -841,7 +851,7 @@ export interface SessionRouteOptions {
      *  logged-out box in the picker. */
     onLoginStatus?: (provider: string | null, loggedIn: boolean) => void;
     /** Per-session turn accounting buffer from the adapter. */
-    turnRecords?: Map<string, import("./adapter.js").TurnRecord[]>;
+    turnRecords?: Map<string, Array<TurnRecord>>;
     /** dsh version read off the package this plugin loads beside; null when unavailable. */
     dshVersion?: string | null;
     /** The running turn's figures per session, for the status row; absent when no turn is running. */
@@ -864,7 +874,7 @@ export interface SessionRouteOptions {
     };
     /** The keeper switch's facts: the config's `spawn` key and whether this platform runs a keeper. */
     spawnMode?: {
-        info(): import("./adapter/spawn-mode.js").SpawnModeInfo;
+        info(): SpawnModeInfo;
     };
     /** Terminal sync: whether terminal `/resume` exchanges mirror into the dsh session. */
     terminalSync?: {
@@ -893,7 +903,7 @@ export interface SessionRouteOptions {
     /** Permission rules and hooks for a session with a live process. */
     permissionReadout?: (sessionId: string) => Promise<PermissionReadoutReply>;
     /** The hooks the session's CLI has run so far, oldest first, for the Diagnostics tab. */
-    hookRuns?: (sessionId: string) => HookRun[];
+    hookRuns?: (sessionId: string) => Array<HookRun>;
     /** MCP servers of a session's live process, and a reconnect for one of them. */
     mcp?: {
         status: (sessionId: string) => Promise<McpStatusReply>;
@@ -914,7 +924,7 @@ export interface SessionRouteOptions {
         }>;
     };
     /** The rules recent approval requests suggest, per session; the Tune tab offers them as chips. */
-    permissionAsks?: Map<string, string[]>;
+    permissionAsks?: Map<string, Array<string>>;
     /** Ask a side question over HTTP, optionally seeded with the working-tree diff. The answer lands
      *  in the ring `sideQuestions` serves, so the caller gets only whether the question went out. */
     askAside?: (sessionId: string, question: string, seed: {
@@ -926,9 +936,9 @@ export interface SessionRouteOptions {
         error?: string;
     }>;
     /** `/btw` side questions and their answers, per session; the client bubble reads them. */
-    sideQuestions?: Map<string, AsideEntry[]>;
+    sideQuestions?: Map<string, Array<AsideEntry>>;
     /** Claude's own live tasks for a session, for the Tasks tab. */
-    liveTasks?: (sessionId: string) => LiveTask[];
+    liveTasks?: (sessionId: string) => Array<LiveTask>;
     /** Ask the CLI to stop one of its tasks. */
     stopTask?: (sessionId: string, taskId: string) => Promise<{
         ok: boolean;
@@ -955,16 +965,16 @@ export interface SessionRouteOptions {
             text: string;
             at: number;
             relayed?: true;
-            attachments?: SteerAttachment[];
+            attachments?: Array<SteerAttachment>;
         }>;
         held: Array<{
             id: string;
             text: string;
-            attachments?: SteerAttachment[];
+            attachments?: Array<SteerAttachment>;
         }>;
     };
     /** Take waiting steers back from Claude for an edit; the answer names the hold and its text. */
-    holdSteers?: (sessionId: string, ids: string[]) => Promise<{
+    holdSteers?: (sessionId: string, ids: Array<string>) => Promise<{
         ok: true;
         holdId: string;
         text: string;
@@ -974,7 +984,7 @@ export interface SessionRouteOptions {
         error?: string;
     }>;
     /** Cut the running turn short and send these waiting steers as the next turn. */
-    sendSteerNow?: (sessionId: string, ids: string[]) => Promise<import("./adapter.js").SteerEditReply>;
+    sendSteerNow?: (sessionId: string, ids: Array<string>) => Promise<SteerEditReply>;
     /** End a hold: put it back as it was, drop it, or send one message with new text in its place. */
     releaseHold?: (sessionId: string, holdId: string, how: "restore" | "drop" | {
         text: string;
@@ -1036,15 +1046,15 @@ export interface SessionRouteOptions {
     pickerModels?: () => Promise<Array<{
         provider: string;
         host: string | null;
-        models: PickerRow[];
-        custom: CustomModel[];
+        models: Array<PickerRow>;
+        custom: Array<CustomModel>;
         route: Route;
     }>>;
     /** Announces a changed picker to dsh, after a hints write that hid or showed a model. */
     modelsUpdated?: () => void;
     /** Replaces the models added in Settings for one mount; `error` is the sentence to show. */
-    setCustomModels?: (provider: string, models: readonly CustomModel[]) => Promise<{
-        models: CustomModel[];
+    setCustomModels?: (provider: string, models: ReadonlyArray<CustomModel>) => Promise<{
+        models: Array<CustomModel>;
     } | {
         error: string;
     }>;
@@ -1066,10 +1076,10 @@ export interface SessionRouteOptions {
     }>;
     /** The plugins a session's live process failed to load, from its init frame. Empty when clean or
      *  when no process has run. */
-    pluginErrors?: (sessionId: string) => PluginLoadError[];
+    pluginErrors?: (sessionId: string) => Array<PluginLoadError>;
     /** The plugins a session's live process loaded with a warning, from its init frame. Empty when
      *  clean or when no process has run. */
-    pluginWarnings?: (sessionId: string) => PluginLoadError[];
+    pluginWarnings?: (sessionId: string) => Array<PluginLoadError>;
     /** Every session holding an open prompt, for the browser's background notices. */
     awaiting?: () => Record<string, {
         kind: "approval" | "question" | "plan";

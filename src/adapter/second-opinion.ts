@@ -2,13 +2,15 @@
 // of the working-tree diff and the card above the composer lists what it found. Off until a model is
 // picked in Settings → Oh My Claude, which writes `second-opinion.json` under the plugin's state.
 // The pure half (marks, review text, parsing) is exported for the test; `opinions` is the runtime.
+import { fits } from "../schema-fits.js";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import z from "@deepseek-ai/schemastery";
 import { BlockAssembler, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { hub } from "../events.js";
 import { STATE_DIR, writeJson } from "../state.js";
-import { textOf, type LooseMessage } from "./prompt.js";
+import { textOf } from "./prompt.js";
+import type { LooseMessage } from "./prompt.js";
 import type { PluginContext } from "../dsh.js";
 import type { WorkspaceDiff } from "../process.js";
 import type { WorkspaceDiffReply } from "./types.js";
@@ -34,21 +36,21 @@ export type FailReason = "gone" | "timeout" | "error" | "empty";
 /** What the card shows for a session's last turn. `files` are the paths the turn changed, in the
  *  CLI's diff order; `reviewed` is how many of them fit in the review. */
 export type OpinionCard =
-  | { state: "ready"; at: number; files: string[] }
-  | { state: "running"; at: number; files: string[]; model: string; startedAt: number }
+  | { state: "ready"; at: number; files: Array<string> }
+  | { state: "running"; at: number; files: Array<string>; model: string; startedAt: number }
   | {
       state: "done";
       at: number;
-      files: string[];
+      files: Array<string>;
       model: string;
-      findings: Finding[];
+      findings: Array<Finding>;
       reviewed: number;
       ms: number;
     }
   | {
       state: "failed";
       at: number;
-      files: string[];
+      files: Array<string>;
       model: string;
       reason: FailReason;
       detail?: string;
@@ -62,22 +64,30 @@ export interface OpinionReply {
 /** Past this many characters the review stops adding files. The same budget the Changes tab's Ask
  *  sends Claude (`DIFF_CONTEXT_CAP` in turn.ts): about 8k tokens, a few minutes on a local model. */
 export const REVIEW_CAP = 32_000;
+
 /** How much of the person's request goes with the diff; the diff is what is reviewed. */
-export const REQUEST_CAP = 2_000;
+export const REQUEST_CAP = 2000;
+
 /** How much of one new file is read for the review. */
 export const NEW_FILE_CAP = 16_000;
+
 /** New files read per turn; past this the rest are named without their text. */
 export const NEW_FILES_READ = 20;
+
 /** Findings kept from one reply; the prompt asks for at most this many. */
 export const MAX_FINDINGS = 3;
+
 /** A new file larger than this is named in the review but not read: a stray dump or an image that
  *  is not ignored would otherwise be read whole into dsh-web (or piped over SSH) twice per turn. */
 export const NEW_FILE_MAX_BYTES = 256_000;
+
 /** How long one review may take. A local model on a shared GPU took 204 s and 259 s for two small
  *  diffs on 2026-11-25, so the deadline is generous; a hosted model answers far sooner. */
 export const REVIEW_TIMEOUT_MS = 600_000;
+
 /** Output budget, reasoning included: the probes' replies spent 836 to 1,208 output tokens. */
-export const REVIEW_MAX_TOKENS = 4_000;
+export const REVIEW_MAX_TOKENS = 4000;
+
 /** Sessions whose last card is kept in memory; the oldest goes when a new one arrives. */
 const MAX_SESSIONS = 200;
 
@@ -105,15 +115,20 @@ export type TreeMarks = Map<string, string>;
  *  read marks as unread, so it counts as changed only when it first appears. */
 export function treeMarks(diff: WorkspaceDiff, texts: ReadonlyMap<string, string>): TreeMarks {
   const marks: TreeMarks = new Map();
+
   for (const f of diff.files) {
-    if (f.untracked) marks.set(f.path, `new\n${texts.get(f.path) ?? "\u0000unread"}`);
-    else if (f.binary) marks.set(f.path, `binary\n${f.added}\n${f.removed}`);
-    else
+    if (f.untracked) {
+      marks.set(f.path, `new\n${texts.get(f.path) ?? "\u0000unread"}`);
+    } else if (f.binary) {
+      marks.set(f.path, `binary\n${f.added}\n${f.removed}`);
+    } else {
       marks.set(
         f.path,
         f.hunks.map((h) => `@@ ${h.oldStart} ${h.newStart}\n${h.lines.join("\n")}`).join("\n"),
       );
+    }
   }
+
   return marks;
 }
 
@@ -121,9 +136,12 @@ export function treeMarks(diff: WorkspaceDiff, texts: ReadonlyMap<string, string
  *  there is nothing to compare against, so nothing counts as this turn's. Gets wrong: a file the
  *  turn committed or reverted is gone from `after` and is not reviewed, and a file the person edited
  *  by hand between the snapshot and the turn's end counts as the turn's. */
-export function changedPaths(before: TreeMarks | undefined, after: TreeMarks): string[] {
-  if (before === undefined) return [];
-  return [...after].filter(([path, mark]) => before.get(path) !== mark).map(([path]) => path);
+export function changedPaths(before: TreeMarks | undefined, after: TreeMarks): Array<string> {
+  if (before === undefined) {
+    return [];
+  }
+
+  return [...after].flatMap(([path, mark]) => (before.get(path) === mark ? [] : [path]));
 }
 
 /** The user message the reviewer reads: the request, then each changed file in diff order until
@@ -132,15 +150,20 @@ export function changedPaths(before: TreeMarks | undefined, after: TreeMarks): s
 export function reviewInput(
   request: string,
   diff: WorkspaceDiff,
-  paths: readonly string[],
+  paths: ReadonlyArray<string>,
   texts: ReadonlyMap<string, string>,
 ) {
   const wanted = new Set(paths);
-  const parts: string[] = [];
+  const parts: Array<string> = [];
   let size = 0;
+
   for (const f of diff.files) {
-    if (!wanted.has(f.path)) continue;
+    if (!wanted.has(f.path)) {
+      continue;
+    }
+
     let part: string;
+
     if (f.untracked) {
       const body = texts.get(f.path);
       part =
@@ -150,18 +173,30 @@ export function reviewInput(
               .split("\n")
               .map((l) => `+${l}`)
               .join("\n")}`;
-    } else if (f.binary) part = `--- ${f.path}\nbinary file`;
-    else
+    } else if (f.binary) {
+      part = `--- ${f.path}\nbinary file`;
+    } else {
       part = `--- ${f.path}\n${f.hunks
         .map((h) => `@@ -${h.oldStart} +${h.newStart} @@\n${h.lines.join("\n")}`)
         .join("\n")}`;
-    if (parts.length > 0 && size + part.length > REVIEW_CAP) break;
+    }
+
+    if (parts.length > 0 && size + part.length > REVIEW_CAP) {
+      break;
+    }
+
     parts.push(part.slice(0, REVIEW_CAP));
     size += part.length + 2;
   }
+
   const reviewed = parts.length;
-  if (reviewed < paths.length) parts.push(`(diff cut: ${reviewed} of ${paths.length} files shown)`);
+
+  if (reviewed < paths.length) {
+    parts.push(`(diff cut: ${reviewed} of ${paths.length} files shown)`);
+  }
+
   const req = request.trim().slice(0, REQUEST_CAP) || "(no request text)";
+
   return { text: `Request:\n${req}\n\nDiff:\n${parts.join("\n\n")}`, reviewed };
 }
 
@@ -173,24 +208,41 @@ const FINDING_LINE = /^\s*[-*]\s*\[(bug|risk)\]\s+(\S+)\s+(.+?)\s*$/i;
  *  so anything else is a guess about code it never read. A reply with text but no line in the
  *  format becomes one `note` holding the reply, cut to 1500 characters, so a model that ignored the
  *  format is still read. Keeps the first `MAX_FINDINGS`. */
-export function parseFindings(reply: string, paths: readonly string[]): Finding[] {
-  const out: Finding[] = [];
+export function parseFindings(reply: string, paths: ReadonlyArray<string>): Array<Finding> {
+  const out: Array<Finding> = [];
+
   for (const line of reply.split("\n")) {
     const m = FINDING_LINE.exec(line);
     const where = m?.[2] ?? "";
-    if (m && paths.includes(where.replace(/^\.\//, "").replace(/:[\d-]+$/, "")))
+
+    if (m && paths.includes(where.replace(/^\.\//, "").replace(/:[\d-]+$/, ""))) {
       out.push({
         kind: m[1]?.toLowerCase() === "bug" ? "bug" : "risk",
         where,
         text: m[3] ?? "",
       });
-    if (out.length === MAX_FINDINGS) break;
+    }
+
+    if (out.length === MAX_FINDINGS) {
+      break;
+    }
   }
-  if (out.length > 0) return out;
+
+  if (out.length > 0) {
+    return out;
+  }
+
   const whole = reply.trim();
+
   // Lines in the format that were all dropped mean the reply did follow it: nothing to show.
-  if (reply.split("\n").some((l) => FINDING_LINE.test(l))) return [];
-  if (whole === "" || /^no findings\.?$/i.test(whole)) return [];
+  if (reply.split("\n").some((l) => FINDING_LINE.test(l))) {
+    return [];
+  }
+
+  if (whole === "" || /^no findings\.?$/i.test(whole)) {
+    return [];
+  }
+
   return [{ kind: "note", where: "", text: whole.slice(0, 1500) }];
 }
 
@@ -203,20 +255,31 @@ const SettingFile = z.object({ provider: z.string(), model: z.string(), auto: z.
 /** The saved setting, or undefined for none, a missing or unreadable file, or a row without a model. */
 export async function loadSecondOpinion(dir: string): Promise<SecondOpinionSetting | undefined> {
   let row;
+
   try {
-    row = SettingFile(JSON.parse(await readFile(SETTING_FILE(dir), "utf8")));
+    const raw: unknown = JSON.parse(await readFile(SETTING_FILE(dir), "utf8"));
+
+    if (!fits(SettingFile, raw)) {
+      return undefined;
+    }
+
+    row = SettingFile(raw);
   } catch {
     return undefined;
   }
-  if (!row.provider || !row.model?.trim()) return undefined;
-  return row.auto === true
+
+  if (!row.provider || !row.model?.trim()) {
+    return undefined;
+  }
+
+  return row.auto
     ? { provider: row.provider, model: row.model, auto: true }
     : { provider: row.provider, model: row.model };
 }
 
 /** The text of the last user message in a turn's history: what the person asked this turn. Empty
  *  for a turn with none, and for options that carry no history at all, which the review says. */
-export const requestText = (messages: readonly LooseMessage[] | undefined): string =>
+export const requestText = (messages: ReadonlyArray<LooseMessage> | undefined): string =>
   textOf((messages ?? []).findLast((m) => m.role === "user")?.content);
 
 /** What the adapter that owns a session hands over at each turn start: the CLI's diff, a reader for
@@ -251,9 +314,13 @@ async function readNewFiles(diff: WorkspaceDiff, read: TurnDeps["read"]) {
   await Promise.all(
     fresh.map(async (f) => {
       const text = await read(f.path).catch(() => null);
-      if (text !== null) texts.set(f.path, text.slice(0, NEW_FILE_CAP));
+
+      if (text !== null) {
+        texts.set(f.path, text.slice(0, NEW_FILE_CAP));
+      }
     }),
   );
+
   return texts;
 }
 
@@ -278,7 +345,12 @@ class SecondOpinions {
   async save(next: SecondOpinionSetting | undefined, dir: string = STATE_DIR): Promise<void> {
     await writeJson(SETTING_FILE(dir), next ?? {});
     this.setting = next;
-    if (next === undefined) for (const sid of this.rows.keys()) this.dismiss(sid);
+
+    if (next === undefined) {
+      for (const sid of this.rows.keys()) {
+        this.dismiss(sid);
+      }
+    }
   }
 
   /** Called just before a turn's prompt is written. Starts the snapshot at once: `deps.diff()`
@@ -286,8 +358,14 @@ class SecondOpinions {
    *  2026-11-25: the answer came 1 to 3 s before the turn's first Write). Clears last turn's card
    *  and stops a review still running for it. Does nothing while the feature is off. */
   turnStarting(sessionId: string, request: string, deps: TurnDeps): void {
-    if (this.setting === undefined) return;
-    if (sessionId.startsWith("aux-") || sessionId.startsWith("compact-")) return;
+    if (this.setting === undefined) {
+      return;
+    }
+
+    if (sessionId.startsWith("aux-") || sessionId.startsWith("compact-")) {
+      return;
+    }
+
     const row = this.rows.get(sessionId) ?? { deps, request, gen: 0, card: null };
     row.deps = deps;
     row.request = request;
@@ -306,23 +384,43 @@ class SecondOpinions {
   async turnEnded(sessionId: string): Promise<void> {
     const row = this.rows.get(sessionId);
     const base = row?.base;
-    if (this.setting === undefined || row === undefined || base === undefined) return;
+
+    if (this.setting === undefined || row === undefined || base === undefined) {
+      return;
+    }
+
     const gen = row.gen;
     row.base = undefined;
     /** Whether this turn end is still the latest word on the session. */
     const current = () => row.gen === gen && this.setting !== undefined;
+
     try {
       const before = await base;
       const now = await row.deps.diff();
-      if (!current() || !now.ok) return;
+
+      if (!current() || !now.ok) {
+        return;
+      }
+
       const texts = await readNewFiles(now, row.deps.read);
-      if (!current()) return;
+
+      if (!current()) {
+        return;
+      }
+
       row.end = { diff: now, texts };
       const files = changedPaths(before, treeMarks(now, texts));
-      if (files.length === 0) return;
+
+      if (files.length === 0) {
+        return;
+      }
+
       row.card = { state: "ready", at: Date.now(), files };
       this.publish(sessionId);
-      if (this.setting?.auto) await this.run(sessionId);
+
+      if (this.setting?.auto) {
+        await this.run(sessionId);
+      }
     } catch {
       // A failed snapshot leaves no card; the next turn takes a fresh one.
     }
@@ -335,16 +433,24 @@ class SecondOpinions {
     const row = this.rows.get(sessionId);
     const setting = this.setting;
     const card = row?.card;
-    if (!row?.end || !setting || !card || card.state === "running" || row.abort) return false;
+
+    if (!row?.end || !setting || !card || card.state === "running" || row.abort) {
+      return false;
+    }
+
     const { files, at } = card;
     const model = setting.model;
     const end = row.end;
     // Claimed before the first await, so a second Run sees it.
     const ac = new AbortController();
     row.abort = ac;
+
     /** Shows the failure, unless the card has since moved on to another turn or was closed. */
     const fail = (reason: FailReason, detail?: string) => {
-      if (row.card?.at !== at || row.abort !== ac) return;
+      if (row.card?.at !== at || row.abort !== ac) {
+        return;
+      }
+
       const failed: Extract<OpinionCard, { state: "failed" }> = {
         state: "failed",
         at,
@@ -352,32 +458,48 @@ class SecondOpinions {
         model,
         reason,
       };
-      if (detail) failed.detail = detail;
+
+      if (detail) {
+        failed.detail = detail;
+      }
+
       row.card = failed;
       this.publish(sessionId);
     };
+
     const timer = setTimeout(() => ac.abort(new Error("timeout")), REVIEW_TIMEOUT_MS);
+
     try {
       const { llm } = row.deps;
       const prepare = llm.prepareCall?.bind(llm);
+
       const offered =
         prepare !== undefined &&
         llm.listProviders().some((p) => p.id === setting.provider) &&
         (await llm.listModels(setting.provider).catch(() => [])).some((m) => m.id === model);
+
       if (!offered || prepare === undefined) {
         fail("gone");
+
         return true;
       }
-      if (row.abort !== ac) return true;
+
+      if (row.abort !== ac) {
+        return true;
+      }
+
       const startedAt = Date.now();
       row.card = { state: "running", at, files, model, startedAt };
       this.publish(sessionId);
       const input = reviewInput(row.request, end.diff, files, end.texts);
+
       const call = await prepare(
         { provider: setting.provider, model, maxTokens: REVIEW_MAX_TOKENS },
         ac.signal,
       );
+
       const assembler = new BlockAssembler();
+
       for await (const chunk of call.stream({
         ...call.config,
         messages: [
@@ -388,20 +510,29 @@ class SecondOpinions {
         ],
         system: REVIEW_SYSTEM,
         signal: ac.signal,
-      }))
+      })) {
         assembler.push(chunk);
-      if (row.abort !== ac || row.card?.at !== at) return true;
+      }
+
+      if (row.abort !== ac || row.card?.at !== at) {
+        return true;
+      }
+
       const finish = assembler.finish;
-      if (finish.kind === "aborted") fail("timeout");
-      else if (finish.kind === "error")
+
+      if (finish.kind === "aborted") {
+        fail("timeout");
+      } else if (finish.kind === "error") {
         fail("error", finish.failure.message || finish.failure.code);
-      else {
+      } else {
         const text = assembler
           .blocks()
           .map((b) => (b.type === "text" ? b.text : ""))
           .join("");
-        if (text.trim() === "") fail("empty", finish.kind);
-        else {
+
+        if (text.trim() === "") {
+          fail("empty", finish.kind);
+        } else {
           row.card = {
             state: "done",
             at,
@@ -415,12 +546,19 @@ class SecondOpinions {
         }
       }
     } catch (error) {
-      if (ac.signal.aborted) fail("timeout");
-      else fail("error", error instanceof Error ? error.message || error.name : String(error));
+      if (ac.signal.aborted) {
+        fail("timeout");
+      } else {
+        fail("error", error instanceof Error ? error.message || error.name : String(error));
+      }
     } finally {
       clearTimeout(timer);
-      if (row.abort === ac) row.abort = undefined;
+
+      if (row.abort === ac) {
+        row.abort = undefined;
+      }
     }
+
     return true;
   }
 
@@ -429,7 +567,11 @@ class SecondOpinions {
   cancel(sessionId: string): void {
     const row = this.rows.get(sessionId);
     const card = row?.card;
-    if (!row?.abort || !card) return;
+
+    if (!row?.abort || !card) {
+      return;
+    }
+
     row.abort.abort(new Error("cancelled"));
     row.abort = undefined;
     row.card = { state: "ready", at: card.at, files: card.files };
@@ -439,7 +581,11 @@ class SecondOpinions {
   /** Hides the card for every tab and stops its review. */
   dismiss(sessionId: string): void {
     const row = this.rows.get(sessionId);
-    if (!row) return;
+
+    if (!row) {
+      return;
+    }
+
     this.stop(sessionId, row);
   }
 
@@ -452,7 +598,11 @@ class SecondOpinions {
   private stop(sessionId: string, row: Row): void {
     row.abort?.abort(new Error("superseded"));
     row.abort = undefined;
-    if (row.card === null) return;
+
+    if (row.card === null) {
+      return;
+    }
+
     row.card = null;
     this.publish(sessionId);
   }
@@ -461,9 +611,13 @@ class SecondOpinions {
   private keep(sessionId: string, row: Row): void {
     this.rows.delete(sessionId);
     this.rows.set(sessionId, row);
+
     if (this.rows.size > MAX_SESSIONS) {
       const oldest = this.rows.keys().next().value;
-      if (oldest !== undefined) this.rows.delete(oldest);
+
+      if (oldest !== undefined) {
+        this.rows.delete(oldest);
+      }
     }
   }
 

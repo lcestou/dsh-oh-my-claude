@@ -18,16 +18,29 @@ let inflight: Promise<AnthropicStatus | undefined> | undefined;
 
 /** What the last read said, without reading: undefined when nothing is cached or it expired. */
 export function peekStatus(now = Date.now()): AnthropicStatus | undefined {
-  if (!cache) return undefined;
-  if (now - cache.at >= cache.ttl) return undefined;
+  if (!cache) {
+    return undefined;
+  }
+
+  if (now - cache.at >= cache.ttl) {
+    return undefined;
+  }
+
   return cache.value;
 }
 
 /** Statuspage's summary shape, checked field by field: the page is not ours and may change. */
 function isStatusDoc(v: unknown): v is { status: AnthropicStatus } {
-  if (typeof v !== "object" || v === null || !("status" in v)) return false;
+  if (typeof v !== "object" || v === null || !("status" in v)) {
+    return false;
+  }
+
   const s = v.status;
-  if (typeof s !== "object" || s === null) return false;
+
+  if (typeof s !== "object" || s === null) {
+    return false;
+  }
+
   return (
     "indicator" in s &&
     typeof s.indicator === "string" &&
@@ -43,30 +56,48 @@ export async function anthropicStatus(
   timeoutMs = 2500,
 ): Promise<AnthropicStatus | undefined> {
   const hit = cache;
-  if (hit && now - hit.at < hit.ttl) return hit.value;
-  if (inflight) return inflight;
+
+  if (hit && now - hit.at < hit.ttl) {
+    return hit.value;
+  }
+
+  if (inflight) {
+    return inflight;
+  }
+
   inflight = (async () => {
     let value: AnthropicStatus | undefined;
+
     try {
       const r = await fetchFn(STATUS_URL, { signal: AbortSignal.timeout(timeoutMs) });
+
       if (r.ok) {
         const doc: unknown = await r.json();
-        if (isStatusDoc(doc)) value = doc.status;
+
+        if (isStatusDoc(doc)) {
+          value = doc.status;
+        }
       }
     } catch {
       // network, timeout, bad JSON: read as undefined
     }
+
     cache = { at: now, ttl: value ? TTL_OK : TTL_FAIL, value };
+
     return value;
   })();
   const result = await inflight;
   inflight = undefined;
+
   return result;
 }
 
 /** The suffix for an error line: empty for `none` or unknown, else ` · Anthropic reports <description>`. */
 export function degradedNote(status: AnthropicStatus | undefined): string {
-  if (!status || status.indicator === "none") return "";
+  if (!status || status.indicator === "none") {
+    return "";
+  }
+
   return ` · Anthropic reports ${status.description}`;
 }
 

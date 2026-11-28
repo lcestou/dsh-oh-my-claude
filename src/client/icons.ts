@@ -14,6 +14,9 @@
 //
 // When dsh 0.1.5 and 0.1.6 support ends: delete this file and import the same names straight from
 // `@deepseek-ai/dsh-client-ui-primitives` in the four modules that import them from here.
+// The lookup by name is the point: a glyph the installed dsh does not export draws nothing
+// instead of throwing React error #130.
+// oxlint-disable-next-line import/no-namespace
 import * as primitives from "@deepseek-ai/dsh-client-ui-primitives";
 import type { CSSProperties, JSX } from "react";
 
@@ -87,41 +90,59 @@ const blank: IconComponent = () => null;
 
 export const IconAgentPresetOutlineMedium =
   exported.IconAgentPresetOutlineMedium ?? exported.IconAgentPresetOutline16 ?? blank;
+
 export const IconApiOutlineRegular =
   exported.IconApiOutlineRegular ?? exported.IconApiOutline14 ?? blank;
+
 export const IconBrowseOutlineMedium =
   exported.IconBrowseOutlineMedium ?? exported.IconBrowseOutline16 ?? blank;
+
 export const IconChecklistOutlineRegular =
   exported.IconChecklistOutlineRegular ?? exported.IconChecklistOutline14 ?? blank;
+
 export const IconCheckOutlineMedium =
   exported.IconCheckOutlineMedium ?? exported.IconCheckOutline16 ?? blank;
+
 export const IconChevronDownOutlineRegular =
   exported.IconChevronDownOutlineRegular ?? exported.IconChevronDownOutline14 ?? blank;
+
 export const IconChevronRightOutlineRegular =
   exported.IconChevronRightOutlineRegular ?? exported.IconChevronRightOutline14 ?? blank;
+
 export const IconCodeOutlineMedium =
   exported.IconCodeOutlineMedium ?? exported.IconCodeOutline16 ?? blank;
+
 export const IconEditOutlineMedium =
   exported.IconEditOutlineMedium ?? exported.IconEditOutline16 ?? blank;
+
 export const IconFolderCloseMedium =
   exported.IconFolderCloseMedium ?? exported.IconFolderClose16 ?? blank;
+
 export const IconFolderOpenMedium =
   exported.IconFolderOpenMedium ?? exported.IconFolderOpen16 ?? blank;
+
 export const IconListPenOutlineMedium =
   exported.IconListPenOutlineMedium ?? exported.IconListPenOutline16 ?? blank;
+
 export const IconPaperclipOutlineRegular =
   exported.IconPaperclipOutlineRegular ??
   exported.IconPaperclipOutline14 ??
   exported.IconPaperclipOutline16 ??
   blank;
+
 export const IconPlusOutlineMedium =
   exported.IconPlusOutlineMedium ?? exported.IconPlusOutline16 ?? blank;
+
 export const IconSearchOutlineMedium =
   exported.IconSearchOutlineMedium ?? exported.IconSearchOutline16 ?? blank;
+
 export const IconSkillOutlineMedium =
   exported.IconSkillOutlineMedium ?? exported.IconSkillOutline16 ?? blank;
+
 export const IconSparkleMedium = exported.IconSparkleMedium ?? exported.IconSparkle16 ?? blank;
 export const PermissionIconReadOnlyRegular = exported.PermissionIconReadOnlyRegular ?? blank;
+
 export const PermissionIconWorkspaceWriteRegular =
   exported.PermissionIconWorkspaceWriteRegular ?? blank;
+
 export const PermissionIconFullAccessRegular = exported.PermissionIconFullAccessRegular ?? blank;

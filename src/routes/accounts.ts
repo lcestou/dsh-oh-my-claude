@@ -3,12 +3,17 @@
 // config dir; the routes save `accounts.json` and hand the list to the adapter, which mounts or
 // withdraws the instance live (src/adapter/accounts.ts). Hand-written mounts with a dir of their
 // own are listed too, read-only, so a login set up in cordis.patch.yml is visible and can log in.
+import { parsedWith } from "../schema-fits.js";
+import type { JsonReply } from "../sessions.js";
+import { stringOf } from "../decode.js";
 import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import z from "@deepseek-ai/schemastery";
 import type { JsonValue } from "../dsh.js";
-import { type Account, boxProviderId, validateAccounts } from "../accounts.js";
-import { type ServerKey, serverText } from "../locale.js";
+import { boxProviderId, validateAccounts } from "../accounts.js";
+import type { Account } from "../accounts.js";
+import { serverText } from "../locale.js";
+import type { ServerKey } from "../locale.js";
 import {
   cancelSshLogin,
   pollSshLogin,
@@ -17,7 +22,8 @@ import {
   THIS_BOX,
 } from "../ssh-login.js";
 import { writeJson } from "../state.js";
-import { type RouteHandler, UNHANDLED } from "./context.js";
+import { UNHANDLED } from "./context.js";
+import type { RouteHandler } from "./context.js";
 
 /** A local mount other than the default with a login of its own: plugin-added or hand-written. */
 export interface LocalMount {
@@ -54,11 +60,11 @@ export interface AccountRouteCtx {
   defaultHome: string;
   /** This box's `claude`, as the default mount resolved it. */
   command: string;
-  json: (res: ServerResponse, status: number, value: object) => void;
+  json: JsonReply;
   readBody: (req: IncomingMessage) => Promise<{ [key: string]: JsonValue }>;
   run: (
     cmd: string,
-    args: string[],
+    args: Array<string>,
     env?: NodeJS.ProcessEnv,
   ) => Promise<{ out: string; error?: string }>;
   cliEnvFor: (dir?: string) => NodeJS.ProcessEnv;
@@ -68,11 +74,11 @@ export interface AccountRouteCtx {
   status: (home: string, command: string) => Promise<{ loggedIn: boolean; running?: number }>;
   forgetIdentity: () => void;
   /** Provider ids the saved SSH boxes mount under, so an account cannot take one. */
-  sshIds: () => Promise<string[]>;
-  localMounts: () => LocalMount[];
+  sshIds: () => Promise<Array<string>>;
+  localMounts: () => Array<LocalMount>;
   /** Ids this plugin mounted from accounts.json. */
   mounted: () => Set<string>;
-  onChange: (accounts: Account[]) => Promise<void> | void;
+  onChange: (accounts: Array<Account>) => Promise<void> | void;
   liveCount: (loginKey: string) => number;
   loginDone: (loginKey: string) => void;
   logoutDone: (loginKey: string) => void;
@@ -95,20 +101,29 @@ export async function loadAccounts(
   path: string,
   home: string,
   defaultHome: string,
-): Promise<Account[] | undefined> {
+): Promise<Array<Account> | undefined> {
   let text: string;
+
   try {
     text = await readFile(path, "utf8");
-  } catch (e) {
-    return e instanceof Error && "code" in e && e.code === "ENOENT" ? [] : undefined;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "ENOENT" ? [] : undefined;
   }
+
+  const list = parsedWith(AccountList, text);
+
+  if (list === undefined) {
+    return undefined;
+  }
+
   try {
-    const v = validateAccounts(AccountList(JSON.parse(text)), {
+    const v = validateAccounts(list, {
       home,
       defaultHome,
       takenIds: new Map(),
       takenHomes: new Map(),
     });
+
     return "accounts" in v ? v.accounts : undefined;
   } catch {
     return undefined;
@@ -130,12 +145,15 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
   /** Writes are serialised: two adds in two tabs would otherwise each save the list without the
    *  other's row. */
   let chain: Promise<unknown> = Promise.resolve();
+
   /** Run `fn` after every write before it, whatever they returned. */
   const serial = <T>(fn: () => Promise<T>): Promise<T> => {
     const next = chain.then(fn, fn);
     chain = next.catch(() => {});
+
     return next;
   };
+
   /** A refusal in the person's language. */
   const refuse = (
     res: ServerResponse,
@@ -143,11 +161,13 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
     key: ServerKey,
     params?: Record<string, string>,
   ) => c.json(res, status, { error: serverText(key, params) });
+
   /** Every account row, plugin rows first, in saved order. A hand-written mount on the default
    *  dir is This box's own login and is not a row. */
-  const rows = async (): Promise<AccountRow[]> => {
+  const rows = async (): Promise<Array<AccountRow>> => {
     const saved = await readAccounts(c.path, c.home, c.defaultHome);
     const mounted = c.mounted();
+
     const own = saved.map((a): AccountRow => ({
       name: a.name,
       configDir: a.configDir,
@@ -155,7 +175,9 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
       source: "plugin",
       mounted: mounted.has(boxProviderId(a.name)),
     }));
+
     const ownIds = new Set(own.map((r) => r.provider));
+
     const profile = c
       .localMounts()
       .filter((m) => m.loginKey !== "" && !mounted.has(m.provider) && !ownIds.has(m.provider))
@@ -166,25 +188,32 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
         source: "profile",
         mounted: true,
       }));
+
     return [...own, ...profile];
   };
+
   /** Save `next`, mount it, tell every tab. A mount failure is reported as `live: false`, the
    *  file already saved, so a restart picks the account up. */
-  const save = async (next: Account[]) => {
+  const save = async (next: Array<Account>) => {
     await writeJson(c.path, next, { pretty: true });
     let live = true;
+
     try {
       await c.onChange(next);
-    } catch (e) {
+    } catch (error) {
       live = false;
-      c.log("warn", `accounts reconcile: ${String(e)}`);
+      c.log("warn", `accounts reconcile: ${String(error)}`);
     }
+
     c.publish();
+
     return { accounts: await rows(), live };
   };
+
   /** The local mount a login route names: a plugin account or a hand-written one. */
   const target = (provider: string) =>
     c.localMounts().find((m) => m.provider === provider && m.loginKey !== "");
+
   /** Whether the mount's CLI under its config dir says logged in now: a login's proof once it
    *  exits. */
   const verify = (m: LocalMount) => async () =>
@@ -193,77 +222,131 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
   /** The group itself: the list and add, remove, the status read, then the four login steps.
    *  Answers `UNHANDLED` for any other path, so the next group is tried. */
   return async (req, res, url) => {
-    if (url.pathname === base && req.method === "GET")
+    if (url.pathname === base && req.method === "GET") {
       return c.json(res, 200, { accounts: await rows() });
+    }
+
     if (url.pathname === base && req.method === "POST") {
       const body = await c.readBody(req);
+
       return serial(async () => {
         const saved = await loadAccounts(c.path, c.home, c.defaultHome);
-        if (saved === undefined) return refuse(res, 500, "accountsUnreadable", { path: c.path });
+
+        if (saved === undefined) {
+          return refuse(res, 500, "accountsUnreadable", { path: c.path });
+        }
+
         const mine = new Set(saved.map((a) => boxProviderId(a.name)));
         const others = c.localMounts().filter((m) => !mine.has(m.provider));
-        const wanted = boxProviderId(String(body.name ?? "").trim());
+        const wanted = boxProviderId((stringOf(body.name) ?? "").trim());
         const profile = others.find((m) => m.provider === wanted);
-        if (profile) return refuse(res, 409, "accountProfile", { provider: wanted });
+
+        if (profile) {
+          return refuse(res, 409, "accountProfile", { provider: wanted });
+        }
+
         const takenIds = new Map<string, string>(
           (await c.sshIds()).map((id): [string, string] => [id, id]),
         );
-        const draft = { name: String(body.name ?? ""), configDir: String(body.configDir ?? "") };
+
+        const draft = {
+          name: stringOf(body.name) ?? "",
+          configDir: stringOf(body.configDir) ?? "",
+        };
+
         const v = validateAccounts([...saved, draft], {
           home: c.home,
           defaultHome: c.defaultHome,
           takenIds,
           takenHomes: new Map(others.map((m): [string, string] => [m.home, m.name])),
         });
-        if ("refusal" in v) return refuse(res, 400, v.refusal.key, v.refusal.params);
+
+        if ("refusal" in v) {
+          return refuse(res, 400, v.refusal.key, v.refusal.params);
+        }
+
         return c.json(res, 200, await save(v.accounts));
       });
     }
+
     if (url.pathname === `${base}/remove` && req.method === "POST") {
-      const provider = String((await c.readBody(req)).provider ?? "");
+      const provider = stringOf((await c.readBody(req)).provider) ?? "";
+
       return serial(async () => {
         const saved = await loadAccounts(c.path, c.home, c.defaultHome);
-        if (saved === undefined) return refuse(res, 500, "accountsUnreadable", { path: c.path });
+
+        if (saved === undefined) {
+          return refuse(res, 500, "accountsUnreadable", { path: c.path });
+        }
+
         const next = saved.filter((a) => boxProviderId(a.name) !== provider);
-        if (next.length === saved.length) return refuse(res, 404, "accountUnknown", { provider });
+
+        if (next.length === saved.length) {
+          return refuse(res, 404, "accountUnknown", { provider });
+        }
+
         // A login started on this account and not finished would still write into its dir.
         cancelSshLogin(loginKeyFor(provider));
+
         return c.json(res, 200, await save(next));
       });
     }
+
     if (url.pathname === `${base}/status` && req.method === "GET") {
       const list = await rows();
       const mounts = new Map(c.localMounts().map((m) => [m.provider, m]));
+
       const out = await Promise.all(
         list.map(async (r) => {
           const m = mounts.get(r.provider);
-          if (!m) return { provider: r.provider, status: null };
+
+          if (!m) {
+            return { provider: r.provider, status: null };
+          }
+
           const status = await c.status(m.home, m.command || c.command);
           status.running = c.liveCount(m.loginKey);
           c.onLoginStatus(r.provider, status.loggedIn);
+
           return { provider: r.provider, status };
         }),
       );
+
       return c.json(res, 200, { accounts: out });
     }
+
     const login = url.pathname.startsWith(`${base}/login/`) && req.method === "POST";
-    if (!login) return UNHANDLED;
+
+    if (!login) {
+      return UNHANDLED;
+    }
+
     const body = await c.readBody(req);
-    const provider = String(body.provider ?? "");
+    const provider = stringOf(body.provider) ?? "";
     const m = target(provider);
-    if (!m) return refuse(res, 400, "accountUnknown", { provider });
+
+    if (!m) {
+      return refuse(res, 400, "accountUnknown", { provider });
+    }
+
     const key = loginKeyFor(provider);
     const step = url.pathname.slice(`${base}/login/`.length);
+
     /** A finished login: forget the cached identity, name the mount logged in, tell every tab. */
     const finish = (out: { done: boolean; error?: string }) => {
-      if (!out.done) return { done: false, error: out.error };
+      if (!out.done) {
+        return { done: false, error: out.error };
+      }
+
       c.forgetIdentity();
       c.onLoginStatus(provider, true);
       c.loginDone(m.loginKey);
       c.publish();
+
       return { done: true, loggedIn: true };
     };
-    if (step === "start")
+
+    if (step === "start") {
       return c.json(
         res,
         200,
@@ -272,34 +355,45 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
           env: c.cliEnvFor(m.home),
         }),
       );
-    if (step === "code")
+    }
+
+    if (step === "code") {
       return c.json(
         res,
         200,
-        finish(await submitSshLoginCode(key, String(body.code ?? ""), verify(m))),
+        finish(await submitSshLoginCode(key, stringOf(body.code) ?? "", verify(m))),
       );
+    }
+
     if (step === "poll") {
       const poll = await pollSshLogin(key, verify(m));
+
       return c.json(res, 200, poll.pending ? { pending: true } : finish(poll));
     }
+
     if (step === "logout") {
       // `claude auth logout` under the account's dir: its credentials file, or on macOS its own
       // Keychain entry, goes; This box's login is not touched. Its running sessions stop.
       const out = await c.run(m.command || c.command, ["auth", "logout"], c.cliEnvFor(m.home));
+
       // The CLI's own answer decides, not its exit code: a logout that failed (a Keychain or
       // permission error) leaves the login in place, and the row must not read logged out while
       // its sessions are stopped for nothing.
-      if (await verify(m)())
+      if (await verify(m)()) {
         return refuse(res, 500, "accountLogoutFailed", {
           name: m.name,
           error: out.error || out.out.trim().split("\n").pop() || "?",
         });
+      }
+
       c.forgetIdentity();
       c.logoutDone(m.loginKey);
       c.onLoginStatus(provider, false);
       c.publish();
+
       return c.json(res, 200, { loggedIn: false });
     }
+
     return UNHANDLED;
   };
 }

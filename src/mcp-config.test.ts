@@ -13,9 +13,11 @@ import { tempDir } from "./test-tmp.js";
       "/elsewhere": { mcpServers: { other: { command: "x" } } },
     },
   });
+
   const mcpJson = JSON.stringify({
     mcpServers: { shared: { command: "bunx", args: ["srv", "--db", "a.sqlite"] } },
   });
+
   assert.deepEqual(configuredFrom(claudeJson, [mcpJson], "/work/app"), [
     { name: "global", scope: "user", summary: "https://example.test/mcp" },
     { name: "echo", scope: "local", summary: "echo hello" },
@@ -23,11 +25,13 @@ import { tempDir } from "./test-tmp.js";
   ]);
   assert.deepEqual(configuredFrom(null, [null], "/work/app"), [], "no files, no rows");
   assert.deepEqual(configuredFrom("{not json", ["[]"], "/work/app"), [], "garbage reads as none");
+
   // `.mcp.json` files from the session's directory upwards: every level counts, and a name two
   // levels share is listed once, from the nearer one.
   const above = JSON.stringify({
     mcpServers: { shared: { command: "old" }, root: { command: "root-only" } },
   });
+
   assert.deepEqual(
     configuredFrom(null, [mcpJson, null, above], "/work/app").map((r) => r.summary),
     ["bunx srv --db a.sqlite", "root-only"],

@@ -13,25 +13,24 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Menu } from "@deepseek-ai/dsh-client-ui-primitives";
 import { IconChevronDownOutlineRegular } from "./icons.js";
-import {
-  ROUTE,
-  T,
-  readJson,
-  type ClientCtx,
-  type DirEntry,
-  type DirectoryFlowOwnerProps,
-  type LocaleFace,
-  type UiWorkspaceFace,
+import { ROUTE, T, errorText, readJson } from "./shared.js";
+import type {
+  ClientCtx,
+  DirEntry,
+  DirectoryFlowOwnerProps,
+  LocaleFace,
+  UiWorkspaceFace,
 } from "./shared.js";
-import { DirectoryBrowser, type Listing, type Translate } from "./browser.js";
+import { DirectoryBrowser } from "./browser.js";
+import type { Listing, Translate } from "./browser.js";
 import { t as omcT, useLocale } from "./i18n.js";
+import { isElement } from "./dom-guards.js";
 
 /** dsh's directory UI service, absent on a dsh that mounts no workspace UI. */
-const uiWorkspaceOf = (ctx: ClientCtx): UiWorkspaceFace | undefined =>
-  ctx.get?.<UiWorkspaceFace>("uiWorkspace");
+const uiWorkspaceOf = (ctx: ClientCtx): UiWorkspaceFace | undefined => ctx.get?.("uiWorkspace");
 
 /** dsh's locale registry, absent on a dsh that mounts no locale service. */
-const localeOf = (ctx: ClientCtx): LocaleFace | undefined => ctx.get?.<LocaleFace>("locale");
+const localeOf = (ctx: ClientCtx): LocaleFace | undefined => ctx.get?.("locale");
 
 /** Whether this dsh can browse directories at all, which is what the takeover needs to be worth it. */
 export const canBrowseDirs = (ctx: ClientCtx): boolean => uiWorkspaceOf(ctx) !== undefined;
@@ -62,20 +61,22 @@ interface BoxRow {
 
 /** Splits a path on `/` and drops the empty pieces, so a leading or doubled slash does not feed a
  *  blank segment to the ancestry chain. */
-const segments = (p: string): string[] => p.split("/").filter(Boolean);
+const segments = (p: string): Array<string> => p.split("/").filter(Boolean);
 
 /**
  * The ancestor chain of a remote path, root first, in the shape dsh's host stamps on a listing:
  * the root crumb named by its own path, every crumb a jump target. `/box-dirs` answers a level
  * without one, and the dialog's breadcrumb (and its Home collapse) reads it from here.
  */
-export const ancestry = (path: string): DirEntry[] => {
-  const crumbs: DirEntry[] = [{ name: "/", path: "/", hidden: false }];
+export const ancestry = (path: string): Array<DirEntry> => {
+  const crumbs: Array<DirEntry> = [{ name: "/", path: "/", hidden: false }];
   let at = "";
+
   for (const name of segments(path)) {
     at = `${at}/${name}`;
     crumbs.push({ name, path: at, hidden: false });
   }
+
   return crumbs;
 };
 
@@ -88,13 +89,17 @@ const noop = (): void => {};
 
 /** What Settings dispatches to open this dialog; see the takeover effect below. */
 export const OPEN_EVENT = "omc-add-workspace";
+
 /** The one mounted AddWorkflow that answers OPEN_EVENT, so two cells never open two dialogs. */
 let settingsOpener: (() => void) | null = null;
+
 /** What this dialog dispatches once a remote workspace is saved, so the Settings card lists it. */
 export const RW_EVENT = "omc-remote-workspaces";
+
 /** What the Boxes card dispatches after saving the ssh box list, so this dialog's takeover engages
  *  for a first box, or lets go after the last, without a reload. */
 export const BOXES_EVENT = "omc-ssh-boxes";
+
 /** What a write to a Claude settings file dispatches once it lands (the settings editor, the Claude
  *  updates channel, the Tune tab), so the rows that read those files on this page read them again.
  *  This tab only: a write from another tab or the CLI is not pushed. */
@@ -117,6 +122,9 @@ const DIALOG_EN = {
   "browser.showHidden": "Show hidden files",
 } satisfies Record<string, string>;
 
+/** DIALOG_EN by key, for a lookup with whatever key the browser asks for. */
+const DIALOG_EN_BY_KEY = new Map<string, string>(Object.entries(DIALOG_EN));
+
 /**
  * Read the Add workspace dialog's copy from dsh's own dictionaries, so the takeover speaks the
  * language the dialog it replaces spoke. `directory-browser` is the namespace
@@ -125,10 +133,12 @@ const DIALOG_EN = {
  */
 const copyOf = (ctx: ClientCtx): Translate => {
   const t = localeOf(ctx)?.bind("directory-browser");
+
   return (key, params) => {
-    // SAFETY: every key this dialog reads is a DIALOG_EN key; an unknown one reads as itself.
-    const raw = (t ? t(key) : undefined) || DIALOG_EN[key as keyof typeof DIALOG_EN] || key;
-    return params ? raw.replace(/\{(\w+)\}/g, (m, k: string) => params[k] ?? m) : raw;
+    // An unknown key reads as itself.
+    const raw = (t ? t(key) : undefined) || DIALOG_EN_BY_KEY.get(key) || key;
+
+    return params ? raw.replaceAll(/\{(\w+)\}/g, (m, k: string) => params[k] ?? m) : raw;
   };
 };
 
@@ -141,14 +151,21 @@ const level = async (
 ): Promise<Listing> => {
   if (host === "") {
     const l = await uiWorkspaceOf(ctx)?.listDirectory(path, signal);
-    if (!l) throw new Error(omcT("picker.noListing"));
+
+    if (!l) {
+      throw new Error(omcT("picker.noListing"));
+    }
+
     return l;
   }
+
   const r = await fetch(
     `${ROUTE}/box-dirs?host=${encodeURIComponent(host)}&path=${encodeURIComponent(path ?? "")}`,
     { signal },
   );
-  const l = await readJson<{ path: string; home: string; entries: DirEntry[] }>(r);
+
+  const l = await readJson<{ path: string; home: string; entries: Array<DirEntry> }>(r);
+
   return { ...l, crumbs: ancestry(l.path) };
 };
 
@@ -156,14 +173,20 @@ const level = async (
 const mkdir = async (ctx: ClientCtx, host: string, path: string, name: string): Promise<string> => {
   if (host === "") {
     const made = uiWorkspaceOf(ctx)?.createDirectory(path, name);
-    if (!made) throw new Error(omcT("picker.noListing"));
+
+    if (!made) {
+      throw new Error(omcT("picker.noListing"));
+    }
+
     return made;
   }
+
   const r = await fetch(`${ROUTE}/box-dirs?host=${encodeURIComponent(host)}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ path, name }),
   });
+
   return (await readJson<{ path: string }>(r)).path;
 };
 
@@ -197,7 +220,7 @@ function WorkspaceDialog({
   adoptsLocal: boolean;
 }) {
   useLocale();
-  const [ssh, setSsh] = useState<BoxRow[]>([]);
+  const [ssh, setSsh] = useState<Array<BoxRow>>([]);
   // Empty host means this PC, which is what the dropdown opens on.
   const [host, setHost] = useState("");
   // Bumped with the host so the dialog relists from that box's home on a switch.
@@ -211,17 +234,24 @@ function WorkspaceDialog({
   // reload. It now rereads when the Boxes card saves, and when the tab comes back into view, which
   // covers a box added from another tab or device.
   useEffect(() => {
-    const load = () =>
+    /** Reads the saved ssh boxes; a failed read keeps the list as it was. */
+    const load = () => {
       fetch(`${ROUTE}/ssh-boxes`)
-        .then((r) => readJson<{ boxes?: BoxRow[] }>(r))
+        .then((r) => readJson<{ boxes?: Array<BoxRow> }>(r))
         .then((b) => setSsh(b.boxes ?? []))
         .catch(() => {});
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void load();
     };
-    void load();
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        load();
+      }
+    };
+
+    load();
     window.addEventListener(BOXES_EVENT, load);
     document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       window.removeEventListener(BOXES_EVENT, load);
       document.removeEventListener("visibilitychange", onVisible);
@@ -233,6 +263,7 @@ function WorkspaceDialog({
     (path?: string, signal?: AbortSignal) => level(ctx, host, path, signal),
     [ctx, host],
   );
+
   const createDirectory = useCallback(
     (path: string, name: string) => mkdir(ctx, host, path, name),
     [ctx, host],
@@ -242,45 +273,69 @@ function WorkspaceDialog({
   // remote route names the workspace after the directory and appends the host itself, and the row
   // is committed before the Settings card rereads, so the new remote workspace lists.
   const add = (target: string) => {
-    if (submitting || busy) return;
+    if (submitting || busy) {
+      return;
+    }
+
     setSubmitting(true);
-    const done = () => {
+
+    const failed = (cause: unknown) => {
       setSubmitting(false);
-      onPicked(target);
+      onError(errorText(cause));
     };
-    const failed = (message: string) => {
-      setSubmitting(false);
-      onError(message);
-    };
+
     if (host === "") {
       // dsh's owner creates the workspace from the path it is handed; creating it here as well
       // would register the same directory twice.
       if (adoptsLocal) {
         setSubmitting(false);
         onPicked(target);
+
         return;
       }
-      ctx.workspaces.create({ path: target }).then(done).catch(failed);
+
+      // Never rejects: a refusal goes to the owner's error line.
+      void (async () => {
+        try {
+          await ctx.workspaces.create({ path: target });
+        } catch (error) {
+          failed(error);
+
+          return;
+        }
+
+        setSubmitting(false);
+        onPicked(target);
+      })();
+
       return;
     }
+
     // A remote path is never handed to dsh's owner: it would adopt it as a directory on this PC.
-    // The route pins the workspace to the box, then the dialog just closes.
-    fetch(`${ROUTE}/remote-workspaces`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: baseName(target) || host, host, remoteCwd: target }),
-    })
-      .then((r) => readJson<{ workspace?: unknown }>(r))
-      .then(() => window.dispatchEvent(new Event(RW_EVENT)))
-      .then(() => {
+    // The route pins the workspace to the box, then the dialog just closes. Never rejects: a
+    // refusal goes to the owner's error line.
+    void (async () => {
+      try {
+        await readJson<{ workspace?: unknown }>(
+          await fetch(`${ROUTE}/remote-workspaces`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ name: baseName(target) || host, host, remoteCwd: target }),
+          }),
+        );
+
+        window.dispatchEvent(new Event(RW_EVENT));
         setSubmitting(false);
         onClosed();
-      })
-      .catch(failed);
+      } catch (error) {
+        failed(error);
+      }
+    })();
   };
 
-  const boxes: BoxRow[] = [{ name: omcT("picker.thisBox"), host: "" }, ...ssh];
+  const boxes: Array<BoxRow> = [{ name: omcT("picker.thisBox"), host: "" }, ...ssh];
   const current = boxes.find((b) => b.host === host) ?? boxes[0];
+
   return (
     <DirectoryBrowser
       // Remount on a box switch: the dialog lists its home on open, and a new box is a new open.
@@ -302,7 +357,11 @@ function WorkspaceDialog({
           selectedId={host}
           onSelect={(id) => {
             setMenuOpen(false);
-            if (id === host) return;
+
+            if (id === host) {
+              return;
+            }
+
             setHost(id);
             setGeneration((n) => n + 1);
           }}
@@ -352,12 +411,21 @@ export function AddWorkflow({
   // The first to mount claims the event, the next claims it when that one unmounts.
   useEffect(() => {
     const start = () => setForcedOpen(true);
-    if (settingsOpener !== null) return;
-    settingsOpener = start;
-    document.addEventListener(OPEN_EVENT, start);
+    const claimed = settingsOpener === null;
+
+    if (claimed) {
+      settingsOpener = start;
+      document.addEventListener(OPEN_EVENT, start);
+    }
+
     return () => {
-      document.removeEventListener(OPEN_EVENT, start);
-      if (settingsOpener === start) settingsOpener = null;
+      if (claimed) {
+        document.removeEventListener(OPEN_EVENT, start);
+      }
+
+      if (settingsOpener === start) {
+        settingsOpener = null;
+      }
     };
   }, []);
 
@@ -368,16 +436,21 @@ export function AddWorkflow({
   const adopt = (path: string) => {
     if (forcedOpen) {
       setForcedOpen(false);
+
       return;
     }
+
     onPicked(path);
   };
 
   // Dismiss withdraws the flow: the forced-open dialog closes on its own, the owner's closes via
   // onCancel.
   const dismiss = () => {
-    if (forcedOpen) setForcedOpen(false);
-    else onCancel();
+    if (forcedOpen) {
+      setForcedOpen(false);
+    } else {
+      onCancel();
+    }
   };
 
   return (
@@ -403,7 +476,7 @@ export function AddWorkflow({
  * sidebar footer, where a root-scoped entry stays mounted whether the sidebar is wide or collapsed.
  */
 export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
-  const [ssh, setSsh] = useState<BoxRow[]>([]);
+  const [ssh, setSsh] = useState<Array<BoxRow>>([]);
   // The dialog is open only from the capture-click or the Settings event; the owner drives it in the
   // slot path, so this fallback owns its own open flag.
   const [open, setOpen] = useState(false);
@@ -412,17 +485,24 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
   // reload. It now rereads when the Boxes card saves, and when the tab comes back into view, which
   // covers a box added from another tab or device.
   useEffect(() => {
-    const load = () =>
+    /** Reads the saved ssh boxes; a failed read keeps the list as it was. */
+    const load = () => {
       fetch(`${ROUTE}/ssh-boxes`)
-        .then((r) => readJson<{ boxes?: BoxRow[] }>(r))
+        .then((r) => readJson<{ boxes?: Array<BoxRow> }>(r))
         .then((b) => setSsh(b.boxes ?? []))
         .catch(() => {});
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void load();
     };
-    void load();
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        load();
+      }
+    };
+
+    load();
     window.addEventListener(BOXES_EVENT, load);
     document.addEventListener("visibilitychange", onVisible);
+
     return () => {
       window.removeEventListener(BOXES_EVENT, load);
       document.removeEventListener("visibilitychange", onVisible);
@@ -434,20 +514,30 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
   // keeps working when dsh re-renders them through the same elements. The label is dsh's own
   // translation of `workspace.add`, so the selector follows the reader's language.
   useEffect(() => {
-    if (ssh.length === 0 || !uiWorkspaceOf(ctx)) return;
+    const engaged = ssh.length > 0 && uiWorkspaceOf(ctx) !== undefined;
     const label = localeOf(ctx)?.bind("workspace")("workspace.add") || "Add workspace";
     const start = () => setOpen(true);
+
     const onClick = (e: MouseEvent) => {
-      const target = e.target instanceof Element ? e.target : null;
-      if (!target?.closest(`button[aria-label="${CSS.escape(label)}"]`)) return;
+      const target = isElement(e.target) ? e.target : null;
+
+      if (!target?.closest(`button[aria-label="${CSS.escape(label)}"]`)) {
+        return;
+      }
+
       e.preventDefault();
       e.stopPropagation();
       start();
     };
-    document.addEventListener("click", onClick, true);
-    // The Settings card lists the remote workspaces but no longer takes a typed path; its button
-    // asks for this dialog by event, the two trees having no shared React parent.
-    document.addEventListener(OPEN_EVENT, start);
+
+    // Without a saved ssh box dsh's own local-only dialog is left alone.
+    if (engaged) {
+      document.addEventListener("click", onClick, true);
+      // The Settings card lists the remote workspaces but no longer takes a typed path; its button
+      // asks for this dialog by event, the two trees having no shared React parent.
+      document.addEventListener(OPEN_EVENT, start);
+    }
+
     return () => {
       document.removeEventListener("click", onClick, true);
       document.removeEventListener(OPEN_EVENT, start);

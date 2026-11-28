@@ -1,7 +1,9 @@
 import { ACCENT, SHIMMER } from "./shared.js";
 import { gated } from "./theme.js";
+import { isStyleElement } from "./dom-guards.js";
 
 const STYLE_ID = "dsh-oh-my-claude-send";
+
 /** The mark the old once-a-second scan left on a button it painted inline. */
 const OLD_MARK = "data-omc-send";
 
@@ -21,10 +23,14 @@ const OLD_MARK = "data-omc-send";
  */
 export function ensureSendButtonStyle(): void {
   const existing = document.getElementById(STYLE_ID);
-  const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
+  const el = isStyleElement(existing) ? existing : document.createElement("style");
   el.id = STYLE_ID;
   el.textContent = `${gated("send", '[class*="_card"]:has([contenteditable]) button[class*="_primary"]')} { --dsw-alias-button-info-fill: ${ACCENT}; --dsw-alias-button-info-hover: ${SHIMMER}; }`;
-  if (el !== existing) document.head.append(el);
+
+  if (el !== existing) {
+    document.head.append(el);
+  }
+
   for (const old of document.querySelectorAll<HTMLElement>(`[${OLD_MARK}]`)) {
     old.style.removeProperty("--dsw-alias-button-info-fill");
     old.style.removeProperty("--dsw-alias-button-info-hover");

@@ -1,8 +1,10 @@
 // Claude Code's compaction summary, read back from the transcript. The CLI feeds the summary
 // straight into its next prompt and never puts it on the stream, but it writes it to the session's
 // transcript as a `user` row flagged `isCompactSummary`, right after the `compact_boundary` row.
+import { fits } from "./schema-fits.js";
 import z from "@deepseek-ai/schemastery";
-import { readFromAt, sizeAt, type FsBox } from "./remote-fs.js";
+import { readFromAt, sizeAt } from "./remote-fs.js";
+import type { FsBox } from "./remote-fs.js";
 
 /** How much of the transcript's end is read: a summary runs to some 20k characters, and the
  *  turn's own rows after it are small, so this leaves room for both and for one earlier pair. */
@@ -12,10 +14,12 @@ const TextRow = z.object({
   isCompactSummary: z.boolean().default(false),
   message: z.object({ content: z.string() }),
 });
+
 const BlockRow = z.object({
   isCompactSummary: z.boolean().default(false),
   message: z.object({ content: z.array(z.object({ text: z.string().default("") })) }),
 });
+
 const BoundaryRow = z.object({
   subtype: z.string().default(""),
   compactMetadata: z.object({ preTokens: z.number().default(-1) }).default({ preTokens: -1 }),
@@ -23,23 +27,40 @@ const BoundaryRow = z.object({
 
 /** The summary row's text, or undefined when the line is not one. */
 function summaryText(line: string): string | undefined {
+  let raw: unknown;
+
   try {
-    const row = TextRow(JSON.parse(line));
-    return row.isCompactSummary ? row.message.content : undefined;
+    raw = JSON.parse(line);
   } catch {
-    try {
-      const row = BlockRow(JSON.parse(line));
-      return row.isCompactSummary ? row.message.content.map((b) => b.text).join("\n") : undefined;
-    } catch {
-      return undefined;
-    }
+    return undefined;
   }
+
+  if (fits(TextRow, raw)) {
+    const row = TextRow(raw);
+
+    return row.isCompactSummary ? row.message.content : undefined;
+  }
+
+  if (fits(BlockRow, raw)) {
+    const row = BlockRow(raw);
+
+    return row.isCompactSummary ? row.message.content.map((b) => b.text).join("\n") : undefined;
+  }
+
+  return undefined;
 }
 
 /** The `preTokens` of a `compact_boundary` row, or undefined when the line is not one. */
 function boundaryPreTokens(line: string): number | undefined {
   try {
-    const row = BoundaryRow(JSON.parse(line));
+    const raw: unknown = JSON.parse(line);
+
+    if (!fits(BoundaryRow, raw)) {
+      return undefined;
+    }
+
+    const row = BoundaryRow(raw);
+
     return row.subtype === "compact_boundary" ? row.compactMetadata.preTokens : undefined;
   } catch {
     return undefined;
@@ -51,8 +72,8 @@ function boundaryPreTokens(line: string): number | undefined {
 function stripFraming(text: string): string {
   return text
     .replace(/^This session is being continued[^\n]*\n+/, "")
-    .replace(/<tools-used-before-summary>[\s\S]*?<\/tools-used-before-summary>\s*/g, "")
-    .replace(/<\/?system-reminder>\s*/g, "")
+    .replaceAll(/<tools-used-before-summary>[\s\S]*?<\/tools-used-before-summary>\s*/g, "")
+    .replaceAll(/<\/?system-reminder>\s*/g, "")
     .trim();
 }
 
@@ -64,17 +85,33 @@ function stripFraming(text: string): string {
 export function compactSummaryOf(tail: string, preTokens?: number): string | undefined {
   let lastBoundary: number | undefined;
   let found: string | undefined;
+
   for (const line of tail.split("\n")) {
     if (line.includes('"compact_boundary"')) {
       const pre = boundaryPreTokens(line);
-      if (pre !== undefined) lastBoundary = pre;
+
+      if (pre !== undefined) {
+        lastBoundary = pre;
+      }
+
       continue;
     }
-    if (!line.includes('"isCompactSummary":true')) continue;
+
+    if (!line.includes('"isCompactSummary":true')) {
+      continue;
+    }
+
     const text = summaryText(line);
-    if (text === undefined) continue;
-    if (preTokens === undefined || lastBoundary === preTokens) found = stripFraming(text);
+
+    if (text === undefined) {
+      continue;
+    }
+
+    if (preTokens === undefined || lastBoundary === preTokens) {
+      found = stripFraming(text);
+    }
   }
+
   return found;
 }
 
@@ -86,7 +123,12 @@ export async function readCompactSummary(
   preTokens?: number,
 ): Promise<string | undefined> {
   const size = await sizeAt(box, path);
-  if (size === null) return undefined;
+
+  if (size === null) {
+    return undefined;
+  }
+
   const tail = await readFromAt(box, path, Math.max(0, size - TAIL_BYTES));
+
   return compactSummaryOf(tail, preTokens);
 }

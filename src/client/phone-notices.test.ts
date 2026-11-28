@@ -21,4 +21,5 @@ import { delayLabel, testSentence } from "./phone-notices.js";
   );
   assert.equal(testSentence({ ...none, webhook: "HTTP 500" }), "The webhook failed: HTTP 500");
 }
+
 console.log("phone-notices ok");

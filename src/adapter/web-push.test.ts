@@ -15,6 +15,7 @@ const b64u = (s: string): Buffer => Buffer.from(s, "base64url");
     b64u("yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw"),
     b64u("DGv6ra1nlYgDCS1FRnbzlw"),
   );
+
   assert.equal(
     out.subarray(0, 86).toString("base64url"),
     "DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLocInmYWAmS6TlzAC8wEqKK6PBru3jl7A8",
@@ -41,10 +42,12 @@ const b64u = (s: string): Buffer => Buffer.from(s, "base64url");
     { aud: "https://web.push.apple.com", exp: 1000 + 12 * 3600, sub: VAPID_SUBJECT },
     "aud is the endpoint's origin, never its path",
   );
+
   const pub = createPublicKey({
     key: { kty: "EC", crv: "P-256", x: keys.privateJwk.x, y: keys.privateJwk.y },
     format: "jwk",
   });
+
   assert.ok(
     verify(
       "sha256",
@@ -55,4 +58,5 @@ const b64u = (s: string): Buffer => Buffer.from(s, "base64url");
     "the ES256 signature verifies in raw r||s form",
   );
 }
+
 console.log("web-push ok");

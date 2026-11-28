@@ -1,4 +1,4 @@
-import { type FsBox } from "./remote-fs.js";
+import type { FsBox } from "./remote-fs.js";
 /** Where a file sits in the hierarchy, named as the CLI names its own layers. */
 export type InstructionKind = "Managed" | "User" | "Project" | "Local";
 /** One loaded file. `importedBy` is set when a `@` line in another file pulled it in. */
@@ -24,13 +24,13 @@ export declare const managedDir: (box?: FsBox, platform?: string) => string;
  * markdown parser in for it, fenced blocks and inline spans are cut out of the text first, which
  * agrees with the CLI on everything but a fence opened and never closed.
  */
-export declare function importsIn(text: string): string[];
+export declare function importsIn(text: string): Array<string>;
 /**
  * Every file the walk below asks for by name, in walk order. Only the fixed ones: a rules file is
  * named by a directory listing that has not happened yet, and an `@` import by a file that has not
  * been read yet, so both are found on the way through.
  */
-export declare const instructionCandidates: (cwd: string, claudeHome: string, managed?: string) => string[];
+export declare const instructionCandidates: (cwd: string, claudeHome: string, managed?: string) => Array<string>;
 /**
  * Whether a listed file may be written back. The list doubles as the write allowlist, and a `@`
  * line puts any absolute path a repo names on it. A cloned `CLAUDE.md` holding
@@ -45,4 +45,4 @@ export declare const isWritableInstructions: (path: string) => boolean;
  * A file pulled in by `@` follows the file that imported it and keeps its scope. Files that are
  * not there are skipped, and each path appears once however many times it is reached.
  */
-export declare function listInstructions(cwd: string, claudeHome: string, box?: FsBox): Promise<InstructionFile[]>;
+export declare function listInstructions(cwd: string, claudeHome: string, box?: FsBox): Promise<Array<InstructionFile>>;

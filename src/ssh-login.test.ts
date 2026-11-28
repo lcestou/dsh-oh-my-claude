@@ -1,8 +1,10 @@
 // Offline self-check: bun src/ssh-login.test.ts. Fake spawn, fake verify, no ssh, no network.
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
+import { ChildProcess } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { PassThrough, Writable } from "node:stream";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   deleteSshToken,
   loginInvocation,
@@ -18,30 +20,78 @@ import { tempDir } from "./test-tmp.js";
 /** A whole token from the earlier setup-token flow: the ~100-char shape the store insists on. */
 const FULL = `sk-ant-oat01-${"A_b9".repeat(20)}`;
 
-/** A stand-in for a child process: stdout/stderr emit data, stdin records writes, exit is driven. */
-function fakeChild() {
-  const child = new EventEmitter() as any;
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  child.written = [] as string[];
-  child.stdin = { write: (s: string) => child.written.push(s) };
-  child.killed = false;
-  child.kill = () => {
-    child.killed = true;
+/** One spawned stand-in: the real `ChildProcess` the login drives, its stdout to emit on, what
+ *  was typed at its stdin, and whether it was killed. */
+interface FakeChild {
+  proc: ChildProcess;
+  stdout: PassThrough;
+  written: Array<string>;
+  readonly killed: boolean;
+}
+
+/** A stand-in for a child process: stdout/stderr emit data, stdin records writes, exit is driven
+ *  by emitting `close` on `proc`. */
+function fakeChild(): FakeChild {
+  const stdout = new PassThrough();
+  const written: Array<string> = [];
+  let killed = false;
+
+  // Own properties: the runtime's ChildProcess serves its streams through getters.
+  const proc = Object.defineProperties(new ChildProcess(), {
+    stdout: { value: stdout },
+    stderr: { value: new PassThrough() },
+    stdin: {
+      value: new Writable({
+        write: (chunk: Buffer | string, _encoding, done) => {
+          written.push(String(chunk));
+          done();
+        },
+      }),
+    },
+    kill: {
+      value: () => {
+        killed = true;
+
+        return true;
+      },
+    },
+  });
+
+  return {
+    proc,
+    stdout,
+    written,
+    get killed() {
+      return killed;
+    },
   };
-  return child;
 }
 
 /** A spawner that emits `firstLine` on stdout shortly after start and hands the child back. */
-function spawner(firstLine: string): { spawnFn: any; child: () => any } {
-  let child: any;
-  const spawnFn = (() => {
-    child = fakeChild();
-    setTimeout(() => child.stdout.emit("data", Buffer.from(firstLine)), 5);
-    return child;
-  }) as any;
-  return { spawnFn, child: () => child };
+function spawner(firstLine: string): {
+  spawnFn: NonNullable<Parameters<typeof startSshLogin>[1]>;
+  child: () => FakeChild;
+} {
+  let current: FakeChild | undefined;
+
+  const spawnFn = () => {
+    const made = fakeChild();
+    current = made;
+    setTimeout(() => made.stdout.emit("data", Buffer.from(firstLine)), 5);
+
+    return made.proc;
+  };
+
+  return {
+    spawnFn,
+    child: () => {
+      assert.ok(current, "the login spawned its process");
+
+      return current;
+    },
+  };
 }
+
 const yes = async () => true;
 const no = async () => false;
 
@@ -84,6 +134,7 @@ const no = async () => false;
   const { spawnFn, child } = spawner(
     "If the browser didn't open, visit: https://claude.com/cai/oauth/authorize?code=true&state=abc\nPaste code here if prompted >",
   );
+
   const start = await startSshLogin("nova", spawnFn, 2000);
   assert.match(
     start.url ?? "",
@@ -95,18 +146,21 @@ const no = async () => false;
 
   // A clean code is typed; the outcome waits for the exit, then asks the box.
   let asked = 0;
+
   const verify = async () => {
     asked++;
+
     return true;
   };
+
   const submit = submitSshLoginCode("nova", "  thecode123  ", verify, 2000);
-  await new Promise((r) => setTimeout(r, 650));
+  await sleep(650);
   assert.ok(child().written.includes("thecode123"));
   // The carriage-return submit lands after the type (the Ink prompt ignores a bare newline).
   assert.ok(child().written.includes("\r"));
   assert.equal(asked, 0, "the box is not asked while the process runs");
   child().stdout.emit("data", Buffer.from("\nLogin successful\n"));
-  child().emit("close", 0);
+  child().proc.emit("close", 0);
   const res = await submit;
   assert.deepEqual(res, { done: true });
   assert.equal(asked, 1);
@@ -129,7 +183,7 @@ const no = async () => false;
   // The start resolves on its 250ms poll, so the time to live has to outlast that first.
   await startSshLogin("box-ttl", spawnFn, 2000, "claude", 700);
   assert.equal(child().killed, false);
-  await new Promise((r) => setTimeout(r, 700));
+  await sleep(700);
   assert.equal(child().killed, true, "killed once the time to live passed");
 }
 
@@ -139,10 +193,11 @@ const no = async () => false;
   const { spawnFn, child } = spawner(
     "https://claude.com/cai/oauth/authorize?code=true&state=s\nPaste code here if prompted >",
   );
+
   await startSshLogin("box0", spawnFn, 2000);
   assert.deepEqual(await pollSshLogin("box0", yes), { pending: true });
   child().stdout.emit("data", Buffer.from("\nLogin successful\n"));
-  child().emit("close", 0);
+  child().proc.emit("close", 0);
   assert.deepEqual(await pollSshLogin("box0", yes), { pending: false, done: true });
   assert.equal(child().written.length, 0, "nothing typed at a prompt that never needed a code");
 }
@@ -153,12 +208,12 @@ const no = async () => false;
   await startSshLogin("box2", spawnFn, 2000);
   const submit = submitSshLoginCode("box2", "code", no, 2000);
   child().stdout.emit("data", Buffer.from("Failed to exchange authorization code\n"));
-  child().emit("close", 1);
+  child().proc.emit("close", 1);
   const res = await submit;
   assert.equal(res.done, false);
   assert.match(res.error ?? "", /Failed to exchange/);
   const failed = await pollSshLogin("box2", no);
-  assert.ok(!failed.pending && failed.done === false);
+  assert.ok(!failed.pending && !failed.done);
 }
 
 // A login that never prints a URL times out with the last line as the reason, not a hang.

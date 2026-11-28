@@ -1,4 +1,4 @@
-import { type FsBox } from "./remote-fs.js";
+import type { FsBox } from "./remote-fs.js";
 import type { JsonValue } from "./dsh.js";
 /**
  * What a person typed, out of a prompt as the CLI stored it. dsh sends its own text in the same
@@ -46,7 +46,7 @@ export interface TranscriptListItem {
  * Transcripts in one project dir, newest first. `exclude` holds Claude session ids that already
  * belong to dsh sessions the plugin started itself (their dsh side is the source of truth).
  */
-export declare function listTranscripts(dir: string, exclude?: Set<string>): Promise<TranscriptListItem[]>;
+export declare function listTranscripts(dir: string, exclude?: Set<string>): Promise<Array<TranscriptListItem>>;
 /** The dsh content blocks a transcript turn becomes. */
 export type SeedBlock = {
     type: "text";
@@ -90,7 +90,7 @@ export interface FoldedStep {
     id: string;
     model: string | undefined;
     time: number;
-    content: SeedBlock[];
+    content: Array<SeedBlock>;
     calls: Array<{
         id: string;
         name: string;
@@ -106,12 +106,12 @@ export interface FoldedTurn {
         type: "text";
         text: string;
     }>;
-    steps: FoldedStep[];
+    steps: Array<FoldedStep>;
     /** The prompt was a slash command, rebuilt from the CLI's markup by `commandPrompt`. */
     command?: true;
 }
 export interface FoldedTranscript {
-    turns: FoldedTurn[];
+    turns: Array<FoldedTurn>;
     title: string | undefined;
     createdAt: number;
     /** Task call id to the subagent that answered it, for the records kept in a file of their own. */
@@ -132,7 +132,7 @@ export interface SeedEvent {
     time: number;
     data: Record<string, JsonValue>;
     surfaceOp?: "append";
-    sourceEventSeqs?: number[];
+    sourceEventSeqs?: Array<number>;
 }
 /** Where an appended fold continues from: the write handle's cursor and the log's last turn
  *  number. Zero for a fresh seed. With a nonzero turn the system head and the title row are
@@ -143,7 +143,7 @@ export interface SeedBase {
 }
 /** dsh session events for folded turns. Shapes follow what dsh writes itself; seqs are contiguous
  *  from `base.seq` and turns count on from `base.turn`, so a delta appends onto a stored log. */
-export declare function toSessionEvents(folded: FoldedTranscript, logVersion?: number, base?: SeedBase): SeedEvent[];
+export declare function toSessionEvents(folded: FoldedTranscript, logVersion?: number, base?: SeedBase): Array<SeedEvent>;
 /** The model the transcript's last answer ran on, undefined when no step names one. */
 export declare const lastModelOf: (folded: FoldedTranscript) => string | undefined;
 /**
@@ -157,12 +157,12 @@ export declare function settingsEvents(pick: {
     provider: string | undefined;
     model: string | undefined;
     permissionMode?: string;
-}, time: number, seq: number): SeedEvent[];
+}, time: number, seq: number): Array<SeedEvent>;
 /** What another entrypoint wrote into a stretch of transcript: its completed turns, and how many
  *  bytes of the stretch are settled. A prompt still being answered is not settled: `consumed` stops
  *  at its row, so the next read starts there and reports the whole turn once. */
 export interface ForeignTurns {
-    turns: FoldedTurn[];
+    turns: Array<FoldedTurn>;
     consumed: number;
     /** Bytes through the end of the first completed turn, or `consumed` when there is none. A live
      *  stream owns one exchange: settling it moves the baseline by this much rather than by
@@ -212,7 +212,7 @@ export declare function mirrorReply(turn: FoldedTurn, limit: number): string;
 /** The reply as one markdown chunk per rendered block, a text block or a tool call with its
  *  result, in order. Live streaming yields the chunks a running turn has gained since the last
  *  render, so a long turn fills into one dsh turn step by step instead of landing all at once. */
-export declare function mirrorReplyBlocks(turn: FoldedTurn, limit: number): string[];
+export declare function mirrorReplyBlocks(turn: FoldedTurn, limit: number): Array<string>;
 /**
  * A transcript as one Markdown document: title, date, then `## You` and `## Claude` per turn, the
  * reply rendered by the same blocks the terminal mirror draws (text, tool calls, results).

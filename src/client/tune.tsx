@@ -14,17 +14,23 @@ import {
   useNarrow,
   claudeProviderOf,
   codeInline,
+  errorText,
+  isJsonNumber,
+  isJsonObject,
+  isJsonString,
+  parseJson,
 } from "./shared.js";
-import type { ClientCtx } from "./shared.js";
-import {
-  PERMISSION_KINDS,
-  readPermissionRules,
-  setPermissionRule,
-  type PermissionKind,
-} from "../permissions.js";
-import { SCOPE_LABELS, type SettingsScopeInfo } from "./settings.js";
+import type { ClientCtx, Json, JsonObject } from "./shared.js";
+import { PERMISSION_KINDS, readPermissionRules, setPermissionRule } from "../permissions.js";
+import type { PermissionKind } from "../permissions.js";
+import { SCOPE_LABELS } from "./settings.js";
+import type { SettingsScopeInfo } from "./settings.js";
 import { t, useLocale } from "./i18n.js";
 import { SETTINGS_EVENT } from "./picker.js";
+
+/** True when `value` is one of the three rule kinds, such as a `<select>` option's value. */
+const isPermissionKind = (value: string): value is PermissionKind =>
+  PERMISSION_KINDS.some((kind) => kind === value);
 
 /** What the usage route answers about extra usage. */
 interface UsageReply {
@@ -32,7 +38,8 @@ interface UsageReply {
 }
 
 /** A Fable model, which is the family whose advisor bills to usage credits. */
-export const isFable = (value: SettingsValue) => String(value ?? "").startsWith("claude-fable");
+export const isFable = (value: SettingsValue) =>
+  isJsonString(value) && value.startsWith("claude-fable");
 
 /** The settings.json keys this tab owns. Everything else in the file is left untouched. The three
  *  attribution fields are nested under one object in the file and flat here, one row each. */
@@ -55,13 +62,22 @@ export interface Tunables {
   /** The release channel the CLI's updater and the plugin's update card follow. */
   autoUpdatesChannel?: "latest" | "stable" | "rc";
 }
+
 type TuneKey = keyof Tunables;
-/** A settings document as this tab handles it: every key open, since it edits a dozen and keeps
- *  the rest. `attribution` is the one nested object, so a value may be a settings object itself. */
-type SettingsValue = string | number | boolean | null | undefined | Settings;
-type Settings = { [key: string]: SettingsValue };
+
+/** One value of a settings document as this tab handles it, or `undefined` for a key the file
+ *  does not set. The document keeps every key open, since this tab edits a dozen and keeps the
+ *  rest; `attribution` is the one nested object it reads into. */
+type SettingsValue = Json | undefined;
+
+/** A scalar setting as text: a string as itself, a number as its digits; null, a boolean, an
+ *  object or an array is no text, so a field of the wrong type reads as unset. */
+const scalarText = (value: SettingsValue): string | undefined =>
+  isJsonString(value) ? value : isJsonNumber(value) ? String(value) : undefined;
+
 /** The CLI's own pair of cache TTLs; anything else is not a value its resolver understands. */
 const cacheTtl = (value: SettingsValue) => (value === "5m" || value === "1h" ? value : undefined);
+
 /** True only for the two prompt-cache-TTL keys, so validation applies the CLI's own `5m`/`1h`
  *  rule to just those and leaves every other row to its own check. */
 const isCacheTtlKey = (key: TuneKey) =>
@@ -69,9 +85,12 @@ const isCacheTtlKey = (key: TuneKey) =>
 
 /** The CLI's deadline enum, shared by both waiting rows. `never` is a value, not an absent key. */
 const DEADLINES = ["60s", "5m", "10m", "never"] as const;
+
 /** True only when the value equals one of the four deadline strings, so a non-string or an
  *  unknown string fails the deadline check. */
-const isDeadline = (value: SettingsValue) => DEADLINES.some((d) => d === value);
+const isDeadline = (value: SettingsValue): value is (typeof DEADLINES)[number] =>
+  DEADLINES.some((d) => d === value);
+
 /** True only for the two deadline keys, so validation checks just those against the `60s`, `5m`,
  *  `10m`, `never` set and leaves the rest to its own check. */
 const isDeadlineKey = (key: TuneKey) => key === "askUserQuestionTimeout" || key === "dialogExpiry";
@@ -80,6 +99,7 @@ const isDeadlineKey = (key: TuneKey) => key === "askUserQuestionTimeout" || key 
  *  so the row refuses it here instead of showing a number the model will never see. */
 const OUTPUT_MIN = 4000;
 const OUTPUT_MAX = 128_000;
+
 /** True only for the two output-size keys, so validation applies the 4000 to 128000 range to just
  *  those and leaves every other row to its own check. */
 const isOutputKey = (key: TuneKey) => key === "bashOutputMaxChars" || key === "taskOutputMaxChars";
@@ -94,107 +114,176 @@ export function updateSettings(
     key === "autoCompactWindow" &&
     value !== undefined &&
     !(Number.isInteger(value) && Number(value) > 0)
-  )
+  ) {
     return { error: t("tune.errCompact") };
-  if (isCacheTtlKey(key) && value !== undefined && cacheTtl(value) === undefined)
+  }
+
+  if (isCacheTtlKey(key) && value !== undefined && cacheTtl(value) === undefined) {
     return { error: t("tune.errCacheTtl") };
-  if (isDeadlineKey(key) && value !== undefined && !isDeadline(value))
+  }
+
+  if (isDeadlineKey(key) && value !== undefined && !isDeadline(value)) {
     return { error: t("tune.errDeadline") };
+  }
+
   if (
     isOutputKey(key) &&
     value !== undefined &&
     !(Number.isInteger(value) && Number(value) >= OUTPUT_MIN && Number(value) <= OUTPUT_MAX)
-  )
+  ) {
     return { error: t("tune.errOutput", { min: OUTPUT_MIN, max: OUTPUT_MAX }) };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : t("tune.errNotJson") };
   }
-  if (!(parsed instanceof Object) || Array.isArray(parsed))
+
+  let parsed: Json;
+
+  try {
+    parsed = parseJson(text);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : t("tune.errNotJson") };
+  }
+
+  if (!isJsonObject(parsed)) {
     return { error: t("tune.errNotObject") };
-  // SAFETY: the value parsed as a plain object, which is the shape the route also enforces.
-  const obj = parsed as Settings;
+  }
+
+  const obj = parsed;
   const [outer, inner] = key.split(".");
+
   if (inner === undefined) {
-    if (value === undefined) delete obj[key];
-    else obj[key] = value;
+    if (value === undefined) {
+      delete obj[key];
+    } else {
+      obj[key] = value;
+    }
   } else {
     // An empty string is what hides a trailer, so only an absent value removes the field, and the
     // `attribution` object goes with its last field rather than being left behind empty.
     const held = obj[outer ?? ""];
-    const nested: Settings = held instanceof Object && !Array.isArray(held) ? { ...held } : {};
-    if (value === undefined) delete nested[inner];
-    else nested[inner] = value;
-    if (Object.keys(nested).length === 0) delete obj[outer ?? ""];
-    else obj[outer ?? ""] = nested;
+    const nested: JsonObject = isJsonObject(held) ? { ...held } : {};
+
+    if (value === undefined) {
+      delete nested[inner];
+    } else {
+      nested[inner] = value;
+    }
+
+    if (Object.keys(nested).length === 0) {
+      delete obj[outer ?? ""];
+    } else {
+      obj[outer ?? ""] = nested;
+    }
   }
+
   // Two spaces and a trailing newline: how Claude Code writes the file itself.
   return { text: `${JSON.stringify(obj, null, 2)}\n` };
 }
 
 /** Read the seven keys out of the file; anything of the wrong type reads as unset. */
 export function readTunables(text: string): Tunables {
-  let parsed: unknown;
+  let parsed: Json;
+
   try {
-    parsed = JSON.parse(text);
+    parsed = parseJson(text);
   } catch {
     return {};
   }
-  if (!(parsed instanceof Object) || Array.isArray(parsed)) return {};
-  // SAFETY: a plain object; each field is checked against its expected type before use.
-  const obj = parsed as Settings;
+
+  if (!isJsonObject(parsed)) {
+    return {};
+  }
+
+  // Each field is checked against its expected type before use.
+  const obj = parsed;
   const out: Tunables = {};
-  const style = obj.outputStyle;
-  if (style !== null && style !== undefined && style !== "") out.outputStyle = String(style);
-  if (obj.alwaysThinkingEnabled === true) out.alwaysThinkingEnabled = true;
-  if (obj.showThinkingSummaries === true) out.showThinkingSummaries = true;
-  if (Number.isInteger(obj.autoCompactWindow))
+  const style = scalarText(obj.outputStyle);
+
+  if (style !== undefined && style !== "") {
+    out.outputStyle = style;
+  }
+
+  if (obj.alwaysThinkingEnabled === true) {
+    out.alwaysThinkingEnabled = true;
+  }
+
+  if (obj.showThinkingSummaries === true) {
+    out.showThinkingSummaries = true;
+  }
+
+  if (Number.isInteger(obj.autoCompactWindow)) {
     out.autoCompactWindow = Number(obj.autoCompactWindow);
+  }
+
   const ttl = cacheTtl(obj.promptCacheTtl);
-  if (ttl !== undefined) out.promptCacheTtl = ttl;
+
+  if (ttl !== undefined) {
+    out.promptCacheTtl = ttl;
+  }
+
   const subagentTtl = cacheTtl(obj.subagentPromptCacheTtl);
-  if (subagentTtl !== undefined) out.subagentPromptCacheTtl = subagentTtl;
+
+  if (subagentTtl !== undefined) {
+    out.subagentPromptCacheTtl = subagentTtl;
+  }
+
   // A model id, so the same reading as outputStyle: an absent, empty or boolean value is no id.
-  const advisor = obj.advisorModel;
-  if (
-    advisor !== null &&
-    advisor !== undefined &&
-    advisor !== "" &&
-    advisor !== true &&
-    advisor !== false
-  )
-    out.advisorModel = String(advisor);
-  const fallback = obj.fallbackModel;
-  if (
-    fallback !== null &&
-    fallback !== undefined &&
-    fallback !== "" &&
-    fallback !== true &&
-    fallback !== false
-  )
-    out.fallbackModel = String(fallback);
-  if (isDeadline(obj.askUserQuestionTimeout))
-    out.askUserQuestionTimeout = String(obj.askUserQuestionTimeout);
-  if (isDeadline(obj.dialogExpiry)) out.dialogExpiry = String(obj.dialogExpiry);
-  if (Number.isInteger(obj.bashOutputMaxChars))
+  const advisor = scalarText(obj.advisorModel);
+
+  if (advisor !== undefined && advisor !== "") {
+    out.advisorModel = advisor;
+  }
+
+  const fallback = scalarText(obj.fallbackModel);
+
+  if (fallback !== undefined && fallback !== "") {
+    out.fallbackModel = fallback;
+  }
+
+  const askTimeout = obj.askUserQuestionTimeout;
+
+  if (isDeadline(askTimeout)) {
+    out.askUserQuestionTimeout = askTimeout;
+  }
+
+  const dialogExpiry = obj.dialogExpiry;
+
+  if (isDeadline(dialogExpiry)) {
+    out.dialogExpiry = dialogExpiry;
+  }
+
+  if (Number.isInteger(obj.bashOutputMaxChars)) {
     out.bashOutputMaxChars = Number(obj.bashOutputMaxChars);
-  if (Number.isInteger(obj.taskOutputMaxChars))
+  }
+
+  if (Number.isInteger(obj.taskOutputMaxChars)) {
     out.taskOutputMaxChars = Number(obj.taskOutputMaxChars);
+  }
+
   // An empty string is a set value here: it is how the CLI is told to write no trailer at all.
   const attribution = obj.attribution;
-  if (attribution instanceof Object && !Array.isArray(attribution)) {
+
+  if (isJsonObject(attribution)) {
     const commit = attribution.commit;
     const pr = attribution.pr;
-    if (String(commit) === commit) out["attribution.commit"] = commit;
-    if (String(pr) === pr) out["attribution.pr"] = pr;
-    if (attribution.sessionUrl === true || attribution.sessionUrl === false)
+
+    if (isJsonString(commit)) {
+      out["attribution.commit"] = commit;
+    }
+
+    if (isJsonString(pr)) {
+      out["attribution.pr"] = pr;
+    }
+
+    if (attribution.sessionUrl === true || attribution.sessionUrl === false) {
       out["attribution.sessionUrl"] = attribution.sessionUrl;
+    }
   }
+
   const channel = obj.autoUpdatesChannel;
-  if (channel === "latest" || channel === "stable" || channel === "rc")
+
+  if (channel === "latest" || channel === "stable" || channel === "rc") {
     out.autoUpdatesChannel = channel;
+  }
+
   return out;
 }
 
@@ -216,6 +305,7 @@ export interface SettingsFile {
 /** Every settings call carries the session's own mount, so a session on a box edits that box's file. */
 export const onBox = (provider: string | undefined) =>
   provider === undefined ? "" : `?provider=${encodeURIComponent(provider)}`;
+
 /** The current settings.json for the Tune tab, fetched for the session's provider when one is
  *  given and resolved as a SettingsFile. */
 export const read = (provider: string | undefined) =>
@@ -223,6 +313,7 @@ export const read = (provider: string | undefined) =>
 
 /** Where a row's value comes from: the file when a key is set, the CLI's own default when not. */
 const source = (set: boolean) => (set ? "settings.json" : t("tune.claudeDefault"));
+
 /** The cursor a row shows: a pointer when its value can change, `not-allowed` when it is locked
  *  to the CLI default. */
 const check = (on: boolean) => (on ? "pointer" : "not-allowed");
@@ -238,6 +329,7 @@ type Apply = (
 ) => Promise<string | undefined>;
 
 const ARM_EASE = "color 150ms ease, border-color 150ms ease";
+
 /**
  * A destructive button that asks before it acts. The first click arms it and the label becomes
  * "Sure?"; the second click within five seconds runs `onAct`, and anything slower disarms it. No
@@ -265,16 +357,20 @@ export function ConfirmButton({
   useLocale();
   const [armed, setArmed] = useState(false);
   useEffect(() => {
-    if (!armed) return;
-    const timer = setTimeout(() => setArmed(false), 5000);
+    // An armed button disarms itself after 5 s.
+    const timer = armed ? setTimeout(() => setArmed(false), 5000) : undefined;
+
     return () => clearTimeout(timer);
   }, [armed]);
-  if (busyLabel !== undefined)
+
+  if (busyLabel !== undefined) {
     return (
       <button type="button" style={style} disabled>
         {busyLabel}
       </button>
     );
+  }
+
   return (
     <button
       type="button"
@@ -288,8 +384,10 @@ export function ConfirmButton({
       onClick={() => {
         if (!armed) {
           setArmed(true);
+
           return;
         }
+
         setArmed(false);
         onAct();
       }}
@@ -313,8 +411,8 @@ const THINKING_PRESETS = [
   { labelKey: "tune.think.default", tokens: null },
   { labelKey: "tune.think.off", tokens: 0 },
   { labelKey: "tune.think.4k", tokens: 4000 },
-  { labelKey: "tune.think.10k", tokens: 10000 },
-  { labelKey: "tune.think.32k", tokens: 31999 },
+  { labelKey: "tune.think.10k", tokens: 10_000 },
+  { labelKey: "tune.think.32k", tokens: 31_999 },
 ] as const;
 
 /** The Tune tab body: the settings.json keys that change how Claude answers, on the surface that
@@ -354,31 +452,33 @@ export function TuneBody({
     let live = true;
     read(provider).then(
       (f) => live && setFile(f),
-      (e: Error) => live && setError(e.message),
+      (cause: unknown) => live && setError(errorText(cause)),
     );
     fetch(`${ROUTE}/models`)
       .then((r) => readJson<{ models?: Array<{ id: string; name: string }> }>(r))
       .then((b) => live && setModels(b.models ?? []))
-      .catch((e: Error) => live && setModelsError(e.message));
+      .catch((cause: unknown) => live && setModelsError(errorText(cause)));
     fetch(`${ROUTE}/usage`)
       .then((r) => readJson<UsageReply>(r))
       .then((b) => live && setExtraUsage(b.extraUsage === true))
-      .catch((e: Error) => live && setCreditsError(e.message));
+      .catch((cause: unknown) => live && setCreditsError(errorText(cause)));
     fetch(`${ROUTE}/thinking?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<{ tokens: number | null | undefined }>(r))
       .then((b) => live && setThinkBudget(b.tokens))
       .catch(() => {});
+
     return () => {
       live = false;
     };
-  }, [sessionId]);
+  }, [sessionId, provider]);
 
-  if (!file)
+  if (!file) {
     return error ? (
       <span style={errText}>{error}</span>
     ) : (
       <span style={{ ...meta, padding: "2px 0" }}>{t("loading")}</span>
     );
+  }
 
   const settings = readTunables(file.text);
 
@@ -387,14 +487,22 @@ export function TuneBody({
   const apply: Apply = async (mutate) => {
     setBusy(true);
     setError("");
+
     try {
       const fresh = await read(provider);
+
       if (fresh.mtime !== file.mtime) {
         setFile(fresh);
+
         return t("tune.errChangedOnDisk");
       }
+
       const next = mutate(fresh.text);
-      if (next.error !== undefined) return next.error;
+
+      if (next.error !== undefined) {
+        return next.error;
+      }
+
       await readJson<{ path: string; mtime: number }>(
         await fetch(`${ROUTE}/settings${onBox(provider)}`, {
           method: "PUT",
@@ -410,9 +518,10 @@ export function TuneBody({
       // the real value only appeared when another tab remounted the panel and fetched afresh.
       setFile(await read(provider));
       window.dispatchEvent(new Event(SETTINGS_EVENT));
+
       return undefined;
-    } catch (e) {
-      return e instanceof Error ? e.message : String(e);
+    } catch (error_) {
+      return error_ instanceof Error ? error_.message : String(error_);
     } finally {
       setBusy(false);
     }
@@ -423,13 +532,21 @@ export function TuneBody({
   const writeAll = async (edits: Array<[TuneKey, string | number | boolean | undefined]>) => {
     const failure = await apply((text) => {
       let out: { text: string; error?: undefined } | { error: string } = { text };
+
       for (const [key, value] of edits) {
-        if (out.error !== undefined) return out;
+        if (out.error !== undefined) {
+          return out;
+        }
+
         out = updateSettings(out.text, key, value);
       }
+
       return out;
     });
-    if (failure) setError(failure);
+
+    if (failure) {
+      setError(failure);
+    }
   };
 
   const write = async (key: TuneKey, value: string | number | boolean | undefined) => {
@@ -442,10 +559,15 @@ export function TuneBody({
           ? t("tune.errFableUnread", { error: creditsError })
           : t("tune.errFableCredits"),
       );
+
       return;
     }
+
     const failure = await apply((text) => updateSettings(text, key, value));
-    if (failure) setError(failure);
+
+    if (failure) {
+      setError(failure);
+    }
   };
 
   /** Ride the control-request seam the CLI's own thinking hotkey uses: it lands on the running
@@ -453,6 +575,7 @@ export function TuneBody({
   const setThinking = async (tokens: number | null) => {
     setThinkBusy(true);
     setThinkErr("");
+
     try {
       const reply = await readJson<{ ok: boolean; tokens: number | null; error?: string }>(
         await fetch(`${ROUTE}/thinking`, {
@@ -461,10 +584,14 @@ export function TuneBody({
           body: JSON.stringify({ session: sessionId, tokens }),
         }),
       );
-      if (reply.ok) setThinkBudget(reply.tokens);
-      else setThinkErr(reply.error ?? t("tune.errThinkBudget"));
-    } catch (e) {
-      setThinkErr(e instanceof Error ? e.message : String(e));
+
+      if (reply.ok) {
+        setThinkBudget(reply.tokens);
+      } else {
+        setThinkErr(reply.error ?? t("tune.errThinkBudget"));
+      }
+    } catch (error_) {
+      setThinkErr(error_ instanceof Error ? error_.message : String(error_));
     } finally {
       setThinkBusy(false);
     }
@@ -478,13 +605,16 @@ export function TuneBody({
     borderTop: `1px solid ${T.border}`,
     flexWrap: "wrap",
   };
+
   const labelStyle: CSSProperties = {
     fontSize: 13,
     color: T.text,
     flex: "0 0 auto",
     minWidth: 100,
   };
+
   const sourceStyle: CSSProperties = { ...meta, marginLeft: "auto" };
+
   const controlStyle: CSSProperties = {
     display: "flex",
     gap: 10,
@@ -492,6 +622,7 @@ export function TuneBody({
     flex: narrow ? "1 1 auto" : "0 0 auto",
     minWidth: 0,
   };
+
   const thinking = settings.alwaysThinkingEnabled === true;
 
   return (
@@ -568,7 +699,7 @@ export function TuneBody({
         <span style={labelStyle}>{t("tune.thinkingBudget")}</span>
         <div style={controlStyle}>
           <select
-            value={thinkBudget == null ? "" : String(thinkBudget)}
+            value={String(thinkBudget ?? "")}
             disabled={thinkBusy}
             aria-label={t("tune.thinkingBudgetAria")}
             onChange={(e) =>
@@ -581,7 +712,7 @@ export function TuneBody({
             }}
           >
             {THINKING_PRESETS.map((p) => (
-              <option key={p.labelKey} value={p.tokens == null ? "" : String(p.tokens)}>
+              <option key={p.labelKey} value={String(p.tokens ?? "")}>
                 {t(p.labelKey)}
               </option>
             ))}
@@ -612,7 +743,10 @@ export function TuneBody({
             onBlur={(e) => {
               const typed = e.target.value.trim();
               const next = typed === "" ? undefined : Number(typed);
-              if (next !== settings.autoCompactWindow) void write("autoCompactWindow", next);
+
+              if (next !== settings.autoCompactWindow) {
+                void write("autoCompactWindow", next);
+              }
             }}
             style={{ ...inputStyle, maxWidth: narrow ? "100%" : 140 }}
           />
@@ -685,6 +819,7 @@ export function TuneBody({
             <option value="">{t("tune.off")}</option>
             {models?.map((m) => {
               const blocked = isFable(m.id) && extraUsage !== true;
+
               return (
                 <option key={m.id} value={m.id} disabled={blocked}>
                   {m.name}
@@ -809,7 +944,10 @@ export function TuneBody({
             onBlur={(e) => {
               const typed = e.target.value.trim();
               const next = typed === "" ? undefined : Number(typed);
-              if (next !== settings.bashOutputMaxChars) void write("bashOutputMaxChars", next);
+
+              if (next !== settings.bashOutputMaxChars) {
+                void write("bashOutputMaxChars", next);
+              }
             }}
             style={{ ...inputStyle, maxWidth: narrow ? "100%" : 140 }}
           />
@@ -835,7 +973,10 @@ export function TuneBody({
             onBlur={(e) => {
               const typed = e.target.value.trim();
               const next = typed === "" ? undefined : Number(typed);
-              if (next !== settings.taskOutputMaxChars) void write("taskOutputMaxChars", next);
+
+              if (next !== settings.taskOutputMaxChars) {
+                void write("taskOutputMaxChars", next);
+              }
             }}
             style={{ ...inputStyle, maxWidth: narrow ? "100%" : 140 }}
           />
@@ -926,7 +1067,10 @@ export function TuneBody({
                   }
                   onBlur={(e) => {
                     const typed = e.target.value;
-                    if (typed !== (settings[key] ?? "")) void write(key, typed);
+
+                    if (typed !== (settings[key] ?? "")) {
+                      void write(key, typed);
+                    }
                   }}
                   style={{ ...inputStyle, flex: "1 1 auto", minWidth: 0 }}
                 />
@@ -984,8 +1128,8 @@ function PermissionsBlock({
   const [kind, setKind] = useState<PermissionKind>("allow");
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
-  const [asks, setAsks] = useState<string[]>([]);
-  const [others, setOthers] = useState<SettingsScopeInfo[]>([]);
+  const [asks, setAsks] = useState<Array<string>>([]);
+  const [others, setOthers] = useState<Array<SettingsScopeInfo>>([]);
   const rules = readPermissionRules(file.text);
 
   useEffect(() => {
@@ -993,15 +1137,21 @@ function PermissionsBlock({
     // leaves them out rather than putting an error over the rules this panel does own.
     let live = true;
     const query = new URLSearchParams();
-    if (cwd !== null) query.set("cwd", cwd);
-    if (provider !== undefined) query.set("provider", provider);
+
+    if (cwd !== null) {
+      query.set("cwd", cwd);
+    }
+
+    if (provider !== undefined) {
+      query.set("provider", provider);
+    }
+
     const q = query.toString();
     fetch(`${ROUTE}/settings/scopes${q ? `?${q}` : ""}`)
-      .then((r) => readJson<{ scopes?: SettingsScopeInfo[] }>(r))
-      .then((body) => {
-        if (live) setOthers((body.scopes ?? []).filter((sc) => sc.path !== file.path));
-      })
+      .then((r) => readJson<{ scopes?: Array<SettingsScopeInfo> }>(r))
+      .then((body) => live && setOthers((body.scopes ?? []).filter((sc) => sc.path !== file.path)))
       .catch(() => {});
+
     return () => {
       live = false;
     };
@@ -1012,11 +1162,10 @@ function PermissionsBlock({
     // for the route, leaves the chips out rather than showing an error over the rules.
     let live = true;
     fetch(`${ROUTE}/permission-asks?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => readJson<{ asks?: string[] }>(r))
-      .then((body) => {
-        if (live) setAsks(body.asks ?? []);
-      })
+      .then((r) => readJson<{ asks?: Array<string> }>(r))
+      .then((body) => live && setAsks(body.asks ?? []))
       .catch(() => {});
+
     return () => {
       live = false;
     };
@@ -1025,14 +1174,19 @@ function PermissionsBlock({
   const change = async (action: "add" | "remove", ruleKind: PermissionKind, rule: string) => {
     setError("");
     const failure = await apply((text) => setPermissionRule(text, ruleKind, rule, action));
-    if (failure) setError(failure);
-    else if (action === "add") setDraft("");
+
+    if (failure) {
+      setError(failure);
+    } else if (action === "add") {
+      setDraft("");
+    }
   };
 
   const known = new Set([...rules.allow, ...rules.deny, ...rules.ask]);
   const unused = asks.filter((rule) => !known.has(rule));
 
   const heading: CSSProperties = { ...meta, marginBottom: 4, textTransform: "capitalize" };
+
   const ruleRow: CSSProperties = {
     display: "flex",
     gap: 8,
@@ -1041,6 +1195,7 @@ function PermissionsBlock({
     fontSize: 13,
     color: T.text,
   };
+
   const small: CSSProperties = {
     ...btn,
     padding: "2px 8px",
@@ -1078,7 +1233,11 @@ function PermissionsBlock({
       {others.map((scope) => {
         const theirs = readPermissionRules(scope.text);
         const kinds = PERMISSION_KINDS.filter((k) => theirs[k].length > 0);
-        if (kinds.length === 0) return null;
+
+        if (kinds.length === 0) {
+          return null;
+        }
+
         return (
           <div key={scope.scope} style={{ marginBottom: 8 }}>
             <div style={{ ...heading, textTransform: "none" }}>
@@ -1134,8 +1293,11 @@ function PermissionsBlock({
           value={kind}
           aria-label={t("tune.ruleKind")}
           onChange={(e) => {
-            // SAFETY: the options are the three kinds, so the value is one of them.
-            setKind(e.target.value as PermissionKind);
+            const picked = e.target.value;
+
+            if (isPermissionKind(picked)) {
+              setKind(picked);
+            }
           }}
           disabled={busy}
           style={{ ...select, flex: "0 0 auto", minWidth: 90, textTransform: "capitalize" }}
@@ -1159,8 +1321,9 @@ function PermissionsBlock({
               !e.nativeEvent.isComposing &&
               e.keyCode !== 229 &&
               draft.trim()
-            )
+            ) {
               void change("add", kind, draft);
+            }
           }}
           placeholder="Bash(npm run:*)"
           disabled={busy}

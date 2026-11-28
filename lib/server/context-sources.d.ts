@@ -48,7 +48,7 @@ export interface ChatFlowNode {
  * @param systemPromptSent - the session's mount passes dsh's system prompt to Claude.
  * @returns the keys to fold away, in render order.
  */
-export declare function maskedRows(order: readonly string[], node: (key: string) => ChatFlowNode | undefined, drops: ReadonlySet<ContextSource>, systemPromptSent?: boolean): string[];
+export declare function maskedRows(order: ReadonlyArray<string>, node: (key: string) => ChatFlowNode | undefined, drops: ReadonlySet<ContextSource>, systemPromptSent?: boolean): Array<string>;
 /** Every row the Settings card shows a number for. Two of them are not messages: `tools` is this
  *  plugin's own guidance appended to the system prompt, and `claudemd` is what the CLAUDE.md filter
  *  took out of dsh's instruction bundle before the rest was sent. */

@@ -50,8 +50,8 @@ export interface AccountRefusal {
  * home dir itself, this box's default config dir, and a dir another account or mount uses. Gets
  * wrong: two spellings of one folder through a symlink count as two folders.
  */
-export declare function validateAccounts(input: readonly Account[], rules: AccountRules): {
-    accounts: Account[];
+export declare function validateAccounts(input: ReadonlyArray<Account>, rules: AccountRules): {
+    accounts: Array<Account>;
 } | {
     refusal: AccountRefusal;
 };

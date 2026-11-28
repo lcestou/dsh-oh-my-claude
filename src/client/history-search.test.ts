@@ -17,23 +17,33 @@ assert.deepEqual(
   historyMatches(rows, "fix test").map((r) => r.time),
   [3],
 );
+
 assert.deepEqual(
   historyMatches(rows, "FIX").map((r) => r.time),
   [3, 2],
 );
+
 assert.deepEqual(historyMatches(rows, "nothing here"), []);
 
 // Ctrl+S and Ctrl+Down walk the scopes round and round; Ctrl+Up walks them back.
 assert.equal(nextScope("session"), "workspace");
+
 assert.equal(nextScope("workspace"), "box");
+
 assert.equal(nextScope("box"), "session");
+
 assert.equal(prevScope("session"), "box");
+
 assert.equal(prevScope("box"), "workspace");
+
 assert.equal(prevScope("workspace"), "session");
+
 assert.equal(SCOPES.length, 3);
+
 console.log("history-search: ok");
 
 // The scope button sizes to its label. At the list row's 100% it took the whole line beside the
 // search field and squeezed the field to its padding, so typed text was hidden.
 assert.equal(SCOPE_BUTTON.width, "auto");
+
 assert.equal(SCOPE_BUTTON.flex, "none");

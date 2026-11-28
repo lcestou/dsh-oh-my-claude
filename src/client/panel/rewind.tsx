@@ -1,6 +1,6 @@
 // The rewind tab: the user prompts from the route, their summary line, and the body that offers to reopen
 // the session at one of them. Its retention note and switch hook come from the restore tab.
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   btn,
   btnPrimary,
@@ -13,8 +13,9 @@ import {
   ago,
   activeClaudeSession,
   boxParam,
-  type ClientCtx,
+  errorText,
 } from "../shared.js";
+import type { ClientCtx } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
 import { retentionNote, useFeatureSwitches } from "./restore.js";
 import { RewoundEvent } from "../edit-last.js";
@@ -29,11 +30,12 @@ interface RewindPrompt {
   time: number;
   text: string;
 }
+
 interface RewindReply {
   ok: boolean;
   dryRun: boolean;
   error?: string;
-  filesChanged?: string[];
+  filesChanged?: Array<string>;
   insertions?: number;
   deletions?: number;
 }
@@ -72,7 +74,7 @@ export function RewindBody({
   useLocale();
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
   const isClaude = activeClaudeSession(ctx) === sessionId;
-  const [prompts, setPrompts] = useState<RewindPrompt[]>([]);
+  const [prompts, setPrompts] = useState<Array<RewindPrompt>>([]);
   const [picked, setPicked] = useState<RewindPrompt | null>(null);
   const [preview, setPreview] = useState<RewindReply | null>(null);
   const [busy, setBusy] = useState(false);
@@ -80,27 +82,43 @@ export function RewindBody({
   const switches = useFeatureSwitches(cwd);
   const [historyOff] = useHintFlag("historySearchOff");
 
+  // Another session or workspace starts the walk clean, during the render that switches.
+  const walkOf = cwd ? `${sessionId}\n${cwd}` : null;
+  const [walkSeen, setWalkSeen] = useState<string | null>(null);
+
+  if (walkSeen !== walkOf) {
+    setWalkSeen(walkOf);
+
+    if (walkOf !== null) {
+      setPicked(null);
+      setPreview(null);
+      setError("");
+    }
+  }
+
   useEffect(() => {
-    if (!cwd) return;
     let live = true;
-    setPicked(null);
-    setPreview(null);
-    setError("");
+
     // `full=1`: whole texts, so the prompt a rewind drops can go back into the composer as typed;
     // the row shows one line of it either way.
-    fetch(
-      `${ROUTE}/rewind?session=${encodeURIComponent(sessionId)}&cwd=${encodeURIComponent(cwd)}&full=1${boxParam(ctx, sessionId)}`,
-    )
-      .then((r) => readJson<{ prompts?: RewindPrompt[] }>(r))
-      .then((b) => live && setPrompts(b.prompts ?? []))
-      .catch((e: Error) => live && setError(e.message));
+    if (cwd) {
+      fetch(
+        `${ROUTE}/rewind?session=${encodeURIComponent(sessionId)}&cwd=${encodeURIComponent(cwd)}&full=1${boxParam(ctx, sessionId)}`,
+      )
+        .then((r) => readJson<{ prompts?: Array<RewindPrompt> }>(r))
+        .then((b) => live && setPrompts(b.prompts ?? []))
+        .catch((cause: unknown) => live && setError(errorText(cause)));
+    }
+
     return () => {
       live = false;
     };
-  }, [cwd, sessionId]);
+  }, [cwd, sessionId, ctx]);
+
   const run = async (uuid: string, dryRun: boolean) => {
     setBusy(true);
     setError("");
+
     try {
       const reply = await readJson<RewindReply>(
         await fetch(`${ROUTE}/rewind`, {
@@ -109,43 +127,64 @@ export function RewindBody({
           body: JSON.stringify({ session: sessionId, uuid, dryRun }),
         }),
       );
+
       setPreview(reply);
+
       if (!dryRun && reply.ok) {
         // The walk's list now holds prompts the transcript no longer has; recall re-reads it,
         // and the composer (`edit-last.ts`) takes the dropped prompt back to edit and resend.
         window.dispatchEvent(new RewoundEvent(sessionId, picked?.text));
         onClose();
       }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+    } catch (error_) {
+      setError(error_ instanceof Error ? error_.message : String(error_));
     } finally {
       setBusy(false);
     }
   };
+
+  /** Picks a row and asks for its dry run. Never rejects: run reports its own failure. */
   const pick = (p: RewindPrompt) => {
     setPicked(p);
     setPreview(null);
-    run(p.id, true);
+    void run(p.id, true);
   };
+
+  // The newest pick and spend, for the effect below, which runs on the flag and the list alone: a
+  // re-render for the preview must not pick (and post) again.
+  const pickRef = useRef(pick);
+  const onPickedRef = useRef(onPicked);
+
+  // After every commit, before any effect reads them: the latest-handler pattern useEffectEvent
+  // gives a newer React.
+  useLayoutEffect(() => {
+    pickRef.current = pick;
+    onPickedRef.current = onPicked;
+  });
+
   // Esc Esc: the newest prompt the person typed (not a notice this plugin sent, such as the
   // reattach line after a dsh restart) is picked once the list is in; spent at once so a Back
   // press is not undone by the next render.
   useEffect(() => {
     const latest = prompts.find((p) => !p.text.trimStart().startsWith(PLUGIN_NOTICE));
-    if (!pickLatest || latest === undefined) return;
-    onPicked?.();
-    pick(latest);
-    // Only the flag and the list: a re-render for the preview must not pick (and post) again.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- pick is a per-render closure
+
+    if (pickLatest && latest !== undefined) {
+      onPickedRef.current?.();
+      pickRef.current(latest);
+    }
   }, [pickLatest, prompts]);
 
-  if (!isClaude || !cwd) return null;
+  if (!isClaude || !cwd) {
+    return null;
+  }
+
   // History search opens on Ctrl+R, which a phone does not have, so a touch screen gets a button
   // here, the tab that already lists past prompts. A mouse never sees it.
   const historyButton = picked === null && !historyOff && touchScreen();
   // The file half of a rewind needs checkpoints; without them the button still moves the
   // conversation, so say which half is missing before it is pressed rather than after.
   const noFiles = switches?.checkpointingDisabled === true;
+
   return (
     <div style={bodyFlow}>
       {historyButton && (
@@ -209,7 +248,7 @@ export function RewindBody({
               type="button"
               style={btnPrimary}
               disabled={busy || !preview?.ok}
-              onClick={() => run(picked.id, false)}
+              onClick={() => void run(picked.id, false)}
             >
               {t("panel.rewind.action")}
             </button>

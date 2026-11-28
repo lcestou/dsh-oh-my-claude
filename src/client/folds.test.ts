@@ -5,30 +5,32 @@
 // demand the mark, because it hot-reloads into a tab whose server half is still the older build.
 // These cases pin the switch: bare glyphs claim until a marked header proves the writer marks them.
 import { strict as assert } from "node:assert";
+import type { HeaderParagraph } from "./tool-folds.js";
 
 // The predicate reads Node.TEXT_NODE, which bun has no DOM to supply.
-// SAFETY: the fake stands in for the DOM constant the browser would provide.
-(globalThis as unknown as { Node: { TEXT_NODE: number } }).Node = { TEXT_NODE: 3 };
+// The fake stands in for the DOM constant the browser would provide.
+Object.defineProperty(globalThis, "Node", { value: { TEXT_NODE: 3 }, configurable: true });
 
 const { glyphOf } = await import("./index.js");
 
 const MARK = "⁠";
 
 /** The smallest header node `glyphOf` reads: its first text child and its own attributes. */
-function head(text: string, attrs: Record<string, string> = {}): HTMLElement {
-  const node = {
+function head(text: string, attrs: Record<string, string> = {}): HeaderParagraph {
+  return {
     firstChild: { nodeType: 3, nodeValue: text },
     hasAttribute: (name: string) => name in attrs,
     getAttribute: (name: string) => attrs[name] ?? null,
     querySelector: () => null,
   };
-  return node as unknown as HTMLElement;
 }
 
 // Before any marked header: the glyph alone claims the paragraph, which is what keeps a tab folding
 // while the dsh process still holds the previous server build.
 assert.equal(glyphOf(head("❯ Bash")), "❯");
+
 assert.equal(glyphOf(head("  ▤ Read `src/x.ts`")), "▤");
+
 // A paragraph that leads with anything else is never a header, marked or not.
 assert.equal(glyphOf(head("npm test")), "");
 
@@ -37,19 +39,22 @@ assert.equal(glyphOf(head(`⌕${MARK} Grep`)), "⌕");
 
 // From here on a bare glyph is prose: the pasted shell line keeps its `❯` and its block stays open.
 assert.equal(glyphOf(head("❯ npm test")), "");
+
 // An already-folding header keeps its glyph, so the switch never reopens a block on screen.
 assert.equal(glyphOf(head("❯ Bash", { "data-omc-tool": "1" })), "❯");
+
 // And a marked one still claims, whichever way it is written.
 assert.equal(glyphOf(head(`⚙${MARK} Task`)), "⚙");
 
 // A header whose glyph was already lifted into the icon span is read from the attribute the span
 // carries, not from the text, so a repeat pass over a claimed header does not lose it.
-const lifted = {
+const lifted: HeaderParagraph = {
   firstChild: null,
   hasAttribute: () => false,
   getAttribute: () => null,
   querySelector: () => ({ getAttribute: () => "▤" }),
 };
-assert.equal(glyphOf(lifted as unknown as HTMLElement), "▤");
+
+assert.equal(glyphOf(lifted), "▤");
 
 console.log("folds ok");

@@ -14,10 +14,8 @@ import {
   newer,
   cardFor,
   ClaudeUpdater,
-  type Exec,
-  type ClaudeUpdateState,
-  type ClaudeUpdateEntry,
 } from "./claude-update.js";
+import type { Exec, ClaudeUpdateState, ClaudeUpdateEntry } from "./claude-update.js";
 import { tempDir } from "./test-tmp.js";
 
 const dir = tempDir("omc-claude-update-");
@@ -25,12 +23,14 @@ const dir = tempDir("omc-claude-update-");
 // A. latestClaude: cache, TTL, forget, junk answers, channel param.
 {
   let calls = 0;
-  const fetchFn = (async (url: string) => {
+
+  const fetchFn = async (url: string) => {
     calls++;
     assert.equal(url, "https://downloads.claude.ai/claude-code-releases/latest");
-    // SAFETY: the reader only calls `ok` and `text()`; a whole Response is more than the check needs
-    return { ok: true, text: async () => "2.1.274\n" } as Response;
-  }) as typeof fetch;
+
+    return new Response("2.1.274\n");
+  };
+
   const t0 = 1_000_000;
   assert.equal(await latestClaude("latest", fetchFn, t0), "2.1.274");
   assert.equal(await latestClaude("latest", fetchFn, t0 + 60_000), "2.1.274");
@@ -40,10 +40,13 @@ const dir = tempDir("omc-claude-update-");
 
   forgetLatestClaude();
   calls = 0;
-  const failFetch = (async () => {
+
+  const failFetch = async () => {
     calls++;
-    return { ok: false } as Response;
-  }) as typeof fetch;
+
+    return new Response(null, { status: 500 });
+  };
+
   assert.equal(await latestClaude("latest", failFetch, t0), undefined);
   assert.equal(await latestClaude("latest", failFetch, t0 + 30 * 60_000), undefined);
   assert.equal(calls, 1, "failed read cached for an hour: no new read at 30 min");
@@ -51,29 +54,40 @@ const dir = tempDir("omc-claude-update-");
   assert.equal(calls, 2, "after an hour a new read is attempted");
 
   forgetLatestClaude();
-  const junkFetch = (async () => {
-    return { ok: true, text: async () => "not a version" } as Response;
-  }) as typeof fetch;
+
+  const junkFetch = async () => {
+    return new Response("not a version");
+  };
+
   assert.equal(await latestClaude("latest", junkFetch, t0), undefined);
 
   forgetLatestClaude();
   calls = 0;
-  const stableFetch = (async (url: string) => {
+
+  const stableFetch = async (url: string) => {
     calls++;
     assert.equal(url.split("/").pop(), "stable");
-    return { ok: true, text: async () => "2.1.274\n" } as Response;
-  }) as typeof fetch;
+
+    return new Response("2.1.274\n");
+  };
+
   assert.equal(await latestClaude("stable", stableFetch, t0), "2.1.274");
 }
 
 // B. installedClaude: happy path, not-found binary, arg verification.
 {
-  const execCalls: { args: string[]; timeoutMs: number }[] = [];
+  const execCalls: Array<{ args: Array<string>; timeoutMs: number }> = [];
+
   const exec: Exec = async (args, timeoutMs) => {
     execCalls.push({ args, timeoutMs });
-    if (args[0] === "--version") return { out: "2.1.273 (Claude Code)\n" };
+
+    if (args[0] === "--version") {
+      return { out: "2.1.273 (Claude Code)\n" };
+    }
+
     return { out: "" };
   };
+
   assert.equal(await installedClaude(exec), "2.1.273");
   const notFoundExec: Exec = async () => ({ out: "", error: "not found" });
   assert.equal(await installedClaude(notFoundExec), null);
@@ -82,29 +96,44 @@ const dir = tempDir("omc-claude-update-");
 
 // C. channelFrom: defaults and recognised values; junk falls back to latest.
 assert.equal(channelFrom(undefined), "latest");
+
 assert.equal(channelFrom("{"), "latest");
+
 assert.equal(channelFrom('{"autoUpdatesChannel":"stable"}'), "stable");
+
 assert.equal(channelFrom('{"autoUpdatesChannel":"rc"}'), "rc");
+
 assert.equal(channelFrom('{"autoUpdatesChannel":"nightly"}'), "latest");
+
 assert.equal(channelFrom("[]"), "latest");
 
 // D. offBy: env wins, then settings nested env; number is not a string; wrong shape is ignored.
 assert.equal(offBy({}, undefined), undefined);
+
 assert.equal(offBy({ DISABLE_AUTOUPDATER: "1" }, undefined), "DISABLE_AUTOUPDATER");
+
 assert.equal(
   offBy({ DISABLE_UPDATES: "true", DISABLE_AUTOUPDATER: "1" }, undefined),
   "DISABLE_UPDATES",
 );
+
 assert.equal(offBy({ DISABLE_AUTOUPDATER: "0" }, undefined), undefined);
+
 assert.equal(offBy({ DISABLE_AUTOUPDATER: " Yes " }, undefined), "DISABLE_AUTOUPDATER");
+
 assert.equal(offBy({}, '{"env":{"DISABLE_AUTOUPDATER":"on"}}'), "DISABLE_AUTOUPDATER");
+
 assert.equal(offBy({}, '{"env":{"DISABLE_AUTOUPDATER":1}}'), undefined);
+
 assert.equal(offBy({}, '{"env":"x"}'), undefined);
 
 // E. lastLine: last non-empty line of out, then error; capped at 200 chars.
 assert.equal(lastLine("a\nb\n\n", undefined), "b");
+
 assert.equal(lastLine("", "err line 1\nerr line 2\n"), "err line 2");
+
 assert.equal(lastLine("", ""), undefined);
+
 assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
 
 // F. readUpdates / writeUpdates: missing file, round-trip, cross-box isolation, chain serialisation, truncation, malformed JSON, array root.
@@ -118,6 +147,7 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
     by: "button",
     ok: true,
   };
+
   await writeUpdates(dir, "this-box", { auto: true, skipped: "2.1.274", log: [e1] });
   assert.deepEqual(await readUpdates(dir, "this-box"), {
     auto: true,
@@ -146,6 +176,7 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
     by: "auto" as const,
     ok: true,
   }));
+
   await writeUpdates(dir, "many", { log: sixty });
   const manyResult = await readUpdates(dir, "many");
   assert.equal(manyResult.log.length, 50);
@@ -158,6 +189,7 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
       skipped: "nope",
     },
   });
+
   await writeFile(join(dir, "claude-updates.json"), badFile);
   assert.deepEqual(await readUpdates(dir, "this-box"), {
     log: [{ at: 1, from: null, to: "2.1.1", by: "auto", ok: true }],
@@ -186,6 +218,7 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
     auto: false,
     log: [],
   };
+
   assert.equal(newer(base), true);
   assert.equal(newer(undefined), false);
   assert.equal(newer({ ...base, off: "DISABLE_UPDATES" }), false);
@@ -217,25 +250,33 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
 {
   const dir2 = tempDir("omc-claude-update-");
   let version = "2.1.273";
-  const execCalls: string[][] = [];
+  const execCalls: Array<Array<string>> = [];
   let fetchCallCount = 0;
 
   const exec: Exec = async (args, _timeoutMs) => {
     execCalls.push(args);
-    if (args[0] === "--version") return { out: `${version} (Claude Code)\n` };
+
+    if (args[0] === "--version") {
+      return { out: `${version} (Claude Code)\n` };
+    }
+
     if (args[0] === "update") {
       version = "2.1.274";
+
       return { out: "Successfully updated to version 2.1.274\n" };
     }
+
     return { out: "" };
   };
 
-  const fetchFn = (async (_url: string) => {
+  const fetchFn = async (_url: string) => {
     fetchCallCount++;
-    return { ok: true, text: async () => "2.1.274\n" } as Response;
-  }) as typeof fetch;
 
-  const updated: string[] = [];
+    return new Response("2.1.274\n");
+  };
+
+  const updated: Array<string> = [];
+
   const u = new ClaudeUpdater({
     dir: dir2,
     host: "",
@@ -244,7 +285,7 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
     env: {},
     exec,
     fetchFn,
-    now: () => 5_000,
+    now: () => 5000,
     onUpdated: (host) => {
       updated.push(host);
     },
@@ -333,17 +374,25 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
 
   // Declined run: exec says up to date, pointer is newer.
   version = "2.1.273";
+
   const declinedExec: Exec = async (args, _timeoutMs) => {
     execCalls.push(args);
-    if (args[0] === "--version") return { out: `${version} (Claude Code)\n` };
+
+    if (args[0] === "--version") {
+      return { out: `${version} (Claude Code)\n` };
+    }
+
     if (args[0] === "update") {
       return { out: "", error: "Claude is up to date!\n" };
     }
+
     return { out: "" };
   };
-  const declinedFetch = (async () => {
-    return { ok: true, text: async () => "2.1.275\n" } as Response;
-  }) as typeof fetch;
+
+  const declinedFetch = async () => {
+    return new Response("2.1.275\n");
+  };
+
   const u2 = new ClaudeUpdater({
     dir: dir2,
     host: "",
@@ -352,11 +401,12 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
     env: {},
     exec: declinedExec,
     fetchFn: declinedFetch,
-    now: () => 5_000,
+    now: () => 5000,
     onUpdated: (host) => {
       updated.push(host);
     },
   });
+
   forgetLatestClaude();
   await u2.check();
   assert.equal(u2.state().latest, "2.1.275");
@@ -373,9 +423,14 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
   // Throwing exec: busy clears, next call is a fresh promise.
   const boomExec: Exec = async (args, _timeoutMs) => {
     execCalls.push(args);
-    if (args[0] === "update") throw new Error("boom");
+
+    if (args[0] === "update") {
+      throw new Error("boom");
+    }
+
     return { out: `${version} (Claude Code)\n` };
   };
+
   const u3 = new ClaudeUpdater({
     dir: dir2,
     host: "",
@@ -384,16 +439,19 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
     env: {},
     exec: boomExec,
     fetchFn: declinedFetch,
-    now: () => 5_000,
+    now: () => 5000,
   });
+
   await u3.check();
   const boomPromise = u3.runUpdate("button");
   let boomRejected = false;
+
   try {
     await boomPromise;
   } catch {
     boomRejected = true;
   }
+
   assert.equal(boomRejected, true);
   assert.equal(u3.state().busy, false);
   await Promise.resolve();

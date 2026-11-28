@@ -2,7 +2,8 @@
 // pull in with `@`. Read-only: the routes in sessions.ts use this list as their allowlist. The
 // walk and the import rules were read off the 2.1.263 binary; tested in instructions.test.ts.
 import { dirname, join, resolve } from "node:path";
-import { homeAt, listNamesAt, readAt, type FileRead, type FsBox } from "./remote-fs.js";
+import { homeAt, listNamesAt, readAt } from "./remote-fs.js";
+import type { FileRead, FsBox } from "./remote-fs.js";
 
 /** Where a file sits in the hierarchy, named as the CLI names its own layers. */
 export type InstructionKind = "Managed" | "User" | "Project" | "Local";
@@ -22,8 +23,14 @@ export interface InstructionFile {
  * 2.1.287 binary). An SSH box is taken to be Linux: nothing asks it what it runs.
  */
 export const managedDir = (box: FsBox = {}, platform: string = process.platform): string => {
-  if (!box.sshHost && platform === "win32") return "C:\\Program Files\\ClaudeCode";
-  if (!box.sshHost && platform === "darwin") return "/Library/Application Support/ClaudeCode";
+  if (!box.sshHost && platform === "win32") {
+    return String.raw`C:\Program Files\ClaudeCode`;
+  }
+
+  if (!box.sshHost && platform === "darwin") {
+    return "/Library/Application Support/ClaudeCode";
+  }
+
   return "/etc/claude-code";
 };
 
@@ -39,21 +46,31 @@ const MAX_IMPORT_DEPTH = 5;
  * markdown parser in for it, fenced blocks and inline spans are cut out of the text first, which
  * agrees with the CLI on everything but a fence opened and never closed.
  */
-export function importsIn(text: string): string[] {
+export function importsIn(text: string): Array<string> {
   const prose = text
     .replaceAll(/^```[\S\s]*?^```/gm, "")
     .replaceAll(/`[^`\n]*`/g, "")
     .replaceAll(/<!--[\S\s]*?-->/g, "");
-  const out: string[] = [];
+
+  const out: Array<string> = [];
+
   for (const match of prose.matchAll(/(?:^|\s)@((?:[^\s\\]|\\ )+)/g)) {
     const raw = match[1] ?? "";
-    const path = raw.split("#")[0]?.replaceAll("\\ ", " ") ?? "";
-    if (!path) continue;
+    const path = raw.split("#")[0]?.replaceAll(String.raw`\ `, " ") ?? "";
+
+    if (!path) {
+      continue;
+    }
+
     const absolute = path.startsWith("/") && path !== "/";
     const relative = path.startsWith("./") || path.startsWith("~/");
     const bare = !path.startsWith("@") && !/^[#%&*()^]/.test(path) && /^[\w.-]/.test(path);
-    if (absolute || relative || bare) out.push(path);
+
+    if (absolute || relative || bare) {
+      out.push(path);
+    }
   }
+
   return out;
 }
 
@@ -62,8 +79,9 @@ const resolveImport = (path: string, from: string, home: string): string =>
   path.startsWith("~/") ? join(home, path.slice(2)) : resolve(dirname(from), path);
 
 /** The `.md` files directly in a rules directory, sorted; a directory that is not there reads empty. */
-const rulesIn = async (box: FsBox, dir: string): Promise<string[]> => {
+const rulesIn = async (box: FsBox, dir: string): Promise<Array<string>> => {
   const names = await listNamesAt(box, dir).catch(() => []);
+
   return names
     .filter((n) => n.endsWith(".md"))
     .toSorted()
@@ -71,12 +89,17 @@ const rulesIn = async (box: FsBox, dir: string): Promise<string[]> => {
 };
 
 /** The ancestors of `cwd`, root first: the order the CLI loads them in, nearest file last. */
-const ancestors = (cwd: string): string[] => {
-  const chain: string[] = [];
+const ancestors = (cwd: string): Array<string> => {
+  const chain: Array<string> = [];
+
   for (let dir = resolve(cwd); ; dir = dirname(dir)) {
     chain.unshift(dir);
-    if (dir === dirname(dir)) break;
+
+    if (dir === dirname(dir)) {
+      break;
+    }
   }
+
   return chain;
 };
 
@@ -89,7 +112,7 @@ export const instructionCandidates = (
   cwd: string,
   claudeHome: string,
   managed: string = managedDir(),
-): string[] => [
+): Array<string> => [
   join(managed, "CLAUDE.md"),
   join(claudeHome, "CLAUDE.md"),
   ...ancestors(cwd).flatMap((dir) => [
@@ -100,7 +123,7 @@ export const instructionCandidates = (
 ];
 
 /** The rules directories the walk lists, in walk order. */
-const ruleDirs = (cwd: string, claudeHome: string, managed: string): string[] => [
+const ruleDirs = (cwd: string, claudeHome: string, managed: string): Array<string> => [
   join(managed, ".claude", "rules"),
   join(claudeHome, "rules"),
   ...ancestors(cwd).map((dir) => join(dir, ".claude", "rules")),
@@ -118,14 +141,23 @@ const ruleDirs = (cwd: string, claudeHome: string, managed: string): string[] =>
 const READ_FANOUT = 6;
 
 /** Run `job` over `items`, `limit` at a time. Results are discarded: each job caches its own. */
-const inFlight = async <T>(items: string[], limit: number, job: (item: string) => Promise<T>) => {
+const inFlight = async <T>(
+  items: Array<string>,
+  limit: number,
+  job: (item: string) => Promise<T>,
+) => {
   let next = 0;
+
   const worker = async () => {
     while (next < items.length) {
       const item = items[next++];
-      if (item !== undefined) await job(item);
+
+      if (item !== undefined) {
+        await job(item);
+      }
     }
   };
+
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 };
 
@@ -148,8 +180,8 @@ export async function listInstructions(
   cwd: string,
   claudeHome: string,
   box: FsBox = {},
-): Promise<InstructionFile[]> {
-  const files: InstructionFile[] = [];
+): Promise<Array<InstructionFile>> {
+  const files: Array<InstructionFile> = [];
   const seen = new Set<string>();
 
   // One read serves both the listing and the imports it pulls in, which is a round trip rather
@@ -157,21 +189,28 @@ export async function listInstructions(
   // is absent, a directory or unreadable does not count. This walk is discovery, and the status
   // panel is where a box that cannot be reached is reported.
   const reads = new Map<string, Promise<FileRead | null>>();
+
   const readOnce = (at: string): Promise<FileRead | null> => {
     let job = reads.get(at);
+
     if (job === undefined) {
       job = readAt(box, at).catch(() => null);
       reads.set(at, job);
     }
+
     return job;
   };
-  const lists = new Map<string, Promise<string[]>>();
-  const listOnce = (dir: string): Promise<string[]> => {
+
+  const lists = new Map<string, Promise<Array<string>>>();
+
+  const listOnce = (dir: string): Promise<Array<string>> => {
     let job = lists.get(dir);
+
     if (job === undefined) {
       job = rulesIn(box, dir);
       lists.set(dir, job);
     }
+
     return job;
   };
 
@@ -197,35 +236,63 @@ export async function listInstructions(
 
   const add = async (path: string, kind: InstructionKind, depth = 0, importedBy?: string) => {
     const at = resolve(path);
-    if (seen.has(at)) return;
+
+    if (seen.has(at)) {
+      return;
+    }
+
     seen.add(at);
     const found = await readOnce(at);
-    if (found === null) return;
+
+    if (found === null) {
+      return;
+    }
+
     const file: InstructionFile = {
       path: at,
       kind,
       size: Buffer.byteLength(found.text, "utf8"),
       mtime: found.mtimeMs,
     };
-    if (importedBy !== undefined) file.importedBy = importedBy;
+
+    if (importedBy !== undefined) {
+      file.importedBy = importedBy;
+    }
+
     files.push(file);
-    if (depth >= MAX_IMPORT_DEPTH || !found.text.includes("@")) return;
-    for (const imported of importsIn(found.text))
+
+    if (depth >= MAX_IMPORT_DEPTH || !found.text.includes("@")) {
+      return;
+    }
+
+    for (const imported of importsIn(found.text)) {
       await add(resolveImport(imported, at, home), kind, depth + 1, at);
+    }
   };
 
   await add(join(managed, "CLAUDE.md"), "Managed");
-  for (const rule of await listOnce(join(managed, ".claude", "rules"))) await add(rule, "Managed");
+
+  for (const rule of await listOnce(join(managed, ".claude", "rules"))) {
+    await add(rule, "Managed");
+  }
 
   await add(join(claudeHome, "CLAUDE.md"), "User");
-  for (const rule of await listOnce(join(claudeHome, "rules"))) await add(rule, "User");
+
+  for (const rule of await listOnce(join(claudeHome, "rules"))) {
+    await add(rule, "User");
+  }
 
   // Root first, workspace last: the nearer file is loaded later and so has the last word.
   for (const dir of ancestors(cwd)) {
     await add(join(dir, "CLAUDE.md"), "Project");
     await add(join(dir, ".claude", "CLAUDE.md"), "Project");
-    for (const rule of await listOnce(join(dir, ".claude", "rules"))) await add(rule, "Project");
+
+    for (const rule of await listOnce(join(dir, ".claude", "rules"))) {
+      await add(rule, "Project");
+    }
+
     await add(join(dir, "CLAUDE.local.md"), "Local");
   }
+
   return files;
 }

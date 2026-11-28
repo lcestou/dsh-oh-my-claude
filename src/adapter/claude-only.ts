@@ -10,6 +10,9 @@ export function claudeOnlyRefusal(
   provider: string | undefined,
   command: string,
 ): { kind: "error"; text: string } | undefined {
-  if (provider === undefined || provider.startsWith("claude-code")) return undefined;
+  if (provider === undefined || provider.startsWith("claude-code")) {
+    return undefined;
+  }
+
   return { kind: "error", text: serverText("claudeOnly", { command, provider }) };
 }

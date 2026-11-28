@@ -64,7 +64,7 @@ export interface ClaudeMdState {
  * `process.env` is authoritative for it. A box across ssh runs its own shell, which cannot be read
  * from here, so the environment is not consulted for one at all.
  */
-export declare function claudeMdDisabledBy(scopes: readonly ScopeText[], env: string | undefined, local: boolean): string | undefined;
+export declare function claudeMdDisabledBy(scopes: ReadonlyArray<ScopeText>, env: string | undefined, local: boolean): string | undefined;
 /** One settings file read back as an object, or an empty one when it is not JSON. */
 export declare const parseSettings: (text: string) => Record<string, JsonValue>;
 /**
@@ -72,6 +72,6 @@ export declare const parseSettings: (text: string) => Record<string, JsonValue>;
  * Precedence is per key and first-wins, which is how the CLI resolves one of these scalars: the
  * highest scope that names the key decides it, and a lower file naming it changes nothing.
  */
-export declare function featureSwitches(scopes: readonly ScopeText[], env: {
+export declare function featureSwitches(scopes: ReadonlyArray<ScopeText>, env: {
     CLAUDE_CODE_DISABLE_FILE_CHECKPOINTING?: string;
 }, continueAfterLimit?: boolean): FeatureSwitches;

@@ -77,7 +77,7 @@ assert.deepEqual(newlyWaiting(snap({ a: { running: true } }), snap({ a: { runnin
   assert.deepEqual(step, { pending: {} });
   step = recapNext(step.pending, ["a"], "b", t0, RECAP_AWAY_MS); // "a" stops while "b" is on screen
   assert.deepEqual(step, { pending: { a: t0 } }, "queued at the moment it stopped, not fired");
-  step = recapNext(step.pending, ["a"], "b", t0 + 5_000, RECAP_AWAY_MS); // still stopped, still away
+  step = recapNext(step.pending, ["a"], "b", t0 + 5000, RECAP_AWAY_MS); // still stopped, still away
   assert.deepEqual(
     step,
     { pending: { a: t0 } },
@@ -134,7 +134,7 @@ assert.deepEqual(newlyWaiting(snap({ a: { running: true } }), snap({ a: { runnin
   assert.equal(recapOnIn({ recapOn: true }), true);
   assert.equal(recapAwayIn(undefined), RECAP_AWAY_MS, "absent is the default bar");
   assert.equal(recapAwayIn(60_000), 60_000, "an offered choice is kept");
-  assert.equal(recapAwayIn(7_000), RECAP_AWAY_MS, "a bar nobody offers falls back");
+  assert.equal(recapAwayIn(7000), RECAP_AWAY_MS, "a bar nobody offers falls back");
   assert.equal(recapAwayIn(true), RECAP_AWAY_MS, "so does the wrong kind of value");
 }
 
@@ -186,7 +186,9 @@ assert.deepEqual(
 // The desktop-notice body for each kind of wait, compared against the literal strings rather than
 // a variable, so a changed body fails here and nowhere else.
 assert.equal(awaitingBody("approval"), "Claude needs your approval.");
+
 assert.equal(awaitingBody("question"), "Claude has a question for you.");
+
 assert.equal(awaitingBody("plan"), "Claude wants you to review a plan.");
 
 console.log("notices ok");

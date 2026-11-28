@@ -11,17 +11,21 @@
 // bridge served only there is unreachable and Claude sees zero dsh tools. Plain `dsh web` has no
 // gate and keeps the web server route alone, whose port is the one dsh was started on. The web
 // server route is registered either way, and is the fallback when the listener cannot start.
+import { setTimeout as sleep } from "node:timers/promises";
+import { idOf, isRec } from "./decode.js";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
+import { createServer } from "node:http";
+import type { Server } from "node:http";
 import { dirname, join } from "node:path";
-import type { AddressInfo } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readBody } from "./sessions.js";
 import { KEY_HEADER } from "./mcp-config.js";
+
 // The header name lives in mcp-config.ts, a leaf, so the CLI argument builder can read it without
 // importing this module, whose route helpers lead back to the adapter.
 export { KEY_HEADER } from "./mcp-config.js";
+
 import { errorText } from "./process.js";
 import type { RelayResult } from "./process.js";
 import type {
@@ -45,6 +49,7 @@ export const ALWAYS_LOAD = "anthropic/alwaysLoad";
 export const MCP_PATH = "/dsh-oh-my-claude/mcp";
 const PROTOCOL = "2025-06-18";
 const BODY_LIMIT = 1024 * 1024;
+
 /** dsh tools Claude Code already has natively; proxying them would only confuse the model.
  *  `str_replace_editor` is the file editor some presets offer in place of `edit`. */
 export const HIDDEN = new Set([
@@ -72,19 +77,27 @@ const NATIVE_TWINS = {
   glob: ["Glob"],
   grep: ["Grep"],
   ls: ["LS", "Glob"],
-} satisfies Record<string, readonly string[]>;
+} satisfies Record<string, ReadonlyArray<string>>;
 
 /**
  * The dsh tools the bridge leaves out for a CLI started with these built-ins (the `--tools` list):
  * all of `HIDDEN` for `default`, and otherwise only the file tools whose Claude Code stand-in is on.
  * `run_code` stays out either way: it is dsh's executor transport, offered alone in code mode.
  */
-export function hiddenFor(builtins: readonly string[]): ReadonlySet<string> {
-  if (builtins.includes("default")) return HIDDEN;
+export function hiddenFor(builtins: ReadonlyArray<string>): ReadonlySet<string> {
+  if (builtins.includes("default")) {
+    return HIDDEN;
+  }
+
   const on = new Set(builtins.flatMap((b) => b.split(",")).map((b) => b.trim()));
   const hidden = new Set([RUN_CODE]);
-  for (const [tool, twins] of Object.entries(NATIVE_TWINS))
-    if (twins.some((t) => on.has(t))) hidden.add(tool);
+
+  for (const [tool, twins] of Object.entries(NATIVE_TWINS)) {
+    if (twins.some((t) => on.has(t))) {
+      hidden.add(tool);
+    }
+  }
+
   return hidden;
 }
 
@@ -100,6 +113,7 @@ export const RUN_CODE = "run_code";
 export const codeModeTool = (agent: Agent): ToolSchema | undefined => {
   const offered = agent.session?.requestHeader()?.tools;
   const only = offered?.length === 1 ? offered[0] : undefined;
+
   return only?.name === RUN_CODE ? only : undefined;
 };
 
@@ -111,8 +125,9 @@ const bridgedSchemas = (
   tools: DshToolsRegistry,
   agent: Agent,
   hidden: ReadonlySet<string> = HIDDEN,
-): ToolSchema[] => {
+): Array<ToolSchema> => {
   const runCode = codeModeTool(agent);
+
   return runCode ? [runCode] : tools.schemas(agent).filter((t) => !hidden.has(t.name));
 };
 
@@ -181,9 +196,11 @@ const PROMPT_SESSION: ToolSchema = {
 /** Longest wait_session accepts. Claude's MCP client drops a call that stays silent for about
  *  300 s, so a longer wait would lose its answer; Claude calls again instead. */
 const WAIT_MAX_S = 240;
+
 /** Most assistant messages one wait_session asks dsh for. dsh's own default, pinned here because
  *  the tool description states it; WAIT_MAX_CHARS is what bounds the size. */
 const WAIT_MAX_REPLIES = 50;
+
 /** Most reply text one wait_session returns. Past its MCP output cap Claude Code moves a result
  *  out of the conversation into a file, and below the cap a long one still fills the caller's
  *  context; Chinese runs near a token a character, so the bound is set for that case. */
@@ -216,7 +233,13 @@ const OWN_TOOLS = [OPEN_SESSION, PROMPT_SESSION, WAIT_SESSION];
 
 /** A call refused for its arguments. The caller made the mistake, so it gets the message alone:
  *  no stack in the answer, no line in the log. */
-class BadCall extends Error {}
+class BadCall extends Error {
+  /** Marks the refusal; the name stays `Error`, which the text Claude reads starts with. */
+  readonly refusedCall = true;
+}
+
+/** True for a BadCall, told by its marker: the one error class the bridge throws on purpose. */
+const isBadCall = (error: unknown): boolean => isRec(error) && error.refusedCall === true;
 
 /** The open_session arguments Claude sends, as far as the bridge reads them. */
 interface OpenSessionArgs {
@@ -231,10 +254,14 @@ interface OpenSessionArgs {
 /** True when the bridge key header equals the key, compared in constant time so the answer's
  *  timing says nothing about how much of a guess was right. A missing header, a repeated one (Node
  *  hands those over as an array) or one of another length is false without comparing. */
-export function keyMatches(header: string | string[] | undefined, key: string): boolean {
-  if (typeof header !== "string") return false;
+export function keyMatches(header: string | Array<string> | undefined, key: string): boolean {
+  if (typeof header !== "string") {
+    return false;
+  }
+
   const a = Buffer.from(header);
   const b = Buffer.from(key);
+
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
@@ -267,22 +294,35 @@ export async function openSession(
   // Checked before anything is created: a call without a prompt (a model passing another tool's
   // arguments, say) would otherwise open a session whose first message reads "undefined".
   const prompt = str(args.prompt) ?? "";
-  if (!prompt.trim()) throw new BadCall("open_session needs a non-empty prompt");
+
+  if (!prompt.trim()) {
+    throw new BadCall("open_session needs a non-empty prompt");
+  }
+
   const sessionOf = agent.session;
+
   const cwd =
     sessionOf?.header?.cwd ?? (sessionOf ? ctx.sessions.get(sessionOf.id)?.header?.cwd : undefined);
+
   const workspaceId =
     str(args.workspaceId) ?? ctx.workspaceRegistry.list().find((w) => w.path === cwd)?.id;
+
   const agentPreset = str(args.agentPreset);
+
   const create: Parameters<OpenHost["sessionController"]["create"]>[0] = workspaceId
     ? { workspaceId }
     : { cwd };
-  if (agentPreset) create.agentPreset = agentPreset;
+
+  if (agentPreset) {
+    create.agentPreset = agentPreset;
+  }
+
   const { sessionId } = await ctx.sessionController.create(create);
   const provider = str(args.provider);
   const model = str(args.model);
   // From huananhuxu-debug's patch in #250: without it every child ran at the provider's default.
   const reasoningEffort = str(args.reasoningEffort);
+
   // dsh 0.2 dropped `agents.selectForNextRequest`. The controller's `selectModel` is not the
   // replacement: it also saves the pick as the box's default for every new session, so a model
   // Claude named for one child would become everyone's. The child's own agent takes the route
@@ -293,17 +333,21 @@ export async function openSession(
   if (provider && model) {
     try {
       const child = resolvedAgent(await ctx.sessionController.resolveAgent(sessionId));
+
       // An agent without a model route would leave the session on dsh's default without a word.
-      if (!child.model)
+      if (!child.model) {
         throw new Error(`session ${sessionId} has no agent to select ${provider}/${model} on`);
+      }
+
       child.model.select(
         reasoningEffort ? { provider, model, reasoningEffort } : { provider, model },
       );
-    } catch (e) {
+    } catch (error) {
       await ctx.workspaceRegistry.archiveSession(sessionId).catch(() => {});
-      throw e;
+      throw error;
     }
   }
+
   await ctx.sessionController.prompt(
     {
       sessionId,
@@ -315,6 +359,7 @@ export async function openSession(
     },
     signal,
   );
+
   return `opened session ${sessionId}${workspaceId ? ` in workspace ${workspaceId}` : ` at ${cwd}`}`;
 }
 
@@ -323,8 +368,15 @@ export async function openSession(
  *  waiting on itself would only ever time out. */
 function targetOf(agent: Agent, args: Record<string, JsonValue>, tool: string): SessionId {
   const id = str(args.sessionId);
-  if (!id) throw new BadCall(`${tool} needs a sessionId`);
-  if (agent.session?.id === id) throw new BadCall(`${tool} cannot target the calling session`);
+
+  if (!id) {
+    throw new BadCall(`${tool} needs a sessionId`);
+  }
+
+  if (agent.session?.id === id) {
+    throw new BadCall(`${tool} cannot target the calling session`);
+  }
+
   return asSessionId(id);
 }
 
@@ -359,43 +411,76 @@ async function switchRoute(
 ): Promise<ModelRoute | undefined> {
   // A wrong type is refused rather than dropped: dropped, the message would go out on the old
   // route while the caller believes it switched. A JSON null reads as "not given", as elsewhere.
-  for (const key of ["provider", "model", "reasoningEffort"] as const)
-    if (args[key] != null && typeof args[key] !== "string")
+  for (const key of ["provider", "model", "reasoningEffort"] as const) {
+    if (args[key] !== null && args[key] !== undefined && typeof args[key] !== "string") {
       throw new BadCall(`prompt_session ${key} must be a string`);
+    }
+  }
+
   const provider = str(args.provider) || undefined;
   const model = str(args.model) || undefined;
   const reasoningEffort = str(args.reasoningEffort) || undefined;
-  if (!provider && !model && !reasoningEffort) return undefined;
-  if (provider && !model) throw new BadCall("prompt_session needs a model with a provider");
+
+  if (!provider && !model && !reasoningEffort) {
+    return undefined;
+  }
+
+  if (provider && !model) {
+    throw new BadCall("prompt_session needs a model with a provider");
+  }
+
   const target = resolvedAgent(await ctx.sessionController.resolveAgent(sessionId));
-  if (!target.model) throw new Error(`session ${sessionId} has no agent to select a model on`);
+
+  if (!target.model) {
+    throw new Error(`session ${sessionId} has no agent to select a model on`);
+  }
+
   const current = target.model.current();
+
   const route: ModelRoute = {
     provider: provider ?? current?.provider ?? "",
     model: model ?? current?.model ?? "",
   };
-  if (!route.provider || !route.model)
+
+  if (!route.provider || !route.model) {
     throw new BadCall(`session ${sessionId} has no model yet; name a provider and a model`);
+  }
+
   const same = route.provider === current?.provider && route.model === current.model;
   const effort = reasoningEffort ?? (same ? current.reasoningEffort : undefined);
-  if (effort) route.reasoningEffort = effort;
+
+  if (effort) {
+    route.reasoningEffort = effort;
+  }
+
   const offered =
     same ||
     (ctx.llm.listProviders().some((p) => p.id === route.provider) &&
       (await ctx.llm.listModels(route.provider)).some((m) => m.id === route.model));
-  if (!offered)
+
+  if (!offered) {
     throw new BadCall(
       `${route.provider}/${route.model} is not a model dsh offers${provider ? "" : "; name its provider if it is another provider's model"}; nothing was sent`,
     );
+  }
+
   try {
     await ctx.llm.resolveCallConfig(route, signal);
-  } catch (e) {
+  } catch (error) {
     // Only the caller's mistake is a BadCall; an adapter or network failure is logged as itself.
-    if (e instanceof Error && "code" in e && e.code === "UNSUPPORTED_REASONING_EFFORT")
-      throw new BadCall(`${e.message}; nothing was sent`);
-    throw e;
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "UNSUPPORTED_REASONING_EFFORT"
+    ) {
+      throw new BadCall(`${error.message}; nothing was sent`);
+    }
+
+    throw error;
   }
+
   target.model.select(route);
+
   return route;
 }
 
@@ -415,7 +500,11 @@ export async function promptSession(
 ): Promise<string> {
   const sessionId = targetOf(agent, args, PROMPT_SESSION.name);
   const prompt = str(args.prompt) ?? "";
-  if (!prompt.trim()) throw new BadCall("prompt_session needs a non-empty prompt");
+
+  if (!prompt.trim()) {
+    throw new BadCall("prompt_session needs a non-empty prompt");
+  }
+
   const mode = str(args.mode) === "steer" ? "steer" : "queue";
   const { cursor } = await ctx.sessionController.state({ sessionId }, signal);
   const route = await switchRoute(ctx, sessionId, args, signal);
@@ -428,9 +517,11 @@ export async function promptSession(
     },
     signal,
   );
+
   const on = route
     ? ` on ${route.provider}/${route.model}${route.reasoningEffort ? ` at ${route.reasoningEffort} effort` : ""}`
     : "";
+
   return `sent to session ${sessionId} (${mode})${on}; afterSeq ${cursor}`;
 }
 
@@ -438,8 +529,10 @@ export async function promptSession(
  *  dsh's reasoning blocks carry a `text` field too, so the block type is what is checked: tool
  *  calls and thinking are the session's working, not its answer. */
 function replyText(data: JsonValue): string {
-  // SAFETY: dsh event data is JsonValue; an assistant message nests its blocks under `message`
-  const content = (data as { message?: { content?: unknown } } | null)?.message?.content;
+  // An assistant message nests its blocks under `message`.
+  const message = isRec(data) ? data.message : undefined;
+  const content = isRec(message) ? message.content : undefined;
+
   return (Array.isArray(content) ? content : [])
     .flatMap((b: unknown) =>
       b &&
@@ -473,17 +566,24 @@ export async function waitSession(
   const sessionId = targetOf(agent, args, WAIT_SESSION.name);
   // A JSON null reads as "not given", the way Claude sometimes fills an optional argument.
   const after = args.afterSeq ?? undefined;
+
   if (
     after !== undefined &&
     !(typeof after === "number" && Number.isSafeInteger(after) && after >= -1)
-  )
+  ) {
     throw new BadCall(
       "wait_session afterSeq must be an integer, -1 or more, as prompt_session or the last wait_session gave it",
     );
+  }
+
   const seconds = args.timeoutSeconds ?? 30;
-  if (typeof seconds !== "number")
+
+  if (typeof seconds !== "number") {
     throw new BadCall(`wait_session timeoutSeconds must be a number, 1 to ${WAIT_MAX_S}`);
+  }
+
   const timeoutMs = Math.round(Math.min(Math.max(seconds, 1), WAIT_MAX_S) * 1000);
+
   const { reason, state, output } = await ctx.sessionController.wait(
     after === undefined
       ? { sessionId, timeoutMs, maxMessages: WAIT_MAX_REPLIES }
@@ -491,6 +591,7 @@ export async function waitSession(
         { sessionId, timeoutMs, maxMessages: WAIT_MAX_REPLIES, afterSeq: after + 0 },
     signal,
   );
+
   const status = [
     `session ${sessionId}: ${reason}`,
     state.running ? "running" : "not running",
@@ -498,26 +599,38 @@ export async function waitSession(
     state.pendingInput.length > 0 ? `${state.pendingInput.length} waiting on input` : "",
     `afterSeq ${state.cursor}`,
   ].filter(Boolean);
-  const replies: string[] = [];
+
+  const replies: Array<string> = [];
   let room = WAIT_MAX_CHARS;
   let leftOut = output.truncated;
+
   // dsh hands the records newest first, so the budget goes to the latest replies.
   for (const { event } of output.records) {
     const text = replyText(event.data);
-    if (!text) continue;
+
+    if (!text) {
+      continue;
+    }
+
     if (room <= 0) {
       leftOut = true;
       break;
     }
+
     // A cut that lands inside an emoji would leave half of its surrogate pair behind.
     const kept =
       text.length > room
         ? `${text.slice(0, room).replace(/[\uD800-\uDBFF]$/, "")}… (reply cut short)`
         : text;
+
     room -= text.length;
     replies.unshift(`--- reply at seq ${event.seq} ---\n${kept}`);
   }
-  if (leftOut) replies.unshift("(older replies left out)");
+
+  if (leftOut) {
+    replies.unshift("(older replies left out)");
+  }
+
   return [status.join(", "), ...(replies.length ? replies : ["(no replies in range)"])].join("\n");
 }
 
@@ -539,6 +652,7 @@ interface ListedTool {
   annotations: { readOnlyHint: boolean };
   _meta?: Record<string, JsonValue>;
 }
+
 /** One JSON-RPC request as the CLI sends it; only `id`, `method` and `params` are read. */
 export interface JsonRpcRequest {
   jsonrpc?: string;
@@ -556,10 +670,22 @@ interface CallResult {
 }
 
 /** A JSON-RPC reply: a result, or an error object. */
+/** What the bridge answers a JSON-RPC request with: the handshake, an empty pong, the tool list,
+ *  or a call's result. */
+export type JsonRpcResult =
+  | {
+      protocolVersion: string;
+      capabilities: { tools: Record<string, never> };
+      serverInfo: { name: string; version: string };
+    }
+  | Record<string, never>
+  | { tools: Array<ListedTool> }
+  | CallResult;
+
 export interface JsonRpcReply {
   jsonrpc: "2.0";
   id: JsonValue | undefined;
-  result?: object;
+  result?: JsonRpcResult;
   error?: { code: number; message: string };
 }
 
@@ -602,6 +728,7 @@ export interface RpcEnv {
  *  ties the request to the exact block in the stream; undefined when the CLI sends none. */
 const toolUseIdOf = (msg: JsonRpcRequest): string | undefined => {
   const meta = msg.params?.["_meta"];
+
   return meta && typeof meta === "object" && !Array.isArray(meta)
     ? str(meta["claudecode/toolUseId"])
     : undefined;
@@ -627,19 +754,36 @@ export async function handleRpc(
 ): Promise<JsonRpcReply | null> {
   // The bridge's own tools the host provided, by name; dsh never sees these.
   const own = new Map<string, (args: Record<string, JsonValue>) => Promise<string>>();
-  if (open) own.set(OPEN_SESSION.name, open);
-  if (prompt) own.set(PROMPT_SESSION.name, prompt);
-  if (wait) own.set(WAIT_SESSION.name, wait);
-  const reply = (result: object): JsonRpcReply => ({ jsonrpc: "2.0", id: msg.id, result });
+
+  if (open) {
+    own.set(OPEN_SESSION.name, open);
+  }
+
+  if (prompt) {
+    own.set(PROMPT_SESSION.name, prompt);
+  }
+
+  if (wait) {
+    own.set(WAIT_SESSION.name, wait);
+  }
+
+  const reply = (result: JsonRpcResult): JsonRpcReply => ({ jsonrpc: "2.0", id: msg.id, result });
+
   /** Writes a failed call to the log with its stack, and returns that stack. */
   const logged = (e: unknown): string => {
     const stack = e instanceof Error ? (e.stack ?? e.message) : String(e);
     log?.("warn", `mcp bridge: ${str(msg.params?.name) ?? msg.method} failed: ${stack}`);
+
     return stack;
   };
+
   /** The reply for a failed dsh tool: logged, and answered with the stack, as it always was. */
   const failed = (e: unknown): JsonRpcReply => errorReply(msg.id, logged(e));
-  if (msg.id === undefined) return null;
+
+  if (msg.id === undefined) {
+    return null;
+  }
+
   switch (msg.method) {
     case "initialize":
       return reply({
@@ -664,79 +808,122 @@ export async function handleRpc(
               // changes files: run in parallel with other calls, two writes could race.
               annotations: { readOnlyHint: !FILE_WRITERS.has(t.name) },
             };
+
             // Claude Code defers every MCP tool behind ToolSearch, however few there are (2.1.323
             // with five), so a model would start with no dsh tool in view. This key, which the
             // CLI reads per tool, keeps one loaded; a tool dsh defers itself stays deferred.
             // `_meta` is MCP's own name for the field.
-            if (alwaysLoad && t.deferLoading !== true) listed["_meta"] = { [ALWAYS_LOAD]: true };
+            if (alwaysLoad && t.deferLoading !== true) {
+              listed["_meta"] = { [ALWAYS_LOAD]: true };
+            }
+
             return listed;
           })
           .concat(
-            OWN_TOOLS.filter((t) => own.has(t.name)).map((t) => ({
-              name: t.name,
-              description: t.description,
-              inputSchema: t.parameters,
-              // prompt_session changes another session, so the CLI runs it on its own: batched
-              // beside a wait_session, the wait could otherwise read the session before it lands.
-              annotations: { readOnlyHint: t !== PROMPT_SESSION },
-            })),
+            OWN_TOOLS.flatMap((t) =>
+              !own.has(t.name)
+                ? []
+                : [
+                    {
+                      name: t.name,
+                      description: t.description,
+                      inputSchema: t.parameters,
+                      // prompt_session changes another session, so the CLI runs it on its own: batched
+                      // beside a wait_session, the wait could otherwise read the session before it lands.
+                      annotations: { readOnlyHint: t !== PROMPT_SESSION },
+                    },
+                  ],
+            ),
           ),
       });
     case "tools/call": {
       const name = str(msg.params?.name) ?? "";
       const rawArgs = msg.params?.arguments;
+
       const args: Record<string, JsonValue> =
         rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs) ? rawArgs : {};
+
       // First, ahead of the bridge's own tools and code mode: plan mode runs hinted tools unasked.
-      if (planRefuses(name, mode?.())) return errorReply(msg.id, PLAN_REFUSAL);
+      if (planRefuses(name, mode?.())) {
+        return errorReply(msg.id, PLAN_REFUSAL);
+      }
+
       const ownTool = own.get(name);
+
       if (ownTool) {
         try {
           return reply({ content: [{ type: "text", text: await ownTool(args) }] });
-        } catch (e) {
+        } catch (error) {
           // The message alone goes back: a stack of plugin and dsh paths tells Claude nothing
           // about a mistyped session id. A refused argument is not logged either.
-          if (!(e instanceof BadCall)) logged(e);
-          return errorReply(msg.id, e);
+          if (!isBadCall(error)) {
+            logged(error);
+          }
+
+          return errorReply(msg.id, error);
         }
       }
+
       const codeMode = codeModeTool(agent) !== undefined;
-      if (codeMode && name !== RUN_CODE)
+
+      if (codeMode && name !== RUN_CODE) {
         return errorReply(
           msg.id,
           `only ${RUN_CODE} is callable directly in code mode; call ${name} from a ${RUN_CODE} program`,
         );
+      }
+
       // run_code is dsh's executor transport, not a registered tool: only a live turn's relay can run it.
-      if (codeMode && !relay) return errorReply(msg.id, `${RUN_CODE} needs a live dsh turn`);
+      if (codeMode && !relay) {
+        return errorReply(msg.id, `${RUN_CODE} needs a live dsh turn`);
+      }
+
       const tool = codeMode || hidden.has(name) ? undefined : tools.get(name, agent);
-      if (!tool && !codeMode) return errorReply(msg.id, `unknown tool ${name}`);
+
+      if (!tool && !codeMode) {
+        return errorReply(msg.id, `unknown tool ${name}`);
+      }
+
       try {
         // A live Claude turn takes the call first: dsh then runs the tool itself and renders it
         // natively (subagent cards, counts, notices). Otherwise execute it here.
         const relayed = relay ? await relay(name, args, signal, toolUseIdOf(msg)) : undefined;
+
         if (relayed) {
           const result: CallResult = {
             content: [{ type: "text", text: relayed.text }],
           };
-          for (const image of relayed.images ?? [])
+
+          for (const image of relayed.images ?? []) {
             result.content.push({ type: "image", data: image.data, mimeType: image.mediaType });
-          if (relayed.isError) result.isError = true;
+          }
+
+          if (relayed.isError) {
+            result.isError = true;
+          }
+
           return reply(result);
         }
-        if (!tool) return errorReply(msg.id, `${RUN_CODE} needs a live dsh turn`);
+
+        if (!tool) {
+          return errorReply(msg.id, `${RUN_CODE} needs a live dsh turn`);
+        }
+
         const exec = { agent, signal, name, arguments: args, callId: randomUUID() };
         const returned = await tool.execute(args, exec);
         const rendered = tool.output?.render ? tool.output.render(args, returned) : returned;
+
         return reply({ content: [{ type: "text", text: textOf(rendered) }] });
-      } catch (e) {
-        return failed(e);
+      } catch (error) {
+        return failed(error);
       }
     }
+
     default:
       return {
         jsonrpc: "2.0",
         id: msg.id,
-        error: { code: -32601, message: `unknown method ${msg.method}` },
+        error: { code: -32_601, message: `unknown method ${msg.method}` },
       };
   }
 }
@@ -766,7 +953,7 @@ export interface BridgeOptions {
   mode?: (sessionId: string) => string | undefined;
   /** The Claude Code built-ins a session's CLI is started with (`builtinTools`), which decide the
    *  dsh file tools the bridge leaves out (`hiddenFor`). Every one of them when not given. */
-  builtins?: (sessionId: string) => readonly string[];
+  builtins?: (sessionId: string) => ReadonlyArray<string>;
   /** Whether a session's tools follow dsh's own deferral (`toolLoading: dsh`). */
   dshLoading?: (sessionId: string) => boolean;
   /** Path of a file holding the bridge key; created once, reused across restarts. */
@@ -809,15 +996,28 @@ function stableKey(file: string): string {
   try {
     mkdirSync(dirname(file), { recursive: true });
     chmodSync(dirname(file), 0o700);
-  } catch {}
+  } catch {
+    // Best effort: the key file below is still written owner-only.
+  }
+
   try {
     const k = readFileSync(file, "utf8").trim();
-    if (/^[0-9a-f-]{36}$/.test(k)) return k;
-  } catch {}
+
+    if (/^[0-9a-f-]{36}$/.test(k)) {
+      return k;
+    }
+  } catch {
+    // No key yet: a new one is made below.
+  }
+
   const k = randomUUID();
+
   try {
     writeFileSync(file, k, { mode: 0o600 });
-  } catch {}
+  } catch {
+    // Unwritable: the key still serves this mount, and the next one makes its own.
+  }
+
   return k;
 }
 
@@ -833,7 +1033,7 @@ export interface McpBridge {
   /** The tools `tools/list` will answer that session with, the bridge's own included, so the system
    *  prompt can name the ones that are really there. Undefined when the session has no live agent
    *  or dsh refuses the listing; the bridge has nothing for that session either. */
-  toolsFor: (sessionId: string) => ToolSchema[] | undefined;
+  toolsFor: (sessionId: string) => Array<ToolSchema> | undefined;
   /** How many requests from that session the bridge is answering or holding right now. A
    *  `mcp_reconnect` closes the connection they ride on and fails each of them. */
   openCalls: (sessionId: string) => number;
@@ -843,8 +1043,14 @@ export interface McpBridge {
 function readPortFile(file: string): number | undefined {
   try {
     const n = Number.parseInt(readFileSync(file, "utf8").trim(), 10);
-    if (Number.isInteger(n) && n > 0 && n <= 65535) return n;
-  } catch {}
+
+    if (Number.isInteger(n) && n > 0 && n <= 65_535) {
+      return n;
+    }
+  } catch {
+    // No file yet: the mount takes any free port.
+  }
+
   return undefined;
 }
 
@@ -853,7 +1059,9 @@ function writePortFile(file: string, port: number): void {
   try {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, `${port}\n`);
-  } catch {}
+  } catch {
+    // Only the reuse is lost, never the mount.
+  }
 }
 
 /**
@@ -864,11 +1072,13 @@ function writePortFile(file: string, port: number): void {
 export function webServerBase(webServer: Pick<WebServer, "port" | "host">): string {
   const host = webServer.host?.trim() ?? "";
   const wildcard = host === "" || host === "0.0.0.0" || host === "::" || host === "[::]";
+
   const addr = wildcard
     ? "127.0.0.1"
     : host.includes(":") && !host.startsWith("[")
       ? `[${host}]`
       : host;
+
   return `http://${addr}:${webServer.port}`;
 }
 
@@ -907,9 +1117,14 @@ export async function probeRoute(
       redirect: "manual",
       signal: AbortSignal.timeout(5000),
     });
+
     await res.body?.cancel();
+
     // A 5xx is a server not ready yet (dsh booting, a proxy before its upstream), not a gate.
-    if (res.status >= 500) return "unreachable";
+    if (res.status >= 500) {
+      return "unreachable";
+    }
+
     return res.status === 405 ? "open" : "gated";
   } catch {
     return "unreachable";
@@ -929,26 +1144,34 @@ async function startLoopback(
 ): Promise<{ url: string; close: () => void } | undefined> {
   const wanted = portFile ? readPortFile(portFile) : undefined;
   const attempts = wanted === undefined ? [0] : [wanted, 0];
+
   for (const port of attempts) {
     try {
       const server = await listenOnce(handler, port);
       // SAFETY: a TCP listener bound to 127.0.0.1 reports AddressInfo; string is Unix sockets only
-      const address = server.address() as AddressInfo | string | null;
+      const address = server.address();
       const actual = typeof address === "object" && address !== null ? address.port : undefined;
+
       if (actual === undefined) {
         server.close();
         continue;
       }
-      if (portFile) writePortFile(portFile, actual);
+
+      if (portFile) {
+        writePortFile(portFile, actual);
+      }
+
       server.on("error", (e) => log("warn", `mcp bridge loopback: ${errorText(e)}`));
+
       return { url: `http://127.0.0.1:${actual}`, close: () => server.close() };
-    } catch (e) {
+    } catch (error) {
       log(
         "warn",
-        `mcp bridge: loopback listen on ${port === 0 ? "an ephemeral port" : `port ${port}`} failed: ${errorText(e)}`,
+        `mcp bridge: loopback listen on ${port === 0 ? "an ephemeral port" : `port ${port}`} failed: ${errorText(error)}`,
       );
     }
   }
+
   return undefined;
 }
 
@@ -976,15 +1199,17 @@ export function registerMcpBridge(
     agentWaitMs = AGENT_WAIT_MS,
   }: BridgeOptions,
 ): Promise<McpBridge> {
-  // SAFETY: the key symbol is this plugin's own key on globalThis, typed here once
-  const g = globalThis as typeof globalThis & { [KEY_REGISTRY]?: string };
+  // The key symbol is this plugin's own key on globalThis, typed here once
+  const g: typeof globalThis & { [KEY_REGISTRY]?: string } = globalThis;
   // A key file keeps the bridge key stable across dsh restarts, so a Claude process that outlived
   // dsh (keeper mode) still authenticates against the new bridge.
   const key = (g[KEY_REGISTRY] ??= keyFile ? stableKey(keyFile) : randomUUID());
+
   const loopPortFile =
     portFile === null
       ? undefined
       : (portFile ?? (keyFile ? join(dirname(keyFile), "mcp-port") : undefined));
+
   return new Promise((resolve, reject) => {
     ctx.inject?.(
       ["webServer", "tools", "agents", "sessions", "sessionController", "workspaceRegistry"],
@@ -992,7 +1217,11 @@ export function registerMcpBridge(
       (host) =>
         void (async () => {
           const { webServer, tools, agents, sessions, sessionController, workspaceRegistry } = host;
-          if (!webServer || !tools || !sessionController) return;
+
+          if (!webServer || !tools || !sessionController) {
+            return;
+          }
+
           const openHost: OpenHost = { sessions, workspaceRegistry, sessionController };
           // The plugin's own context, as adapter.ts reads it: `llm` is in its inject list.
           const promptHost: PromptHost = { sessionController, llm: ctx.llm };
@@ -1007,62 +1236,95 @@ export function registerMcpBridge(
           host.on?.(
             "agent/created",
             (payload) => {
-              // SAFETY: dsh's agent/created carries { agent, source }; only the agent's id is read
-              const id = (payload as { agent?: { id?: string } } | undefined)?.agent?.id;
-              if (id !== undefined) gaveUp.delete(id);
+              // dsh's agent/created carries { agent, source }; only the agent's id is read.
+              const id = isRec(payload) ? idOf(payload.agent) : undefined;
+
+              if (id !== undefined) {
+                gaveUp.delete(id);
+              }
+
               // Each wake removes itself from the set; a Set iterates safely past that.
-              for (const wake of id === undefined ? [] : (waiting.get(id) ?? [])) wake();
+              for (const wake of id === undefined ? [] : (waiting.get(id) ?? [])) {
+                wake();
+              }
             },
             { global: true },
           );
+
           /** The session's agent once dsh has it again, or undefined past the wait or when the
            *  client gives up. Only sessions dsh is expected to bring back wait at all. */
           const agentFor = async (sessionId: string, signal: AbortSignal) => {
             const id = asSessionId(sessionId);
             const now = agents.get(id);
-            if (now || signal.aborted || gaveUp.has(sessionId) || !awaitsAgent?.(sessionId))
+
+            if (now || signal.aborted || gaveUp.has(sessionId) || !awaitsAgent?.(sessionId)) {
               return now;
+            }
+
             const since = Date.now();
             let timedOut = false;
+
             const agent = await new Promise<ReturnType<typeof agents.get>>((settle) => {
               const set = waiting.get(sessionId) ?? new Set<() => void>();
               waiting.set(sessionId, set);
+
               const done = () => {
                 clearTimeout(timer);
                 signal.removeEventListener("abort", done);
                 set.delete(done);
-                if (set.size === 0) waiting.delete(sessionId);
+
+                if (set.size === 0) {
+                  waiting.delete(sessionId);
+                }
+
                 settle(agents.get(id));
               };
+
               const timer = setTimeout(() => {
                 timedOut = true;
                 done();
               }, agentWaitMs);
+
               timer.unref?.();
               signal.addEventListener("abort", done, { once: true });
               set.add(done);
             });
-            if (!agent && timedOut) gaveUp.add(sessionId);
+
+            if (!agent && timedOut) {
+              gaveUp.add(sessionId);
+            }
+
             log(
               "info",
               `mcp bridge: a call for ${sessionId} waited ${Date.now() - since} ms for its agent: ${agent ? "served" : "none came"}`,
             );
+
             return agent;
           };
+
           const serve = async (req: IncomingMessage, res: ServerResponse) => {
-            if (!keyMatches(req.headers[KEY_HEADER], key))
+            if (!keyMatches(req.headers[KEY_HEADER], key)) {
               return send(res, 403, { error: "forbidden" });
-            if (req.method !== "POST") return send(res, 405, { error: "POST only" });
+            }
+
+            if (req.method !== "POST") {
+              return send(res, 405, { error: "POST only" });
+            }
+
             const sessionId = decodeURIComponent(
               (req.url ?? "").slice(MCP_PATH.length + 1).split("?")[0] ?? "",
             );
+
             const controller = new AbortController();
             // Node fires the request's own "close" once the body is consumed; the response's
             // fires when the client actually goes away.
             res.on("close", () => {
-              if (!res.writableFinished) controller.abort();
+              if (!res.writableFinished) {
+                controller.abort();
+              }
             });
             open.set(sessionId, (open.get(sessionId) ?? 0) + 1);
+
             try {
               // The body is read before any wait for the agent, so the server's request timeout
               // never cuts a call that is only waiting.
@@ -1071,8 +1333,11 @@ export function registerMcpBridge(
               // while the Claude process that outlived dsh is still mid-turn.
               // Answering its calls 404 meanwhile made it give up its own turn for broken tools.
               const agent = await agentFor(sessionId, controller.signal);
-              if (!agent)
+
+              if (!agent) {
                 return send(res, 404, { error: `no live agent for session ${sessionId}` });
+              }
+
               const out = await handleRpc(msg, {
                 tools,
                 agent,
@@ -1090,20 +1355,28 @@ export function registerMcpBridge(
                 alwaysLoad: dshLoading?.(sessionId) === true,
                 log,
               });
+
               return out === null ? send(res, 202) : send(res, 200, out);
-            } catch (e) {
-              log("warn", `mcp bridge: ${errorText(e)}`);
-              return send(res, 400, { error: errorText(e) });
+            } catch (error) {
+              log("warn", `mcp bridge: ${errorText(error)}`);
+
+              return send(res, 400, { error: errorText(error) });
             } finally {
               const left = (open.get(sessionId) ?? 1) - 1;
-              if (left > 0) open.set(sessionId, left);
-              else open.delete(sessionId);
+
+              if (left > 0) {
+                open.set(sessionId, left);
+              } else {
+                open.delete(sessionId);
+              }
             }
           };
+
           // Desktop provides this service from its launcher, before any profile plugin loads, and
           // gates on it per request; its presence is the gate. Read by name so a host without it
           // (every plain `dsh web`) answers undefined and runs exactly the path it always has.
           const gated = host.get?.("desktopBrowserAccess") !== undefined;
+
           // The loopback listener is what new Claude processes get there: it answers on 127.0.0.1
           // no matter what gate sits on the web server routes.
           /** Starts the loopback listener serving the bridge; undefined when no port would bind. */
@@ -1111,17 +1384,22 @@ export function registerMcpBridge(
             startLoopback(
               log,
               (req, res) => {
-                serve(req, res).catch((e: unknown) =>
-                  log("warn", `mcp bridge loopback: ${errorText(e)}`),
+                serve(req, res).catch((error: unknown) =>
+                  log("warn", `mcp bridge loopback: ${errorText(error)}`),
                 );
               },
               loopPortFile,
             );
+
           let loopback = gated ? await listen() : undefined;
           let disposed = false;
-          if (loopback) log("info", `mcp bridge: loopback listener on ${loopback.url}`);
-          else if (gated)
+
+          if (loopback) {
+            log("info", `mcp bridge: loopback listener on ${loopback.url}`);
+          } else if (gated) {
             log("warn", "mcp bridge: no loopback listener, falling back to the web server route");
+          }
+
           // The listen above is awaited, so the scope may be gone by now (a reload mid-mount). An
           // effect that cannot register would leave the listener holding the port with no owner.
           try {
@@ -1133,20 +1411,27 @@ export function registerMcpBridge(
                 auth: "anonymous",
                 handler: serve,
               });
+
               return () => {
                 disposed = true;
                 loopback?.close();
-                if (typeof off === "function") off();
+
+                if (typeof off === "function") {
+                  off();
+                }
               };
             });
-          } catch (e) {
+          } catch (error) {
             // Rejecting hands the caller its "bridge unavailable" path instead of a promise that
             // never settles.
             loopback?.close();
-            reject(e instanceof Error ? e : new Error(errorText(e)));
+            reject(error instanceof Error ? error : new Error(errorText(error)));
+
             return;
           }
+
           const webBase = webServerBase(webServer);
+
           const bridge: McpBridge = {
             base: loopback?.url ?? webBase,
             via: loopback ? "loopback" : "webserver",
@@ -1155,6 +1440,7 @@ export function registerMcpBridge(
               try {
                 const agent = agents.get(asSessionId(sessionId));
                 const hidden = builtins ? hiddenFor(builtins(sessionId)) : HIDDEN;
+
                 return agent ? [...bridgedSchemas(tools, agent, hidden), ...OWN_TOOLS] : undefined;
               } catch {
                 return undefined;
@@ -1162,26 +1448,50 @@ export function registerMcpBridge(
             },
             openCalls: (sessionId) => open.get(sessionId) ?? 0,
           };
+
           resolve(bridge);
-          if (loopback) return;
+
+          if (loopback) {
+            return;
+          }
+
           // The mount runs before dsh's web server listens, so the probe retries until something
           // answers. Processes started before it settles keep the web server URL; at boot that is
           // only keepers, whose URL was fixed when they were spawned.
           for (let i = 0; i < PROBE_ATTEMPTS; i++) {
-            if (i > 0) await new Promise((r) => setTimeout(r, PROBE_RETRY_MS).unref?.());
-            if (disposed) return;
+            if (i > 0) {
+              await sleep(PROBE_RETRY_MS, undefined, { ref: false });
+            }
+
+            if (disposed) {
+              return;
+            }
+
             const reach = await probeRoute(webBase, key);
-            if (reach === "unreachable") continue;
-            if (reach === "open" || disposed) return;
+
+            if (reach === "unreachable") {
+              continue;
+            }
+
+            if (reach === "open" || disposed) {
+              return;
+            }
+
             const started = await listen();
+
             if (!started) {
               log(
                 "warn",
                 `mcp bridge: ${webBase}${MCP_PATH} is gated and no loopback listener started`,
               );
+
               return;
             }
-            if (disposed) return started.close();
+
+            if (disposed) {
+              return started.close();
+            }
+
             loopback = started;
             bridge.base = started.url;
             bridge.via = "loopback";
@@ -1189,10 +1499,13 @@ export function registerMcpBridge(
               "info",
               `mcp bridge: ${webBase}${MCP_PATH} is gated; loopback listener on ${started.url}`,
             );
+
             return;
           }
-          if (!disposed)
+
+          if (!disposed) {
             log("warn", `mcp bridge: ${webBase}${MCP_PATH} never answered; staying on it`);
+          }
         })(),
     );
   });

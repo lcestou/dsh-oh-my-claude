@@ -3,18 +3,21 @@
 import { strict as assert } from "node:assert";
 import type { ClientCtx } from "./shared.js";
 import { claudeRunningTitles } from "./index.js";
+import { fakeClientCtx } from "../test-context.js";
 
 // A cold ctx: `directoryFor` throws because the tab never opened these rows, so isClaudeSession
 // falls back to the list projection, and running + displayTitle come off each row.
-const coldCtx = (byId: Record<string, unknown>): ClientCtx =>
-  ({
+const coldCtx = (
+  byId: ReturnType<ClientCtx["sessions"]["list"]["getSnapshot"]>["byId"],
+): ClientCtx =>
+  fakeClientCtx({
     modelDirectories: {
       directoryFor: () => {
         throw new Error("cold row: no scope");
       },
     },
     sessions: { list: { getSnapshot: () => ({ byId }) } },
-  }) as unknown as ClientCtx;
+  });
 
 // Both the running Claude rows contribute their title; the running non-Claude row and the idle
 // Claude row do not, so the scan tints exactly the running Claude dots.
@@ -47,6 +50,7 @@ const coldCtx = (byId: Record<string, unknown>): ClientCtx =>
       },
     }),
   );
+
   assert.deepEqual(
     [...titles].toSorted(),
     ["Build", "Recipe"],
@@ -54,7 +58,7 @@ const coldCtx = (byId: Record<string, unknown>): ClientCtx =>
   );
 }
 
-// A running Claude row with no title contributes nothing, and a missing snapshot answers empty.
+// A running Claude row with no title contributes nothing, and no rows answer empty.
 {
   const noTitle = claudeRunningTitles(
     coldCtx({
@@ -65,12 +69,9 @@ const coldCtx = (byId: Record<string, unknown>): ClientCtx =>
       },
     }),
   );
+
   assert.deepEqual([...noTitle], [], "a row without a title is skipped");
   assert.deepEqual([...claudeRunningTitles(coldCtx({}))], [], "no rows answers an empty set");
-  const none = {
-    sessions: { list: { getSnapshot: () => undefined } },
-  } as unknown as ClientCtx;
-  assert.deepEqual([...claudeRunningTitles(none)], [], "a missing snapshot answers an empty set");
 }
 
 console.log("mark: ok");

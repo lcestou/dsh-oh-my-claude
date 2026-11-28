@@ -1,11 +1,12 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { JsonReply } from "../sessions.js";
+import type { IncomingMessage } from "node:http";
 import type { JsonValue } from "../dsh.js";
-import { type RouteHandler } from "./context.js";
+import type { RouteHandler } from "./context.js";
 /** What the group needs from the session routes. */
 export interface TestGateRouteCtx {
     ROUTE_PREFIX: string;
     stateDir: string;
-    json: (res: ServerResponse, status: number, value: object) => void;
+    json: JsonReply;
     readBody: (req: IncomingMessage) => Promise<{
         [key: string]: JsonValue;
     }>;

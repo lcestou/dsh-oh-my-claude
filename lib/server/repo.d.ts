@@ -1,4 +1,4 @@
-import { type FsBox } from "./remote-fs.js";
+import type { FsBox } from "./remote-fs.js";
 /** The root of the checkout `cwd` is in (a linked worktree's own root, not the main checkout's),
  *  or `cwd` outside a repository. The CLI's workspace diff names files relative to this. */
 export declare function checkoutRoot(box: FsBox, cwd: string): Promise<string>;
@@ -17,7 +17,7 @@ export declare function repoRoot(box: FsBox, cwd: string): Promise<string>;
  * scope: a session opened in the home directory has no project level at all. `home` is that box's
  * home directory, asked for when not given.
  */
-export declare function projectLevels(box: FsBox, cwd: string, home?: string): Promise<string[]>;
+export declare function projectLevels(box: FsBox, cwd: string, home?: string): Promise<Array<string>>;
 /**
  * The directory whose `.claude/settings.local.json` the CLI reads first and writes to for a
  * session in `cwd`. That is the repository's root (`repoRoot`), but only when the CLI can vouch

@@ -7,6 +7,7 @@ import { dirname, join, relative, resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const repoBlob = "https://github.com/lcestou/dsh-oh-my-claude/blob/main/";
+
 const pages = [
   "README.md",
   "CONTRIBUTING.md",
@@ -23,57 +24,80 @@ const pages = [
 const slugsOf = (markdown: string): Set<string> => {
   const seen = new Map<string, number>();
   const out = new Set<string>();
+
   for (const line of markdown.split("\n")) {
     const m = /^#{1,6}\s+(.*)$/.exec(line);
-    if (!m) continue;
+
+    if (!m) {
+      continue;
+    }
+
     const base = (m[1] ?? "")
-      .replace(/`/g, "")
+      .replaceAll("`", "")
       .toLowerCase()
-      .replace(/[^\p{L}\p{N} _-]/gu, "")
-      .replace(/ /g, "-");
+      .replaceAll(/[^\p{L}\p{N} _-]/gu, "")
+      .replaceAll(" ", "-");
+
     const n = seen.get(base) ?? 0;
     seen.set(base, n + 1);
     out.add(n === 0 ? base : `${base}-${n}`);
   }
+
   return out;
 };
 
 /** Extract every link target from markdown, from both `[text](url)` and `href="..."` forms,
  *  flattening to a list.
  */
-const linksIn = (markdown: string): string[] => {
-  const out: string[] = [];
-  for (const m of markdown.matchAll(/\]\(([^)\s]+)\)|href="([^"]+)"/g))
+const linksIn = (markdown: string): Array<string> => {
+  const out: Array<string> = [];
+
+  for (const m of markdown.matchAll(/\]\(([^)\s]+)\)|href="([^"]+)"/g)) {
     out.push(m[1] ?? m[2] ?? "");
+  }
+
   return out;
 };
 
-const failures: string[] = [];
+const failures: Array<string> = [];
 const linked = new Set<string>();
+
 for (const page of pages) {
   const text = readFileSync(join(root, page), "utf8");
+
   for (const raw of linksIn(text)) {
     const absolute = raw.startsWith(repoBlob);
-    if (!absolute && (/^[a-z]+:/.test(raw) || raw.startsWith("#"))) continue;
+
+    if (!absolute && (/^[a-z]+:/.test(raw) || raw.startsWith("#"))) {
+      continue;
+    }
+
     const [path = "", fragment] = (absolute ? raw.slice(repoBlob.length) : raw).split("#");
     const file = absolute ? join(root, path) : resolve(join(root, dirname(page)), path);
     const rel = relative(root, file);
+
     if (!existsSync(file)) {
       failures.push(`${page}: ${raw} -> no file ${rel}`);
       continue;
     }
+
     linked.add(rel);
+
     if (fragment && rel.endsWith(".md") && !slugsOf(readFileSync(file, "utf8")).has(fragment)) {
       failures.push(`${page}: ${raw} -> no heading #${fragment} in ${rel}`);
     }
   }
 }
+
 for (const page of pages) {
-  if (page !== "README.md" && !linked.has(page)) failures.push(`${page}: linked from nowhere`);
+  if (page !== "README.md" && !linked.has(page)) {
+    failures.push(`${page}: linked from nowhere`);
+  }
 }
 
 if (failures.length > 0) {
   console.error(failures.join("\n"));
   process.exit(1);
 }
+
 console.log(`check-links: ${pages.length} pages, no failures`);

@@ -24,14 +24,26 @@ import { sshInvocation } from "../lib/server/process.js";
 import { readRemoteWorkspaces } from "../lib/server/sessions.js";
 import { readSshToken } from "../lib/server/ssh-login.js";
 import { STATE_DIR } from "../lib/server/state.js";
+import z from "@deepseek-ai/schemastery";
+import { fits } from "../src/schema-fits.js";
 
 /** The four counters the turn pill is built from. */
+const UsageSchema = z.object({
+  input_tokens: z.number(),
+  output_tokens: z.number(),
+  cache_read_input_tokens: z.number(),
+  cache_creation_input_tokens: z.number(),
+});
+
+/** What UsageSchema hands back: schemastery leaves an absent field out, which its own types do not
+ *  say, so the fields are spelt optional here. */
 type Usage = {
   input_tokens?: number;
   output_tokens?: number;
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
 };
+
 const COUNTERS = [
   "input_tokens",
   "output_tokens",
@@ -40,6 +52,17 @@ const COUNTERS = [
 ] as const;
 
 /** The CLI's own closing frame, the only one this check reads. */
+const ResultFrameSchema = z.object({
+  type: z.const("result").required(),
+  is_error: z.boolean(),
+  num_turns: z.number(),
+  duration_ms: z.number(),
+  session_id: z.string(),
+  // Absent stays absent: a bare object schema would answer `{}` and read as zero counters.
+  usage: z.union([z.const(undefined), UsageSchema]),
+});
+
+/** What ResultFrameSchema hands back, every field but `type` optional the way the CLI may omit it. */
 type ResultFrame = {
   type: "result";
   is_error?: boolean;
@@ -48,6 +71,13 @@ type ResultFrame = {
   session_id?: string;
   usage?: Usage;
 };
+
+/** The two fields of a transcript line this check reads: an assistant message's id and usage. */
+const TranscriptEntrySchema = z.object({
+  type: z.string(),
+  message: z.object({ id: z.string(), usage: UsageSchema }),
+});
+
 type TurnOutcome =
   | { result: ResultFrame; error?: undefined }
   | { error: string; result?: undefined };
@@ -57,8 +87,9 @@ const live = args.includes("--live");
 const hostArgs = args.filter((a) => !a.startsWith("--"));
 
 /** The boxes to check when none are named: whichever hosts the remote workspaces point at. */
-async function knownHosts(): Promise<string[]> {
+async function knownHosts(): Promise<Array<string>> {
   const workspaces = await readRemoteWorkspaces(join(STATE_DIR, "remote-workspaces.json"));
+
   return [...new Set(workspaces.map((w) => w.host).filter(Boolean))];
 }
 
@@ -67,39 +98,49 @@ async function knownHosts(): Promise<string[]> {
  * PC holds for the box is used there, rather than the check reporting the box as logged out. */
 function runTurn(
   host: string | undefined,
-  argv: string[],
-  timeoutMs = 180000,
+  argv: Array<string>,
+  timeoutMs = 180_000,
 ): Promise<TurnOutcome> {
   const inv = host
     ? sshInvocation(host, "claude", argv, process.cwd(), { token: readSshToken(STATE_DIR, host) })
     : { command: "claude", args: argv, stdinFirst: "" };
+
   return new Promise<TurnOutcome>((resolve) => {
     const child = spawn(inv.command, inv.args, { stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
+
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       resolve({ error: `no result frame in ${timeoutMs / 1000}s` });
     }, timeoutMs);
+
     child.stdout.on("data", (b) => (out += String(b)));
     child.stderr.on("data", (b) => (err += String(b)));
     child.on("close", (code) => {
       clearTimeout(timer);
+
+      // The first line that is a result frame; every other frame fails the schema and is dropped.
       const result = out
         .split("\n")
         .flatMap<ResultFrame>((l) => {
+          let raw: unknown;
+
           try {
-            // SAFETY: the caller keeps only frames whose `type` it recognises, so a line that
-            // parses to something else is dropped one step later rather than trusted here.
-            return [JSON.parse(l) as ResultFrame];
+            raw = JSON.parse(l);
           } catch {
             return [];
           }
+
+          return fits(ResultFrameSchema, raw) ? [ResultFrameSchema(raw)] : [];
         })
-        .find((f) => f.type === "result");
-      if (!result)
+        .at(0);
+
+      if (!result) {
         resolve({ error: `exit ${code}: ${err.trim().split("\n").pop() ?? "no output"}` });
-      else resolve({ result });
+      } else {
+        resolve({ result });
+      }
     });
     // The box token line goes first: the far shell reads it before it starts the CLI.
     child.stdin.end(
@@ -127,43 +168,69 @@ function runTurn(
  */
 async function transcriptUsage(sessionId: string): Promise<Usage | undefined> {
   const root = join(homedir(), ".claude", "projects");
+
   for (const project of await readdir(root).catch(() => [])) {
     const text = await readFile(join(root, project, `${sessionId}.jsonl`), "utf8").catch(
       () => undefined,
     );
-    if (text === undefined) continue;
+
+    if (text === undefined) {
+      continue;
+    }
+
     // One assistant message is logged more than once; its id is what makes it a single sample.
     const byId = new Map<string, Usage>();
+
     for (const line of text.split("\n")) {
+      let raw: unknown;
+
       try {
-        // SAFETY: only the two shapes below are read off it, each through a typeof-checked sum.
-        const entry = JSON.parse(line) as {
-          type?: string;
-          message?: { id?: string; usage?: Usage };
-        };
-        if (entry.type !== "assistant") continue;
-        const { id, usage } = entry.message ?? {};
-        if (id !== undefined && usage !== undefined) byId.set(id, usage);
+        raw = JSON.parse(line);
       } catch {
         continue;
       }
+
+      if (!fits(TranscriptEntrySchema, raw)) {
+        continue;
+      }
+
+      const entry: { type?: string; message?: { id?: string; usage?: Usage } } =
+        TranscriptEntrySchema(raw);
+
+      if (entry.type !== "assistant") {
+        continue;
+      }
+
+      const { id, usage } = entry.message ?? {};
+
+      if (id !== undefined && usage !== undefined) {
+        byId.set(id, usage);
+      }
     }
+
     const total: Usage = {};
-    for (const key of COUNTERS)
+
+    for (const key of COUNTERS) {
       total[key] = [...byId.values()].reduce((sum, u) => sum + (u[key] ?? 0), 0);
+    }
+
     return total;
   }
+
   return undefined;
 }
 
 let failures = 0;
+
 for (const host of ["", ...(hostArgs.length > 0 ? hostArgs : await knownHosts())]) {
   const name = host || "local";
   const { flags, version } = await probeCli(execFile, "claude", host || undefined);
+
   if (flags === null) {
     console.log(`skip ${name}: no answer from \`claude --help\``);
     continue;
   }
+
   // The turn a session spawns: stdin input, a session id, the MCP bridge and an appended prompt,
   // which is the widest flag set the plugin ever builds.
   const argv = buildArgs({
@@ -174,34 +241,46 @@ for (const host of ["", ...(hostArgs.length > 0 ? hostArgs : await knownHosts())
     system: "check",
     mcp: { url: "http://127.0.0.1:1/mcp" },
   });
+
   const unknown = argv.filter((a) => a.startsWith("--") && !flags.has(a));
+
   if (unknown.length > 0) {
     console.log(`FAIL ${name} (${version}): ${unknown.join(" ")} not in this binary's --help`);
     failures++;
     continue;
   }
+
   console.log(
     `ok   ${name} (${version}): ${argv.filter((a) => a.startsWith("--")).length} flags accepted`,
   );
-  if (!live) continue;
+
+  if (!live) {
+    continue;
+  }
+
   // One real turn, with the bridge and the session id dropped: nothing here serves MCP, and a
   // fixed session id would collide on a second run.
   const turnArgs = buildArgs({ model: undefined, config: Config({}), flags });
   const { result, error } = await runTurn(host || undefined, turnArgs);
+
   if (error !== undefined || result.is_error) {
     console.log(`FAIL ${name}: turn failed: ${error ?? JSON.stringify(result).slice(0, 200)}`);
     failures++;
   } else {
     console.log(`ok   ${name}: turn ran, ${result.num_turns} turn(s), ${result.duration_ms}ms`);
+
     // The turn pill is this frame's `usage`, forwarded untouched. Corroborate it against the
     // transcript before trusting a number the whole cost readout is built on.
     const ledger =
       result.session_id === undefined ? undefined : await transcriptUsage(result.session_id);
+
     const frame = result.usage;
+
     if (ledger === undefined || frame === undefined) {
       console.log(`skip ${name}: no transcript on this box to check usage against`);
     } else {
       const off = COUNTERS.filter((k) => (frame[k] ?? 0) !== ledger[k]);
+
       if (off.length > 0) {
         const shown = off.map((k) => `${k} ${frame[k] ?? 0} vs ${ledger[k]}`).join(", ");
         console.log(`FAIL ${name}: result frame disagrees with its own transcript: ${shown}`);
@@ -213,4 +292,5 @@ for (const host of ["", ...(hostArgs.length > 0 ? hostArgs : await knownHosts())
     }
   }
 }
+
 process.exit(failures > 0 ? 1 : 0);

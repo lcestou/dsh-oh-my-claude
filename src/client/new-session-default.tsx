@@ -56,19 +56,27 @@ export function blankSessionTarget(args: {
   def: SessionDefault | undefined;
 }): BlankTarget | undefined {
   const { current, picked, saved, def } = args;
+
   // A provider picked by hand decides the mount: a Claude one is used as it is, any other leaves
   // the blank alone. `current` is read when the component mounts and `picked` just before the
   // apply, so a box chosen in between must not lose to the mount the blank started on.
   if (picked) {
     const mount = claude(picked);
     const model = saved?.model ?? def?.model;
-    if (!mount || !model) return undefined;
+
+    if (!mount || !model) {
+      return undefined;
+    }
+
     return withEffort(mount, model, saved ? saved.effort : def?.effort);
   }
+
   if (saved) {
     const provider = current ?? claude(saved.provider);
+
     return provider ? withEffort(provider, saved.model, saved.effort) : undefined;
   }
+
   if (def) {
     // The default names its box on purpose (the dropdown is grouped by box), so a blank that is
     // already Claude moves to that box. Opening it on the blank's own mount put a box's model id
@@ -78,8 +86,10 @@ export function blankSessionTarget(args: {
       : def.all
         ? claude(def.provider)
         : undefined;
+
     return provider ? withEffort(provider, def.model, def.effort) : undefined;
   }
+
   return undefined;
 }
 
@@ -88,20 +98,20 @@ export const loadSessionDefault = (): Promise<SessionDefault | undefined> =>
   fetch(`${ROUTE}/new-session-default`)
     .then((r) => readJson<Partial<SessionDefault>>(r))
     .then((d) =>
-      // SAFETY: provider and model were just checked; effort and all are optional on the type
-      d.provider && d.model ? (d as SessionDefault) : undefined,
+      d.provider && d.model ? { ...d, provider: d.provider, model: d.model } : undefined,
     )
     .catch(() => undefined);
 
 /** `off` is a row the picker leaves out because of where the box's traffic goes (a model that
  *  needs a router on a box talking to Anthropic, or the reverse); absent from an older server. */
 type PickerModel = { id: string; name: string; hidden: boolean; off?: boolean };
+
 type PickerBox = {
   provider: string;
   host: string | null;
   /** An account's name; null for this box's default login and for an SSH box. */
   name?: string | null;
-  models: PickerModel[];
+  models: Array<PickerModel>;
 };
 
 /** Settings → Oh My Claude: the model and effort a new Claude session opens on where its
@@ -110,7 +120,7 @@ type PickerBox = {
  *  Writes on each change; a failed write puts the error under the row and keeps the old value. */
 export function NewSessionDefaultRow() {
   useLocale();
-  const [boxes, setBoxes] = useState<PickerBox[]>([]);
+  const [boxes, setBoxes] = useState<Array<PickerBox>>([]);
   const [value, setValue] = useState<SessionDefault | undefined>(undefined);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -119,30 +129,37 @@ export function NewSessionDefaultRow() {
     // Only the newest read lands: two switches flipped in quick succession start two reads, and
     // the older answer arriving last would put back the lineup from before the second flip.
     let latest = 0;
+
+    /** Reads the model lineup; a failed read keeps the one on screen. */
     const loadModels = () => {
       const mine = ++latest;
-      return fetch(`${ROUTE}/models?all=1`)
-        .then((r) => readJson<{ models?: PickerBox[] }>(r))
+
+      fetch(`${ROUTE}/models?all=1`)
+        .then((r) => readJson<{ models?: Array<PickerBox> }>(r))
         .then((b) => live && mine === latest && setBoxes(b.models ?? []))
         .catch(() => {});
     };
-    void loadModels();
+
+    loadModels();
     // A model switched off or on in the Models block, and a box added or removed in the Boxes
     // card, change this list. Read once at mount, the dropdown kept the old lineup until Settings
     // was reopened (owner, 2026-11-04). The hints event fires after the hint is saved, so the
     // re-read sees the new hidden state.
     window.addEventListener(HINTS_EVENT, loadModels);
     window.addEventListener(BOXES_EVENT, loadModels);
+
     // A default saved from another tab or browser: take it, so a later change here does not
     // write back the model that tab replaced.
     const offDefault = subscribe("new-session-default", (_session, d) => {
-      if (live)
+      if (live) {
         setValue(
           d.provider && d.model
             ? { provider: d.provider, model: d.model, effort: d.effort, all: d.all }
             : undefined,
         );
+      }
     });
+
     return () => {
       live = false;
       offDefault();
@@ -150,22 +167,33 @@ export function NewSessionDefaultRow() {
       window.removeEventListener(BOXES_EVENT, loadModels);
     };
   }, []);
+
   const save = (next: SessionDefault | undefined) => {
     setError("");
-    fetch(`${ROUTE}/new-session-default`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(next ?? {}),
-    })
-      .then(async (r) => {
+    // Never rejects: a refused or failed write is the row's error.
+    void (async () => {
+      try {
+        const r = await fetch(`${ROUTE}/new-session-default`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(next ?? {}),
+        });
+
         // The route's refusal text is English and for logs; the row says it in the UI's language.
-        if (!r.ok) throw new Error(String(r.status));
-        setValue(next);
-      })
-      .catch(() => setError(t("main.settingsUi.newDefaultSaveFailed")));
+        if (r.ok) {
+          setValue(next);
+        } else {
+          setError(t("main.settingsUi.newDefaultSaveFailed"));
+        }
+      } catch {
+        setError(t("main.settingsUi.newDefaultSaveFailed"));
+      }
+    })();
   };
+
   const key = value ? `${value.provider}\n${value.model}` : "";
   const many = boxes.length > 1;
+
   return (
     <div data-omc-new-session-default="" style={{ fontSize: 13, marginBottom: 12 }}>
       <div>{t("main.settingsUi.newDefaultTitle")}</div>
@@ -205,6 +233,7 @@ export function NewSessionDefaultRow() {
                   {m.name}
                 </option>
               ));
+
             return many ? (
               <optgroup
                 key={box.provider}

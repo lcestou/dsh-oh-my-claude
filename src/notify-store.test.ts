@@ -46,6 +46,7 @@ import {
     { endpoint: "https://updates.push.services.mozilla.com/c", p256dh: "", auth: "", added: 3 },
     { endpoint: "https://push.example.org/d", p256dh: "", auth: "", added: 4 },
   ]);
+
   assert.deepEqual(
     rows.map((r) => r.service),
     ["Apple", "Chrome", "Firefox", "push.example.org"],
@@ -61,10 +62,12 @@ import {
   const ua = createECDH("prime256v1");
   ua.generateKeys();
   const keys = { p256dh: ua.getPublicKey().toString("base64url"), auth: "AAAAAAAAAAAAAAAAAAAAAA" };
+
   for (let i = 0; i < DEVICES_MAX; i++) {
     const d = validateDevice({ endpoint: `https://fcm.googleapis.com/fcm/send/${i}`, keys });
     assert.ok(d && (await addDevice(dir, d)));
   }
+
   assert.equal(
     validateDevice({ endpoint: "https://intranet.example/hook", keys }),
     null,
@@ -87,15 +90,19 @@ import {
   assert.equal((await stat(join(dir, "push-devices.json"))).mode & 0o777, 0o600);
   assert.ok((await readFile(join(dir, "push-devices.json"), "utf8")).startsWith('{\n  "devices"'));
 }
+
 {
   const dir = await mkdtemp(join(tmpdir(), "omc-store-race-"));
   const ua = createECDH("prime256v1");
   ua.generateKeys();
   const keys = { p256dh: ua.getPublicKey().toString("base64url"), auth: "AAAAAAAAAAAAAAAAAAAAAA" };
+
   const devices = [0, 1, 2, 3, 4].map((i) =>
     validateDevice({ endpoint: `https://web.push.apple.com/r${i}`, keys }),
   );
+
   await Promise.all(devices.map((d) => (d ? addDevice(dir, d) : false)));
   assert.equal((await readDevices(dir)).length, 5, "five subscriptions at once keep all five rows");
 }
+
 console.log("notify-store ok");

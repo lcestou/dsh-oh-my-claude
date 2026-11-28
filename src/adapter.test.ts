@@ -26,7 +26,6 @@ import {
   remoteCwdFor,
   remoteWorkspaceFor,
   setRemoteWorkspaces,
-  type ExecLike,
   denyCliFlag,
   unknownFlagIn,
   supports,
@@ -64,7 +63,6 @@ import {
   withoutNativeInstructions,
   finishReason,
   isLoginFailure,
-  TurnRecord,
   RESTART_TEXT,
   markBusy,
   takeInterrupted,
@@ -87,7 +85,9 @@ import {
   selectionContext,
   OUTCOME_MESSAGE,
 } from "./adapter.js";
+import type { ExecLike, ToolResultMeta, TranslatorBlock, TurnRecord } from "./adapter.js";
 import { PERMISSION_MODES } from "./state.js";
+import { isJsonValue } from "./decode.js";
 import {
   CHILD_ENV,
   childEnv,
@@ -101,11 +101,12 @@ import {
   seamSpawner,
   elicitationQuestions,
   elicitationResult,
+  isClaudeEvent,
   isIdleReply,
   mcpAuthUrl,
   mcpAuthNeedsNothing,
-  type WorkspaceDiff,
 } from "./process.js";
+import type { WorkspaceDiff } from "./process.js";
 import {
   buildRedactor,
   CLAUDE_HOME,
@@ -116,35 +117,82 @@ import {
   saveCommandCatalog,
   stateDir,
 } from "./state.js";
-import type { ClaudeEvent, ClaudeProcessSpec, SubprocessHandle, TurnPrep } from "./process.js";
+import type {
+  ClaudeEvent,
+  ClaudeProcessSpec,
+  ClaudeStreamPartial,
+  SubprocessHandle,
+  RelayEvent,
+  RelayResult,
+  SteerAttachment,
+  TurnPrep,
+  WaitingSteer,
+} from "./process.js";
 import type { LooseMessage } from "./adapter.js";
 import { elapsedText, formatToolCall, resetClock, tokensText } from "./translator.js";
-import type { FinishReason, LlmFailure, Message, StreamChunk } from "@deepseek-ai/dsh-llm";
-import type { Agent, PluginContext, SubprocessSpawnSpec } from "./dsh.js";
+import { MessageId, ReasoningEffortId, ToolCallId } from "@deepseek-ai/dsh-llm";
+import type {
+  ContentBlock,
+  FileBlock,
+  FinishReason,
+  GenerateOptions,
+  ImageBlock,
+  LlmFailure,
+  Message,
+  MessageSource,
+  StreamChunk,
+  TextBlock,
+} from "@deepseek-ai/dsh-llm";
+import type {
+  Agent,
+  ApprovalOutcome,
+  ApprovalRequest,
+  AskUserQuestionAnswer,
+  JsonValue,
+  OptionalServices,
+  PluginContext,
+  Session,
+  SessionController,
+  SessionEvent,
+  SubprocessSpawnSpec,
+} from "./dsh.js";
 import type { SubprocessHandle as SeamHandle } from "./dsh.js";
-import { COMMAND_CATALOG } from "./dsh.js";
+import { asSessionId, COMMAND_CATALOG } from "./dsh.js";
+import { fakeAgent, fakePluginContext, fakeSession, notFaked } from "./test-context.js";
+import type { PluginContextOverrides } from "./test-context.js";
 
-// Test fakes stand in for dsh services and CLI events. One cast per shape, here, instead of one
-// per fake; every fake is partial on purpose and the test names what it exercises.
-// SAFETY: partial fake for tests
-const fakeCtx = (o: object): PluginContext => o as unknown as PluginContext;
 // Every real process carries a `steers` map, and the publish paths reach `steersFor` from most
 // mutations now, so a fake without one would throw where the product never does.
-const fakeProc = (o: object): ClaudeProcess => {
-  // SAFETY: partial fake for tests
-  const p = o as unknown as ClaudeProcess;
+const fakeProc = (o: Partial<ClaudeProcess>): ClaudeProcess => {
+  // SAFETY: a partial fake of the class. Each suite hands in the members its path reads, checked
+  // against ClaudeProcess.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- a real ClaudeProcess spawns the CLI, and a stub of every member would change what the adapter's optional reads see
+  const p = o as ClaudeProcess;
+
   // In place, not a copy: some blocks keep the original object and read what the adapter set on it.
-  if (!p.steers) p.steers = new Map();
+  if (!p.steers) {
+    p.steers = new Map();
+  }
+
   return p;
 };
-// SAFETY: partial fake for tests
-const fakeAgent = (o: object): Agent => o as unknown as Agent;
-// SAFETY: tests feed the translator event types it has never seen, on purpose
-const anyEvent = (o: object): ClaudeEvent => o as unknown as ClaudeEvent;
-/** Message fixtures: the shapes dsh sends, written loosely; typed here once for the helpers under test. */
-// SAFETY: test fixture, checked by the assertions that read it
-const message = (m: object): LooseMessage => m as LooseMessage;
-const messageList = (list: object[]): LooseMessage[] => list.map(message);
+
+/** A line off the CLI's stdout, checked the way the process reads one: any object with a string
+ *  `type` passes, so a test can feed the translator a type it has never seen. Throws otherwise. */
+const wireEvent = (line: string): ClaudeEvent => {
+  const v: unknown = JSON.parse(line);
+
+  if (isClaudeEvent(v)) {
+    return v;
+  }
+
+  throw new Error(`not a stream-json event: ${line}`);
+};
+
+/** Message fixtures: the shapes dsh sends, written loosely and checked against `LooseMessage`. */
+const message = (m: LooseMessage) => m;
+const messageList = (list: Array<LooseMessage>) => list;
+
 const emptySpec: ClaudeProcessSpec = {
   cwd: "",
   model: undefined,
@@ -153,23 +201,281 @@ const emptySpec: ClaudeProcessSpec = {
   sessionId: null,
   temporary: false,
 };
+
+/** Reads a stream to its end and drops the chunks; a throw from the stream propagates. */
+const drain = async (chunks: AsyncIterable<StreamChunk>) => {
+  for await (const _ of chunks) {
+    // Read to the end only: the checks after a drain look at what the turn recorded.
+  }
+};
+
+/** The value at `path` inside parsed JSON, or undefined where the path leaves an object. Reads what
+ *  the adapter wrote to the CLI's stdin without trusting its shape. */
+const pathIn = (value: JsonValue | undefined, ...path: Array<string>): JsonValue | undefined => {
+  let at = value;
+
+  for (const key of path) {
+    if (typeof at !== "object" || at === null) {
+      return undefined;
+    }
+
+    at = Object.entries(at).find(([k]) => k === key)?.[1];
+  }
+
+  return at;
+};
+
+/** The inner `response` of every control_response among `lines`; a line that is not JSON (the
+ *  prompt itself goes down the same pipe) is skipped. */
+const controlAnswers = (lines: Array<string>): Array<JsonValue | undefined> =>
+  lines.flatMap((line) => {
+    let parsed: JsonValue;
+
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return [];
+    }
+
+    return pathIn(parsed, "type") === "control_response"
+      ? [pathIn(parsed, "response", "response")]
+      : [];
+  });
+
+/** Turn options for `sessionId` on the provider and model the suites use, with no messages unless
+ *  `overrides` gives some. */
+const turnOptions = (
+  sessionId: string,
+  overrides: Partial<GenerateOptions> = {},
+): SessionOptions => ({
+  provider: "claude-code",
+  model: "m",
+  messages: [],
+  ...overrides,
+  sessionId: asSessionId(sessionId),
+});
+
+/** One content block of a user line the adapter wrote to the CLI's stdin. */
+type StdinBlock = {
+  type: string;
+  text?: string;
+  source?: { type?: string; media_type?: string; data?: string };
+};
+
+/** Whether `b` is a stdin content block: a string `type`, and `text` and `source` of the right
+ *  kind where present. The object itself is kept, so a deepEqual still sees every key it has. */
+const isStdinBlock = (b: JsonValue): b is { [key: string]: JsonValue } & StdinBlock => {
+  if (typeof b !== "object" || b === null || Array.isArray(b)) {
+    return false;
+  }
+
+  const { type, text, source } = b;
+
+  const sourceOk =
+    source === undefined ||
+    (typeof source === "object" &&
+      source !== null &&
+      !Array.isArray(source) &&
+      ["type", "media_type", "data"].every(
+        (k) => source[k] === undefined || typeof source[k] === "string",
+      ));
+
+  return typeof type === "string" && (text === undefined || typeof text === "string") && sourceOk;
+};
+
+/** The uuid and content blocks of a user line the adapter wrote to the CLI's stdin; a missing
+ *  line, or one that is not a user line, reads as no uuid and no blocks. */
+const stdinLine = (line: string | undefined) => {
+  const parsed: JsonValue = JSON.parse(line ?? "{}");
+  const content = pathIn(parsed, "message", "content");
+  const uuid = pathIn(parsed, "uuid");
+
+  return {
+    uuid: typeof uuid === "string" ? uuid : undefined,
+    blocks: Array.isArray(content) ? content.filter(isStdinBlock) : [],
+  };
+};
+
+/** A one-prompt request with no model picked: the empty id reads as unset everywhere the adapter
+ *  checks a model, as dsh's request without one did. */
+const promptRequest = (text: string, model = ""): GenerateOptions => ({
+  provider: "claude-code",
+  model,
+  messages: [userTurn(text)],
+});
+
+/** The text of a message's first block, or undefined when there is no message or it starts with
+ *  something other than text. */
+const firstText = (m: Message | undefined) => {
+  const first = m?.content[0];
+
+  return first?.type === "text" ? first.text : undefined;
+};
+
+/** A dsh session controller that resolves agents with `resolveAgent`; its other methods throw. */
+const fakeController = (resolveAgent: SessionController["resolveAgent"]): SessionController => ({
+  resolveAgent,
+  create: notFaked("sessionController.create"),
+  prompt: notFaked("sessionController.prompt"),
+  state: notFaked("sessionController.state"),
+  wait: notFaked("sessionController.wait"),
+});
+
+/** A dsh call the CLI is waiting on, for fakes that only count or clear `relays`. */
+const pendingRelay = (id: string): RelayEvent => ({
+  type: "dsh_relay",
+  id,
+  name: "bash",
+  args: {},
+  resolve: () => {},
+  reject: () => {},
+});
+
+/** A dsh tool bridge on a loopback port nobody listens on, with no tools and no open calls. */
+const fakeBridge = (overrides: Partial<McpBridge> = {}): McpBridge => ({
+  base: "http://127.0.0.1:1",
+  key: "k",
+  via: "loopback",
+  toolsFor: () => [],
+  openCalls: () => 0,
+  ...overrides,
+});
+
+/** A host context with `on` and nothing loaded: `sessions.get` and `agents.get` answer undefined,
+ *  as they do for a session dsh does not hold live, and every other service method throws until
+ *  faked. `overrides` replace those defaults member by member. */
+const bareCtx = (overrides: PluginContextOverrides = {}): PluginContext =>
+  fakePluginContext({
+    on() {},
+    sessions: { get: () => undefined },
+    agents: { get: () => undefined },
+    ...overrides,
+  });
+
+/** `ctx` on a dsh with no attachment store: `ctx.attachments` reads undefined, which the plugin
+ *  checks for before it loads an image, though dsh's type always carries the service. Redefines
+ *  the member on `ctx` itself and returns it. */
+const withoutAttachments = (ctx: PluginContext): PluginContext =>
+  Object.defineProperty(ctx, "attachments", { get: () => undefined });
+
 /** The failure of an error or aborted finish; throws when the reason has none, which fails the test. */
 const failureOf = (r: FinishReason | undefined): LlmFailure => {
-  if (r && (r.kind === "error" || r.kind === "aborted")) return r.failure;
+  if (r && (r.kind === "error" || r.kind === "aborted")) {
+    return r.failure;
+  }
+
   throw new Error(`no failure on finish reason ${r?.kind}`);
 };
+
+/** Whether `c` is a chunk of `type`, so the caller sees that variant's fields. */
+const isChunk = <K extends StreamChunk["type"]>(
+  c: StreamChunk | undefined,
+  type: K,
+): c is Extract<StreamChunk, { type: K }> => c?.type === type;
+
 /** Narrow a chunk to one type or fail the test with the type it actually had. */
 const chunkOf = <K extends StreamChunk["type"]>(c: StreamChunk | undefined, type: K) => {
-  if (c?.type !== type) throw new Error(`expected a ${type} chunk, got ${c?.type}`);
-  return c as Extract<StreamChunk, { type: K }>;
+  if (!isChunk(c, type)) {
+    throw new Error(`expected a ${type} chunk, got ${c?.type}`);
+  }
+
+  return c;
 };
+
+/** A session event as dsh's log holds it; `seq` and `time` default to 0 for fakes that read neither. */
+const sessionEvent = (
+  type: string,
+  data: Record<string, JsonValue> = {},
+  seq = 0,
+): SessionEvent => ({
+  type,
+  seq,
+  time: 0,
+  data,
+});
+
+/** What dsh's session log keeps of an append's data: a JSON copy, the way it lands on disk. Covers
+ *  both `append` overloads, `tool/result`'s typed message included; throws when the copy is not an
+ *  object, which no append writes. */
+const loggedData = (data: unknown): Record<string, JsonValue> => {
+  // The line written to disk and read back, not a clone: JSON drops what the log cannot hold.
+  const line = JSON.stringify(data);
+  const copy: unknown = JSON.parse(line);
+
+  if (!isJsonValue(copy) || !isJsonRecord(copy)) {
+    throw new TypeError("append data is not a JSON object");
+  }
+
+  return copy;
+};
+
+/** A JSON value that is an object, not an array or null. */
+const isJsonRecord = (v: JsonValue): v is Record<string, JsonValue> =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
+
+/** Messages as they reach the adapter off the wire. dsh's `Message` type names four source kinds,
+ *  requires an id and a complete block; these fixtures carry the producer-named kinds, id-less rows
+ *  and bare blocks the plugin also meets, which no typed value can express, so this one cast
+ *  stands in for the wire. */
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the one entry point for wire rows dsh's Message type cannot express: producer-named source kinds, id-less rows, attachment-less images
+const wireMessages = (list: Array<object>): Array<Message> => list as Array<Message>;
+
+/** A typed user prompt as dsh hands it to the provider. */
+const userTurn = (text: string, id = "u1"): Message => ({
+  id: MessageId(id),
+  role: "user",
+  source: { kind: "user" },
+  content: [{ type: "text", text }],
+});
+
+/** A user message as dsh's inbox holds it, for fakes that read only its id. */
+const inboxMessage = (id: string): Message => ({
+  id: MessageId(id),
+  role: "user",
+  source: { kind: "user" },
+  content: [],
+});
+
 /** The text of a text or reasoning block-end. */
 const blockTextOf = (c: StreamChunk | undefined): string => {
   const b = chunkOf(c, "block-end").block;
-  if (b.type === "text" || b.type === "reasoning") return b.text;
+
+  if (b.type === "text" || b.type === "reasoning") {
+    return b.text;
+  }
+
   throw new Error(`block has no text: ${b.type}`);
 };
+
+/** The block a block-end chunk closes; throws on any other chunk. */
+const endBlockOf = (c: StreamChunk | undefined) => chunkOf(c, "block-end").block;
+
+/** The reason a finish chunk carries; throws on any other chunk. */
+const finishOf = (c: StreamChunk | undefined) => chunkOf(c, "finish").reason;
+
+/** The token usage a usage chunk carries; throws on any other chunk. */
+const usageOf = (c: StreamChunk | undefined) => chunkOf(c, "usage").usage;
+
+/** The block index of a block-start, delta or block-end chunk; throws on usage and finish. */
+const indexOf = (c: StreamChunk | undefined): number => {
+  if (c && "index" in c) {
+    return c.index;
+  }
+
+  throw new Error(`chunk has no index: ${c?.type}`);
+};
+
+/** The text of a text or reasoning delta; throws on any other chunk. */
+const deltaTextOf = (c: StreamChunk | undefined): string => {
+  if (c?.type === "text-delta" || c?.type === "reasoning-delta") {
+    return c.text;
+  }
+
+  throw new Error(`expected a text or reasoning delta, got ${c?.type}`);
+};
+
 import { PassThrough } from "node:stream";
+import { setTimeout as sleep } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { firstPartyOf, forgetFirstParty } from "./first-party.js";
 import { unwatchSettings } from "./adapter/routing.js";
@@ -180,13 +486,15 @@ import { join as joinPath } from "node:path";
 import { STATE_DIR } from "./state.js";
 import { LINEUP_PROBE_ARGS } from "./adapter/catalog.js";
 import { removeOnExit, tempDir } from "./test-tmp.js";
+import type { McpBridge } from "./mcp.js";
+import type { Decision, SessionOptions } from "./adapter/types.js";
 
 declare module "./adapter.js" {
   interface Translator {
     finished: boolean;
     toolPending: boolean;
     relayed: Set<string>;
-    open: Map<number, import("./adapter.js").TranslatorBlock>;
+    open: Map<number, TranslatorBlock>;
     index: number;
     dshIds: Set<string>;
     aborting: boolean;
@@ -195,50 +503,71 @@ declare module "./adapter.js" {
 }
 
 const config = new Config({});
+
 assert.equal(config.permissionMode, "dsh");
+
 assert.deepEqual(config.allowedTools, []);
+
 assert.equal(config.titleModel, "haiku");
+
 assert.equal(config.resume, true);
 
 // providerId defaults to claude-code; settingsNs and displayName derive correctly
 assert.equal(config.providerId, "claude-code");
+
 const workConfig = new Config({
   providerId: "claude-code-work",
   providerName: "Work",
 });
+
 assert.equal(workConfig.providerId, "claude-code-work");
+
 // registry key separates instances even with the same sessionId
 assert.notEqual(
   registryKey("claude-code-work", "s1"),
   registryKey("claude-code", "s1"),
   "different provider ids produce different keys",
 );
+
 assert.equal(registryKey("claude-code-work", "s1").slice(0, 15), "claude-code-wor");
+
 // invalid provider id throws at construction
-const badCtx = { on() {} } as unknown as import("./dsh.js").PluginContext;
+const badCtx = fakePluginContext({ on() {} });
+
 assert.throws(
   () => new ClaudeCodeAdapter(badCtx, new Config({ providerId: "gpt" })),
   /invalid providerId/,
 );
+
 // displayName and settingsNs derive from config
-const defaultAdapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+const defaultAdapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+
 assert.equal(defaultAdapter.providerId, "claude-code");
+
 assert.equal(defaultAdapter.displayName, "Oh My Claude");
+
 assert.equal(defaultAdapter.settingsNs, "llm-claude-code");
-const workAdapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), workConfig);
+
+const workAdapter = new ClaudeCodeAdapter(bareCtx(), workConfig);
+
 assert.equal(workAdapter.providerId, "claude-code-work");
+
 assert.equal(workAdapter.displayName, "Work");
+
 // empty providerName falls back to auto-derived name
 const autoWorkAdapter = new ClaudeCodeAdapter(
-  fakeCtx({ on() {} }),
+  bareCtx(),
   new Config({ providerId: "claude-code-work" }),
 );
+
 assert.equal(autoWorkAdapter.displayName, "Oh My Claude (work)");
+
 assert.equal(workAdapter.settingsNs, "llm-claude-code-work");
+
 // A logged-out box carries the hint in its provider name and re-registers its route once per
 // change, so the picker learns it without a restart; a repeat of the same state is a no-op.
 {
-  const replaced: string[][] = [];
+  const replaced: Array<Array<string>> = [];
   workAdapter.registration = { replace: (p) => void replaced.push(p) };
   workAdapter.setLoggedIn(true);
   assert.equal(workAdapter.providerInfo("claude-code-work").name, "Work");
@@ -251,12 +580,14 @@ assert.equal(workAdapter.settingsNs, "llm-claude-code-work");
   assert.equal(workAdapter.providerInfo("claude-code-work").name, "Work");
   assert.equal(replaced.length, 2);
 }
+
 // state dir for non-default id nests under STATE_DIR/<providerId>; STATE_DIR itself is the
 // suite's tmp dir when DSH_OMC_STATE_DIR is set, the home path otherwise.
 assert.equal(
   stateDir("claude-code"),
   process.env.DSH_OMC_STATE_DIR || joinPath(homedir(), ".local", "state", "dsh-oh-my-claude"),
 );
+
 assert.equal(
   stateDir("claude-code-work"),
   joinPath(stateDir("claude-code"), "claude-code-work"),
@@ -264,14 +595,22 @@ assert.equal(
 );
 
 // resolveModelInfo echoes the requested id and only borrows the display name
-const rmi = (id: string) => resolveModelInfo("claude-code", id) as any;
+const rmi = (id: string) => resolveModelInfo("claude-code", id);
+
 assert.equal(rmi("claude-opus-4").id, "claude-opus-4");
+
 assert.equal(rmi("claude-fable-5-1").name, "Claude Fable 5.1");
+
 assert.equal(rmi("bogus").name, "bogus");
+
 assert.equal(rmi("bogus").context, undefined);
-assert.equal(rmi("claude-fable-5-1").context.contextWindow, 1_000_000);
-assert.equal(rmi("claude-fable-5-1").reasoning.defaultEffort, undefined);
-assert.equal(rmi("claude-fable-5-1").reasoning.efforts.length, 5);
+
+assert.equal(rmi("claude-fable-5-1").context?.contextWindow, 1_000_000);
+
+assert.equal(rmi("claude-fable-5-1").reasoning?.defaultEffort, undefined);
+
+assert.equal(rmi("claude-fable-5-1").reasoning?.efforts.length, 5);
+
 // maxEffortLevel caps the offered efforts; an absent cap keeps the full ladder.
 assert.deepEqual(
   resolveModelInfo("claude-code", "claude-fable-5-1", undefined, "medium").reasoning?.efforts,
@@ -281,6 +620,7 @@ assert.deepEqual(
   ],
   "a medium cap trims fable's efforts to low and medium",
 );
+
 assert.deepEqual(
   resolveModelInfo("claude-code", "claude-fable-5-1").reasoning?.efforts,
   [
@@ -292,15 +632,22 @@ assert.deepEqual(
   ],
   "no cap keeps the full five-level ladder",
 );
+
 assert.equal(rmi("claude-haiku-4-5").reasoning, undefined);
+
 assert.deepEqual(rmi("claude-haiku-4-5").inputModalities, ["text", "image"]);
 
 // session mapping is deterministic and UUID-shaped
 const sid = claudeSessionId("abc");
+
 assert.equal(sid, claudeSessionId("abc"));
+
 assert.match(sid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+
 assert.notEqual(sid, claudeSessionId("abd"));
+
 assert.equal(projectDirName("/home/me/.dsh/x"), "-home-me--dsh-x");
+
 // Past 200 characters the CLI cuts the name and appends a hash of the whole path. The expected
 // name is the one Claude Code 2.1.287 itself used for this directory.
 {
@@ -308,6 +655,7 @@ assert.equal(projectDirName("/home/me/.dsh/x"), "-home-me--dsh-x");
     { length: 14 },
     (_, i) => `segment-number-${String(i + 1).padStart(2, "0")}`,
   );
+
   assert.equal(
     projectDirName(`/tmp/omc-long-probe/${segments.join("/")}`),
     `-tmp-omc-long-probe-${segments.slice(0, 10).join("-")}--csc9ne`,
@@ -319,11 +667,13 @@ const inj = message({
   role: "user",
   content: [{ type: "text", text: "<system-reminder>ctx</system-reminder>" }],
 });
+
 const toolMsg = message({
   role: "user",
   source: { kind: "tool", callId: "x" },
-  content: [{ type: "tool-result" }],
+  content: [{ type: "tool-result", toolCallId: ToolCallId("x"), content: [] }],
 });
+
 const history = messageList([
   { role: "user", content: "hi" },
   { role: "assistant", content: "yo" },
@@ -331,28 +681,41 @@ const history = messageList([
   { role: "user", content: "again" },
   inj,
 ]);
+
 assert.equal(selectTurns(history, false).length, 4);
+
 assert.deepEqual(
-  selectTurns(history, true).map((m: any) => textOf(m)),
+  selectTurns(history, true).map((m) => textOf(m)),
   ["again", "<system-reminder>ctx</system-reminder>"],
 );
-function textOf(m: any) {
-  return typeof m.content === "string" ? m.content : m.content[0].text;
+
+function textOf(m: LooseMessage) {
+  if (typeof m.content === "string") {
+    return m.content;
+  }
+
+  const first = m.content?.[0];
+
+  return first?.type === "text" ? first.text : "";
 }
+
 assert.equal(
   buildPrompt(selectTurns([{ role: "user", content: "hi" }, inj], false)),
   "hi\n\n<system-reminder>ctx</system-reminder>",
 );
+
 assert.equal(
   buildPrompt(selectTurns(history, false)),
   "[user]\nhi\n\n[assistant]\nyo\n\n[user]\nagain\n\n[user]\n<system-reminder>ctx</system-reminder>",
 );
+
 assert.throws(() => buildPrompt([{ role: "assistant", content: "x" }]));
+
 // Back on Claude after another model: everything since Claude's OWN last reply goes over, the other
 // model's tool use included, so the turns it made reach the resumed CLI session. Claude's own tool
 // results stay out: they already sit in its transcript.
 {
-  const switched = [
+  const switched: Array<LooseMessage> = [
     { role: "user", content: "read note-1" },
     {
       role: "assistant",
@@ -360,7 +723,7 @@ assert.throws(() => buildPrompt([{ role: "assistant", content: "x" }]));
       content: [
         {
           type: "tool-call",
-          id: "toolu_own",
+          id: ToolCallId("toolu_own"),
           name: "read",
           arguments: '{"file_path":"note-1.txt"}',
         },
@@ -381,7 +744,12 @@ assert.throws(() => buildPrompt([{ role: "assistant", content: "x" }]));
       role: "assistant",
       source: { kind: "model", provider: "deepseek-official", model: "deepseek-flash" },
       content: [
-        { type: "tool-call", id: "call_ds", name: "read", arguments: '{"file_path":"note-2.txt"}' },
+        {
+          type: "tool-call",
+          id: ToolCallId("call_ds"),
+          name: "read",
+          arguments: '{"file_path":"note-2.txt"}',
+        },
       ],
     },
     { role: "tool", toolCallId: "call_ds", content: [{ type: "text", text: "nonce-2: basalt" }] },
@@ -392,7 +760,8 @@ assert.throws(() => buildPrompt([{ role: "assistant", content: "x" }]));
     },
     { role: "user", content: "what did note-2 say?" },
   ];
-  const turns = selectTurns(switched as any, true, "claude-code");
+
+  const turns = selectTurns(switched, true, "claude-code");
   assert.equal(turns.length, 5, "the other model's turn, its tool use and the new prompt");
   const sent = buildPrompt(turns);
   assert.match(sent, /\[user\]\nread note-2/);
@@ -401,18 +770,16 @@ assert.throws(() => buildPrompt([{ role: "assistant", content: "x" }]));
   assert.match(sent, /\[assistant\]\nnow=basalt/);
   assert.doesNotMatch(sent, /apricot/, "Claude's own turn is already in its session");
   // Without a provider to match, resume keeps the old cut after the last reply of any model.
-  assert.equal(selectTurns(switched as any, true).length, 1);
+  assert.equal(selectTurns(switched, true).length, 1);
   // A fresh session gets the whole transcript, both models' tool results included.
-  assert.match(
-    buildPrompt(selectTurns(switched as any, false)),
-    /nonce-1: apricot[\s\S]*nonce-2: basalt/,
-  );
+  assert.match(buildPrompt(selectTurns(switched, false)), /nonce-1: apricot[\s\S]*nonce-2: basalt/);
+
   // A long tool output is cut, saying how much was left out.
-  const long = [
+  const long: Array<LooseMessage> = [
     {
       role: "assistant",
       source: { provider: "openai" },
-      content: [{ type: "tool-call", id: "c", name: "bash", arguments: "{}" }],
+      content: [{ type: "tool-call", id: ToolCallId("c"), name: "bash", arguments: "{}" }],
     },
     {
       role: "tool",
@@ -421,8 +788,10 @@ assert.throws(() => buildPrompt([{ role: "assistant", content: "x" }]));
     },
     { role: "user", content: "and?" },
   ];
-  assert.match(buildPrompt(selectTurns(long as any, false)), /… \(50 more characters\)/);
+
+  assert.match(buildPrompt(selectTurns(long, false)), /… \(50 more characters\)/);
 }
+
 // dsh's own system prompt arrives as role "system" and never reaches the CLI. Verified against a
 // fresh session on 2026-09-14: the block sits in the dsh log as a system/message, and neither the
 // Claude Code transcript nor the spawned process argv carries a word of it. The card says so, so
@@ -431,11 +800,14 @@ const dshSystem = message({
   role: "system",
   content: [{ type: "text", text: "You are an AI agent powered by DeepSeek Harness." }],
 });
+
 assert.deepEqual(selectTurns([dshSystem], false), []);
+
 assert.equal(
   buildPrompt(selectTurns(messageList([{ role: "user", content: "hi" }, dshSystem]), false)),
   "hi",
 );
+
 // A skill dsh knows: dsh injects its body as this user message, tagged by source.kind and name.
 const skill = (name: string): LooseMessage =>
   message({
@@ -448,12 +820,15 @@ const skill = (name: string): LooseMessage =>
       },
     ],
   });
+
 {
   // dsh and Claude Code both know these skills, so the CLI lists them; save/restore the global the
   // CLI writes in bridgeCommands.
-  const saved = (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG];
+  const g: typeof globalThis & { [COMMAND_CATALOG]?: Array<string> } = globalThis;
+  const saved = g[COMMAND_CATALOG];
+
   try {
-    (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG] = ["ic-logos", "commit"];
+    g[COMMAND_CATALOG] = ["ic-logos", "commit"];
     // A skill the CLI lists reaches Claude once: dsh's copy is dropped as a duplicate, the typed line stays.
     assert.equal(
       buildPrompt(
@@ -494,11 +869,14 @@ const skill = (name: string): LooseMessage =>
       "a skill invoked mid-turn is filtered the same way on the steer path",
     );
   } finally {
-    if (saved === undefined)
-      delete (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG];
-    else (globalThis as { [COMMAND_CATALOG]?: string[] })[COMMAND_CATALOG] = saved;
+    if (saved === undefined) {
+      delete g[COMMAND_CATALOG];
+    } else {
+      g[COMMAND_CATALOG] = saved;
+    }
   }
 }
+
 // image-only / attachment-only user turn: no typed text, but not rejected — synthesize a prompt
 assert.equal(
   buildPrompt([
@@ -509,38 +887,48 @@ assert.equal(
   ]),
   "(see attached)",
 );
+
 // no user turn at all still rejects
 assert.throws(() => buildPrompt([{ role: "assistant", content: [{ type: "text", text: "x" }] }]));
 
 // args: chat call carries permission mode and session flags; aux calls are one turn, no tools
 const chat = buildArgs({
   model: "claude-fable-5-1",
-  reasoningEffort: "max",
+  reasoningEffort: ReasoningEffortId("max"),
   system: "sys",
   config,
   session: { id: "u", resuming: true },
-} as any);
+});
+
 assert.ok(chat.includes("--include-partial-messages") && chat.includes("--input-format"));
+
 assert.deepEqual(chat.slice(-2), ["--resume", "u"]);
+
 assert.ok(
   chat.join(" ").includes("--permission-prompt-tool stdio") &&
     chat.join(" ").includes("--tools default"),
 );
+
 assert.ok(chat.join(" ").includes("--permission-mode acceptEdits"));
+
 // Permission mode override is passed through to args
 const override = buildArgs({
   model: "m",
   config,
   permissionMode: "plan",
-} as any);
+});
+
 assert.ok(override.join(" ").includes("--permission-mode plan"), "override takes precedence");
+
 assert.ok(
   chat.join(" ").includes("--effort max") && chat.join(" ").includes("--append-system-prompt sys"),
 );
+
 assert.ok(!chat.join(" ").includes("mcp__dsh__"), "no dsh guidance without the bridge");
+
 // bridged dsh tools: the system prompt gains the subagent guidance so Claude uses mcp__dsh__*
 /** A bridged tool schema with the named parameters, as far as the guidance reads one. */
-const bridgedTool = (name: string, ...params: string[]) => ({
+const bridgedTool = (name: string, ...params: Array<string>) => ({
   name,
   description: "",
   parameters: {
@@ -548,6 +936,7 @@ const bridgedTool = (name: string, ...params: string[]) => ({
     properties: Object.fromEntries(params.map((p) => [p, {}])),
   },
 });
+
 const bridged = buildArgs({
   model: "m",
   system: "sys",
@@ -564,27 +953,37 @@ const bridged = buildArgs({
       bridgedTool("job_kill"),
     ],
   },
-} as any);
+});
+
 const bridgedSystem = bridged[bridged.indexOf("--append-system-prompt") + 1]!;
+
 // The command line names the variable the key arrives in, never the key: `ps` shows argv to
 // every local user.
 assert.deepEqual(JSON.parse(bridged[bridged.indexOf("--mcp-config") + 1]!).mcpServers.dsh.headers, {
   "x-dsh-oh-my-claude-key": "${DSH_OMC_MCP_KEY}",
 });
+
 {
-  const keyed = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  (keyed as any).mcp = { base: "http://x", key: "secret" };
+  const keyed = new ClaudeCodeAdapter(bareCtx(), Config({}));
+  keyed.mcp = fakeBridge({ base: "http://x", key: "secret" });
   assert.equal(keyed.localEnvOverride()?.DSH_OMC_MCP_KEY, "secret", "the key rides in the env");
 }
+
 assert.ok(bridgedSystem.startsWith("sys\n\n"), "dsh system prompt comes first");
+
 assert.ok(bridgedSystem.includes("never the built-in Agent/Task tool"));
+
 assert.ok(bridgedSystem.includes("mcp__dsh__list_subagent_models"));
+
 assert.ok(bridgedSystem.includes("mcp__dsh__subagent_fork runs a child too."));
+
 assert.ok(bridgedSystem.includes("mcp__dsh__bash"), "guidance names the bridged bash tool");
+
 assert.ok(
   bridgedSystem.includes("run_in_background: true"),
   "guidance tells Claude to use run_in_background on it",
 );
+
 // The guidance names only the tools the session really has. A Windows session without a
 // model-selection policy: the shell tool is pwsh, `subagent` takes no route, and nothing mentions
 // bash, list_subagent_models or a preset tool that is not there.
@@ -594,11 +993,15 @@ assert.ok(
     bridgedTool("pwsh", "run_in_background"),
     bridgedTool("job_output"),
   ]);
+
   assert.ok(windows.includes("`mcp__dsh__pwsh` with `run_in_background: true`"));
   assert.ok(windows.includes("mcp__dsh__subagent runs a child on the default route."));
   assert.ok(windows.includes("read output with `mcp__dsh__job_output`."));
-  for (const absent of ["mcp__dsh__bash", "list_subagent_models", "researcher", "job_kill"])
+
+  for (const absent of ["mcp__dsh__bash", "list_subagent_models", "researcher", "job_kill"]) {
     assert.ok(!windows.includes(absent), `${absent} is not offered, so it is not named`);
+  }
+
   assert.ok(!windows.includes("provider"), "no route arguments without a selection policy");
   // A persistent shell takes no run_in_background, so nothing sends background work to it.
   const persistent = dshToolsGuidance([bridgedTool("bash"), bridgedTool("open_session")]);
@@ -606,11 +1009,13 @@ assert.ok(
   assert.ok(!persistent.includes("Agent/Task"), "no subagent tools, no subagent rule");
   assert.ok(persistent.includes("mcp__dsh__open_session makes a new top-level session"));
   assert.ok(!persistent.includes("prompt_session"), "not offered, so not named");
+
   const followUp = dshToolsGuidance([
     bridgedTool("open_session"),
     bridgedTool("prompt_session"),
     bridgedTool("wait_session"),
   ]);
+
   assert.ok(followUp.includes("mcp__dsh__prompt_session sends a session a follow-up"));
   assert.ok(followUp.includes("mcp__dsh__wait_session reads a session's replies back."));
   // The host offers the two independently, so each is named only when it is listed.
@@ -625,38 +1030,49 @@ assert.ok(
   assert.ok(code.includes("never the built-in Agent/Task tool"));
   assert.ok(!code.includes("mcp__dsh__subagent"), "no direct subagent tool is named");
 }
+
 const fresh = buildArgs({
   model: "m",
   config,
   session: { id: "u", resuming: false },
-} as any);
+});
+
 assert.deepEqual(fresh.slice(-2), ["--session-id", "u"]);
+
 const aux = buildArgs({
   model: "haiku",
   purpose: "session-title",
   config,
   session: undefined,
-} as any);
+});
+
 assert.deepEqual(aux.slice(-5), ["--tools", "", "--max-turns", "1", "--no-session-persistence"]);
+
 const auxOld = buildArgs({
   model: "haiku",
   purpose: "session-title",
   config,
   session: undefined,
   flags: new Set(["--tools", "--max-turns"]),
-} as any);
+});
+
 assert.deepEqual(auxOld.slice(-4), ["--tools", "", "--max-turns", "1"], "older CLI: flag left out");
+
 assert.equal(aux.filter((a) => a === "--tools").length, 1);
+
 assert.ok(!aux.includes("--permission-mode"));
+
 const custom = buildArgs({
   model: "m",
   config: new Config({ allowedTools: ["Bash"], addDirs: ["/x"], maxTurns: 3 }),
-} as any);
+});
+
 assert.ok(
   custom.join(" ").includes("--allowedTools Bash") &&
     custom.join(" ").includes("--add-dir /x") &&
     custom.join(" ").includes("--max-turns 3"),
 );
+
 // session-only plugins map to repeated --plugin-dir/--plugin-url, gated on flag support
 const withPlugins = buildArgs({
   model: "m",
@@ -665,46 +1081,48 @@ const withPlugins = buildArgs({
     pluginUrls: ["https://x/p.zip"],
   }),
   flags: new Set(["--plugin-dir", "--plugin-url"]),
-} as any);
+});
+
 assert.ok(
   withPlugins.join(" ").includes("--plugin-dir /a --plugin-dir /b.zip") &&
     withPlugins.includes("--plugin-url") &&
     withPlugins.includes("https://x/p.zip"),
 );
+
 // A probe that answered but did not list the flag (empty-but-present set): left out. A null/absent
 // probe means "assume supported", so it is not the no-support case.
 const noFlag = buildArgs({
   model: "m",
   config: new Config({ pluginDirs: ["/a"] }),
   flags: new Set<string>(),
-} as any);
+});
+
 assert.ok(!noFlag.includes("--plugin-dir"), "older CLI without the flag: left out");
 
 // The spend cap is the only money guard the plugin hands the CLI: a chat turn carries it, a CLI
 // that does not list the flag is not handed one it would die on, unset means no cap (not a cap of
 // 0), and title and compaction one-shots never carry it.
 {
-  const valueOf = (args: string[], flag: string) => {
+  const valueOf = (args: Array<string>, flag: string) => {
     const i = args.indexOf(flag);
+
     return i === -1 ? undefined : args[i + 1];
   };
+
   const capped = new Config({ maxBudgetUsd: 2.5 });
-  assert.equal(
-    valueOf(buildArgs({ model: "m", config: capped } as any), "--max-budget-usd"),
-    "2.5",
-  );
+  assert.equal(valueOf(buildArgs({ model: "m", config: capped }), "--max-budget-usd"), "2.5");
   const listed = new Set(["--max-budget-usd"]);
   assert.equal(
-    valueOf(buildArgs({ model: "m", config: capped, flags: listed } as any), "--max-budget-usd"),
+    valueOf(buildArgs({ model: "m", config: capped, flags: listed }), "--max-budget-usd"),
     "2.5",
   );
   const unlisted = new Set(["--model"]);
   assert.ok(
-    !buildArgs({ model: "m", config: capped, flags: unlisted } as any).includes("--max-budget-usd"),
+    !buildArgs({ model: "m", config: capped, flags: unlisted }).includes("--max-budget-usd"),
   );
-  assert.ok(!buildArgs({ model: "m", config: new Config({}) } as any).includes("--max-budget-usd"));
+  assert.ok(!buildArgs({ model: "m", config: new Config({}) }).includes("--max-budget-usd"));
   assert.ok(
-    !buildArgs({ model: "m", config: capped, purpose: "title" } as any).includes(
+    !buildArgs({ model: "m", config: capped, purpose: "session-title" }).includes(
       "--max-budget-usd",
     ),
   );
@@ -713,13 +1131,17 @@ assert.ok(!noFlag.includes("--plugin-dir"), "older CLI without the flag: left ou
 
 // input line: text first, then images
 const line = JSON.parse(buildInput("hi", [{ mediaType: "image/png", data: "AAA" }]));
+
 assert.equal(line.type, "user");
+
 assert.equal(line.message.content[0].text, "hi");
+
 assert.equal(line.message.content[1].source.media_type, "image/png");
 
 // translator: partial deltas become live text/reasoning, whole assistant messages are then ignored
-const tr = new Translator() as any;
-const se = (event: any) => tr.translate({ type: "stream_event", event });
+const tr = new Translator();
+const se = (event: ClaudeStreamPartial) => tr.translate({ type: "stream_event", event });
+
 // The step's first message_start writes one whitespace reasoning block, dsh's first-token time,
 // which dsh does not draw; it takes index 0, so the blocks below start at 1.
 assert.deepEqual(se({ type: "message_start" }), [
@@ -727,6 +1149,7 @@ assert.deepEqual(se({ type: "message_start" }), [
   { type: "reasoning-delta", index: 0, text: " " },
   { type: "block-end", index: 0, block: { type: "reasoning", text: " " } },
 ]);
+
 assert.deepEqual(
   se({
     type: "content_block_start",
@@ -736,6 +1159,7 @@ assert.deepEqual(
   [],
   "a block is announced with its first text, not at start",
 );
+
 assert.deepEqual(
   se({
     type: "content_block_delta",
@@ -747,6 +1171,7 @@ assert.deepEqual(
     { type: "reasoning-delta", index: 1, text: "hmm" },
   ],
 );
+
 assert.deepEqual(
   se({
     type: "content_block_delta",
@@ -755,24 +1180,28 @@ assert.deepEqual(
   }),
   [],
 );
+
 assert.deepEqual(se({ type: "content_block_stop", index: 0 }), [
   { type: "block-end", index: 1, block: { type: "reasoning", text: "hmm" } },
 ]);
+
 assert.deepEqual(
   se({
     type: "content_block_start",
     index: 1,
     content_block: { type: "tool_use", name: "Read" },
-    // SAFETY: partial fake for tests; StreamChunk type not exported
   }).map((e: { type: string }) => e.type),
   ["block-start", "reasoning-delta"],
 );
+
 se({
   type: "content_block_delta",
   index: 1,
   delta: { type: "input_json_delta", partial_json: '{"a":1}' },
 });
-assert.equal(se({ type: "content_block_stop", index: 1 })[0].block.text, 'Read {"a":1}');
+
+assert.equal(blockTextOf(se({ type: "content_block_stop", index: 1 })[0]), 'Read {"a":1}');
+
 assert.deepEqual(
   tr.translate({
     type: "assistant",
@@ -780,15 +1209,20 @@ assert.deepEqual(
   }),
   [],
 );
+
 const res = tr.translate({
   type: "user",
   message: {
     content: [{ type: "tool_result", tool_use_id: "t", content: "1\thello" }],
   },
 });
-assert.equal(res.at(-1).block.text, "◀ result\n1\thello");
+
+assert.equal(blockTextOf(res.at(-1)), "◀ result\n1\thello");
+
 se({ type: "message_start" });
+
 se({ type: "content_block_start", index: 0, content_block: { type: "text" } });
+
 assert.deepEqual(
   se({
     type: "content_block_delta",
@@ -800,57 +1234,67 @@ assert.deepEqual(
     { type: "text-delta", index: 4, text: "pong" },
   ],
 );
+
 assert.equal(tr.finished, false);
+
 const done = tr.translate({
   type: "result",
   is_error: false,
   stop_reason: "end_turn",
   usage: { input_tokens: 2, output_tokens: 4, cache_read_input_tokens: 10 },
 });
-// SAFETY: partial fake for tests
+
 // Usage before finish, never after: dsh fails a stream that emits anything past a terminal finish.
 assert.deepEqual(
   done.map((e: { type: string }) => e.type),
   ["usage", "finish"],
 );
-assert.equal(done[1].reason.kind, "stop");
+
+assert.equal(finishOf(done[1]).kind, "stop");
+
 assert.equal(tr.finished, true);
+
 // This CLI streamed no `message_delta`, so the result frame's own usage is the fallback the last
 // step closes with. Every counter is written even at zero: one attempt omitting the cache bucket
 // drops the cache-hit row off the whole turn.
-assert.deepEqual(done[0].usage, {
+assert.deepEqual(usageOf(done[0]), {
   inputTokens: 2,
   outputTokens: 4,
   cacheReadTokens: 10,
   cacheWriteTokens: 0,
   totalTokens: 16,
 });
+
 // Spent once: the adapter's own call at the step's end must not re-report the turn's figures.
 assert.deepEqual(tr.takeStepUsage(), []);
 
 // With partials on the wire, a step reports its last message's prompt (the context as it stands,
 // which dsh's meter reads) and every message's output, not the turn's total. Two messages, as when
 // the CLI runs its own Read between them; summing the prompts read five calls at 740k as 3.7M.
-const trs = new Translator() as any;
-const delta = (usage: object) =>
+const trs = new Translator();
+
+const delta = (usage: NonNullable<ClaudeStreamPartial["usage"]>) =>
   trs.translate({
     type: "stream_event",
     event: { type: "message_delta", usage },
   });
+
 delta({
   input_tokens: 10,
   output_tokens: 337,
   cache_read_input_tokens: 4163,
-  cache_creation_input_tokens: 16576,
+  cache_creation_input_tokens: 16_576,
   output_tokens_details: { thinking_tokens: 256 },
 });
+
 delta({
   input_tokens: 10,
   output_tokens: 544,
-  cache_read_input_tokens: 20739,
+  cache_read_input_tokens: 20_739,
   cache_creation_input_tokens: 1354,
   output_tokens_details: { thinking_tokens: 453 },
 });
+
 // A nested agent's frames are the result frame's business, not this step's.
 trs.translate({
   type: "stream_event",
@@ -860,22 +1304,24 @@ trs.translate({
     usage: { input_tokens: 99, output_tokens: 99 },
   },
 });
+
 assert.deepEqual(trs.takeStepUsage(), [
   {
     type: "usage",
     usage: {
       inputTokens: 10,
       outputTokens: 881,
-      cacheReadTokens: 20739,
+      cacheReadTokens: 20_739,
       cacheWriteTokens: 1354,
       reasoningTokens: 709,
-      totalTokens: 22984,
+      totalTokens: 22_984,
     },
   },
 ]);
 
 // A delta that reports output only leaves the last call's prompt standing, not a zero context.
-const tro = new Translator() as any;
+const tro = new Translator();
+
 tro.translate({
   type: "stream_event",
   event: {
@@ -883,18 +1329,23 @@ tro.translate({
     usage: { input_tokens: 5, output_tokens: 10, cache_read_input_tokens: 800 },
   },
 });
+
 tro.translate({
   type: "stream_event",
   event: { type: "message_delta", usage: { output_tokens: 4 } },
 });
+
 const [lone] = tro.takeStepUsage();
-assert.equal(lone.usage.cacheReadTokens, 800);
-assert.equal(lone.usage.outputTokens, 14);
+
+assert.equal(usageOf(lone).cacheReadTokens, 800);
+
+assert.equal(usageOf(lone).outputTokens, 14);
 
 // The last step of a turn sees both sources: its own deltas, then the result frame carrying the
 // turn's total. It reports the deltas once and the fallback never — a second chunk would be a
 // duplicate, and after the terminal finish the same frame emits, which dsh fails a stream for.
-const trb = new Translator() as any;
+const trb = new Translator();
+
 trb.translate({
   type: "stream_event",
   event: {
@@ -902,23 +1353,28 @@ trb.translate({
     usage: { input_tokens: 3, output_tokens: 7 },
   },
 });
+
 const closing = trb.translate({
   type: "result",
   is_error: false,
   stop_reason: "end_turn",
   usage: { input_tokens: 40, output_tokens: 90, cache_read_input_tokens: 500 },
 });
+
 assert.deepEqual(
   closing.map((e: { type: string }) => e.type),
   ["usage", "finish"],
 );
-assert.equal(closing[0].usage.outputTokens, 7);
+
+assert.equal(usageOf(closing[0]).outputTokens, 7);
+
 // Nothing left for the adapter's own call at the step's end to spend.
 assert.deepEqual(trb.takeStepUsage(), []);
 
 // A dsh tool that ran in the bridge, with no session rows to draw on, folds into reasoning beside
 // the other tools: never answer text, which reads as words the model wrote.
-const trd = new Translator() as any;
+const trd = new Translator();
+
 const dshCall = trd.translate({
   type: "assistant",
   message: {
@@ -932,40 +1388,60 @@ const dshCall = trd.translate({
     ],
   },
 });
+
 assert.deepEqual(dshCall, [], "the call draws nothing until its result is in");
+
 const dshResult = trd.translate({
   type: "user",
   message: {
     content: [{ type: "tool_result", tool_use_id: "d1", content: "abc" }],
   },
 });
-assert.equal(dshResult[0].blockType, "reasoning", "bridge result is reasoning, not answer text");
-assert.match(dshResult[1].text, /^⤷ subagent_local\n⤶ result\nabc/, "named without the mcp prefix");
+
+assert.equal(
+  chunkOf(dshResult[0], "block-start").blockType,
+  "reasoning",
+  "bridge result is reasoning, not answer text",
+);
+
+assert.match(
+  deltaTextOf(dshResult[1]),
+  /^⤷ subagent_local\n⤶ result\nabc/,
+  "named without the mcp prefix",
+);
+
 const nativeResult = trd.translate({
   type: "user",
   message: {
     content: [{ type: "tool_result", tool_use_id: "other", content: "y" }],
   },
 });
-assert.equal(nativeResult[0].blockType, "reasoning", "other tools stay in reasoning");
+
+assert.equal(
+  chunkOf(nativeResult[0], "block-start").blockType,
+  "reasoning",
+  "other tools stay in reasoning",
+);
 
 // translator fallback: no partials seen → whole assistant message is emitted
-const tr2 = new Translator({ toolActivity: false }) as any;
+const tr2 = new Translator({ toolActivity: false });
+
 const whole = tr2.translate({
   type: "assistant",
   message: {
     content: [
       { type: "thinking", thinking: "t" },
       { type: "text", text: "pong" },
-      { type: "tool_use", name: "Bash", input: {} },
+      { type: "tool_use", id: "toolu_1", name: "Bash", input: {} },
     ],
   },
 });
-// SAFETY: partial fake for tests
+
 assert.deepEqual(
   whole.map((e: { type: string }) => e.type),
   ["block-start", "reasoning-delta", "block-end", "block-start", "text-delta", "block-end"],
 );
+
 assert.deepEqual(
   tr2.translate({
     type: "user",
@@ -973,6 +1449,7 @@ assert.deepEqual(
   }),
   [],
 );
+
 assert.equal(
   new Translator().translate({
     type: "rate_limit_event",
@@ -980,22 +1457,26 @@ assert.equal(
   }).length,
   0,
 );
+
 // "allowed_warning" = near the cap, not a limit: the turn must go on (ending it made dsh's
 // retry re-send the prompt, seen live 2026-09-04)
-const warned = new Translator() as any;
+const warned = new Translator();
+
+// `utilization` rides along on the wire; the translator does not read it.
+const warningInfo = { status: "allowed_warning", utilization: 0.9, resetsAt: 1 };
+
 assert.deepEqual(
   warned.translate({
     type: "rate_limit_event",
-    rate_limit_info: {
-      status: "allowed_warning",
-      utilization: 0.9,
-      resetsAt: 1,
-    },
+    rate_limit_info: warningInfo,
   }),
   [],
 );
+
 assert.equal(warned.finished, false, "allowed_warning does not end the turn");
+
 const limitedTr = new Translator();
+
 assert.deepEqual(
   limitedTr.translate({
     type: "rate_limit_event",
@@ -1004,21 +1485,29 @@ assert.deepEqual(
   [],
   "the CLI's own message follows, so the turn does not end on this frame",
 );
+
 const limited = limitedTr.translate({ type: "result", is_error: false });
+
 // SAFETY: a held limit failure always produces a finish chunk with error reason
 const limitedFirst = limited.at(-1);
+
 assert.ok(limitedFirst && "reason" in limitedFirst && limitedFirst.reason.kind === "error");
+
 assert.equal(
   failureOf(chunkOf(limitedFirst, "finish").reason).code,
   "PROVIDER_ERROR",
   "no reset ahead: not a code dsh retries, its retry reopens the step with nothing to send",
 );
+
 // SAFETY: result error always produces a finish chunk with error reason
 const resultChunk = new Translator()
   .translate({ type: "result", is_error: true, result: "boom" })
   .at(-1);
+
 assert.ok(resultChunk && "reason" in resultChunk && resultChunk.reason.kind === "error");
+
 assert.equal(failureOf(chunkOf(resultChunk, "finish").reason).message, "boom");
+
 assert.deepEqual(new Translator().translate({ type: "system", subtype: "init" }), []);
 
 // Models API mapping + fallback
@@ -1034,6 +1523,7 @@ const api = modelFromApi({
     },
   },
 });
+
 assert.deepEqual(api, {
   provider: "claude-code",
   id: "claude-x",
@@ -1041,24 +1531,32 @@ assert.deepEqual(api, {
   contextWindow: 500,
   efforts: ["low"],
 });
+
 // Aim the cache at an empty dir so this exercises the offline floor, not whatever this box cached.
 process.env.DSH_OMC_STATE_DIR = removeOnExit(joinPath(tmpdir(), `omc-catalog-${process.pid}`));
+
 const failing = await getCatalog(async () => {
   throw new Error("offline");
 });
+
 assert.equal(failing, KNOWN_MODELS);
+
 delete process.env.DSH_OMC_STATE_DIR;
 
 // A dated id for a model we know is advertised the way the fallback list spells it, so the lineup
 // reads the same whether the API answered or not; one we do not know keeps the API's spelling.
 assert.equal(stableModelId("claude-haiku-4-5-20251001"), "claude-haiku-4-5");
+
 assert.equal(stableModelId("claude-sonnet-4-5-20250929"), "claude-sonnet-4-5");
+
 assert.equal(stableModelId("claude-opus-5"), "claude-opus-5", "undated ids are left alone");
+
 assert.equal(
   stableModelId("claude-opus-9-20261231"),
   "claude-opus-9-20261231",
   "a model the fallback list does not name keeps its date",
 );
+
 assert.equal(modelFromApi({ id: "claude-haiku-4-5-20251001" }).id, "claude-haiku-4-5");
 
 // The persisted catalog round-trips, and any corruption reads as empty so the caller falls back to
@@ -1066,6 +1564,7 @@ assert.equal(modelFromApi({ id: "claude-haiku-4-5-20251001" }).id, "claude-haiku
 {
   const good = [modelFromApi({ id: "claude-haiku-4-5-20251001", display_name: "Haiku" })];
   assert.deepEqual(parseCatalogCache(JSON.stringify(good)), good, "clean cache round-trips");
+
   // A cache written before `createdAt` existed (1.5.x) still reads: the field is optional, as
   // every schemastery field is unless marked required, so an upgrade keeps its catalog.
   const dated = modelFromApi({
@@ -1073,6 +1572,7 @@ assert.equal(modelFromApi({ id: "claude-haiku-4-5-20251001" }).id, "claude-haiku
     display_name: "Haiku",
     created_at: "2026-01-01T00:00:00Z",
   });
+
   const old = [
     {
       id: dated.id,
@@ -1081,6 +1581,7 @@ assert.equal(modelFromApi({ id: "claude-haiku-4-5-20251001" }).id, "claude-haiku
       efforts: dated.efforts,
     },
   ];
+
   const read = parseCatalogCache(JSON.stringify(old));
   assert.equal(read.length, 1, "a cache row without createdAt still parses");
   assert.equal(read[0]?.createdAt, undefined, "and carries no date");
@@ -1091,10 +1592,13 @@ assert.equal(modelFromApi({ id: "claude-haiku-4-5-20251001" }).id, "claude-haiku
   );
   assert.deepEqual(parseCatalogCache("not json"), [], "garbage reads empty");
   assert.deepEqual(parseCatalogCache(JSON.stringify({ models: [] })), [], "non-array reads empty");
+
   const wrongProvider = JSON.stringify([
     { provider: "other", id: "x", name: "X", contextWindow: 1, efforts: [] },
   ]);
+
   assert.deepEqual(parseCatalogCache(wrongProvider), [], "a bad row voids the whole cache");
+
   const badTypes = JSON.stringify([
     {
       provider: "claude-code",
@@ -1104,8 +1608,10 @@ assert.equal(modelFromApi({ id: "claude-haiku-4-5-20251001" }).id, "claude-haiku
       efforts: [],
     },
   ]);
+
   assert.deepEqual(parseCatalogCache(badTypes), [], "a mistyped field voids the whole cache");
 }
+
 assert.equal(
   resolveModelInfo("claude-code", "claude-haiku-4-5-20251001").context?.contextWindow,
   200_000,
@@ -1114,11 +1620,17 @@ assert.equal(
 
 // A base URL is a proxy exactly when the CLI says so: any host but api.anthropic.com, port included.
 assert.equal(proxyBaseUrl(undefined), undefined);
+
 assert.equal(proxyBaseUrl(""), undefined);
+
 assert.equal(proxyBaseUrl("https://api.anthropic.com"), undefined);
+
 assert.equal(proxyBaseUrl("https://api.anthropic.com/v1/"), undefined);
+
 assert.equal(proxyBaseUrl("http://127.0.0.1:8787"), "http://127.0.0.1:8787");
+
 assert.equal(proxyBaseUrl("https://api.anthropic.com:8443"), "https://api.anthropic.com:8443");
+
 assert.equal(proxyBaseUrl("not a url"), "not a url");
 
 // The window a live session reported outranks the table, which only ever holds a guess.
@@ -1138,8 +1650,12 @@ assert.equal(proxyBaseUrl("not a url"), "not a url");
   assert.equal(window("claude-haiku-4-5"), 500_000, "a dated id banks under the stable one");
   noteLiveWindow("claude-opus-4-8[1m]", 1_000_000);
   assert.equal(window("claude-opus-4-8"), 1_000_000, "the [1m] suffix banks under the plain id");
+
   // Nothing usable leaves the last good answer standing.
-  for (const bad of [0, -1, Number.NaN, undefined]) noteLiveWindow("claude-opus-5", bad);
+  for (const bad of [0, -1, Number.NaN, undefined]) {
+    noteLiveWindow("claude-opus-5", bad);
+  }
+
   assert.equal(window("claude-opus-5"), 500_000, "a nonsense figure is not banked");
   noteLiveWindow(undefined, 123);
   // A model no table knows still gets a window once a session has run it.
@@ -1159,11 +1675,14 @@ const policy = (mode: string): LooseMessage => ({
     },
   ],
 });
+
 assert.equal(accessModeOf([{ role: "user", content: "hi" }]), undefined);
+
 assert.equal(
   accessModeOf([policy("read-only"), policy("danger-full-access")]),
   "danger-full-access",
 );
+
 // dsh's approval policy rides in the same snapshot; the last snapshot decides, so a switch back
 // to "ask" (a snapshot without the line) clears it, and a plain user message changes nothing.
 {
@@ -1176,30 +1695,38 @@ assert.equal(
       },
     ],
   };
+
   assert.equal(approvalsDisabled(undefined), false);
   assert.equal(approvalsDisabled([policy("read-only")]), false);
   assert.equal(approvalsDisabled([never]), true);
   assert.equal(approvalsDisabled([never, { role: "user", content: "hi" }]), true);
   assert.equal(approvalsDisabled([never, policy("workspace-write")]), false);
 }
+
 assert.equal(permissionModeFor(config, "read-only"), "plan");
+
 assert.equal(permissionModeFor(config, "workspace-write"), "acceptEdits");
+
 assert.equal(permissionModeFor(config, "danger-full-access"), "bypassPermissions");
+
 assert.equal(permissionModeFor(config, undefined), "acceptEdits");
+
 assert.equal(
   permissionModeFor(new Config({ permissionMode: "plan" }), "danger-full-access"),
   "plan",
 );
+
 const switched = buildArgs({
   model: "m",
   config,
   accessMode: "danger-full-access",
-} as any);
+});
+
 assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
 
 // Ceiling: permissionModeInfo reports allowed modes; setPermissionMode rejects loosening
 {
-  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const a = new ClaudeCodeAdapter(bareCtx(), Config({}));
   a.accessModes.set("s", "read-only");
   const infoRo = a.permissionModeInfo("s");
   assert.equal(infoRo.accessMode, "read-only");
@@ -1242,19 +1769,20 @@ assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
 // it, and Bypass on a process launched below bypass is stored for the next spawn, never sent (the
 // CLI refuses it on any process not launched in bypass).
 {
-  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  const sent: string[] = [];
-  const proc: any = {
+  const a = new ClaudeCodeAdapter(bareCtx(), Config({}));
+  const sent: Array<string> = [];
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
-    spec: { mode: "default" },
+    spec: { ...emptySpec, mode: "default" },
     liveMode: "default",
     controlListener: undefined,
     write(line: string) {
       const req = JSON.parse(line);
       sent.push(req.request.mode);
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           request_id: req.request_id,
           response: {
@@ -1264,9 +1792,11 @@ assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
           },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   a.accessModes.set("s5", "danger-full-access");
   assert.equal(a.permissionModeInfo("s5").liveMode, null, "no process, no live mode");
   a.processes.set(registryKey(a.providerId, "s5"), proc);
@@ -1303,9 +1833,9 @@ assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
 
 // Thinking budget: unknown until set, and set refuses without a live process to carry it
 {
-  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const a = new ClaudeCodeAdapter(bareCtx(), Config({}));
   assert.equal(a.thinkingInfo("s").tokens, undefined);
-  const r = await a.setThinkingBudget("s", 10000);
+  const r = await a.setThinkingBudget("s", 10_000);
   assert.equal(r.ok, false);
   assert.equal(r.live, false);
   assert.match(r.error!, /no live Claude process/);
@@ -1315,7 +1845,7 @@ assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
 
 // reload_plugins is best-effort: with no live process it is not an error, it just did not apply live
 {
-  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const a = new ClaudeCodeAdapter(bareCtx(), Config({}));
   const r = await a.reloadPlugins("s");
   assert.equal(r.ok, true);
   assert.equal(r.live, false);
@@ -1324,22 +1854,29 @@ assert.ok(switched.join(" ").includes("--permission-mode bypassPermissions"));
 
 // CLI flag probe: missing flags are left out; missing --input-format switches to positional prompt
 assert.equal(supports(null, "--anything"), true);
+
 const oldCli = new Set(["--print", "--output-format", "--model", "--permission-mode"]);
+
 assert.equal(usesStdin(oldCli), false);
+
 const legacy = buildArgs({
   model: "m",
   config,
   flags: oldCli,
   promptText: "hello there",
   session: { id: "u", resuming: true },
-} as any);
+});
+
 assert.deepEqual(legacy.slice(0, 2), ["-p", "hello there"]);
+
 assert.ok(
   !legacy.includes("--include-partial-messages") &&
     !legacy.includes("--resume") &&
     !legacy.includes("--effort"),
 );
+
 assert.ok(legacy.includes("--permission-mode"));
+
 const probed = await probeCli((cmd, args, opts, cb) =>
   cb(
     null,
@@ -1348,8 +1885,11 @@ const probed = await probeCli((cmd, args, opts, cb) =>
       : "9.9.9 (Claude Code)\n",
   ),
 );
+
 assert.equal(probed.version, "9.9.9 (Claude Code)");
+
 assert(probed.flags);
+
 assert.ok(probed.flags.has("--effort") && probed.flags.has("--input-format"));
 
 // Which binary a turn is measured against. `sshHost` defaults to "" for a local provider, and an
@@ -1357,8 +1897,11 @@ assert.ok(probed.flags.has("--effort") && probed.flags.has("--input-format"));
 // local claude while the spawn ran on the box, and the box was handed a flag its older CLI exits 1
 // on. A remote-workspace cwd names its box whether or not this instance has one of its own.
 assert.equal(boxFor("", "devbox"), "devbox");
+
 assert.equal(boxFor(undefined, "devbox"), "devbox");
+
 assert.equal(boxFor("nova", "devbox"), "nova", "this instance's own box wins");
+
 assert.equal(boxFor("", undefined), undefined, "a local turn in a local workspace stays local");
 
 // The other half of the same choice: which path the turn runs in. A remote workspace's dsh cwd is
@@ -1437,9 +1980,13 @@ const remoteProbe = await probeCli(
   "claude",
   "nova",
 );
+
 assert.equal(remoteProbe.version, "1.0.0 (Claude Code)");
+
 assert(remoteProbe.flags);
+
 assert.ok(remoteProbe.flags.has("--input-format"));
+
 assert.ok(!remoteProbe.flags.has("--forward-subagent-text"));
 
 // A probe can be wrong — a box updates its CLI, or `--help` comes back empty over a stalled ssh and
@@ -1452,12 +1999,18 @@ assert.ok(!remoteProbe.flags.has("--forward-subagent-text"));
   assert.equal(unknownFlagIn("claude exited 1: no output"), undefined);
 
   let helps = 0;
-  const helpful = (help: string): ExecLike =>
-    ((_cmd, args, _opts, cb) => {
-      const line = String(args.at(-1) ?? "");
-      if (line.includes("--help")) helps++;
+
+  const helpful =
+    (help: string): ExecLike =>
+    (_cmd, args, _opts, cb) => {
+      const line = args.at(-1) ?? "";
+
+      if (line.includes("--help")) {
+        helps++;
+      }
+
       cb(null, line.includes("--help") ? help : "1.0.0 (Claude Code)\n");
-    }) as ExecLike;
+    };
 
   // A binary that refuses a flag never sees it again, even though `--help` still lists it.
   const listed = "Usage\n --input-format <f>\n --forward-subagent-text\n";
@@ -1490,45 +2043,48 @@ assert.ok(!remoteProbe.flags.has("--forward-subagent-text"));
 // spawn for that binary and asks for one retry, and refuses to ask twice for the same flag.
 {
   const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {} }),
+    bareCtx(),
     new Config({
       providerId: "claude-code-flagtest",
       command: "claude-flagtest",
     }),
   );
+
   const died = fakeProc({
     stderr: "error: unknown option '--forward-subagent-text'\n",
     stray: "",
   });
-  assert.equal(a.dropRejectedFlag(died, { sessionId: "s1" } as never), true);
-  assert.equal(a.dropRejectedFlag(died, { sessionId: "s1" } as never), false, "no retry loop");
+
+  assert.equal(a.dropRejectedFlag(died, turnOptions("s1")), true);
+  assert.equal(a.dropRejectedFlag(died, turnOptions("s1")), false, "no retry loop");
+
   // The denial reaches the flag set the next spawn is built from.
   const probe = await probeCli(
-    ((_cmd, args, _opts, cb) =>
+    (_cmd, args, _opts, cb) =>
       cb(
         null,
-        String(args.at(-1) ?? "").includes("--help")
+        (args.at(-1) ?? "").includes("--help")
           ? "Usage\n --input-format <f>\n --forward-subagent-text\n"
           : "2.0.0 (Claude Code)\n",
-      )) as ExecLike,
+      ),
     "claude-flagtest",
   );
+
   assert.ok(!probe.flags?.has("--forward-subagent-text"));
   assert.ok(probe.flags?.has("--input-format"));
   // A turn that died for any other reason is not a flag problem and must not ask for a retry.
   assert.equal(
-    a.dropRejectedFlag(fakeProc({ stderr: "Killed", stray: "" }), {
-      sessionId: "s1",
-    } as never),
+    a.dropRejectedFlag(fakeProc({ stderr: "Killed", stray: "" }), turnOptions("s1")),
     false,
   );
 }
 
 const soon = Math.floor(Date.now() / 1000) + 120;
+
 {
   // A rejected limit does not end the turn: the CLI's own synthetic message follows and is
   // relayed, then the result frame carries the failure and its retry-after.
-  const t = new Translator() as any;
+  const t = new Translator();
   assert.deepEqual(
     t.translate({
       type: "rate_limit_event",
@@ -1537,28 +2093,29 @@ const soon = Math.floor(Date.now() / 1000) + 120;
     [],
   );
   assert.equal(t.finished, false);
+
   const said = t.translate({
     type: "assistant",
     message: {
       content: [{ type: "text", text: "You've reached your Fable limit." }],
     },
   });
-  assert.equal(said.at(-1).block.text, "You've reached your Fable limit.", "the CLI's own words");
+
+  assert.equal(blockTextOf(said.at(-1)), "You've reached your Fable limit.", "the CLI's own words");
   const fin = t.translate({ type: "result", is_error: false }).at(-1);
-  assert.equal(fin.reason.failure.code, "RATE_LIMIT");
+  assert.equal(failureOf(finishOf(fin)).code, "RATE_LIMIT");
   assert.equal(
-    fin.reason.failure.message,
+    failureOf(finishOf(fin)).message,
     `You've hit your usage limit · resets ${resetClock(soon * 1000)}`,
     "no rateLimitType: the CLI's generic wording",
   );
-  assert.ok(
-    fin.reason.failure.providerRetryAfterMs > 100_000 &&
-      fin.reason.failure.providerRetryAfterMs <= 120_000,
-  );
+  const retryAfter = failureOf(finishOf(fin)).providerRetryAfterMs ?? 0;
+  assert.ok(retryAfter > 100_000 && retryAfter <= 120_000);
 }
+
 {
   // The CLI names the limit from rateLimitType; the same table is used here.
-  const t = new Translator() as any;
+  const t = new Translator();
   t.translate({
     type: "rate_limit_event",
     rate_limit_info: {
@@ -1568,10 +2125,11 @@ const soon = Math.floor(Date.now() / 1000) + 120;
     },
   });
   assert.equal(
-    t.translate({ type: "result", is_error: false }).at(-1).reason.failure.message,
+    failureOf(finishOf(t.translate({ type: "result", is_error: false }).at(-1))).message,
     `You've hit your Fable limit · resets ${resetClock(soon * 1000)}`,
   );
 }
+
 {
   // The CLI's error reference prints a time today, a weekday inside the week, a date beyond it.
   const day = 24 * 60 * 60 * 1000;
@@ -1589,10 +2147,11 @@ const soon = Math.floor(Date.now() / 1000) + 120;
   assert.equal(resetClock(1_757_199_600_000, "America/New_York"), "7pm (America/New_York)");
   assert.equal(resetClock(1_757_201_400_000, "America/New_York"), "7:30pm (America/New_York)");
 }
+
 {
   // With the wait armed the row says the task continues by itself, and the translator reports the
   // reset instant for the adapter to arm; a reset already past arms nothing.
-  const t = new Translator({ continueAfterLimit: true }) as any;
+  const t = new Translator({ continueAfterLimit: true });
   t.translate({
     type: "rate_limit_event",
     rate_limit_info: {
@@ -1602,11 +2161,11 @@ const soon = Math.floor(Date.now() / 1000) + 120;
     },
   });
   assert.equal(
-    t.translate({ type: "result", is_error: false }).at(-1).reason.failure.message,
+    failureOf(finishOf(t.translate({ type: "result", is_error: false }).at(-1))).message,
     `You've hit your 5-hour limit · resets ${resetClock(soon * 1000)} · continuing automatically when it resets`,
   );
   assert.equal(t.limitResetAt, soon * 1000);
-  const past = new Translator({ continueAfterLimit: true }) as any;
+  const past = new Translator({ continueAfterLimit: true });
   past.translate({
     type: "rate_limit_event",
     rate_limit_info: { status: "rejected", resetsAt: 1 },
@@ -1614,20 +2173,26 @@ const soon = Math.floor(Date.now() / 1000) + 120;
   assert.equal(past.limitResetAt, undefined);
   // The API throttling requests is a rejection with no reset and an error result: the turn
   // reports the CLI's sentence, not a plan limit.
-  const throttled = new Translator() as any;
+  const throttled = new Translator();
   throttled.translate({ type: "rate_limit_event", rate_limit_info: { status: "rejected" } });
-  const gaveUp = throttled
-    .translate({
-      type: "result",
-      is_error: true,
-      api_error_status: 429,
-      result: "API Error: Server is temporarily limiting requests (not your usage limit)",
-    })
-    .at(-1).reason.failure;
+
+  const gaveUp = failureOf(
+    finishOf(
+      throttled
+        .translate({
+          type: "result",
+          is_error: true,
+          api_error_status: 429,
+          result: "API Error: Server is temporarily limiting requests (not your usage limit)",
+        })
+        .at(-1),
+    ),
+  );
+
   assert.equal(gaveUp.code, "PROVIDER_ERROR");
   assert.match(gaveUp.message, /not your usage limit/);
   // Extra usage covering the overflow: the CLI shows no limit, neither does the turn.
-  const covered = new Translator() as any;
+  const covered = new Translator();
   assert.deepEqual(
     covered.translate({
       type: "rate_limit_event",
@@ -1642,7 +2207,7 @@ const soon = Math.floor(Date.now() / 1000) + 120;
   );
   assert.equal(covered.limitFailure, undefined);
   // Credits exhausted as well: their reset is the one that drives the wait.
-  const drained = new Translator() as any;
+  const drained = new Translator();
   drained.translate({
     type: "rate_limit_event",
     rate_limit_info: {
@@ -1653,11 +2218,12 @@ const soon = Math.floor(Date.now() / 1000) + 120;
     },
   });
   assert.ok(
-    drained.translate({ type: "result", is_error: false }).at(-1).reason.failure
-      .providerRetryAfterMs > 3_600_000,
+    (failureOf(finishOf(drained.translate({ type: "result", is_error: false }).at(-1)))
+      .providerRetryAfterMs ?? 0) > 3_600_000,
   );
   // Retry banners take the browser's zone when dsh stamped one on a prompt.
-  const tokyo = new Translator({ timeZone: "Asia/Tokyo" }) as any;
+  const tokyo = new Translator({ timeZone: "Asia/Tokyo" });
+
   const tz = tokyo.translate({
     type: "system",
     subtype: "api_retry",
@@ -1666,7 +2232,8 @@ const soon = Math.floor(Date.now() / 1000) + 120;
     retry_delay_ms: 1000,
     error: { formatted: "x", rate_limits: { resets_at: soon } },
   });
-  assert.match(tz.at(-1).block.text, /\(Asia\/Tokyo\)\)/);
+
+  assert.match(blockTextOf(tz.at(-1)), /\(Asia\/Tokyo\)\)/);
   assert.equal(
     clientTimeZone([
       {
@@ -1695,19 +2262,25 @@ assert.equal(
   }),
   true,
 );
+
 assert.equal(isStaleResume({ type: "result", is_error: true, errors: ["boom"] }), false);
+
 assert.equal(isStaleResume({ type: "result", is_error: false }), false);
+
 // SAFETY: result with errors produces a finish chunk with error reason
 const rl2 = new Translator().translate({
   type: "result",
   is_error: true,
   errors: ["a", "b"],
 });
-assert.ok(rl2[0] && "reason" in rl2[0] && rl2[0].reason.kind === "error");
-assert.equal(rl2[0].reason.failure.message, "a; b");
+
+assert.ok(rl2[0] && "reason" in rl2[0] && finishOf(rl2[0]).kind === "error");
+
+assert.equal(failureOf(finishOf(rl2[0])).message, "a; b");
 
 // denied tool calls are counted and reported once at the end of the turn
-const td = new Translator({ toolTextLimit: 100 }) as any;
+const td = new Translator({ toolTextLimit: 100 });
+
 td.translate({
   type: "user",
   message: {
@@ -1720,38 +2293,47 @@ td.translate({
     ],
   },
 });
+
 td.translate({
   type: "user",
   message: {
     content: [{ type: "tool_result", is_error: true, content: "boom" }],
   },
 });
+
 const ended = td.translate({
   type: "result",
   is_error: false,
   stop_reason: "end_turn",
 });
-assert.equal(ended[0].type, "block-start");
+
+assert.equal(ended[0]?.type, "block-start");
+
 // SAFETY: text-delta event exists for this transcript
 const textDelta = ended.find((e: { type: string }) => e.type === "text-delta");
+
 assert.ok(textDelta && "text" in textDelta);
+
 assert.ok((textDelta as { text?: string }).text?.includes("denied 1 tool call "));
-assert.equal(ended.at(-1).reason.kind, "stop");
+
+assert.equal(finishOf(ended.at(-1)).kind, "stop");
+
 assert.equal(new Translator().translate({ type: "result", is_error: false })[0]?.type, "finish");
 
 // result frame with usage fields records a turn summary via onResult
-const recorded: TurnRecord[] = [];
+const recorded: Array<TurnRecord> = [];
+
 const trWithResult = new Translator({
   onResult: (s: TurnRecord) => recorded.push(s),
 });
-// SAFETY: test fixture; these runtime fields are not in the ClaudeEvent type but exist on CLI output
+
 trWithResult.translate({
   type: "result",
   is_error: false,
   stop_reason: "end_turn",
   total_cost_usd: 0.42,
-  duration_ms: 34000,
-  duration_api_ms: 12000,
+  duration_ms: 34_000,
+  duration_api_ms: 12_000,
   num_turns: 3,
   usage: {
     input_tokens: 100,
@@ -1759,44 +2341,58 @@ trWithResult.translate({
     cache_read_input_tokens: 900,
     cache_creation_input_tokens: 0,
   },
-} as any);
+});
+
 assert.equal(recorded.length, 1, "onResult fired once per result frame");
+
 // SAFETY: recorded.length is exactly 1 above
 assert.equal(recorded[0]!.costUsd, 0.42);
-assert.equal(recorded[0]!.durationMs, 34000);
-assert.equal(recorded[0]!.apiMs, 12000);
+
+assert.equal(recorded[0]!.durationMs, 34_000);
+
+assert.equal(recorded[0]!.apiMs, 12_000);
+
 assert.equal(recorded[0]!.turns, 3);
+
 assert.equal(recorded[0]!.input, 100);
+
 assert.equal(recorded[0]!.output, 50);
+
 assert.equal(recorded[0]!.cacheRead, 900);
+
 assert.equal(recorded[0]!.cacheWrite, 0);
+
 // missing fields default to 0
-const missing: TurnRecord[] = [];
+const missing: Array<TurnRecord> = [];
+
 const trMissing = new Translator({
   onResult: (s: TurnRecord) => missing.push(s),
 });
+
 trMissing.translate({
   type: "result",
   is_error: false,
   stop_reason: "end_turn",
 });
+
 // no total_cost_usd or duration_ms → condition stays false, nothing recorded
 assert.equal(missing.length, 0);
 
 // A result with only one of the two figures, or one of an odd type, still records a finite
 // number: the adapter takes the cost as the session's running total, and NaN would stick there.
 {
-  const record = (frame: object) => {
-    const out: TurnRecord[] = [];
-    // SAFETY: test fixture; the money fields are not in the ClaudeEvent type but exist on CLI output
-    new Translator({ onResult: (s: TurnRecord) => out.push(s) }).translate({
-      type: "result",
-      is_error: false,
-      stop_reason: "end_turn",
-      ...frame,
-    } as any);
+  // Off the wire, as the CLI writes it: these frames carry the odd types on purpose.
+  const record = (frame: Record<string, JsonValue>) => {
+    const out: Array<TurnRecord> = [];
+    new Translator({ onResult: (s: TurnRecord) => out.push(s) }).translate(
+      wireEvent(
+        JSON.stringify({ type: "result", is_error: false, stop_reason: "end_turn", ...frame }),
+      ),
+    );
+
     return out;
   };
+
   const durationOnly = record({ duration_ms: 1000 });
   assert.equal(durationOnly.length, 1, "a duration alone is recorded");
   assert.equal(durationOnly[0]?.costUsd, 0);
@@ -1806,23 +2402,26 @@ assert.equal(missing.length, 0);
     0,
     "null is 0, not NaN",
   );
+
   const failed = record({
     is_error: true,
     subtype: "error_during_execution",
     total_cost_usd: 0.1,
     duration_ms: 5,
   });
+
   assert.equal(failed[0]?.costUsd, 0.1, "an error result still records the money spent");
   assert.doesNotThrow(() => record({ total_cost_usd: 0.1, permission_denials: [null, 3, {}] }));
   console.log("result cost ok");
 }
 
 // permission_denials converts tool calls to rule labels, deduped and in insertion order
-const deniedTurns: TurnRecord[] = [];
+const deniedTurns: Array<TurnRecord> = [];
+
 const trDenied = new Translator({
   onResult: (s: TurnRecord) => deniedTurns.push(s),
 });
-// SAFETY: test fixture; permission_denials is not in the ClaudeEvent type but exists on CLI output
+
 trDenied.translate({
   type: "result",
   is_error: false,
@@ -1834,40 +2433,51 @@ trDenied.translate({
     { tool_name: "Read", tool_input: { file_path: "/home/user/.zshrc" } },
     { tool_name: "Bash", tool_input: { command: "git status --short" } }, // duplicate
   ],
-} as any);
+});
+
 assert.equal(deniedTurns.length, 1, "onResult fired once");
+
 // SAFETY: deniedTurns.length is exactly 1 above
 assert.deepEqual(deniedTurns[0]!.denials, ["Bash(git status:*)", "Read(/home/user/.zshrc)"]);
 
 // no permission_denials → record has no denials field
-const nodenialsRecords: TurnRecord[] = [];
+const nodenialsRecords: Array<TurnRecord> = [];
+
 const trNoDenials = new Translator({
   onResult: (s: TurnRecord) => nodenialsRecords.push(s),
 });
-// SAFETY: test fixture; total_cost_usd and duration_ms are not in the ClaudeEvent type but exist on CLI output
+
 trNoDenials.translate({
   type: "result",
   is_error: false,
   stop_reason: "end_turn",
   total_cost_usd: 0,
   duration_ms: 0,
-} as any);
+});
+
 assert.equal(nodenialsRecords.length, 1);
+
 // SAFETY: nodenialsRecords.length is exactly 1 above
 assert.equal(nodenialsRecords[0]!.denials, undefined);
 
 // forwarded subagent text renders as reasoning even while partials are on
-const ts2 = new Translator() as any;
+const ts2 = new Translator();
+
 ts2.translate({ type: "stream_event", event: { type: "message_start" } });
+
 const sub = ts2.translate({
   type: "assistant",
   parent_tool_use_id: "toolu_1",
   message: { content: [{ type: "text", text: "child says hi" }] },
 });
+
 // SAFETY: subagent message always produces a block-end chunk
 const subLast = sub.at(-1);
+
 assert.ok(subLast && "block" in subLast);
-assert.equal(subLast.block.text, "↳ subagent\nchild says hi");
+
+assert.equal(blockTextOf(subLast), "↳ subagent\nchild says hi");
+
 // SAFETY: tool_result always produces a block-end chunk
 const toolResultChunk = new Translator({ toolTextLimit: 5 })
   .translate({
@@ -1875,9 +2485,13 @@ const toolResultChunk = new Translator({ toolTextLimit: 5 })
     message: { content: [{ type: "tool_result", content: "abcdefghij" }] },
   })
   .at(-1);
+
 assert.ok(toolResultChunk && "block" in toolResultChunk);
+
 assert.equal(blockTextOf(toolResultChunk), "◀ result\nabcde…");
-assert.ok(buildArgs({ model: "m", config } as any).includes("--forward-subagent-text"));
+
+assert.ok(buildArgs({ model: "m", config }).includes("--forward-subagent-text"));
+
 assert.equal(new Config({}).idleTimeoutMs, 1_800_000);
 
 // control channel helpers
@@ -1891,6 +2505,7 @@ const {
   denyResult,
   permissionReason,
 } = await import("./process.js");
+
 const qs = parseQuestions(
   {
     questions: [
@@ -1903,75 +2518,109 @@ const qs = parseQuestions(
   },
   "toolu_9",
 );
+
 assert.ok(qs);
+
 assert.equal(qs.length, 1);
+
 // SAFETY: qs[0] exists because we asserted length === 1
 const firstQ = qs[0];
+
 assert.ok(firstQ);
+
 assert.equal(firstQ.id, "toolu_9:0");
+
 // SAFETY: options[1] exists because we asserted options has 2 elements
 const secondOpt = firstQ.options[1];
+
 assert.ok(secondOpt);
+
 assert.deepEqual(secondOpt, { label: "coffee", description: "hot" });
+
 assert.equal(parseQuestions({ questions: [] }, "x"), undefined);
+
 assert.equal(
   parseQuestions({ questions: [{ question: "q", options: [{ nope: 1 }] }] }, "x"),
   undefined,
 );
-assert.deepEqual(answersFor(qs as any, { answers: [{ id: "toolu_9:0", selected: ["tea"] }] }), {
+
+assert.deepEqual(answersFor(qs, { answers: [{ id: "toolu_9:0", selected: ["tea"] }] }), {
   "Tea or coffee?": "tea",
 });
+
 assert.deepEqual(
-  answersFor(qs as any, {
+  answersFor(qs, {
     answers: [{ id: "toolu_9:0", selected: [], custom: "water" }],
   }),
   { "Tea or coffee?": "water" },
 );
+
 const turn = JSON.parse(userTurnLine([{ type: "text", text: "hi" }]));
+
 assert.equal(turn.type, "user");
+
 assert.equal(turn.parent_tool_use_id, null);
+
 assert.equal(turn.message.content[0].text, "hi");
+
 // No uuid: byte-identical to the line before the steer card existed.
 assert.equal(
   userTurnLine([{ type: "text", text: "hi" }]),
   '{"type":"user","session_id":"","message":{"role":"user","content":[{"type":"text","text":"hi"}]},"parent_tool_use_id":null}\n',
 );
+
 assert.equal(JSON.parse(userTurnLine([{ type: "text", text: "hi" }], "u-1")).uuid, "u-1");
+
 assert.equal(decodeCancelled({ cancelled: true }), true);
+
 assert.equal(decodeCancelled({ cancelled: false }), false);
+
 assert.equal(decodeCancelled({}), false);
+
 assert.equal(decodeCancelled(null), false);
+
 assert.equal(decodeCancelled(undefined), false);
+
 const cr = JSON.parse(controlResponseLine("r1", allowResult("t1", { a: 1 })));
+
 assert.equal(cr.type, "control_response");
+
 assert.equal(cr.response.request_id, "r1");
+
 assert.equal(cr.response.response.behavior, "allow");
+
 assert.deepEqual(cr.response.response.updatedInput, { a: 1 });
+
 assert.equal(denyResult("t1", "no").decisionClassification, "user_reject");
+
 assert.equal(
   permissionReason("Bash", { command: "ls -la" }, { title: "Run ls" }),
   "Run ls: ls -la",
 );
+
 assert.equal(
   permissionReason("PowerShell", { command: "Get-ChildItem" }, { title: "Run it" }),
   "Run it: Get-ChildItem",
   "the Windows shell tool shows its command, not its arguments as JSON",
 );
+
 assert.ok(buildArgs({ model: "m", config }).includes("--permission-prompt-tool"));
+
 assert.ok(
   !buildArgs({ model: "m", config: new Config({ approvals: false }) }).includes(
     "--permission-prompt-tool",
   ),
 );
+
 assert.ok(
-  !buildArgs({ model: "m", purpose: "session-title", config } as any).includes(
-    "--permission-prompt-tool",
-  ),
+  !buildArgs({ model: "m", purpose: "session-title", config }).includes("--permission-prompt-tool"),
 );
 
 // idle-timer pause: a closed tool_use block sets toolPending until the tool result arrives
-const tp = new Translator() as any;
+const tp = new Translator();
+
 tp.translate({ type: "stream_event", event: { type: "message_start" } });
+
 tp.translate({
   type: "stream_event",
   event: {
@@ -1980,19 +2629,27 @@ tp.translate({
     content_block: { type: "tool_use", name: "Bash" },
   },
 });
+
 assert.equal(tp.toolPending, false);
+
 tp.translate({
   type: "stream_event",
   event: { type: "content_block_stop", index: 0 },
 });
+
 assert.equal(tp.toolPending, true);
+
 tp.translate({
   type: "user",
   message: { content: [{ type: "tool_result", content: "done" }] },
 });
+
 assert.equal(tp.toolPending, false);
-const tq = new Translator({ toolActivity: false }) as any;
+
+const tq = new Translator({ toolActivity: false });
+
 tq.translate({ type: "stream_event", event: { type: "message_start" } });
+
 assert.deepEqual(
   tq.translate({
     type: "stream_event",
@@ -2004,6 +2661,7 @@ assert.deepEqual(
   }),
   [],
 );
+
 assert.deepEqual(
   tq.translate({
     type: "stream_event",
@@ -2011,16 +2669,19 @@ assert.deepEqual(
   }),
   [],
 );
+
 assert.equal(tq.toolPending, true);
 
 console.log("ok");
 
 // --- a tool called with no arguments still fires its call, so its result is not an orphan ---
 {
-  const calls: { id: string; name: string; input: string }[] = [];
+  const calls: Array<{ id: string; name: string; input: string }> = [];
+
   const tr = new Translator({
     onToolCall: (id: string, name: string, input: string) => calls.push({ id, name, input }),
-  } as any) as any;
+  });
+
   tr.translate({ type: "stream_event", event: { type: "message_start" } });
   tr.translate({
     type: "stream_event",
@@ -2049,7 +2710,7 @@ console.log("ok");
 
 // --- the whole-message echo is dropped, a message the CLI sends on its own is not ---
 {
-  const tr = new Translator() as any;
+  const tr = new Translator();
   tr.translate({
     type: "stream_event",
     event: { type: "message_start", message: { id: "m1" } },
@@ -2078,6 +2739,7 @@ console.log("ok");
     [],
     "the echo of what just streamed is a duplicate",
   );
+
   // What the CLI sends after refusing a turn on a rate limit: its own message, never streamed.
   const limit = tr.translate({
     type: "assistant",
@@ -2086,6 +2748,7 @@ console.log("ok");
       content: [{ type: "text", text: "5-hour limit reached" }],
     },
   });
+
   assert.ok(
     JSON.stringify(limit).includes("5-hour limit reached"),
     "a message that never streamed is shown",
@@ -2094,7 +2757,8 @@ console.log("ok");
 
 // --- native relay: Claude's view of a relayed dsh tool call stays hidden, dsh renders it ---
 {
-  const tr = new Translator({ relay: true }) as any;
+  const tr = new Translator({ relay: true });
+
   const start = tr.translate({
     type: "stream_event",
     event: {
@@ -2107,22 +2771,27 @@ console.log("ok");
       },
     },
   });
+
   assert.deepEqual(start, [], "relayed dsh tool_use opens no visible block");
+
   const stop = tr.translate({
     type: "stream_event",
     event: { type: "content_block_stop", index: 0 },
   });
+
   assert.deepEqual(stop, []);
   assert.equal(tr.toolPending, true, "still counts as a running tool for the idle timer");
   tr.relayed.add("tu1"); // dsh ran it natively
+
   const res = tr.translate({
     type: "user",
     message: {
       content: [{ type: "tool_result", tool_use_id: "tu1", content: "done" }],
     },
   });
+
   assert.deepEqual(res, [], "its result row is dsh's to render, not ours");
-  const plain = new Translator({ relay: false }) as any;
+  const plain = new Translator({ relay: false });
   plain.translate({
     type: "stream_event",
     event: {
@@ -2140,29 +2809,21 @@ console.log("ok");
   assert.ok(plainBlock);
   assert.equal(plainBlock.blockType, "hidden", "without relay the call still draws no text block");
 }
+
 {
-  const tr = new Translator() as any;
+  const tr = new Translator();
   tr.index = 3;
-  // SAFETY: partial fake for tests; RelayEvent requires type/resolve/reject not used in test
+
   const chunks = [
-    ...relayBlocks(
-      tr as any,
-      {
-        id: "c1",
-        name: "subagent_local",
-        args: { prompt: "hi" },
-      } as unknown as import("./process.js").RelayEvent,
-    ),
+    ...relayBlocks(tr, { ...pendingRelay("c1"), name: "subagent_local", args: { prompt: "hi" } }),
   ];
+
   assert.deepEqual(
     chunks.map((c) => c.type),
     ["block-start", "tool-call-delta", "block-end"],
   );
-  // SAFETY: chunks[0] exists because relayBlocks yields at least one chunk
-  const firstChunk = chunks[0];
-  assert.ok(firstChunk);
-  // SAFETY: chunks[0] has index from translator state
-  assert.equal((firstChunk as { index?: number }).index, 3);
+  // relayBlocks yields at least one chunk, and the first carries the reserved block index.
+  assert.equal(indexOf(chunks[0]), 3);
   assert.equal(tr.index, 4, "reserves one block index");
   // SAFETY: chunks[2] exists and has block property
   const lastChunk = chunks[2];
@@ -2174,15 +2835,17 @@ console.log("ok");
     arguments: '{"prompt":"hi"}',
   });
 }
+
 {
   const messages = messageList([
     { role: "user", content: [{ type: "text", text: "go" }] },
     {
       role: "assistant",
-      content: [{ type: "tool-call", id: "c1", name: "x", arguments: "{}" }],
+      content: [{ type: "tool-call", id: ToolCallId("c1"), name: "x", arguments: "{}" }],
     },
     { role: "tool", toolCallId: "c1", content: [{ type: "text", text: "42" }] },
   ]);
+
   assert.deepEqual(toolResultFor(messages, "c1"), {
     text: "42",
     isError: false,
@@ -2190,12 +2853,13 @@ console.log("ok");
   assert.equal(toolResultFor(messages, "nope"), undefined);
   assert.equal(toolResultFor([{ role: "user", content: [] }], "c1"), undefined);
 }
+
 {
   const base = messageList([
     { role: "user", content: [{ type: "text", text: "go" }] },
     {
       role: "assistant",
-      content: [{ type: "tool-call", id: "c1", name: "x", arguments: "{}" }],
+      content: [{ type: "tool-call", id: ToolCallId("c1"), name: "x", arguments: "{}" }],
     },
     {
       role: "user",
@@ -2203,13 +2867,15 @@ console.log("ok");
       content: [
         {
           type: "tool-result",
-          toolCallId: "c1",
+          toolCallId: ToolCallId("c1"),
           content: [{ type: "text", text: "42" }],
         },
       ],
     },
   ]);
+
   assert.equal(stepContextFor(base), "", "only the tool result: nothing to add");
+
   const steered = messageList([
     ...base,
     {
@@ -2224,6 +2890,7 @@ console.log("ok");
       content: [{ type: "text", text: "child done" }],
     },
   ]);
+
   const ctx = stepContextFor(steered);
   assert.match(ctx, /also check \/tmp/);
   assert.match(ctx, /child done/);
@@ -2235,6 +2902,7 @@ console.log("ok");
   const dedup = stepContextFor(steered, new Set(), new Set(["s1"]));
   assert.match(dedup, /also check \/tmp/, "a message not yet sent still rides on the result");
   assert.doesNotMatch(dedup, /child done/, "a message already written live is not read twice");
+
   // Typed while the turn ran, `/btw` reaches the plugin as prose; the turn loop pulls it out and
   // asks it as a side question instead of forwarding it to Claude, which does not know the command.
   const withAside = messageList([
@@ -2250,12 +2918,14 @@ console.log("ok");
       content: [{ type: "text", text: "the docs say to run /btw for a side question" }],
     },
   ]);
+
   const asides = sideQuestionsIn(withAside);
   assert.equal(asides.length, 1, "prose that merely mentions the command is still prose");
   assert.equal(asides[0]?.question, "what is the cwd?");
   assert.equal(asides[0]?.message.source?.rpcId, "r9", "the message is named so it can be dropped");
   assert.deepEqual(sideQuestionsIn(base), [], "no /btw, nothing to ask");
 }
+
 {
   const msgs = messageList([
     {
@@ -2275,6 +2945,7 @@ console.log("ok");
       content: [{ type: "text", text: "new" }],
     },
   ]);
+
   assert.equal(afterLastAssistant(msgs).length, 2);
   assert.deepEqual(
     dropSent(msgs, new Set(["r2"])).map((m) => m.source?.rpcId),
@@ -2302,65 +2973,85 @@ console.log("ok");
     "a dsh message marked by id is dropped like a typed steer marked by rpcId",
   );
 }
+
 {
-  // SAFETY: partial fake for tests; PluginContext requires many fields not used here
   const adapter = new ClaudeCodeAdapter(
-    { on() {} } as unknown as import("./dsh.js").PluginContext,
+    fakePluginContext({ on() {} }),
     Config({ maxProcesses: 2, processIdleMs: 10_000 }),
   );
-  const fake = (extra: any) => ({
-    alive: true,
-    busy: false,
-    relays: new Map(),
-    lastUsed: Date.now() - 20_000,
-    killed: 0,
-    kill() {
-      this.killed++;
-    },
-    ...extra,
+
+  const kills = new Map<string, number>();
+
+  /** An idle-looking process past processIdleMs whose kills are counted under `name`. */
+  const fake = (name: string, extra: Partial<ClaudeProcess> = {}) =>
+    fakeProc({
+      alive: true,
+      busy: false,
+      relays: new Map<string, RelayEvent>(),
+      lastUsed: Date.now() - 20_000,
+      kill() {
+        kills.set(name, (kills.get(name) ?? 0) + 1);
+      },
+      ...extra,
+    });
+
+  const killed = (name: string) => kills.get(name) ?? 0;
+
+  const parked = fake("parked", {
+    relays: new Map<string, RelayEvent>([["c1", pendingRelay("c1")]]),
   });
-  const parked = fake({ relays: new Map([["c1", {}]]) });
-  const steered = fake({ parked: "steer" });
-  const idle = fake({});
+
+  const steered = fake("steered", { parked: "steer" });
+  const idle = fake("idle");
   // Spawned for a turn that is still waiting on the initialize reply: not busy yet, so it is the
   // one settled process left for the cap to take once the idle one is gone.
-  const starting = fake({ claimed: true, lastUsed: Date.now() });
+  const starting = fake("starting", { claimed: true, lastUsed: Date.now() });
   adapter.processes.set(registryKey("claude-code", "a"), parked);
   adapter.processes.set(registryKey("claude-code", "b"), steered);
   adapter.processes.set(registryKey("claude-code", "c"), idle);
   adapter.processes.set(registryKey("claude-code", "d"), starting);
   adapter.evict();
-  assert.equal(starting.killed, 0, "a process a turn just took is not evicted before it is busy");
-  assert.equal(parked.killed, 0, "a process waiting on dsh's tool result is not idle");
-  assert.equal(steered.killed, 0, "a process parked for a steer is not idle");
-  assert.equal(idle.killed, 1, "a truly idle process past processIdleMs is culled");
+  assert.equal(
+    killed("starting"),
+    0,
+    "a process a turn just took is not evicted before it is busy",
+  );
+  assert.equal(killed("parked"), 0, "a process waiting on dsh's tool result is not idle");
+  assert.equal(killed("steered"), 0, "a process parked for a steer is not idle");
+  assert.equal(killed("idle"), 1, "a truly idle process past processIdleMs is culled");
 }
+
 {
-  const tr = new Translator({ relay: true }) as any;
+  const tr = new Translator({ relay: true });
   tr.aborting = true;
+
   const fin = tr.translate({
     type: "result",
     subtype: "error_during_execution",
     is_error: true,
   });
+
   assert.equal(
-    fin.at(-1).reason.kind,
+    finishOf(fin.at(-1)).kind,
     "aborted",
     "an interrupted turn finishes as aborted, not error",
   );
   const plain = new Translator({ relay: true });
+
   const fin2 = plain.translate({
     type: "result",
     subtype: "error_during_execution",
     is_error: true,
     result: "x",
   });
+
   // SAFETY: fin2 has at least one element with error reason
   const fin2Last = fin2.at(-1);
   assert.ok(fin2Last && "reason" in fin2Last && fin2Last.reason.kind === "error");
 }
+
 {
-  const tr = new Translator({ relay: true }) as any;
+  const tr = new Translator({ relay: true });
   tr.translate({
     type: "assistant",
     message: {
@@ -2384,13 +3075,14 @@ console.log("ok");
   assert.equal(tr.dshIds.size, 2, "whole-message path counts outstanding dsh calls for batching");
   assert.deepEqual(tr.relayableIds(), ["d1", "d2"], "every relayed tool is a relay candidate");
 }
+
 // The bridge's own tools answer inside the bridge and never relay. Counted as relay candidates, a
 // wait_session held open beside a subagent made the batch wait for a second relay, then took the
 // subagent's mark: the subagent's result drew twice and wait_session's own row was dropped.
 {
   const names = new Map<string, { name: string; args: string }>();
   const ids = new Set<string>();
-  const tr = new Translator({ relay: true, dshIds: ids, dshCalls: names }) as any;
+  const tr = new Translator({ relay: true, dshIds: ids, dshCalls: names });
   tr.translate({
     type: "assistant",
     message: {
@@ -2405,12 +3097,14 @@ console.log("ok");
   assert.equal(tr.dshIds.size, 4, "own tools stay tracked, so their results still draw a row");
   assert.deepEqual(tr.relayableIds(), ["d1"], "only the subagent can relay");
   // The next step's translator shares the turn's ids and names, so the answer holds there too.
-  const next = new Translator({ relay: true, dshIds: ids, dshCalls: names }) as any;
+  const next = new Translator({ relay: true, dshIds: ids, dshCalls: names });
   assert.deepEqual(next.relayableIds(), ["d1"], "still told apart a step later");
+
   const row = next.translate({
     type: "user",
     message: { content: [{ type: "tool_result", tool_use_id: "w1", content: "waited" }] },
   });
+
   assert.ok(
     JSON.stringify(row).includes("wait_session"),
     "a result that lands a step later still names its tool",
@@ -2418,8 +3112,10 @@ console.log("ok");
   assert.equal(names.has("w1"), false, "the name goes when the result lands");
   assert.deepEqual(next.relayableIds(), ["d1"]);
 }
+
 {
   const line = (o: any) => JSON.stringify(o);
+
   const src = [
     line({
       type: "user",
@@ -2450,6 +3146,7 @@ console.log("ok");
       message: { role: "assistant", content: [{ type: "text", text: "a2" }] },
     }),
   ].join("\n");
+
   const cut = forkTranscriptText(src, "OLD", "NEW", 1);
   assert.equal(
     cut.split("\n").filter(Boolean).length,
@@ -2466,7 +3163,8 @@ console.log("ok");
   assert.equal(forkTranscriptText(src, "OLD", "NEW", 9).split("\n").filter(Boolean).length, 5);
   // A skill body is a user row nobody typed (`isMeta`), and so is a task notice
   // (`promptSource: "system"`): neither is a prompt to cut at.
-  const row = (v: object) => JSON.stringify({ sessionId: "OLD", ...v });
+  const row = (v: Record<string, JsonValue>) => JSON.stringify({ sessionId: "OLD", ...v });
+
   const withMeta = [
     row({ type: "user", message: { role: "user", content: "first" } }),
     row({ type: "user", isMeta: true, message: { role: "user", content: "# Skill body" } }),
@@ -2474,19 +3172,23 @@ console.log("ok");
     row({ type: "assistant", message: { role: "assistant", content: [] } }),
     row({ type: "user", message: { role: "user", content: "second" } }),
   ].join("\n");
+
   assert.equal(
     forkTranscriptText(withMeta, "OLD", "NEW", 1).split("\n").filter(Boolean).length,
     4,
     "a fork at turn 1 keeps all of turn 1",
   );
+
   const msgs = messageList([
     { role: "user", source: { kind: "user" }, content: [] },
     { role: "assistant", content: [] },
     { role: "user", source: { kind: "subagent-settled" }, content: [] },
     { role: "user", source: { kind: "user" }, content: [] },
   ]);
+
   assert.equal(userPromptCount(msgs), 2);
 }
+
 {
   const q = new LineQueue();
   assert.equal(await q.next(30), TIMEOUT, "times out with nothing queued");
@@ -2500,22 +3202,28 @@ console.log("ok");
   q.push("now");
   assert.equal(await pending, "now");
 }
+
 {
   // Claude ran a turn on its own while dsh was idle (background task finished): its whole
   // output is queued ahead of the next prompt. Count its results so the turn loop skips them.
   const queue = new LineQueue();
   const count = () => ClaudeProcess.prototype.countStaleResults.call({ queue });
   assert.equal(count(), 0, "empty queue");
-  queue.push(
+
+  // LineQueue.push takes one line at a time.
+  for (const line of [
     JSON.stringify({
       type: "assistant",
       message: { content: [{ type: "text", text: "done" }] },
     }),
-  );
-  queue.push(JSON.stringify({ type: "result", subtype: "success", is_error: false }));
-  queue.push('{"type":"assistant","message":{"content":[{"type":"text","text":"result"}]}}');
-  queue.push("not json result line");
-  queue.push({ type: "dsh_relay" });
+    JSON.stringify({ type: "result", subtype: "success", is_error: false }),
+    '{"type":"assistant","message":{"content":[{"type":"text","text":"result"}]}}',
+    "not json result line",
+    { type: "dsh_relay" },
+  ]) {
+    queue.push(line);
+  }
+
   assert.equal(
     count(),
     1,
@@ -2527,11 +3235,12 @@ console.log("ok");
   await queue.next();
   assert.equal(count(), 1, "only what is still queued counts");
 }
+
 {
   // A child printing lines that are not JSON must not hold a timed call open: the deadline is
   // fixed when the wait starts, so the junk is filed under `stray` and the call still times out.
   const queue = new LineQueue();
-  const fake = { queue, stray: "", queuedIndexes: [] as number[], used() {} };
+  const fake = { queue, stray: "", queuedIndexes: [] as Array<number>, used() {} };
   const noise = setInterval(() => queue.push("warning: not json"), 20);
   const started = Date.now();
   const event = await ClaudeProcess.prototype.nextEvent.call(fake, 120);
@@ -2540,11 +3249,20 @@ console.log("ok");
   assert.ok(Date.now() - started < 600, "timed out on its own deadline");
   assert.ok(fake.stray.includes("warning: not json"), "the junk is kept for the error message");
 }
+
 {
   // Idle result → wake callback; busy or non-result lines stay silent.
   let woke = 0;
-  const fake = { busy: false, onIdleResult: () => woke++ };
-  const note = (line: any) => ClaudeProcess.prototype.noteIdleResult.call(fake, line);
+
+  // Only the members noteIdleResult reads; it runs with this fake as `this`.
+  const fake: Partial<ClaudeProcess> = {
+    busy: false,
+    onIdleResult: () => {
+      woke++;
+    },
+  };
+
+  const note = (line: string) => ClaudeProcess.prototype.noteIdleResult.call(fake, line);
   note('{"type":"assistant","message":{"content":[{"type":"text","text":"result"}]}}');
   note("plain result text");
   assert.equal(woke, 0, "assistant text and junk do not wake");
@@ -2556,7 +3274,7 @@ console.log("ok");
   fake.busy = false;
   // The answer to an interrupt: one result of any outcome is swallowed, taken off the queue and
   // acknowledged to the keeper, and the next one wakes again.
-  const acked: number[] = [];
+  const acked: Array<number> = [];
   const kept = '{"type":"assistant","message":{"content":[{"type":"text","text":"earlier"}]}}';
   Object.assign(fake, {
     interruptOwed: true,
@@ -2574,20 +3292,21 @@ console.log("ok");
   });
   note('{"type":"result","subtype":"success"}');
   assert.equal(woke, 1, "the interrupt's own result wakes nobody");
-  assert.equal((fake as any).interruptOwed, false, "and the debt is paid");
+  assert.equal(fake.interruptOwed, false, "and the debt is paid");
   assert.deepEqual(
-    (fake as any).queue.lines,
+    fake.queue?.lines,
     [kept],
     "the tail since the interrupt leaves the queue, what came before stays",
   );
   assert.deepEqual(acked, [41, 42, 43], "and the keeper is told each was used");
-  assert.equal((fake as any).interruptMark, undefined, "the mark is spent with the answer");
+  assert.equal(fake.interruptMark, undefined, "the mark is spent with the answer");
   note('{"type":"result","subtype":"success"}');
   assert.equal(woke, 2, "the one after it is a real idle reply");
-  (fake as any).onIdleResult = undefined;
+  fake.onIdleResult = undefined;
   note('{"type":"result","subtype":"success"}');
   assert.equal(woke, 2, "no callback, no throw");
 }
+
 {
   const wake = message({
     role: "user",
@@ -2599,20 +3318,24 @@ console.log("ok");
     },
     content: [{ type: "text", text: WAKE_TEXT }],
   });
+
   const user = message({
     role: "user",
     source: { kind: "user" },
     content: [{ type: "text", text: "hi" }],
   });
+
   const other = message({
     role: "user",
     source: { kind: "plugin", plugin: "dsh-skills" },
     content: [],
   });
+
   const asst = message({
     role: "assistant",
     content: [{ type: "text", text: "ok" }],
   });
+
   assert.equal(wakeOnlyTurn([user, asst, wake]), true, "our notice alone opens a drain-only turn");
   assert.equal(
     wakeOnlyTurn([user, asst, wake, other]),
@@ -2626,6 +3349,7 @@ console.log("ok");
     "an old notice behind an assistant reply is history",
   );
   assert.equal(wakeOnlyTurn([user, asst, other]), false, "no notice, no drain turn");
+
   const wakeV4 = message({
     role: "user",
     source: {
@@ -2635,7 +3359,9 @@ console.log("ok");
     },
     content: [{ type: "text", text: WAKE_TEXT }],
   });
+
   assert.equal(wakeOnlyTurn([user, asst, wakeV4]), true, "the v4 producer kind is our notice too");
+
   const named = message({
     role: "user",
     source: { kind: "plugin:dsh-oh-my-claude", form: "notice", summary: WAKE_TEXT },
@@ -2644,7 +3370,9 @@ console.log("ok");
       { type: "text", text: finishedTasksText([{ name: "lint", status: "completed" }]) },
     ],
   });
+
   assert.equal(wakeOnlyTurn([user, asst, named]), true, "naming the task keeps it a drain turn");
+
   // #311: any producer's pending message beside the wake makes a normal turn, not only `user`.
   const team = message({
     role: "user",
@@ -2656,46 +3384,57 @@ console.log("ok");
     },
     content: [{ type: "text", text: "Team Inbox has unread work." }],
   });
+
   assert.equal(wakeOnlyTurn([user, asst, wakeV4, team]), false, "a pending Team notice is sent");
   assert.equal(
     wakeOnlyTurn([user, asst, wakeV4, team], { sent: new Set(["team-1"]) }),
     true,
     "a notice Claude already got live is not sent twice",
   );
+
   const reconnect = message({
     role: "user",
     source: { kind: "plugin:dsh-oh-my-claude", form: "notice" },
     content: [{ type: "text", text: RECONNECT_TEXT }],
   });
+
   assert.equal(
     wakeOnlyTurn([user, asst, wake, reconnect]),
     false,
     "our reconnect notice is a prompt",
   );
+
   const catalog = message({
     role: "user",
     source: { kind: "skill-catalog" },
     content: [{ type: "text", text: "Skills: deploy, review" }],
   });
+
   assert.equal(wakeOnlyTurn([user, asst, wake, catalog]), true, "a context block is not input");
+
   const tool = message({
     role: "user",
     source: { kind: "tool" },
     content: [{ type: "text", text: "done" }],
   });
+
   assert.equal(wakeOnlyTurn([user, asst, wake, tool]), true, "a tool result is not input");
+
   const picture = message({
     role: "user",
     source: { kind: "@contexera/dsh-agent-team" },
     content: [{ type: "image", attachment: { bytes: 10 } }],
   });
+
   assert.equal(wakeOnlyTurn([user, asst, wake, picture]), false, "an image alone is input");
+
   // dsh-time-context adds this before a step once ten minutes have passed since its last one.
   const clock = message({
     role: "user",
     source: { kind: "time-context", form: "snapshot" },
     content: [{ type: "text", text: "Current time: 2026-11-16T22:10:00-05:00" }],
   });
+
   assert.equal(wakeOnlyTurn([user, asst, wake, clock]), true, "a time snapshot is not input");
   // The aside turn asks the same question with no wake in the batch.
   assert.equal(hasPendingInput([user, asst, team]), true, "a Team notice beside an aside is sent");
@@ -2703,28 +3442,42 @@ console.log("ok");
   assert.equal(hasPendingInput([user, asst, user]), true, "a person's prompt is");
   assert.equal(hasPendingInput([user, asst, team], { sent: new Set(["team-1"]) }), false);
 }
+
 {
   // Claude Code's own compaction shows as one line; other system events stay silent.
-  const t = new Translator() as any;
-  assert.deepEqual(t.translate({ type: "system", subtype: "init", session_id: "x" }), []);
+  const t = new Translator();
+
+  // The CLI's init frame carries `session_id`, which the translator does not read.
+  const init: ClaudeEvent & { session_id: string } = {
+    type: "system",
+    subtype: "init",
+    session_id: "x",
+  };
+
+  assert.deepEqual(t.translate(init), []);
+
   const out = t.translate({
     type: "system",
     subtype: "compact_boundary",
-    compact_metadata: { trigger: "auto", pre_tokens: 150000 },
+    compact_metadata: { trigger: "auto", pre_tokens: 150_000 },
   });
-  assert.equal(out.at(-1).type, "block-end");
+
+  assert.equal(out.at(-1)?.type, "block-end");
   assert.match(
-    out.at(-1).block.text,
+    blockTextOf(out.at(-1)),
     /Context compacted by Claude Code \(auto, 150000 tokens before\)/,
   );
   assert.equal(t.finished, false, "compaction does not end the turn");
+
   const manual = t.translate({
     type: "system",
     subtype: "compact_boundary",
     compact_metadata: { trigger: "manual" },
   });
-  assert.equal(out.at(-1).block.type, "reasoning", "compaction rides the reasoning lane");
-  assert.match(manual.at(-1).block.text, /\(manual\)/, "manual trigger, no token count");
+
+  assert.equal(endBlockOf(out.at(-1)).type, "reasoning", "compaction rides the reasoning lane");
+  assert.match(blockTextOf(manual.at(-1)), /\(manual\)/, "manual trigger, no token count");
+
   // The CLI fills post_tokens and duration_ms when it has them, and both are optional in its own
   // schema, so the line has to read whole either way.
   const full = t.translate({
@@ -2732,23 +3485,28 @@ console.log("ok");
     subtype: "compact_boundary",
     compact_metadata: {
       trigger: "auto",
-      pre_tokens: 150000,
-      post_tokens: 42000,
+      pre_tokens: 150_000,
+      post_tokens: 42_000,
       duration_ms: 8430,
     },
   });
-  assert.match(full.at(-1).block.text, /\(auto, 150000 tokens before, 42000 after, 8\.4s\)/);
+
+  assert.match(blockTextOf(full.at(-1)), /\(auto, 150000 tokens before, 42000 after, 8\.4s\)/);
+
   // "after" without a "before" to pair with is dropped rather than left dangling.
   const noPre = t.translate({
     type: "system",
     subtype: "compact_boundary",
-    compact_metadata: { trigger: "auto", post_tokens: 42000 },
+    compact_metadata: { trigger: "auto", post_tokens: 42_000 },
   });
-  assert.match(noPre.at(-1).block.text, /\(auto\)/, "a lone post_tokens says nothing on its own");
+
+  assert.match(blockTextOf(noPre.at(-1)), /\(auto\)/, "a lone post_tokens says nothing on its own");
 }
+
 {
   // Auto-memory traffic: saved files and recalls show as one reasoning line each; an empty recall is silent.
-  const t = new Translator() as any;
+  const t = new Translator();
+
   const saved = t.translate({
     type: "system",
     subtype: "memory_saved",
@@ -2757,22 +3515,31 @@ console.log("ok");
       "/h/.claude/projects/p/memory/MEMORY.md",
     ],
   });
-  assert.equal(saved.at(-1).block.type, "reasoning");
-  assert.equal(saved.at(-1).block.text, "Saved 2 memories: feedback-x.md, MEMORY.md");
-  const recalled = t.translate({
+
+  assert.equal(endBlockOf(saved.at(-1)).type, "reasoning");
+  assert.equal(blockTextOf(saved.at(-1)), "Saved 2 memories: feedback-x.md, MEMORY.md");
+
+  // `mode` rides along on the wire; the translator does not read it.
+  const recallFrame: ClaudeEvent & { mode: string } = {
     type: "system",
     subtype: "memory_recall",
     mode: "select",
     memories: [{ path: "a.md" }],
-  });
-  assert.equal(recalled.at(-1).block.text, "Recalled 1 memory");
+  };
+
+  const recalled = t.translate(recallFrame);
+
+  assert.equal(blockTextOf(recalled.at(-1)), "Recalled 1 memory");
   assert.deepEqual(t.translate({ type: "system", subtype: "memory_recall", memories: [] }), []);
 }
+
 {
   // api_retry: one reasoning line per retry, worded like the CLI's banner, with the reset clock
   // for a quota 429 and without it for any other error.
-  const t = new Translator() as any;
-  const quota = t.translate({
+  const t = new Translator();
+
+  // `error_status` rides along on the wire; the translator reads `error.status` instead.
+  const quotaFrame: ClaudeEvent & { error_status: number } = {
     type: "system",
     subtype: "api_retry",
     attempt: 2,
@@ -2785,14 +3552,18 @@ console.log("ok");
       formatted: "You've hit your session limit",
       rate_limits: { resets_at: 1_757_199_600, rate_limit_type: "five_hour" },
     },
-  });
-  assert.equal(quota.at(-1).block.type, "reasoning");
+  };
+
+  const quota = t.translate(quotaFrame);
+
+  assert.equal(endBlockOf(quota.at(-1)).type, "reasoning");
   assert.equal(
-    quota.at(-1).block.text,
+    blockTextOf(quota.at(-1)),
     `⚠ You've hit your session limit · Retrying in 4s (resets ${resetClock(1_757_199_600_000)}) · attempt 2/10`,
   );
   assert.equal(resetClock(1_757_199_600_000, "America/New_York"), "7pm (America/New_York)");
   assert.equal(resetClock(1_757_201_400_000, "America/New_York"), "7:30pm (America/New_York)");
+
   const server = t.translate({
     type: "system",
     subtype: "api_retry",
@@ -2806,16 +3577,19 @@ console.log("ok");
       rate_limits: null,
     },
   });
+
   assert.equal(
-    server.at(-1).block.text,
+    blockTextOf(server.at(-1)),
     "⚠ API Error (529 overloaded) · Retrying in 1s · attempt 1/10",
   );
   console.log("api-retry ok");
 }
+
 {
   // Hook frames: a failed or cancelled hook_response renders one reasoning line; a clean one,
   // hook_started and hook_progress are silent (dozens of hooks per tool call on a busy box).
-  const t = new Translator() as any;
+  const t = new Translator();
+
   const failed = t.translate({
     type: "system",
     subtype: "hook_response",
@@ -2825,8 +3599,10 @@ console.log("ok");
     stderr: "boom\n",
     outcome: "error",
   });
-  assert.equal(failed.at(-1).block.type, "reasoning");
-  assert.equal(failed.at(-1).block.text, "⚠ Hook ctx-route (PreToolUse) exit 2: boom");
+
+  assert.equal(endBlockOf(failed.at(-1)).type, "reasoning");
+  assert.equal(blockTextOf(failed.at(-1)), "⚠ Hook ctx-route (PreToolUse) exit 2: boom");
+
   const cancelled = t.translate({
     type: "system",
     subtype: "hook_response",
@@ -2834,7 +3610,9 @@ console.log("ok");
     hook_event: "Stop",
     outcome: "cancelled",
   });
-  assert.equal(cancelled.at(-1).block.text, "⚠ Hook slow (Stop) cancelled");
+
+  assert.equal(blockTextOf(cancelled.at(-1)), "⚠ Hook slow (Stop) cancelled");
+
   for (const frame of [
     {
       subtype: "hook_response",
@@ -2851,15 +3629,17 @@ console.log("ok");
       hook_event: "PreToolUse",
       stdout: "x",
     },
-  ])
+  ]) {
     assert.deepEqual(t.translate({ type: "system", ...frame }), [], frame.subtype);
+  }
 }
+
 {
   // Task frames: task_started with a task_id opens a block to hold progress updates; without one
   // emits a closed line. task_progress appends when summary or last_tool_name changes. task_notification
   // appends completion and closes. background_tasks_changed is silent. A result frame closes any open
   // task blocks.
-  const t = new Translator() as any;
+  const t = new Translator();
   t.translate({
     type: "system",
     subtype: "task_started",
@@ -2868,6 +3648,7 @@ console.log("ok");
     subagent_type: "Explore",
     is_backgrounded: true,
   });
+
   // First progress with a tool name and usage.
   const prog1 = t.translate({
     type: "system",
@@ -2876,7 +3657,9 @@ console.log("ok");
     last_tool_name: "Explore",
     usage: { input_tokens: 100, output_tokens: 50 },
   });
+
   assert(prog1.length > 0, "progress with new tool name appends");
+
   // Identical progress frame appends nothing.
   const prog1Dup = t.translate({
     type: "system",
@@ -2885,7 +3668,9 @@ console.log("ok");
     last_tool_name: "Explore",
     usage: { input_tokens: 100, output_tokens: 50 },
   });
+
   assert.deepEqual(prog1Dup, [], "identical progress frame appends nothing");
+
   // Progress with a new summary appends.
   const prog2 = t.translate({
     type: "system",
@@ -2893,7 +3678,9 @@ console.log("ok");
     task_id: "t1",
     summary: "testing framework",
   });
+
   assert(prog2.length > 0, "progress with new summary appends");
+
   // Progress for unknown task_id emits nothing.
   const unknownProg = t.translate({
     type: "system",
@@ -2901,33 +3688,41 @@ console.log("ok");
     task_id: "t_unknown",
     summary: "x",
   });
+
   assert.deepEqual(unknownProg, [], "progress for unknown task emits nothing");
+
   // Start with no task_id emits closed one-line form.
   const startNoId = t.translate({
     type: "system",
     subtype: "task_started",
     description: "no id task",
   });
+
   assert.equal(startNoId.length, 3); // block-start, delta, block-end
-  assert.equal(startNoId[0].type, "block-start");
-  assert.equal(startNoId[2].type, "block-end");
+  assert.equal(startNoId[0]?.type, "block-start");
+  assert.equal(startNoId[2]?.type, "block-end");
   // Two concurrent tasks keep distinct block indices.
-  const t2 = new Translator() as any;
+  const t2 = new Translator();
+
   const s1 = t2.translate({
     type: "system",
     subtype: "task_started",
     task_id: "t1",
     description: "task 1",
   });
-  const idx1 = s1[0].index;
+
+  const idx1 = indexOf(s1[0]);
+
   const s2 = t2.translate({
     type: "system",
     subtype: "task_started",
     task_id: "t2",
     description: "task 2",
   });
-  const idx2 = s2[0].index;
+
+  const idx2 = indexOf(s2[0]);
   assert.notEqual(idx1, idx2, "concurrent tasks have distinct indices");
+
   // Progress on t1 goes to idx1.
   const p1 = t2.translate({
     type: "system",
@@ -2935,7 +3730,9 @@ console.log("ok");
     task_id: "t1",
     summary: "progress 1",
   });
-  assert.equal(p1[0].index, idx1);
+
+  assert.equal(indexOf(p1[0]), idx1);
+
   // Progress on t2 goes to idx2.
   const p2 = t2.translate({
     type: "system",
@@ -2943,20 +3740,24 @@ console.log("ok");
     task_id: "t2",
     summary: "progress 2",
   });
-  assert.equal(p2[0].index, idx2);
+
+  assert.equal(indexOf(p2[0]), idx2);
   // Result closes all open task blocks exactly once.
-  const t3 = new Translator() as any;
+  const t3 = new Translator();
+
   const s = t3.translate({
     type: "system",
     subtype: "task_started",
     task_id: "open",
     description: "never notified",
   });
-  const openIdx = s[0].index;
+
+  const openIdx = indexOf(s[0]);
   const result = t3.translate({ type: "result" });
   const endCount = result.filter((e: any) => e.type === "block-end" && e.index === openIdx).length;
   assert.equal(endCount, 1, "result closes each open task block exactly once");
   assert.equal(t3.taskBlocks.size, 0, "taskBlocks cleared after result");
+
   // Notification appends the completion line to the task's own block and closes it, so the row is
   // one block from start to finish rather than a second, unrelated line.
   const done = t.translate({
@@ -2966,9 +3767,11 @@ console.log("ok");
     status: "completed",
     summary: "all green",
   });
-  assert.equal(done.at(-1).type, "block-end", "notification closes the task block");
-  assert.match(done.at(-1).block.text, /Task completed: all green$/);
+
+  assert.equal(done.at(-1)?.type, "block-end", "notification closes the task block");
+  assert.match(blockTextOf(done.at(-1)), /Task completed: all green$/);
   assert.equal(t.taskBlocks.has("t1"), false, "the closed task leaves the map");
+
   // A notification for a task nothing opened still reports itself, as its own closed line.
   const orphan = t.translate({
     type: "system",
@@ -2977,15 +3780,20 @@ console.log("ok");
     status: "failed",
     summary: "boom",
   });
-  assert.equal(orphan.at(-1).type, "block-end");
-  assert.equal(orphan.at(-1).block.text, "Task failed: boom");
+
+  assert.equal(orphan.at(-1)?.type, "block-end");
+  assert.equal(blockTextOf(orphan.at(-1)), "Task failed: boom");
+
   // In auto mode a subagent hands its report back as a message: the summary and the Agent result
   // are a stub that says so, and the report itself rides beside them (CLI 2.1.322). The stub is
   // not what a reader wants in either place.
   const stub =
     'This agent\'s report was delivered to you as a message from "ace" (its SubagentHandback call). Read it there; it is not repeated here.';
-  const handed = new Translator() as any;
-  const note = handed.translate({
+
+  const handed = new Translator();
+
+  // `handback` rides along on the wire; the translator reads `handback_report`.
+  const handedFrame: ClaudeEvent & { handback: string } = {
     type: "system",
     subtype: "task_notification",
     task_id: "h1",
@@ -2993,8 +3801,12 @@ console.log("ok");
     summary: stub,
     handback: "send",
     handback_report: { text: "the answer is 391" },
-  });
-  assert.equal(note.at(-1).block.text, "Task completed: the answer is 391");
+  };
+
+  const note = handed.translate(handedFrame);
+
+  assert.equal(blockTextOf(note.at(-1)), "Task completed: the answer is 391");
+
   const warned = handed.translate({
     type: "system",
     subtype: "task_notification",
@@ -3003,15 +3815,19 @@ console.log("ok");
     summary: stub,
     handback_report: { text: "391", warning: "report was cut short" },
   });
-  assert.equal(warned.at(-1).block.text, "Task completed: report was cut short 391");
+
+  assert.equal(blockTextOf(warned.at(-1)), "Task completed: report was cut short 391");
+
   const row = handed.translate({
     type: "user",
     message: { content: [{ type: "tool_result", tool_use_id: "toolu_agent", content: stub }] },
     tool_use_result: { handbackReport: { text: "the answer is 391" } },
   });
+
   const drawn = JSON.stringify(row);
   assert.ok(drawn.includes("the answer is 391"), "the Agent result shows the report");
   assert.ok(!drawn.includes("not repeated here"), "and not the stub");
+
   // A frame with two results is not a hand-back for both.
   const two = JSON.stringify(
     handed.translate({
@@ -3025,10 +3841,11 @@ console.log("ok");
       tool_use_result: { handbackReport: { text: "the answer is 391" } },
     }),
   );
+
   assert.ok(two.includes("first result") && two.includes("second result"));
   assert.ok(!two.includes("the answer is 391"));
   // background_tasks_changed is silent.
-  const t4 = new Translator() as any;
+  const t4 = new Translator();
   assert.deepEqual(
     t4.translate({
       type: "system",
@@ -3040,11 +3857,13 @@ console.log("ok");
   );
   console.log("task-frames ok");
 }
+
 {
   // tool_progress: the CLI heartbeats every 30s per running call. The first one opens a block, the
   // ones after it only write when they pass the next elapsed mark, the tool result closes the block,
   // and the retry variant is its own line.
-  const t = new Translator() as any;
+  const t = new Translator();
+
   const first = t.translate({
     type: "tool_progress",
     tool_use_id: "call1",
@@ -3052,7 +3871,12 @@ console.log("ok");
     elapsed_time_seconds: 30,
     heartbeat: true,
   });
-  assert.equal(first.at(-1).text, "⏱ Bash running · 30s", "the first heartbeat opens the block");
+
+  assert.equal(
+    deltaTextOf(first.at(-1)),
+    "⏱ Bash running · 30s",
+    "the first heartbeat opens the block",
+  );
   assert.equal(t.heartbeatBlocks.size, 1);
   // Between marks: nothing. The next mark after 30s is 60s.
   assert.deepEqual(
@@ -3066,6 +3890,7 @@ console.log("ok");
     [],
     "a heartbeat short of the next mark is silent",
   );
+
   const later = t.translate({
     type: "tool_progress",
     tool_use_id: "call1",
@@ -3073,11 +3898,13 @@ console.log("ok");
     elapsed_time_seconds: 270,
     heartbeat: true,
   });
+
   assert.equal(
-    later.at(-1).text,
+    deltaTextOf(later.at(-1)),
     "\n⏱ 4m30s",
     "a heartbeat past the mark appends the elapsed time",
   );
+
   // The result closes the block, in the same batch as the result row.
   const done = t.translate({
     type: "user",
@@ -3085,11 +3912,12 @@ console.log("ok");
       content: [{ type: "tool_result", tool_use_id: "call1", content: "ok" }],
     },
   });
-  assert.equal(done[0].type, "block-end", "the tool result closes the elapsed block first");
+
+  assert.equal(done[0]?.type, "block-end", "the tool result closes the elapsed block first");
   assert.equal(t.heartbeatBlocks.size, 0, "the closed call leaves the map");
 
   // A call still running when the turn ends has its block closed by the result frame.
-  const t2 = new Translator() as any;
+  const t2 = new Translator();
   t2.translate({
     type: "tool_progress",
     tool_use_id: "call2",
@@ -3105,7 +3933,8 @@ console.log("ok");
   assert.equal(t2.heartbeatBlocks.size, 0);
 
   // The retry variant carries no heartbeat and gets one closed line of its own.
-  const t3 = new Translator() as any;
+  const t3 = new Translator();
+
   const retry = t3.translate({
     type: "tool_progress",
     tool_use_id: "call3",
@@ -3119,13 +3948,14 @@ console.log("ok");
       error_category: "overloaded",
     },
   });
+
   assert.equal(
-    retry.at(-1).block.text,
+    blockTextOf(retry.at(-1)),
     "↻ Task [Explore] attempt 2/5 failed: overloaded, retrying in 4s",
   );
   assert.equal(t3.heartbeatBlocks.size, 0, "a retry opens no elapsed block");
   // toolActivity off means no heartbeat rows at all.
-  const quiet = new Translator({ toolActivity: false }) as any;
+  const quiet = new Translator({ toolActivity: false });
   assert.deepEqual(
     quiet.translate({
       type: "tool_progress",
@@ -3145,11 +3975,12 @@ console.log("ok");
   assert.equal(elapsedText(3720), "1h2m");
   console.log("tool-progress ok");
 }
+
 {
   // task_updated: a terminal status closes the task's block with the reason; a repeat of the same
   // status is silent; a pause writes one line and keeps the block open; a task nobody opened is
   // silent (a notification for one still reports itself, which is the other frame's job).
-  const t = new Translator() as any;
+  const t = new Translator();
   t.translate({
     type: "system",
     subtype: "task_started",
@@ -3166,25 +3997,29 @@ console.log("ok");
     [],
     "running is a state it passes through",
   );
+
   const paused = t.translate({
     type: "system",
     subtype: "task_updated",
     task_id: "t1",
     patch: { status: "paused" },
   });
-  assert.equal(paused.at(-1).text, "\n… paused");
+
+  assert.equal(deltaTextOf(paused.at(-1)), "\n… paused");
   assert.equal(t.taskBlocks.has("t1"), true, "a pause keeps the block open");
+
   const killed = t.translate({
     type: "system",
     subtype: "task_updated",
     task_id: "t1",
     patch: { status: "failed", error: "worker crashed" },
   });
-  assert.equal(killed.at(-1).type, "block-end");
-  assert.match(killed.at(-1).block.text, /Task failed: worker crashed$/);
+
+  assert.equal(killed.at(-1)?.type, "block-end");
+  assert.match(blockTextOf(killed.at(-1)), /Task failed: worker crashed$/);
   assert.equal(t.taskBlocks.has("t1"), false, "a terminal status leaves the map");
   // Same status twice, and a task nothing opened: both silent.
-  const t2 = new Translator() as any;
+  const t2 = new Translator();
   t2.translate({
     type: "system",
     subtype: "task_started",
@@ -3219,10 +4054,12 @@ console.log("ok");
   );
   console.log("task-updated ok");
 }
+
 {
   // permission_denied: the reason at the moment of the denial. decision_reason wins over the
   // model-facing message, and a reason that is not a string is ignored rather than stringified.
-  const t = new Translator() as any;
+  const t = new Translator();
+
   const denied = t.translate({
     type: "system",
     subtype: "permission_denied",
@@ -3230,7 +4067,9 @@ console.log("ok");
     decision_reason: "Bash(rm:*) is denied by a deny rule",
     message: "I need permission to run this",
   });
-  assert.equal(denied.at(-1).block.text, "⚠ Denied Bash: Bash(rm:*) is denied by a deny rule");
+
+  assert.equal(blockTextOf(denied.at(-1)), "⚠ Denied Bash: Bash(rm:*) is denied by a deny rule");
+
   const fallback = t.translate({
     type: "system",
     subtype: "permission_denied",
@@ -3238,19 +4077,22 @@ console.log("ok");
     decision_reason: { type: "rule" },
     message: "not allowed here",
   });
-  assert.equal(fallback.at(-1).block.text, "⚠ Denied Write: not allowed here");
+
+  assert.equal(blockTextOf(fallback.at(-1)), "⚠ Denied Write: not allowed here");
   const bare = t.translate({ type: "system", subtype: "permission_denied" });
-  assert.equal(bare.at(-1).block.text, "⚠ Denied tool");
+  assert.equal(blockTextOf(bare.at(-1)), "⚠ Denied tool");
   console.log("permission-denied ok");
 }
+
 {
   // commands_changed re-sends the catalog alone: the bridge is refreshed, nothing is drawn, and an
   // empty list is ignored rather than clearing what init established.
-  const t = new Translator() as any;
-  let seen: { names: string[]; tools: string[] } | undefined;
-  t.onInit = (names: string[], tools: string[]) => {
+  const t = new Translator();
+  let seen: { names: Array<string>; tools: Array<string> } | undefined;
+  t.onInit = (names: Array<string>, tools: Array<string>) => {
     seen = { names, tools };
   };
+
   assert.deepEqual(
     t.translate({
       type: "system",
@@ -3267,7 +4109,8 @@ console.log("ok");
   assert.equal(seen, undefined, "an empty catalog is not forwarded");
 
   // model_fallback: the CLI's own wording when it sends one, the models and trigger otherwise.
-  const t2 = new Translator() as any;
+  const t2 = new Translator();
+
   const said = t2.translate({
     type: "system",
     subtype: "model_fallback",
@@ -3276,7 +4119,9 @@ console.log("ok");
     original_model: "claude-opus-5",
     fallback_model: "claude-sonnet-5",
   });
-  assert.equal(said.at(-1).block.text, "⚠ Claude Opus 5 is overloaded, falling back to Sonnet 5");
+
+  assert.equal(blockTextOf(said.at(-1)), "⚠ Claude Opus 5 is overloaded, falling back to Sonnet 5");
+
   const bare = t2.translate({
     type: "system",
     subtype: "model_fallback",
@@ -3284,14 +4129,15 @@ console.log("ok");
     original_model: "claude-opus-5",
     fallback_model: "claude-sonnet-5",
   });
+
   assert.equal(
-    bare.at(-1).block.text,
+    blockTextOf(bare.at(-1)),
     "⚠ Model fallback: claude-opus-5 → claude-sonnet-5 (server_error)",
   );
 
   // informational: info is silent, suggestion and warning are drawn, and anything that stopped the
   // turn is drawn whatever its level.
-  const t3 = new Translator() as any;
+  const t3 = new Translator();
   assert.deepEqual(
     t3.translate({
       type: "system",
@@ -3302,13 +4148,16 @@ console.log("ok");
     [],
     "info is transcript-only",
   );
+
   const warn = t3.translate({
     type: "system",
     subtype: "informational",
     content: "Consider splitting this file",
     level: "suggestion",
   });
-  assert.equal(warn.at(-1).block.text, "⚠ Consider splitting this file");
+
+  assert.equal(blockTextOf(warn.at(-1)), "⚠ Consider splitting this file");
+
   const stopped = t3.translate({
     type: "system",
     subtype: "informational",
@@ -3316,7 +4165,8 @@ console.log("ok");
     level: "info",
     prevent_continuation: true,
   });
-  assert.equal(stopped.at(-1).block.text, "⛔ Stop hook denied continuation");
+
+  assert.equal(blockTextOf(stopped.at(-1)), "⛔ Stop hook denied continuation");
   assert.deepEqual(
     t3.translate({
       type: "system",
@@ -3329,13 +4179,16 @@ console.log("ok");
   );
 
   // api_error is the retry line without the retry framing, and it alone reports a dead connection.
-  const t4 = new Translator() as any;
+  const t4 = new Translator();
+
   const netDown = t4.translate({
     type: "system",
     subtype: "api_error",
     error: { message: "fetch failed", is_network_down: true },
   });
-  assert.equal(netDown.at(-1).block.text, "⚠ fetch failed · network is down");
+
+  assert.equal(blockTextOf(netDown.at(-1)), "⚠ fetch failed · network is down");
+
   const retrying = t4.translate({
     type: "system",
     subtype: "api_error",
@@ -3344,35 +4197,45 @@ console.log("ok");
     attempt: 1,
     max_retries: 5,
   });
-  assert.equal(retrying.at(-1).block.text, "⚠ overloaded · Retrying in 2s · attempt 1/5");
+
+  assert.equal(blockTextOf(retrying.at(-1)), "⚠ overloaded · Retrying in 2s · attempt 1/5");
 
   // keep_alive has no payload and the schema says to ignore it: no unknown-event warning.
-  const t5 = new Translator() as any;
+  const t5 = new Translator();
   let warned = 0;
   t5.log = (level: string) => {
-    if (level === "warn") warned++;
+    if (level === "warn") {
+      warned++;
+    }
   };
+
   assert.deepEqual(t5.translate({ type: "keep_alive" }), []);
   assert.equal(warned, 0, "keep_alive is benign");
   console.log("frame-catchup ok");
 }
+
 {
   // The compaction start frame (status:"compacting") is announced at once, so the silent summarize
   // stretch has a visible anchor and does not arrive delayed as the boundary line alone. The status
   // row is told too: `compacting: true` on the start, false on the boundary.
   const progress: Array<boolean | undefined> = [];
+
   const t = new Translator({
     onProgress: (p: { compacting?: boolean }) => {
-      if (p.compacting !== undefined) progress.push(p.compacting);
+      if (p.compacting !== undefined) {
+        progress.push(p.compacting);
+      }
     },
-  }) as any;
+  });
+
   const start = t.translate({
     type: "system",
     subtype: "status",
     status: "compacting",
   });
+
   assert.deepEqual(progress, [true], "the row learns the compaction started");
-  assert.match(start.at(-1).block.text, /compacting its context…/);
+  assert.match(blockTextOf(start.at(-1)), /compacting its context…/);
   assert.equal(t.finished, false, "the start frame does not end the turn");
   // The success end frame is silent; the boundary line reports the result.
   assert.deepEqual(
@@ -3385,15 +4248,18 @@ console.log("ok");
     [],
   );
   assert.deepEqual(progress, [true], "a silent success frame leaves the row as it was");
+
   const boundary = t.translate({
     type: "system",
     subtype: "compact_boundary",
     compact_metadata: { trigger: "manual", pre_tokens: 1000, post_tokens: 100 },
   });
-  assert.match(boundary.at(-1).block.text, /Context compacted by Claude Code/);
+
+  assert.match(blockTextOf(boundary.at(-1)), /Context compacted by Claude Code/);
   assert.deepEqual(progress, [true, false], "the boundary ends the row's compacting figure");
   // A failed run gets no boundary, so its error surfaces here.
   t.translate({ type: "system", subtype: "status", status: "compacting" });
+
   const failed = t.translate({
     type: "system",
     subtype: "status",
@@ -3401,20 +4267,28 @@ console.log("ok");
     compact_result: "failed",
     compact_error: "Not enough messages to compact.",
   });
-  assert.match(failed.at(-1).block.text, /Compaction failed: Not enough messages to compact\./);
+
+  assert.match(blockTextOf(failed.at(-1)), /Compaction failed: Not enough messages to compact\./);
   assert.deepEqual(progress, [true, false, true, false], "a failure ends the figure too");
 }
+
 {
   // The CLI repeats status:"compacting" every 30 s until it is done, and a 141-second run was
   // measured. One announcement covers the whole stretch, but every repeat still has to tick the
   // stall clock: no other frame arrives in that window, so this is the turn's only proof of life.
   let frames = 0;
+
   const t = new Translator({
-    onProgress: (p: any) => p.frame && frames++,
-  }) as any;
-  const beat = { type: "system", subtype: "status", status: "compacting" };
+    onProgress: (p) => {
+      if (p.frame) {
+        frames++;
+      }
+    },
+  });
+
+  const beat: ClaudeEvent = { type: "system", subtype: "status", status: "compacting" };
   const first = t.translate({ ...beat });
-  assert.match(first.at(-1).block.text, /compacting its context…/);
+  assert.match(blockTextOf(first.at(-1)), /compacting its context…/);
   assert.deepEqual(t.translate({ ...beat }), [], "the heartbeat repeats, the line does not");
   assert.deepEqual(t.translate({ ...beat }), []);
   assert.equal(frames, 3, "every heartbeat ticks the stall clock");
@@ -3424,9 +4298,9 @@ console.log("ok");
     subtype: "compact_boundary",
     compact_metadata: { trigger: "auto" },
   });
-  assert.match(t.translate({ ...beat }).at(-1).block.text, /compacting its context…/);
+  assert.match(blockTextOf(t.translate({ ...beat }).at(-1)), /compacting its context…/);
   // A failure re-arms it as well, since that run ends without a boundary.
-  const t2 = new Translator() as any;
+  const t2 = new Translator();
   t2.translate({ ...beat });
   t2.translate({
     type: "system",
@@ -3434,8 +4308,9 @@ console.log("ok");
     status: null,
     compact_result: "failed",
   });
-  assert.match(t2.translate({ ...beat }).at(-1).block.text, /compacting its context…/);
+  assert.match(blockTextOf(t2.translate({ ...beat }).at(-1)), /compacting its context…/);
 }
+
 {
   // sessionProvider reads the last model/selection from the session log: the limit wait must not
   // wake a session that was rerouted to another provider meanwhile.
@@ -3450,26 +4325,32 @@ console.log("ok");
       data: { provider: "llama-local", model: "kat" },
     },
   ];
+
   const sessionRoutes = ClaudeCodeAdapter.prototype["sessionRoutes"];
+
   const stub = {
     sessionRoutes,
     ctx: {
       sessions: { get: () => ({ snapshotEvents: () => events, requestHeader: () => undefined }) },
     },
   };
+
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(stub, "s"), "llama-local");
+
   const none = {
     sessionRoutes,
     ctx: {
       sessions: { get: () => ({ snapshotEvents: () => [], requestHeader: () => undefined }) },
     },
   };
+
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(none, "s"), undefined);
   const gone = { sessionRoutes, ctx: { sessions: { get: () => undefined } } };
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(gone, "s"), undefined);
   // A read that throws (a dsh that dropped snapshotEvents) answers undefined, which routes every
   // remote session to the local mount; that is logged once, not per routed message.
-  const warned: string[] = [];
+  const warned: Array<string> = [];
+
   const broken = {
     sessionRoutes,
     warnedNoSessionRead: false,
@@ -3484,6 +4365,7 @@ console.log("ok");
       },
     },
   };
+
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(broken, "s"), undefined);
   assert.equal(ClaudeCodeAdapter.prototype.sessionProvider.call(broken, "s"), undefined);
   assert.equal(warned.length, 1);
@@ -3493,12 +4375,15 @@ console.log("ok");
   );
   console.log("session-provider ok");
 }
+
 {
   // continueAfterLimit: a rerouted session drops the notice, a window still at its cap re-arms,
   // otherwise (including extra usage on) the continue notice goes through wake.
   const dir = tempDir("dsh-oh-my-claude-limit-");
-  const run = async (provider: string | undefined, windows: any[], extraUsage = false) => {
-    const calls: string[] = [];
+
+  const run = async (provider: string | undefined, windows: Array<any>, extraUsage = false) => {
+    const calls: Array<string> = [];
+
     const stub = {
       stateDir: dir,
       providerId: "claude-code",
@@ -3510,18 +4395,23 @@ console.log("ok");
       armLimitWait: (id: string, at: number) => calls.push(`arm ${id} ${at}`),
       wake: async (id: string, _proc: unknown, text: string) => {
         calls.push(`wake ${id} ${text === LIMIT_TEXT ? "limit" : "?"}`);
+
         return true;
       },
     };
+
     const probe = async () => ({
       ok: true as const,
       fetchedAt: 0,
       windows,
       extraUsage,
     });
+
     await ClaudeCodeAdapter.prototype.continueAfterLimit.call(stub, "s", probe);
+
     return calls;
   };
+
   const later = Date.now() + 60_000;
   const full = [{ label: "w", usedPercent: 100, resetsAt: later }];
   assert.deepEqual(await run("llama-local", []), [], "rerouted: nothing");
@@ -3532,23 +4422,31 @@ console.log("ok");
   assert.deepEqual(await run(undefined, full, true), ["wake s limit"], "extra usage on: continue");
   console.log("continue-after-limit ok");
 }
+
 {
   // restoreTodos re-appends the last todo/write so the panel survives dsh's per-turn reset.
   // It reads persisted session events (survives restart) and is source-agnostic.
-  const makeStub = (persistTodos: boolean, events: Array<{ type: string; data: any }>) => {
-    const appended: Array<{ type: string; data: any }> = [];
+  const makeStub = (
+    persistTodos: boolean,
+    events: Array<{ type: string; data: Record<string, JsonValue> }>,
+  ) => {
+    const appended: Array<{ type: string; data: Record<string, JsonValue> }> = [];
+
     const session = {
       snapshotEvents: () => events,
-      append: (type: string, data: any) => appended.push({ type, data }),
+      append: (type: string, data: Record<string, JsonValue>) => appended.push({ type, data }),
     };
+
     const stub = {
       config: { persistTodos },
       ctx: { sessions: { get: () => session } },
       log: () => {},
     };
+
     return { stub, appended };
   };
-  const active = [
+
+  const active: Array<{ type: string; data: Record<string, JsonValue> }> = [
     { type: "turn/start", data: {} },
     {
       type: "todo/write",
@@ -3556,9 +4454,10 @@ console.log("ok");
     },
     { type: "turn/start", data: {} },
   ];
+
   // Live turn/start: last non-empty list is re-appended.
   const a = makeStub(true, active);
-  (ClaudeCodeAdapter.prototype as any).restoreTodos.call(a.stub, "s1");
+  ClaudeCodeAdapter.prototype.restoreTodos.call(a.stub, "s1");
   assert.deepEqual(
     a.appended,
     [
@@ -3571,45 +4470,42 @@ console.log("ok");
   );
   // Disabled: nothing is written.
   const b = makeStub(false, active);
-  (ClaudeCodeAdapter.prototype as any).restoreTodos.call(b.stub, "s1");
+  ClaudeCodeAdapter.prototype.restoreTodos.call(b.stub, "s1");
   assert.deepEqual(b.appended, [], "persistTodos off writes nothing");
   // Empty last list (todos cleared): nothing to restore.
   const c = makeStub(true, [{ type: "todo/write", data: { todos: [] } }]);
-  (ClaudeCodeAdapter.prototype as any).restoreTodos.call(c.stub, "s1");
+  ClaudeCodeAdapter.prototype.restoreTodos.call(c.stub, "s1");
   assert.deepEqual(c.appended, [], "an empty list is not re-appended");
 }
+
 {
   // wake(): a live agent gets the notice directly; an unloaded one is resumed through the
   // session controller first; a busy process never wakes.
-  const sent: unknown[] = [];
+  const sent: Array<LooseMessage> = [];
   const agent = fakeAgent({ followup: (m: Message) => sent.push(m) });
-  // SAFETY: partial fake for tests; PluginContext requires many fields not used here
-  const ctx = {
+
+  const ctx = fakePluginContext({
     on() {},
     agents: { get: () => undefined },
     logger: { info() {}, warn() {} },
-  } as unknown as import("./dsh.js").PluginContext;
-  const a = new ClaudeCodeAdapter(fakeCtx(ctx), Config({}));
+  });
+
+  const a = new ClaudeCodeAdapter(ctx, Config({}));
   let resumed = 0;
-  (a as any).sessionController = {
-    resolveAgent: async () => (resumed++, { agent }),
-  };
-  // SAFETY: partial fake for tests; ClaudeProcess requires many fields not used here
+  a.sessionController = fakeController(async () => (resumed++, { agent }));
   await a.wake("s1", fakeProc({ busy: false }));
   assert.equal(resumed, 1, "unloaded agent: resumed through the controller");
   assert.equal(sent.length, 1);
-  const firstMsg = sent[0] as {
-    role?: string;
-    source?: { kind?: string; plugin?: string; form?: string };
-    content?: Array<{ text?: string }>;
-  };
-  assert.equal(firstMsg.role, "user");
+
+  const firstMsg = sent[0];
+
+  assert.equal(firstMsg?.role, "user");
   assert.deepEqual(
-    [firstMsg.source?.kind, firstMsg.source?.plugin, firstMsg.source?.form],
+    [firstMsg?.source?.kind, firstMsg?.source?.plugin, firstMsg?.source?.form],
     ["plugin", "dsh-oh-my-claude", "notice"],
   );
-  assert.equal(firstMsg.content?.[0]?.text, WAKE_TEXT);
-  assert.equal(firstMsg.content?.length, 1, "no queued notification, no task line");
+  assert.equal(firstMsg && textOf(firstMsg), WAKE_TEXT);
+  assert.equal(firstMsg?.content?.length, 1, "no queued notification, no task line");
   ctx.agents.get = () => agent;
   // A queued notification is named by the description the session's task list kept, else by the
   // CLI's summary, else by its id.
@@ -3625,9 +4521,9 @@ console.log("ok");
       ],
     }),
   );
-  const named = sent.at(-1) as { content?: Array<{ text?: string }> };
+  const named = sent.at(-1)?.content;
   assert.deepEqual(
-    named.content?.map((b) => b.text),
+    Array.isArray(named) ? named.map((b) => (b.type === "text" ? b.text : undefined)) : named,
     [
       WAKE_TEXT,
       finishedTasksText([
@@ -3641,28 +4537,22 @@ console.log("ok");
   await a.wake("s1", fakeProc({ busy: false }));
   assert.equal(resumed, 1, "live agent: no resume");
   assert.equal(sent.length, 2);
-  await a.wake("s1", {
-    busy: true,
-  } as unknown as import("./process.js").ClaudeProcess);
+  await a.wake("s1", fakeProc({ busy: true }));
   assert.equal(sent.length, 2, "busy process: the turn is dsh's own, no wake");
   ctx.agents.get = () => undefined;
-  (a as any).sessionController = {
-    resolveAgent: async () => {
-      throw new Error("gone");
-    },
-  };
+  a.sessionController = fakeController(async () => {
+    throw new Error("gone");
+  });
   await a.wake("s1", fakeProc({ busy: false }));
   assert.equal(sent.length, 2, "resume failure is logged, not thrown");
   // dsh 0.1.6 answers the cold resume with its agent controller's own result, `{ agent }` or
   // `{ error }`, where 0.1.5 (the fake above) answered the Agent. Read as the Agent the wrapper has
   // no `followup`, and no unloaded session was woken from the 0.1.6 install on (resume.log,
   // 2026-09-15 to 09-17: "agent.followup is not a function" after every "agent resumed").
-  (a as any).sessionController = { resolveAgent: async () => ({ agent }) };
+  a.sessionController = fakeController(async () => ({ agent }));
   assert.equal(await a.wake("s1", fakeProc({ busy: false })), true, "0.1.6 wrapper: woken");
   assert.equal(sent.length, 3, "0.1.6 wrapper: the notice reaches the agent inside it");
-  (a as any).sessionController = {
-    resolveAgent: async () => ({ error: new Error("owned") }),
-  };
+  a.sessionController = fakeController(async () => ({ error: new Error("owned") }));
   assert.equal(await a.wake("s1", fakeProc({ busy: false })), false, "0.1.6 error: not woken");
   assert.equal(sent.length, 3, "0.1.6 error: reported as a failed resume, nothing sent");
   assert.equal(resolvedAgent({ agent }), agent, "the Agent inside the wrapper");
@@ -3677,13 +4567,20 @@ console.log("ok");
     const f = fakeDsh(join(STATE_DIR, "wake-heal"));
     const cwd = join(f.root, "work");
     const id = f.sessionId("wake");
-    const row = (seq: number, type: string, data: object, extra: object = {}) => ({
+
+    const row = (
+      seq: number,
+      type: string,
+      data: Record<string, JsonValue>,
+      extra: Record<string, JsonValue> = {},
+    ) => ({
       type,
       seq,
       time: seq,
       data,
       ...extra,
     });
+
     f.writeLog(id, cwd, [
       row(
         0,
@@ -3729,14 +4626,16 @@ console.log("ok");
     ]);
     const refusal = `step/end leaves unresolved tool call open (raw log: ${f.logPath(id, cwd)})`;
     let resumes = 0;
-    (a as any).sessionController = {
-      resolveAgent: async () => {
-        resumes++;
-        if (resumes === 1) throw new Error(refusal);
-        return { agent };
-      },
-    };
-    (a as any).heal = f.heal(f.root);
+    a.sessionController = fakeController(async () => {
+      resumes++;
+
+      if (resumes === 1) {
+        throw new Error(refusal);
+      }
+
+      return { agent };
+    });
+    a.heal = f.heal(f.root);
     const sentBefore = sent.length;
     const opensBefore = f.calls.filter((x) => x === "open:read").length;
     assert.equal(await a.wake(id, fakeProc({ busy: false })), true, "healed, then resumed");
@@ -3753,16 +4652,15 @@ console.log("ok");
     );
     assert.equal(sent.length, sentBefore + 1, "the notice went to the resumed agent");
     resumes = 0;
-    (a as any).sessionController = {
-      resolveAgent: async () => {
-        resumes++;
-        throw new Error("some refusal dsh grew (raw log: /nowhere)");
-      },
-    };
+    a.sessionController = fakeController(async () => {
+      resumes++;
+      throw new Error("some refusal dsh grew (raw log: /nowhere)");
+    });
     assert.equal(await a.wake(id, fakeProc({ busy: false })), false, "unknown: not woken");
     assert.equal(resumes, 1, "unknown: no second resume");
     sent.length = 2;
   }
+
   sent.length = 2; // the counts below predate these cases
   // The restart notice asks the model to carry on. A mirrored session's context is a conversation
   // someone is holding in a terminal, and nudging one made it read that conversation as its own
@@ -3784,6 +4682,7 @@ console.log("ok");
   await a.wake("s1", fakeProc({ busy: false }));
   assert.equal(sent.length, 4, "and so does the idle-reply wake");
 }
+
 {
   // A restart's wake and reconnect notice can land while a turn for some other waiting message is
   // starting. That turn draws everything the process queued, and dsh gives each notice a turn of
@@ -3791,6 +4690,7 @@ console.log("ok");
   // drain notices still pending; the one that opened a turn is gone from the inbox already, and a
   // restart notice (a prompt Claude must read) is never withdrawn.
   const pending = new Map<string, Message>();
+
   const agent = fakeAgent({
     followup: (m: Message) => pending.set(String(m.id), m),
     inbox: {
@@ -3799,20 +4699,25 @@ console.log("ok");
       remove: (id: string) => pending.delete(id),
     },
   });
-  // SAFETY: partial fake for tests; PluginContext requires many fields not used here
-  const ctx = {
+
+  const ctx = fakePluginContext({
     on() {},
     agents: { get: () => agent },
     logger: { info() {}, warn() {} },
-  } as unknown as import("./dsh.js").PluginContext;
-  const a = new ClaudeCodeAdapter(fakeCtx(ctx), Config({}));
+  });
+
+  const a = new ClaudeCodeAdapter(ctx, Config({}));
   await a.wake("s1", fakeProc({ busy: false }));
   await a.wake("s1", fakeProc({ busy: false }), RECONNECT_TEXT);
   await a.wake("s1", fakeProc({ busy: false }), RESTART_TEXT);
   assert.equal(pending.size, 3, "all three queued");
   await a.withdrawDrainNotices("s1");
   assert.deepEqual(
-    [...pending.values()].map((m) => (m.content as Array<{ text?: string }>)[0]?.text),
+    [...pending.values()].map((m) => {
+      const first = m.content[0];
+
+      return first?.type === "text" ? first.text : undefined;
+    }),
     [RESTART_TEXT],
     "the drain notices are withdrawn, the restart notice stays",
   );
@@ -3827,6 +4732,7 @@ console.log("ok");
   await a.withdrawDrainNotices("s1");
   assert.equal(ClaudeCodeAdapter.drainNotices.has("s1"), false, "nothing left to withdraw");
 }
+
 {
   // dsh's instruction bundle: CLAUDE.md blocks go, Claude Code loads those files itself.
   const bundle = [
@@ -3848,19 +4754,25 @@ console.log("ok");
     "",
     "</system-reminder>",
   ].join("\n");
+
   const out = withoutNativeInstructions(bundle);
   assert.ok(out.includes("Instructions from: ~/.dsh/AGENTS.md") && out.includes("be lazy"));
   assert.ok(out.includes("Instructions from: AGENTS.md"));
   assert.ok(!out.includes("Instructions from: CLAUDE.md") && !out.includes("no rm -rf"));
   assert.ok(out.endsWith("</system-reminder>"), "wrapper closed after dropping the last block");
   assert.equal(withoutNativeInstructions("plain text, no headers"), "plain text, no headers");
+
   const only =
     "<system-reminder>\nIntro\nInstructions from: sub/dir/CLAUDE.md\n\nx\n</system-reminder>";
+
   assert.equal(withoutNativeInstructions(only), "", "only native files: whole injection dropped");
+
   const nested =
     "Instructions from: ~/.claude/CLAUDE.md\n\ny\n\nInstructions from: docs/AGENTS.md\n\nz\n";
+
   const n = withoutNativeInstructions(nested);
   assert.ok(!n.includes("~/.claude/CLAUDE.md") && n.includes("docs/AGENTS.md") && n.includes("z"));
+
   // buildPrompt applies it only to agent-instructions messages
   const msgs = messageList([
     {
@@ -3884,10 +4796,12 @@ console.log("ok");
       ],
     },
   ]);
+
   const p = buildPrompt(msgs);
   assert.ok(p.includes("be lazy") && !p.includes("no rm -rf"));
   assert.ok(p.includes("is a phrase I typed"), "user text is never filtered");
 }
+
 {
   // Hot reload: a surviving process must never throw into readline, and a new adapter
   // re-adopts the callbacks. Seen live 2026-09-04: `patchReload: live` disposed the old scope,
@@ -3895,41 +4809,52 @@ console.log("ok");
   const boom = () => {
     throw new Error('cannot get required service "agents" in inactive context');
   };
-  const fake = { busy: false, onIdleResult: boom };
+
+  const fake: Partial<ClaudeProcess> = { busy: false, onIdleResult: boom };
   ClaudeProcess.prototype.noteIdleResult.call(fake, '{"type":"result"}'); // must not throw
-  (fake as any).onIdleResult = () => Promise.reject(new Error("async boom"));
+  fake.onIdleResult = () => Promise.reject(new Error("async boom"));
   ClaudeProcess.prototype.noteIdleResult.call(fake, '{"type":"result"}'); // no unhandled rejection
-  const deadCtx = {
-    on() {},
-    get agents() {
-      return boom();
-    },
-    get logger() {
-      return boom();
-    },
-  };
-  const dead = new ClaudeCodeAdapter(fakeCtx(deadCtx), Config({}));
+
+  // A disposed scope: reading `agents` or `logger` throws, the way cordis does once it is gone.
+  const deadCtx = Object.defineProperties(bareCtx(), {
+    agents: { get: boom },
+    logger: { get: boom },
+  });
+
+  const dead = new ClaudeCodeAdapter(deadCtx, Config({}));
   await dead.wake("s", fakeProc({ busy: false })); // scope gone: swallowed, logged if it can
   dead.log("warn", "x"); // logger on a dead scope: swallowed
   // a reloaded adapter re-points every adopted process at itself
-  const reg = (globalThis as any)[Symbol.for("dsh-oh-my-claude.processes")];
-  const stale = { busy: false, onIdleResult: boom, alive: true };
+  // Every adapter's `processes` is the one registry on globalThis, so this is the shared map.
+  const reg = dead.processes;
+  const stale = fakeProc({ busy: false, onIdleResult: boom, alive: true });
   reg.set(registryKey("claude-code", "adopted"), stale);
   let woke = 0;
+
   const liveCtx = {
     on() {},
-    agents: { get: () => ({ followup: () => woke++ }) },
+    agents: {
+      get: () =>
+        fakeAgent({
+          followup: () => {
+            woke++;
+          },
+        }),
+    },
     logger: { info() {}, warn() {} },
   };
-  const fresh = new ClaudeCodeAdapter(fakeCtx(liveCtx), Config({}));
+
+  const fresh = new ClaudeCodeAdapter(fakePluginContext(liveCtx), Config({}));
   assert.notEqual(stale.onIdleResult, boom, "callback re-bound on construction");
-  await stale.onIdleResult();
+  await stale.onIdleResult?.();
   assert.equal(woke, 1, "adopted process wakes through the new adapter");
   assert.equal(fresh.processes.get(registryKey("claude-code", "adopted")), stale);
   reg.delete(registryKey("claude-code", "adopted"));
 }
+
 {
-  const tr = new Translator() as any;
+  const tr = new Translator();
+
   const s1 = tr.translate({
     type: "stream_event",
     event: {
@@ -3938,11 +4863,14 @@ console.log("ok");
       content_block: { type: "thinking" },
     },
   });
+
   assert.deepEqual(s1, [], "a thinking block is not announced before it has text");
+
   const e1 = tr.translate({
     type: "stream_event",
     event: { type: "content_block_stop", index: 0 },
   });
+
   assert.deepEqual(e1, [], "an empty thinking block closes silently: no empty bubble");
   tr.translate({
     type: "stream_event",
@@ -3952,6 +4880,7 @@ console.log("ok");
       content_block: { type: "thinking" },
     },
   });
+
   const d = tr.translate({
     type: "stream_event",
     event: {
@@ -3960,21 +4889,25 @@ console.log("ok");
       delta: { type: "thinking_delta", thinking: "hmm" },
     },
   });
+
   assert.deepEqual(
     d.map((c: StreamChunk) => c.type),
     ["block-start", "reasoning-delta"],
     "block-start rides ahead of the first text",
   );
+
   const e2 = tr.translate({
     type: "stream_event",
     event: { type: "content_block_stop", index: 1 },
   });
-  assert.equal(e2[0].type, "block-end");
-  assert.equal(e2[0].block.text, "hmm");
+
+  assert.equal(e2[0]?.type, "block-end");
+  assert.equal(blockTextOf(e2[0]), "hmm");
 }
+
 {
-  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  const b = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const a = new ClaudeCodeAdapter(bareCtx(), Config({}));
+  const b = new ClaudeCodeAdapter(bareCtx(), Config({}));
   a.processes.set(registryKey("claude-code", "shared"), fakeProc({ alive: true }));
   assert.equal(
     b.processes.get(registryKey("claude-code", "shared"))?.alive,
@@ -3982,16 +4915,15 @@ console.log("ok");
     "a reloaded adapter adopts running processes",
   );
   a.processes.delete(registryKey("claude-code", "shared"));
+
   // `/btw` is registered once, on the main mount, so a session that runs on an SSH box (its own
   // provider id in the shared registry) must still be found from there.
-  const box = new ClaudeCodeAdapter(
-    fakeCtx({ on() {} }),
-    Config({ providerId: "claude-code-box" }),
-  );
+  const box = new ClaudeCodeAdapter(bareCtx(), Config({ providerId: "claude-code-box" }));
+
   // Both persist asides, so neither may point at the real state dir.
   a.stateDir = tempDir("omc-aside-box-");
   box.stateDir = a.stateDir;
-  const wrote: string[] = [];
+  const wrote: Array<string> = [];
   box.processes.set(
     registryKey("claude-code-box", "far"),
     fakeProc({
@@ -4019,22 +4951,27 @@ console.log("ok");
       response: { response: "a box" },
     },
   });
-  await new Promise((r) => setTimeout(r, 0));
+  await sleep(0);
   assert.equal(a.sideQuestions.get("far")?.[0]?.answer, "a box", "the answer lands in the ring");
 
   // An evicted session is respawned from its last turn's options before the side question goes out;
   // one never run since dsh started has nothing to respawn from and is refused.
   assert.equal(await a.revive("never-ran"), undefined, "no last turn: nothing to revive");
-  const revived: string[] = [];
+  const revived: Array<string> = [];
+
   const woke = fakeProc({
     alive: true,
     write: (line: string) => (revived.push(line), true),
   });
-  // SAFETY: only sessionId is read by the stubbed acquire below; the rest of a turn's options is dsh's
-  a.lastTurnOptions.set("evicted", { sessionId: "evicted" } as never);
-  a.acquire = async () => ({ prep: {} as never, proc: woke });
+
+  // Only sessionId is read by the stubbed acquire below.
+  a.lastTurnOptions.set("evicted", turnOptions("evicted"));
+  a.acquire = async () => ({
+    prep: { input: null, cwd: "", args: [], spec: emptySpec },
+    proc: woke,
+  });
   a.askSideQuestion("evicted", "still there?");
-  await new Promise((r) => setTimeout(r, 0));
+  await sleep(0);
   assert.match(revived[0] ?? "", /side_question/, "asked over the respawned process");
   const revivedId = String(JSON.parse(revived[0] ?? "{}").request_id);
   a.resolveControl({
@@ -4046,7 +4983,7 @@ console.log("ok");
       response: { response: "yes" },
     },
   });
-  await new Promise((r) => setTimeout(r, 0));
+  await sleep(0);
   assert.equal(a.sideQuestions.get("evicted")?.[0]?.answer, "yes", "the revived answer lands");
 
   // The routes are registered once, by the main mount, but a session running on a box is read and
@@ -4057,6 +4994,7 @@ console.log("ok");
   const g = globalThis as typeof globalThis & {
     [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
   };
+
   const mounts = (g[ADAPTER_CURRENT] ??= new Map());
   const hadMain = mounts.get("claude-code");
   mounts.set("claude-code", a);
@@ -4071,8 +5009,12 @@ console.log("ok");
     "with no live process left, the session falls back to the asking mount",
   );
   mounts.delete("claude-code-box");
-  if (hadMain === undefined) mounts.delete("claude-code");
-  else mounts.set("claude-code", hadMain);
+
+  if (hadMain === undefined) {
+    mounts.delete("claude-code");
+  } else {
+    mounts.set("claude-code", hadMain);
+  }
 
   // Permission modes live in one shared map for the same reason: the panel writes through the main
   // mount's route while the box's mount reads it back at spawn. A per-instance map left the box
@@ -4081,13 +5023,14 @@ console.log("ok");
   assert.equal(box.permissionModes.get("far"), "plan", "both mounts read one map");
   a.permissionModes.delete("far");
 }
+
 {
   // askSideQuestion accepts an optional `context` argument that is appended to the question sent to
   // the CLI but never stored in the persisted ring: the ring shows just the question, which is what
   // the bubble and the Asides tab display.
-  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const a = new ClaudeCodeAdapter(bareCtx(), Config({}));
   a.stateDir = tempDir("omc-aside-context-");
-  const wrote: string[] = [];
+  const wrote: Array<string> = [];
   a.processes.set(
     registryKey("claude-code", "ctx"),
     fakeProc({
@@ -4119,10 +5062,12 @@ console.log("ok");
       response: { response: "a" },
     },
   });
-  await new Promise((r) => setTimeout(r, 0));
+  await sleep(0);
 }
+
 {
-  const tr = new Translator({ relay: true }) as any;
+  const tr = new Translator({ relay: true });
+
   const open = (id: any) =>
     tr.translate({
       type: "stream_event",
@@ -4136,6 +5081,7 @@ console.log("ok");
         },
       },
     });
+
   const result = (id: string) =>
     tr.translate({
       type: "user",
@@ -4143,18 +5089,24 @@ console.log("ok");
         content: [{ type: "tool_result", tool_use_id: id, content: "out" }],
       },
     });
+
   open("r1");
   tr.relayed.add("r1");
   assert.deepEqual(result("r1"), [], "a relayed call's result is dsh's to draw");
   open("f1");
   const shown = result("f1");
-  assert.equal(shown.at(-1).block.type, "reasoning", "a fallback result is never answer text");
+  assert.equal(
+    endBlockOf(shown.at(-1)).type,
+    "reasoning",
+    "a fallback result is never answer text",
+  );
   assert.match(
-    shown.at(-1).block.text,
+    blockTextOf(shown.at(-1)),
     /subagent_local \(ran in bridge\)/,
     "a call that fell back is drawn as one collapsed row",
   );
 }
+
 // A dsh call that ran inside the bridge (Claude Code went on with no live dsh turn, or a sibling
 // call came after the batch closed) used to land as answer text: "⤷ list_agents (ran in bridge)"
 // and the whole result opened the visible reply. With session rows it gets the row a relayed
@@ -4162,12 +5114,15 @@ console.log("ok");
 {
   const calls: Array<[string, string, string]> = [];
   const results: Array<[string, string, boolean]> = [];
+
   const tr = new Translator({
     relay: true,
     onToolCall: (id: string, name: string, args: string) => (calls.push([id, name, args]), 7),
     onToolResult: (id: string, text: string, isError: boolean) => results.push([id, text, isError]),
-  }) as any;
-  const frame = (event: object) => tr.translate({ type: "stream_event", event });
+  });
+
+  const frame = (event: ClaudeStreamPartial) => tr.translate({ type: "stream_event", event });
+
   const drawn = [
     ...frame({ type: "message_start", message: { id: "m1" } }),
     ...frame({
@@ -4192,6 +5147,7 @@ console.log("ok");
       message: { content: [{ type: "tool_result", tool_use_id: "tl1", content: "a1 [inactive]" }] },
     }),
   ];
+
   assert.deepEqual(
     drawn.filter((c: any) => c.blockType === "text" || c.block?.type === "text"),
     [],
@@ -4205,11 +5161,12 @@ console.log("ok");
   assert.deepEqual(results, [["tl1", "a1 [inactive]", false]], "and its result row");
   assert.equal(tr.dshCalls.size, 0, "the call is forgotten once drawn");
 }
+
 // The mark that says "dsh drew this call" goes to the block the relay answers. Positional matching
 // gave it to an older call still waiting for its echo, and the call dsh had drawn drew a second
 // time as a bridge row.
 {
-  const tr = new Translator({ relay: true }) as any;
+  const tr = new Translator({ relay: true });
   tr.translate({
     type: "assistant",
     message: {
@@ -4226,9 +5183,10 @@ console.log("ok");
   assert.deepEqual([...tr.relayed], ["b", "a"], "an unstamped call takes the oldest unmarked one");
   assert.deepEqual(tr.relayableIds(), [], "a marked call is no longer a candidate");
 }
+
 // A stamped id the translator never saw marks nothing, never the oldest candidate.
 {
-  const tr = new Translator({ relay: true }) as any;
+  const tr = new Translator({ relay: true });
   tr.translate({
     type: "assistant",
     message: { content: [{ type: "tool_use", id: "a", name: "mcp__dsh__bash", input: {} }] },
@@ -4237,17 +5195,20 @@ console.log("ok");
   assert.deepEqual([...tr.relayed], [], "an unknown stamped id takes no other block's mark");
   assert.deepEqual(tr.relayableIds(), ["a"]);
 }
+
 console.log("relay ok");
 
 // Unknown stream-json shapes warn once (schema-drift canary); knowingly-benign types stay silent.
 {
-  const warnings: string[] = [];
+  const warnings: Array<string> = [];
+
   const tr = new Translator({
     log: (level: any, msg: any) => level === "warn" && warnings.push(msg),
-  } as any);
+  });
+
   tr.translate({ type: "system", subtype: "init" }); // benign top-level: no warn
-  tr.translate(anyEvent({ type: "brand_new_event" })); // unknown: warn
-  tr.translate(anyEvent({ type: "brand_new_event" })); // same type again: deduped, no second warn
+  tr.translate(wireEvent('{"type":"brand_new_event"}')); // unknown: warn
+  tr.translate(wireEvent('{"type":"brand_new_event"}')); // same type again: deduped, no second warn
   tr.partial({ type: "message_delta" }); // benign partial: no warn
   tr.partial({ type: "mystery_partial" }); // unknown partial: warn
   tr.openBlock(9, { type: "redacted_thinking" }); // unknown content block: warn
@@ -4257,6 +5218,7 @@ console.log("relay ok");
   assert.match(warnings[1] ?? "", /mystery_partial/);
   assert.match(warnings[2] ?? "", /redacted_thinking/);
 }
+
 console.log("schema-guard ok");
 
 // A logged-out CLI surfaces as a clear instruction, whichever way the CLI words it.
@@ -4265,40 +5227,49 @@ console.log("schema-guard ok");
     is_error: true,
     result: "Not logged in · Please run /login",
   });
+
   assert.match(failureOf(notIn).message, /not logged in on .+claude auth login/);
   // A remote turn names the box it ran on, not this local host, so the user logs in on the right one.
   const remoteOut = finishReason({ is_error: true, result: "Not logged in" }, "nova");
   assert.match(failureOf(remoteOut).message, /not logged in on nova\./);
+
   const expired = finishReason({
     is_error: true,
     api_error_status: 401,
     result: "Failed to authenticate. API Error: 401 OAuth access token is invalid.",
   });
+
   assert.match(failureOf(expired).message, /not logged in on/);
   assert.match(failureOf(expired).message, /OAuth access token is invalid/);
   const other = finishReason({ is_error: true, result: "rate limited" });
   assert.equal(failureOf(other).message, "rate limited");
   // A 5xx that gave up carries what the status page said, once the retries have read it.
   forgetStatus();
+
   const fetchMinor = async () =>
     new Response(
       JSON.stringify({
         status: { indicator: "minor", description: "Degraded performance" },
       }),
     );
+
   await anthropicStatus(fetchMinor);
+
   const gaveUp = finishReason({
     is_error: true,
     api_error_status: 529,
     result: "overloaded",
   });
+
   assert.equal(failureOf(gaveUp).message, "overloaded · Anthropic reports Degraded performance");
   forgetStatus();
+
   const unknown = finishReason({
     is_error: true,
     api_error_status: 529,
     result: "overloaded",
   });
+
   assert.equal(failureOf(unknown).message, "overloaded", "nothing cached, nothing appended");
   // The one predicate the error text and the composer's login card share.
   assert.equal(
@@ -4322,39 +5293,46 @@ console.log("schema-guard ok");
   const stderr = new PassThrough();
   let terminated = 0;
   let finish: (r: { exitCode: number | null; signal: string | null }) => void = () => {};
+
   const handle: SubprocessHandle = {
     stdin,
     stdout,
     stderr,
-    done: new Promise((r) => (finish = r)),
+    done: new Promise((r) => {
+      finish = r;
+    }),
     terminate: () => {
       terminated++;
       finish({ exitCode: 143, signal: "SIGTERM" });
     },
   };
-  const seen: [string, string[], string][] = [];
+
+  const seen: Array<[string, Array<string>, string]> = [];
+
   const proc = new ClaudeProcess({
     args: ["-p"],
     cwd: "/",
     spec: emptySpec,
     spawner: (command, args, cwd) => {
       seen.push([command, args, cwd]);
+
       return handle;
     },
     command: "/opt/claude",
   });
+
   assert.deepEqual(seen, [["/opt/claude", ["-p"], "/"]]);
   let written = "";
   stdin.on("data", (d) => (written += d));
   assert.equal(proc.write("hello\n"), true);
   stdout.write('{"type":"system","subtype":"init"}\n');
-  await new Promise((r) => setTimeout(r, 20));
+  await sleep(20);
   assert.equal(written, "hello\n");
   assert.equal(proc.queue.lines.length, 1, "stdout line reached the queue");
   assert.equal(proc.alive, true);
   assert.equal(proc.steers.size, 0, "a fresh process starts with no pending steers");
   proc.kill();
-  await new Promise((r) => setTimeout(r, 20));
+  await sleep(20);
   assert.equal(terminated, 1);
   assert.equal(proc.alive, false);
   assert.equal(proc.exitCode, 143);
@@ -4366,7 +5344,8 @@ console.log("schema-guard ok");
 // (the session title) at once, and never a line still waiting in the queue.
 {
   const stdout = new PassThrough();
-  const acked: number[] = [];
+  const acked: Array<number> = [];
+
   const handle: SubprocessHandle = {
     stdin: new PassThrough(),
     stdout,
@@ -4375,6 +5354,7 @@ console.log("schema-guard ok");
     terminate: () => {},
     ack: (index) => acked.push(index),
   };
+
   const proc = new ClaudeProcess({
     args: ["-p"],
     cwd: "/",
@@ -4382,11 +5362,12 @@ console.log("schema-guard ok");
     spawner: () => handle,
     command: "/opt/claude",
   });
+
   stdout.write('{"type":"system","subtype":"init"}\n');
   stdout.write('{"type":"system","subtype":"session_title_changed","title":"Fix the build"}\n');
   stdout.write('{"type":"assistant"}\n');
   stdout.write('{"type":"result","subtype":"success","result":"done"}\n');
-  await new Promise((r) => setTimeout(r, 20));
+  await sleep(20);
   assert.deepEqual(acked, [1], "the title frame is used on arrival; queued lines wait for a turn");
   assert.equal((await proc.nextEvent())?.type, "system");
   assert.equal((await proc.nextEvent())?.type, "assistant");
@@ -4405,7 +5386,8 @@ console.log("schema-guard ok");
 // and never queued; a tool result that only mentions the name is queued like any other line.
 {
   const stdout = new PassThrough();
-  const acked: number[] = [];
+  const acked: Array<number> = [];
+
   const handle: SubprocessHandle = {
     stdin: new PassThrough(),
     stdout,
@@ -4414,6 +5396,7 @@ console.log("schema-guard ok");
     terminate: () => {},
     ack: (index) => acked.push(index),
   };
+
   const proc = new ClaudeProcess({
     args: ["-p"],
     cwd: "/",
@@ -4421,6 +5404,7 @@ console.log("schema-guard ok");
     spawner: () => handle,
     command: "/opt/claude",
   });
+
   stdout.write(
     `${JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: [] })}\n`,
   );
@@ -4430,7 +5414,7 @@ console.log("schema-guard ok");
   stdout.write(
     `${JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "b1" }] })}\n`,
   );
-  await new Promise((r) => setTimeout(r, 20));
+  await sleep(20);
   assert.deepEqual(acked, [0, 2], "both snapshots are used on arrival");
   assert.equal(proc.queue.lines.length, 1, "only the tool result waits for a turn");
   assert.equal((await proc.nextEvent())?.type, "user");
@@ -4439,6 +5423,7 @@ console.log("schema-guard ok");
 // The seam spawner hands dsh a fully explicit spec: raw pipes, the binary first in argv, small env.
 {
   let spec: SubprocessSpawnSpec | undefined;
+
   const idle: SeamHandle = {
     stdin: new PassThrough(),
     stdout: new PassThrough(),
@@ -4447,17 +5432,20 @@ console.log("schema-guard ok");
     terminate() {},
     waitForExit: async () => {},
   };
+
   // An empty environment: since #241 dsh's own credential names pass through on purpose, which
   // spawn-mode.test.ts covers, and this block checks that nothing else rides along.
   const spawner = seamSpawner(
     {
       spawn: (s) => {
         spec = s;
+
         return idle;
       },
     },
     {},
   );
+
   spawner("claude", ["-p", "--verbose"], "/w");
   assert.ok(spec, "spawn was called");
   assert.deepEqual(spec.argv, ["claude", "-p", "--verbose"]);
@@ -4494,15 +5482,18 @@ console.log("schema-guard ok");
     content: [{ type: "text", text: "hi" }],
     source: { kind: "user" },
   });
+
   const asst = message({
     role: "assistant",
     content: [{ type: "text", text: "yo" }],
   });
+
   const restart = message({
     role: "user",
     content: [{ type: "text", text: RESTART_TEXT }],
     source: { kind: "plugin", plugin: "dsh-oh-my-claude", form: "notice" },
   });
+
   assert.equal(wakeOnlyTurn([user, asst, restart]), false, "restart notice is sent, not drained");
 }
 
@@ -4513,27 +5504,33 @@ console.log("schema-guard ok");
   const file = joinPath(dir, "busy.json");
   await markBusy("dead", true, file);
   await markBusy("live", true, file);
+
   const ctx = {
     on() {},
     agents: { get: () => undefined },
     logger: { info() {}, warn() {} },
   };
-  const a = new ClaudeCodeAdapter(fakeCtx(ctx), Config({}));
+
+  const a = new ClaudeCodeAdapter(fakePluginContext(ctx), Config({}));
   a.processes.set(registryKey("claude-code", "live"), fakeProc({ busy: true }));
-  const woke: [string, ClaudeProcess | undefined, string | undefined][] = [];
+  const woke: Array<[string, ClaudeProcess | undefined, string | undefined]> = [];
   a.wake = async (id, proc, text) => {
     woke.push([id, proc, text]);
+
     return true;
   };
+
   await a.resumeInterrupted(file);
   assert.deepEqual(woke, [["dead", undefined, RESTART_TEXT]]);
   assert.deepEqual(await takeInterrupted(file), ["live"], "live session stays tracked");
 }
+
 // acquire(): a second prompt arriving while a turn runs is refused, not served by killing the
 // process the turn is running on. Mid-turn relays and steers never reach acquire.
 {
-  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const a = new ClaudeCodeAdapter(bareCtx(), Config({}));
   let killed = 0;
+
   const running = fakeProc({
     alive: true,
     busy: true,
@@ -4542,45 +5539,47 @@ console.log("schema-guard ok");
       killed += 1;
     },
   });
+
   a.processes.set(registryKey("claude-code", "s1"), running);
-  // SAFETY: acquire only reads what prepare returns; the spawn path is never reached here.
-  a.prepare = async () =>
-    ({
-      input: "{}",
-      args: [],
-      cwd: "/tmp",
-      spec: emptySpec,
-    }) as unknown as TurnPrep;
+  // acquire only reads what prepare returns; the spawn path is never reached here.
+  a.prepare = async () => ({
+    input: "{}",
+    args: [],
+    cwd: "/tmp",
+    spec: emptySpec,
+  });
   await assert.rejects(
-    // SAFETY: acquire takes the session options shape; only sessionId is read before the refusal
-    async () =>
-      a.acquire({ sessionId: "s1", messages: [] } as unknown as Parameters<
-        ClaudeCodeAdapter["acquire"]
-      >[0]),
+    // Only sessionId is read before the refusal.
+    async () => a.acquire(turnOptions("s1")),
     /already running/,
     "the second caller is refused",
   );
   assert.equal(killed, 0, "the running turn's process is left alone");
   assert.equal(a.processes.get(registryKey("claude-code", "s1")), running);
 }
+
 // acquire(): a wake turn exists to show what an adopted process wrote while dsh was away, so it
 // keeps that process whatever differs between its stored spec and the new one (an edited
 // instructions file after a restart is enough). A prompt turn still replaces it.
 {
   const old = { ...emptySpec, system: "old" };
+
   const wake = message({
     role: "user",
     source: { kind: "plugin:dsh-oh-my-claude", form: "notice", summary: WAKE_TEXT },
     content: [{ type: "text", text: WAKE_TEXT }],
   });
+
   const prompt = message({
     role: "user",
     source: { kind: "user" },
     content: [{ type: "text", text: "hi" }],
   });
+
   const setup = () => {
-    const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+    const a = new ClaudeCodeAdapter(bareCtx(), Config({}));
     let killed = 0;
+
     const held = fakeProc({
       alive: true,
       busy: false,
@@ -4591,53 +5590,62 @@ console.log("schema-guard ok");
         killed += 1;
       },
     });
+
     a.processes.set(registryKey("claude-code", "s1"), held);
-    // SAFETY: acquire only reads what prepare returns; the spawn path is never reached here.
-    a.prepare = async () =>
-      ({
-        input: "{}",
-        args: [],
-        cwd: "/tmp",
-        spec: { ...emptySpec, system: "new" },
-      }) as unknown as TurnPrep;
+    // acquire only reads what prepare returns; the spawn path is never reached here.
+    a.prepare = async () => ({
+      input: "{}",
+      args: [],
+      cwd: "/tmp",
+      spec: { ...emptySpec, system: "new" },
+    });
     a.evict = () => {
       throw new Error("respawn");
     };
-    // SAFETY: acquire reads sessionId and messages only
-    const options = (messages: LooseMessage[]) =>
-      ({ sessionId: "s1", messages }) as unknown as Parameters<ClaudeCodeAdapter["acquire"]>[0];
+
+    // acquire reads sessionId and messages only.
+    const options = (messages: Array<LooseMessage>) =>
+      turnOptions("s1", { messages: wireMessages(messages) });
+
     return { a, held, options, killedCount: () => killed };
   };
+
   {
     const { a, held, options, killedCount } = setup();
     const got = await a.acquire(options([wake]));
     assert.equal(got.proc, held, "the wake turn keeps the process that holds the output");
     assert.equal(killedCount(), 0);
   }
+
   {
     const { a, options, killedCount } = setup();
     await assert.rejects(async () => a.acquire(options([prompt])), /respawn/);
     assert.equal(killedCount(), 1, "a prompt turn replaces a process whose spec changed");
   }
 }
+
 // --- native tool rows: onToolCall / onToolResult callbacks fire for Bash and Edit ---
 {
   const calls: Array<{ callId: string; name: string; args: string }> = [];
+
   const results: Array<{
     callId: string;
     text: string;
     isError: boolean;
     meta?: object;
   }> = [];
+
   const tr = new Translator({
     onToolCall: (callId, name, args) => {
       calls.push({ callId, name, args });
+
       return 42; // fake seq
     },
     onToolResult: (callId, text, isError, meta) => {
       results.push({ callId, text, isError, meta });
     },
-  }) as any;
+  });
+
   // stream-json partial path: content_block_start → input_json_delta → content_block_stop
   tr.translate({ type: "stream_event", event: { type: "message_start" } });
   tr.translate({
@@ -4659,15 +5667,18 @@ console.log("schema-guard ok");
       },
     },
   });
+
   const stop = tr.translate({
     type: "stream_event",
     event: { type: "content_block_stop", index: 0 },
   });
+
   // no reasoning chunk emitted for the native tool call
   assert.deepEqual(stop, [], "native tool_use block emits no chunk");
   assert.equal(calls.length, 1, "onToolCall fired once");
   assert.equal(calls[0]!.name, "bash", "Bash mapped to lowercase bash");
   assert.ok(calls[0]!.args.includes('"description":"List files"'), "arguments contain description");
+
   // tool_result path
   const res = tr.translate({
     type: "user",
@@ -4675,22 +5686,27 @@ console.log("schema-guard ok");
       content: [{ type: "tool_result", tool_use_id: "tu1", content: "file1\nfile2" }],
     },
   });
+
   assert.deepEqual(res, [], "native tool_result emits no chunk");
   assert.equal(results.length, 1, "onToolResult fired once");
   assert.equal(results[0]!.callId, "tu1", "result references the same callId");
   assert.equal(results[0]!.text, "file1\nfile2", "result text preserved");
 }
+
 // --- a tool_use block reaching both the streaming and whole-message paths fires onToolCall once ---
 // Regression: two `tool/call` appends for one callId gave the client "received more than one start",
 // which threw in ConversationNodeAssembler and stalled the event feed (no history, stuck spinner).
 {
-  const calls: string[] = [];
+  const calls: Array<string> = [];
+
   const tr = new Translator({
     onToolCall: (callId) => {
       calls.push(callId);
+
       return calls.length; // fake, distinct seq
     },
-  }) as any;
+  });
+
   // streaming path: content_block_start → input_json_delta → content_block_stop fires once
   tr.translate({
     type: "stream_event",
@@ -4730,6 +5746,7 @@ console.log("schema-guard ok");
   assert.equal(calls.length, 1, "same callId does not fire onToolCall a second time");
   // the result closes the call: both per-call maps drop the entry, so a long turn stays bounded
   tr.onToolResult = () => {};
+
   tr.translate({
     type: "user",
     message: {
@@ -4739,18 +5756,22 @@ console.log("schema-guard ok");
   assert.equal(tr.firedCalls.size, 0, "firedCalls emptied after tool_result");
   assert.equal(tr.callInputs.size, 0, "callInputs emptied after tool_result");
 }
+
 {
-  const results: Array<{ callId: string; meta?: object }> = [];
+  const results: Array<{ callId: string; meta?: ToolResultMeta | undefined }> = [];
+
   const tr = new Translator({
     onToolCall: (callId, _name, args) => {
       // pretend we stored the args so the result handler can build meta
-      (tr as any).callInputs.set(callId, args);
+      tr.callInputs.set(callId, args);
+
       return 99;
     },
     onToolResult: (_callId, _text, _isError, meta) => {
       results.push({ callId: "", meta });
     },
-  }) as any;
+  });
+
   // feed a whole-assistant-message Edit (no partials)
   tr.translate({
     type: "assistant",
@@ -4774,26 +5795,35 @@ console.log("schema-guard ok");
   });
   assert.equal(results.length, 1, "onToolResult fired after Edit result");
   assert.ok(
-    (results[0]!.meta as any)?.diffs?.[0]?.path === "/x/y.ts",
+    results[0]!.meta?.diffs?.[0]?.path === "/x/y.ts",
     "Edit meta carries diffs[0].path from the call input",
   );
 }
 
 // configDir: default empty, resolveClaudeHome resolves correctly
 assert.equal(new Config({}).configDir, "");
+
 const savedEnv = process.env.CLAUDE_CONFIG_DIR;
+
 delete process.env.CLAUDE_CONFIG_DIR; // SAFETY: test only — restores original at scope exit not needed in module
+
 assert.equal(resolveClaudeHome(""), CLAUDE_HOME);
+
 assert.ok(resolveClaudeHome("~/x").startsWith(homedir()));
+
 assert.ok(resolveClaudeHome("~/x").endsWith("/x"));
+
 assert.equal(resolveClaudeHome("/abs"), "/abs");
-if (savedEnv !== undefined) process.env.CLAUDE_CONFIG_DIR = savedEnv;
+
+if (savedEnv !== undefined) {
+  process.env.CLAUDE_CONFIG_DIR = savedEnv;
+}
 
 // noteBoot: first boot has no previous, a second boot reports the gap, and the file survives.
 {
   const dir = tempDir("omc-boot-");
   const file = joinPath(dir, "boot.json");
-  assert.equal(await noteBoot(file, 1_000), undefined, "no previous boot");
+  assert.equal(await noteBoot(file, 1000), undefined, "no previous boot");
   assert.equal(await noteBoot(file, 31_000), 30_000, "gap since the previous boot");
   assert.equal(
     await noteBoot(joinPath(dir, "nope", "boot.json"), 5),
@@ -4801,6 +5831,7 @@ if (savedEnv !== undefined) process.env.CLAUDE_CONFIG_DIR = savedEnv;
     "missing dir tolerated",
   );
 }
+
 console.log("boot ok");
 
 // hasPendingNotice: a next-turn plugin notice after the last turn/start is pending; one before
@@ -4815,6 +5846,7 @@ console.log("boot ok");
       inserted: [{ source: { kind: "plugin", plugin } }],
     },
   });
+
   const turn = { type: "turn/start", data: { turn: 1 } };
   assert.equal(hasPendingNotice([notice("dsh-oh-my-claude")], "dsh-oh-my-claude"), true);
   assert.equal(hasPendingNotice([notice("dsh-oh-my-claude"), turn], "dsh-oh-my-claude"), false);
@@ -4824,6 +5856,7 @@ console.log("boot ok");
     false,
   );
   assert.equal(hasPendingNotice([notice("other")], "dsh-oh-my-claude"), false);
+
   const v4 = {
     type: "agent/inbox/spliced",
     data: {
@@ -4833,12 +5866,14 @@ console.log("boot ok");
       inserted: [{ source: { kind: "plugin:dsh-oh-my-claude", form: "notice" } }],
     },
   };
+
   assert.equal(hasPendingNotice([v4], "dsh-oh-my-claude"), true, "a v4 notice is pending too");
   assert.equal(hasPendingNotice([v4], "other"), false);
   assert.equal(
     hasPendingNotice([{ type: "agent/inbox/spliced", data: null }], "dsh-oh-my-claude"),
     false,
   );
+
   const userNotice = {
     type: "agent/inbox/spliced",
     data: {
@@ -4853,9 +5888,11 @@ console.log("boot ok");
       ],
     },
   };
+
   assert.equal(hasPendingNotice([userNotice], "dsh-oh-my-claude", ["RESTART"]), true);
   assert.equal(hasPendingNotice([userNotice], "dsh-oh-my-claude"), false);
 }
+
 console.log("pending-notice ok");
 
 // buildRedactor masks secret-looking env values, longest first, and leaves short or unnamed ones.
@@ -4866,6 +5903,7 @@ console.log("pending-notice ok");
     PATH: "/usr/bin:/bin",
     SHORT_KEY: "abc",
   });
+
   assert.equal(
     redact("k=your-key-0001-xyz and your-key-0001"),
     "k=[redacted:LONGER_TOKEN] and [redacted:MY_API_KEY]",
@@ -4877,16 +5915,19 @@ console.log("pending-notice ok");
   );
   assert.equal(Config({}).redactSecrets, true);
 }
+
 // Translator applies the injected redactor to tool results before the row is appended.
 {
-  const results: string[] = [];
+  const results: Array<string> = [];
+
   const tr = new Translator({
     onToolCall: () => 1,
     onToolResult: (_id, text) => {
       results.push(text);
     },
     redact: (s) => s.split("hunter22").join("[redacted:PW]"),
-  }) as any;
+  });
+
   tr.translate({
     type: "assistant",
     message: {
@@ -4907,6 +5948,7 @@ console.log("pending-notice ok");
   });
   assert.deepEqual(results, ["DB_PASSWORD=[redacted:PW]"]);
 }
+
 console.log("redaction ok");
 
 // decide(): ExitPlanMode goes through userQuestions.ask with the plan-review intent; Approve
@@ -4919,12 +5961,14 @@ console.log("redaction ok");
       intent?: { kind: string };
     }>;
   }> = [];
+
   let answer: {
-    answers: Array<{ id: string; selected?: string[]; custom?: string }>;
+    answers: Array<{ id: string; selected?: Array<string>; custom?: string }>;
   } = {
     answers: [],
   };
-  const ctx = fakeCtx({
+
+  const ctx = fakePluginContext({
     on() {},
     userQuestions: {
       ask: async (req: {
@@ -4935,11 +5979,14 @@ console.log("redaction ok");
         }>;
       }) => {
         asked.push(req);
+
         return answer;
       },
     },
   });
+
   const adapter = new ClaudeCodeAdapter(ctx, Config({}));
+
   const base = {
     toolName: "ExitPlanMode",
     input: { plan: "# Plan\n1. do it" },
@@ -4949,9 +5996,9 @@ console.log("redaction ok");
     signal: new AbortController().signal,
     accessMode: "workspace-write",
   };
+
   answer = { answers: [{ id: "plan-review:tu-plan", selected: ["Approve"] }] };
-  // SAFETY: the Decision shape is internal; the test passes the fields decide() reads
-  const ok = await adapter.decide(base as any);
+  const ok = await adapter.decide(base);
   assert.equal(asked.length, 1);
   assert.equal(asked[0]!.questions[0]!.intent?.kind, "plan-review");
   assert.equal(asked[0]!.questions[0]!.detail, "# Plan\n1. do it");
@@ -4965,37 +6012,44 @@ console.log("redaction ok");
       },
     ],
   };
-  const no = await adapter.decide(base as any);
+  const no = await adapter.decide(base);
   assert.equal(no.behavior, "deny");
-  assert.ok(String(no.message).includes("add tests"), "feedback goes back to Claude");
+  assert.ok(
+    no.behavior === "deny" && no.message.includes("add tests"),
+    "feedback goes back to Claude",
+  );
 }
+
 console.log("plan-review ok");
 
 // decide(): an approval that was not allowed tells Claude why. "unavailable" and "cancelled" say
 // nobody refused (#170: the bare `approval unavailable` sent Claude into a 30-minute retry loop).
 {
-  let outcome = "unavailable";
-  const asked: { callId?: string }[] = [];
-  const warned: string[] = [];
-  const ctx = fakeCtx({
+  let outcome: ApprovalOutcome = "unavailable";
+  const asked: Array<ApprovalRequest> = [];
+  const warned: Array<string> = [];
+
+  const ctx = fakePluginContext({
     on() {},
     logger: { warn: (line: string) => warned.push(line) },
     approval: {
-      request: async (req: { callId?: string }) => (asked.push(req), outcome),
+      request: async (req: ApprovalRequest) => (asked.push(req), outcome),
     },
   });
+
   const adapter = new ClaudeCodeAdapter(ctx, Config({}));
-  const base = {
+
+  const base: Decision = {
     toolName: "Bash",
     input: { command: "ls" },
     request: { subtype: "can_use_tool" },
     toolUseId: "tu-ap",
-    agent: { session: { id: "s-ap" } },
+    agent: fakeAgent({ session: fakeSession({ id: asSessionId("s-ap") }) }),
     signal: new AbortController().signal,
     accessMode: "workspace-write",
   };
-  // SAFETY: the Decision shape is internal; the test passes the fields decide() reads
-  const un = await adapter.decide(base as any);
+
+  const un = await adapter.decide(base);
   assert.ok(un.behavior === "deny", "unavailable denies");
   assert.equal(un.message, OUTCOME_MESSAGE.unavailable);
   assert.ok(un.message.includes("nobody was asked"), "unavailable is not a refusal");
@@ -5003,16 +6057,16 @@ console.log("plan-review ok");
   // so a dsh with no one to answer approvals is found from the log (#202 took a day without it).
   assert.equal(warned.length, 1);
   assert.match(warned[0]!, /unavailable.*Bash.*s-ap.*tu-ap/);
-  await adapter.decide(base as any);
+  await adapter.decide(base);
   assert.equal(warned.length, 1, "one warning per session, not one per ask");
   outcome = "cancelled";
-  const ca = await adapter.decide(base as any);
+  const ca = await adapter.decide(base);
   assert.equal(ca.behavior === "deny" && ca.message, OUTCOME_MESSAGE.cancelled);
   outcome = "rejected";
-  const re = await adapter.decide(base as any);
+  const re = await adapter.decide(base);
   assert.equal(re.behavior === "deny" && re.message, "The user denied this action in dsh.");
   outcome = "allowed-once";
-  const ok = await adapter.decide(base as any);
+  const ok = await adapter.decide(base);
   assert.equal(ok.behavior, "allow");
   // dsh's ACP bridge (DSH Desktop) skips a request without the tool call's id (#202).
   assert.ok(
@@ -5020,6 +6074,7 @@ console.log("plan-review ok");
     "every ask names its call",
   );
 }
+
 console.log("approval outcomes ok");
 
 // commandNames keeps dsh-grammar names from the init frame; the Translator hands them to onInit.
@@ -5029,36 +6084,42 @@ console.log("approval outcomes ok");
     "ok-1",
   ]);
   assert.deepEqual(commandNames("nope"), []);
-  const seen: string[][] = [];
-  const tr = new Translator({ onInit: (names) => seen.push(names) }) as any;
+  const seen: Array<Array<string>> = [];
+  const tr = new Translator({ onInit: (names) => seen.push(names) });
+
   const out = tr.translate({
     type: "system",
     subtype: "init",
     slash_commands: ["compact", "verify"],
   });
+
   assert.deepEqual(out, [], "init frame emits no chunk");
   assert.deepEqual(seen, [["compact", "verify"]]);
 }
+
 {
   // bridgeCommands reads the optional service through ctx.get: cordis throws on `ctx.commands`
   // unless "commands" is in `inject`, which took every turn down once (0.23.x).
-  const registered: string[] = [];
+  const registered: Array<string> = [];
+
   const commands = {
     register: (d: { name: string }) => (registered.push(d.name), () => {}),
     find: () => undefined,
   };
-  const base = {
+
+  const base = fakePluginContext({
     on() {},
     logger: { info() {}, warn() {} },
-    get: (n: string) => (n === "commands" ? commands : undefined),
-  };
-  const guarded = new Proxy(base, {
-    get(t, p) {
-      if (p === "commands") throw new Error('cannot get property "commands" without inject');
-      return t[p as keyof typeof t];
+    services: { commands },
+  });
+
+  const guarded = Object.defineProperty(base, "commands", {
+    get() {
+      throw new Error('cannot get property "commands" without inject');
     },
   });
-  const a = new ClaudeCodeAdapter(fakeCtx(guarded), Config({ commandBridge: true }));
+
+  const a = new ClaudeCodeAdapter(guarded, Config({ commandBridge: true }));
   a.bridgeCommands(["compact", "model"], undefined);
   assert.deepEqual(
     registered,
@@ -5068,7 +6129,7 @@ console.log("approval outcomes ok");
   assert.equal(a.bridged.size, 4, "model, temporary, btw and ultracode");
   // A catalog that already carries the plugin's own names (every catalog saved before 2026-09-08
   // did) must not bridge them to Claude: the real handler would then find the name taken.
-  const again = new ClaudeCodeAdapter(fakeCtx(guarded), Config({ commandBridge: true }));
+  const again = new ClaudeCodeAdapter(guarded, Config({ commandBridge: true }));
   registered.length = 0;
   again.bridgeCommands(["btw", "temporary", "ultracode", "verify"], undefined);
   assert.deepEqual(
@@ -5083,21 +6144,28 @@ console.log("approval outcomes ok");
 // own names never try the bare form: HOST_COMMANDS sends them prefixed first; `verify` stands in
 // here for a name some other plugin took.)
 {
-  const registered: string[] = [];
+  const registered: Array<string> = [];
+
   const commands = {
     register: (d: { name: string }) => {
-      if (d.name === "verify") throw new Error('command "verify" is already registered');
+      if (d.name === "verify") {
+        throw new Error('command "verify" is already registered');
+      }
+
       registered.push(d.name);
+
       return () => {};
     },
     find: () => undefined,
   };
+
   const base = {
     on() {},
     logger: { info() {}, warn() {} },
-    get: (n: string) => (n === "commands" ? commands : undefined),
+    services: { commands },
   };
-  const a = new ClaudeCodeAdapter(fakeCtx(base), Config({ commandBridge: true }));
+
+  const a = new ClaudeCodeAdapter(fakePluginContext(base), Config({ commandBridge: true }));
   a.bridgeCommands(["verify"], undefined);
   assert.ok(registered.includes("claude-verify"), "fell back to the prefixed name");
   assert.equal(a.bridged.has("verify"), true, "and the command is bridged either way");
@@ -5107,37 +6175,49 @@ console.log("approval outcomes ok");
 // `compact`; on Claude the handler sends `/compact` to the session as a user message, an argument
 // is refused, and a second mount on the same agent is a no-op.
 {
-  const mounted: Array<{ name: string; inject?: string[] }> = [];
-  const registered: Array<{ name: string; handler: Function }> = [];
-  const sent: string[] = [];
-  const child = {
-    effect: (fn: () => void) => fn(),
+  type Handler = Parameters<OptionalServices["commands"]["register"]>[0]["handler"];
+
+  const mounted: Array<{ name: string; inject?: Array<string> | undefined }> = [];
+  const registered: Array<{ name: string; handler: Handler }> = [];
+  const sent: Array<string> = [];
+
+  const child = fakePluginContext({
+    effect: (fn) => fn(),
     commands: {
-      register: (d: { name: string; handler: Function }) => {
+      register: (d) => {
         registered.push(d);
+
         return () => {};
       },
       find: () => undefined,
     },
-    get: () => undefined,
-  };
-  const agent = {
-    id: "s1",
-    followup: (m: { content: Array<{ type: string; text?: string }> }) =>
-      sent.push(m.content[0]?.text ?? ""),
-    ctx: {
-      plugin: (def: { name: string; inject?: string[]; apply: (c: unknown) => void }) => {
+  });
+
+  // The override reads only ctx.plugin and followup.
+  const agent = fakeAgent({
+    id: asSessionId("s1"),
+    followup: (m) => {
+      const first = m.content[0];
+
+      sent.push(first?.type === "text" ? first.text : "");
+    },
+    ctx: fakePluginContext({
+      plugin: (def) => {
         mounted.push({ name: def.name, inject: def.inject });
         def.apply(child);
+
         return {};
       },
-    },
-  };
-  const base = { on() {}, logger: { info() {}, warn() {} }, get: () => undefined };
-  const a = new ClaudeCodeAdapter(fakeCtx(base), Config({}));
-  // SAFETY: the fake carries only what the override reads: ctx.plugin and followup.
-  a.mountCompactOverride(agent as any);
-  a.mountCompactOverride(agent as any);
+    }),
+  });
+
+  const a = new ClaudeCodeAdapter(
+    fakePluginContext({ on() {}, logger: { info() {}, warn() {} } }),
+    Config({}),
+  );
+
+  a.mountCompactOverride(agent);
+  a.mountCompactOverride(agent);
   assert.deepEqual(
     mounted,
     [{ name: "dsh-oh-my-claude-compact", inject: ["commands"] }],
@@ -5149,15 +6229,18 @@ console.log("approval outcomes ok");
     "the agent-scoped command carries dsh's own name",
   );
   const handler = registered[0]!.handler;
+
   const ok = await handler({
     agent,
     rawInput: "",
     attachments: [],
     signal: new AbortController().signal,
   });
+
   assert.deepEqual(sent, ["/compact"], "sent to Claude as the next user message");
   assert.equal(ok.kind, "success");
   assert.equal(ok.text, "/compact sent to Claude Code");
+
   // Typed while a turn runs it has only been queued, and the receipt says so.
   const midTurn = await handler({
     agent: { ...agent, status: "running" },
@@ -5165,6 +6248,7 @@ console.log("approval outcomes ok");
     attachments: [],
     signal: new AbortController().signal,
   });
+
   assert.equal(midTurn.text, "/compact added to the queue, for when this turn ends");
   sent.pop();
   // On an idle session `followup` starts the turn at once: the receipt reads the status from
@@ -5172,25 +6256,30 @@ console.log("approval outcomes ok");
   const waking = { ...agent, status: "idle" };
   waking.followup = () => {
     waking.status = "running";
+
     return 0;
   };
+
   const woke = await handler({
     agent: waking,
     rawInput: "",
     attachments: [],
     signal: new AbortController().signal,
   });
+
   assert.equal(woke.text, "/compact sent to Claude Code");
+
   const refused = await handler({
     agent,
     rawInput: " now",
     attachments: [],
     signal: new AbortController().signal,
   });
+
   assert.equal(refused.kind, "error", "an argument is refused, as dsh's own command refuses it");
   assert.equal(sent.length, 1, "and nothing more was sent");
   // An agent with no context (another runtime's agent) is left alone.
-  a.mountCompactOverride({ id: "s2", followup() {} } as any);
+  a.mountCompactOverride(fakeAgent({ id: asSessionId("s2"), followup() {} }));
   assert.equal(mounted.length, 1);
 }
 
@@ -5198,20 +6287,23 @@ console.log("approval outcomes ok");
 // are not removed, so the file follows them rather than the frame.
 {
   const dir = tempDir("omc-catalog-shrink-");
+
   const commands = {
     register: () => () => {},
     find: () => undefined,
   };
+
   const base = {
     on() {},
     logger: { info() {}, warn() {} },
-    get: (n: string) => (n === "commands" ? commands : undefined),
+    services: { commands },
   };
-  const a = new ClaudeCodeAdapter(fakeCtx(base), Config({ commandBridge: true }));
+
+  const a = new ClaudeCodeAdapter(fakePluginContext(base), Config({ commandBridge: true }));
   a.stateDir = dir;
   a.bridgeCommands(["llama", "mint"], undefined);
   a.bridgeCommands(["verify"], undefined);
-  await new Promise((r) => setTimeout(r, 50));
+  await sleep(50);
   assert.deepEqual(
     (await loadCommandCatalog(dir)).filter((n) => ["llama", "mint", "verify"].includes(n)),
     ["llama", "mint", "verify"],
@@ -5219,71 +6311,96 @@ console.log("approval outcomes ok");
   );
   // And a second instance over the same state dir — dsh re-instantiates the plugin when settings
   // apply at boot — adds to the file rather than replacing it with its own short catalog.
-  const b = new ClaudeCodeAdapter(fakeCtx(base), Config({ commandBridge: true }));
+  const b = new ClaudeCodeAdapter(fakePluginContext(base), Config({ commandBridge: true }));
   b.stateDir = dir;
   b.bridgeCommands(["compact"], undefined);
-  await new Promise((r) => setTimeout(r, 50));
+  await sleep(50);
   const after = await loadCommandCatalog(dir);
-  assert.ok(after.includes("llama") && after.includes("mint"), `kept the earlier names: ${after}`);
+  assert.ok(
+    after.includes("llama") && after.includes("mint"),
+    `kept the earlier names: ${after.join(",")}`,
+  );
   assert.ok(
     !after.includes("btw") && !after.includes("temporary"),
-    `the plugin's own commands stay out of the catalog: ${after}`,
+    `the plugin's own commands stay out of the catalog: ${after.join(",")}`,
   );
 }
+
 console.log("command-catalog-live ok");
 
 // /ultracode: flips or sets a session's ultracode, sends it to a live process, and `status` says
 // what the CLI read back. The fake CLI answers the way 2.1.293 did when probed: `success` either
 // way, and on a model without ultracode the setting stays off with `ultracodeAvailable: false`.
 {
-  type Handler = (i: { agent: { id: string }; rawInput: string }) => {
-    kind: string;
-    text?: string;
-  };
+  type Handler = Parameters<OptionalServices["commands"]["register"]>[0]["handler"];
+
   let handler: Handler | undefined;
+
   const commands = {
     register: (d: { name: string; handler: Handler }) => {
-      if (d.name === "ultracode") handler = d.handler;
+      if (d.name === "ultracode") {
+        handler = d.handler;
+      }
+
       return () => {};
     },
     find: () => undefined,
   };
+
   const dir = tempDir("omc-ultracode-");
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {}, logger: { info() {}, warn() {} } }),
+    fakePluginContext({ on() {}, logger: { info() {}, warn() {} } }),
     Config({}),
   );
+
   a.stateDir = dir;
   // The constructor read this box's own ultracode.json before the state dir moved to the temp
   // one; whatever sessions that file names would otherwise be saved along with the test's.
   a.ultracode.clear();
-  // SAFETY: the fake carries the one method the registration calls
-  a.registerUltracodeCommand(commands as any);
+  a.registerUltracodeCommand(commands);
   assert.ok(handler);
-  const run = (rawInput: string) => handler!({ agent: { id: "ultracode-session" }, rawInput });
+  const session = fakeAgent({ id: asSessionId("ultracode-session") });
+  const signal = new AbortController().signal;
+
+  /** One /ultracode line. The handler answers synchronously; a promise is a change worth failing on. */
+  const run = (rawInput: string) => {
+    const reply = handler!({ agent: session, rawInput, attachments: [], signal });
+
+    if ("then" in reply) {
+      throw new Error("the /ultracode handler went async");
+    }
+
+    return reply;
+  };
+
   assert.equal(run("status").text, serverText("ultracodeStatusUnset"));
   assert.equal(run("maybe").kind, "error");
   // No process yet: remembered for the next one.
   assert.ok(run("").text?.includes(serverText("ultracodeStateOn")), "nothing after it flips to on");
   assert.deepEqual(a.ultracode.get("ultracode-session"), { wanted: true });
-  await new Promise((r) => setTimeout(r, 30));
+  await sleep(30);
   assert.deepEqual(JSON.parse(await readFile(joinPath(dir, "ultracode.json"), "utf8")), {
     "ultracode-session": true,
   });
   // A live process: the setting goes out and the read-back is recorded.
   let available = true;
   let cli = false;
-  const sent: string[] = [];
-  const proc: any = fakeProc({
+  const sent: Array<string> = [];
+
+  const proc = fakeProc({
     alive: true,
     controlListener: undefined,
     write(line: string) {
       const req = JSON.parse(line);
       sent.push(req.request.subtype);
-      if (req.request.subtype === "apply_flag_settings" && available)
+
+      if (req.request.subtype === "apply_flag_settings" && available) {
         cli = req.request.settings.ultracode;
+      }
+
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           response: {
             subtype: "success",
@@ -5294,15 +6411,17 @@ console.log("command-catalog-live ok");
           },
         });
       }, 0);
+
       return true;
     },
   });
+
   await a.applyUltracode(proc, "ultracode-session");
   assert.deepEqual(sent, ["apply_flag_settings", "get_settings"]);
   assert.equal(run("status").text, serverText("ultracodeStatusOn"));
   a.processFor = () => proc;
   assert.equal(run("off").text, serverText("ultracodeOff"));
-  await new Promise((r) => setTimeout(r, 30));
+  await sleep(30);
   assert.equal(run("status").text, serverText("ultracodeStatusOff"));
   assert.deepEqual(JSON.parse(await readFile(joinPath(dir, "ultracode.json"), "utf8")), {
     "ultracode-session": false,
@@ -5310,7 +6429,7 @@ console.log("command-catalog-live ok");
   // A model that does not offer it: asked for, acknowledged, not in force.
   available = false;
   run("on");
-  await new Promise((r) => setTimeout(r, 30));
+  await sleep(30);
   assert.equal(run("status").text, serverText("ultracodeStatusUnavailable"));
   // A session nobody set is never sent anything.
   sent.length = 0;
@@ -5318,7 +6437,9 @@ console.log("command-catalog-live ok");
   assert.deepEqual(sent, []);
   console.log("ultracode ok");
 }
+
 console.log("command-bridge ok");
+
 {
   // Raw tool rows only on a format-0 session: dsh 0.1.5's migration refuses unadvertised
   // tool/call rows, so on a versioned format the rows are refused and the turn renders inline.
@@ -5339,6 +6460,7 @@ console.log("command-bridge ok");
     refused: false,
   });
 }
+
 console.log("native-rows ok");
 
 // The catalog survives a restart. globalThis carries it across a hot reload, but a restart adopts
@@ -5352,76 +6474,80 @@ console.log("native-rows ok");
   await writeFile(joinPath(dir, "commands.json"), "{ not json", "utf8");
   assert.deepEqual(await loadCommandCatalog(dir), [], "a damaged file reads as no catalog");
 }
+
 console.log("command-catalog ok");
 
 // fastMode: off by default; on, the process is launched with --settings {"fastMode":true} when the CLI lists --settings.
 {
   assert.equal(Config({}).fastMode, false);
   const flags = new Set(["--settings", "--effort", "--output-format"]);
+
   const on = buildArgs({
     model: "opus",
-    reasoningEffort: null,
     system: "",
     purpose: undefined,
     config: Config({ fastMode: true }),
     flags,
-    mcp: null,
-  } as any);
+  });
+
   const i = on.indexOf("--settings");
   assert.ok(
     i >= 0 && on[i + 1] === JSON.stringify({ fastMode: true }),
     "fast mode launches with --settings",
   );
+
   const off = buildArgs({
     model: "opus",
-    reasoningEffort: null,
     system: "",
     purpose: undefined,
     config: Config({}),
     flags,
-    mcp: null,
-  } as any);
+  });
+
   assert.equal(off.indexOf("--settings"), -1, "no --settings without fastMode");
 }
+
 console.log("fast-mode ok");
 
 // temporary: buildArgs adds --no-session-persistence only when asked and the CLI lists it.
 {
   const flags = new Set(["--no-session-persistence", "--permission-mode"]);
+
   const base = {
     model: "opus",
-    reasoningEffort: null,
     system: "",
     purpose: undefined,
     config: Config({}),
     flags,
-    mcp: null,
   };
-  assert.ok(buildArgs({ ...base, temporary: true } as any).includes("--no-session-persistence"));
-  assert.ok(!buildArgs({ ...base } as any).includes("--no-session-persistence"));
+
+  assert.ok(buildArgs({ ...base, temporary: true }).includes("--no-session-persistence"));
+  assert.ok(!buildArgs({ ...base }).includes("--no-session-persistence"));
 }
+
 console.log("temporary ok");
 
 // hookRows: buildArgs adds --include-hook-events only when config.hookRows is true and the CLI lists it.
 {
   const flags = new Set(["--include-hook-events"]);
+
   const base = {
     model: "opus",
-    reasoningEffort: null,
     system: "",
     purpose: undefined,
     config: Config({}),
     flags,
-    mcp: null,
   };
-  assert.ok(buildArgs({ ...base } as any).includes("--include-hook-events"));
+
+  assert.ok(buildArgs({ ...base }).includes("--include-hook-events"));
   assert.ok(
     !buildArgs({
       ...base,
       config: Config({ hookRows: false }),
-    } as any).includes("--include-hook-events"),
+    }).includes("--include-hook-events"),
   );
 }
+
 console.log("hook-rows ok");
 
 // A short PATH (DSH Desktop started from the macOS Dock) still reaches the CLI, and Windows never
@@ -5438,10 +6564,12 @@ console.log("hook-rows ok");
     "no duplicates",
   );
   assert.equal(withClaudeDirs(undefined, dirs), "/h/.local/bin:/opt/homebrew/bin");
+
   const on =
-    (...paths: string[]) =>
+    (...paths: Array<string>) =>
     (p: string) =>
       paths.includes(p);
+
   assert.equal(
     resolveCommand("claude", "/usr/bin:/bin", dirs, on("/h/.local/bin/claude"), "darwin"),
     "/h/.local/bin/claude",
@@ -5528,8 +6656,11 @@ console.log("hook-rows ok");
 // A systemd-run that exists but cannot reach its bus exits 1 at once: fall back to a detached
 // keeper. A scope that ends later, or cleanly, is the keeper's own life ending.
 assert.equal(scopeFailed(1, 40), true, "installed, no user bus");
+
 assert.equal(scopeFailed(1, 60_000), false, "the keeper ended after a long life");
+
 assert.equal(scopeFailed(0, 40), false, "a clean exit is not a refusal");
+
 assert.equal(scopeFailed(null, 40), false, "killed by a signal");
 
 // keeper mode: the default spawn, one keeper dir per provider id and dsh session, stable across calls.
@@ -5544,6 +6675,7 @@ assert.equal(scopeFailed(null, 40), false, "killed by a signal");
   // The plugin's own entrypoint, so a terminal `claude --resume` lists these sessions instead of
   // hiding them as sdk-cli.
   assert.equal(defaultAdapter.keeperEnv().CLAUDE_CODE_ENTRYPOINT, "dsh-oh-my-claude");
+
   // Both spawn paths compose the child env through one helper, and the plugin's own values beat an
   // inherited one: a shell that exports MCP_TOOL_TIMEOUT used to cut relayed dsh tools short under
   // `spawn: node` while keeper mode ignored it, so the same config behaved two ways.
@@ -5552,6 +6684,7 @@ assert.equal(scopeFailed(null, 40), false, "killed by a signal");
     PATH: "/bin",
     EMPTY: undefined,
   });
+
   assert.equal(composed.MCP_TOOL_TIMEOUT, "3600000", "plugin value wins over the inherited one");
   assert.ok(composed.PATH?.startsWith("/bin:"), "the inherited PATH is carried through, first");
   assert.equal(composed.PATH, withClaudeDirs("/bin"), "the installer folders follow it");
@@ -5562,14 +6695,16 @@ assert.equal(scopeFailed(null, 40), false, "killed by a signal");
     "an explicit override still wins",
   );
 }
+
 console.log("keeper-mode ok");
 
 // Idle watchdog: the warning event is queued at half the timeout, the kill lands at the timeout,
 // an extend pushes both out, and a tool in flight pauses the whole thing.
 {
-  const idleAdapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({ idleTimeoutMs: 1000 }));
-  const injected: string[] = [];
+  const idleAdapter = new ClaudeCodeAdapter(bareCtx(), Config({ idleTimeoutMs: 1000 }));
+  const injected: Array<string> = [];
   let killed = 0;
+
   const proc = {
     idleKilled: false,
     idleKilledAfterMs: undefined as number | undefined,
@@ -5580,7 +6715,8 @@ console.log("keeper-mode ok");
       injected.push(e.type);
     },
   };
-  const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+  const wait = (ms: number) => sleep(ms);
 
   idleAdapter.armIdle("s1", proc);
   const first = idleAdapter.idleDeadlineMap.get("s1") ?? 0;
@@ -5645,9 +6781,10 @@ console.log("keeper-mode ok");
 // control(): the request goes out as one stdin line, the reply comes back through the process's
 // control listener (so it works between turns), and rewind() decodes the rewind_files answer.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  const written: string[] = [];
-  const proc: any = {
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+  const written: Array<string> = [];
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     controlListener: undefined,
@@ -5664,7 +6801,8 @@ console.log("keeper-mode ok");
                 deletions: 1,
               }
             : {};
-        proc.controlListener({
+
+        proc.controlListener!({
           type: "control_response",
           request_id: req.request_id,
           response: {
@@ -5674,13 +6812,16 @@ console.log("keeper-mode ok");
           },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   const ok = await adapter.control(proc, {
     subtype: "set_permission_mode",
     mode: "plan",
   });
+
   assert.equal(ok.ok, true);
   assert.equal(JSON.parse(written[0]!).request.mode, "plan");
   adapter.processes.set(registryKey(adapter.providerId, "s1"), proc);
@@ -5708,24 +6849,28 @@ console.log("keeper-mode ok");
 // restored, or nothing.
 {
   /** A fake live process whose writes are recorded; a control request is answered with `cancelled`. */
-  const makeProc = (cancelled: boolean, extra: object = {}) => {
-    const written: string[] = [];
-    const proc: Record<string, unknown> = {
+  const makeProc = (cancelled: boolean, extra: Partial<ClaudeProcess> = {}) => {
+    const written: Array<string> = [];
+
+    const proc = fakeProc({
       alive: true,
       busy: true,
-      relays: new Map(),
+      relays: new Map<string, RelayEvent>(),
       controlListener: undefined,
       steerPending: true,
       forwarded: 1,
       sent: new Set(["r1"]),
-      steers: new Map([["m1", { uuid: "old", key: "r1", text: "first", at: 5 }]]),
+      steers: new Map<string, WaitingSteer>([
+        ["m1", { uuid: "old", key: "r1", text: "first", at: 5 }],
+      ]),
       write(line: string) {
         written.push(line);
         const req = JSON.parse(line);
-        if (req.type === "control_request")
+
+        if (req.type === "control_request") {
           setTimeout(() => {
-            // SAFETY: the adapter installs this listener before writing a control request
-            (proc.controlListener as (e: object) => void)({
+            // The adapter installs this listener before writing a control request.
+            proc.controlListener!({
               type: "control_response",
               request_id: req.request_id,
               response: {
@@ -5735,42 +6880,51 @@ console.log("keeper-mode ok");
               },
             });
           }, 0);
+        }
+
         return true;
       },
       ...extra,
-    };
+    });
+
     return { proc, written };
   };
-  /** A pending dsh message as the inbox holds it. */
-  const pending = (id: string, rpcId: string, text: string) => ({
-    id,
-    role: "user",
-    source: { kind: "user", rpcId },
-    content: [{ type: "text", text }],
-  });
+
+  /** A pending dsh message as the inbox holds it; its user source carries the typed steer's
+   *  `rpcId`, which dsh's `MessageSource` type leaves out. */
+  const pending = (id: string, rpcId: string, text: string): Message => {
+    const source: MessageSource & { rpcId: string } = { kind: "user", rpcId };
+
+    return { id: MessageId(id), role: "user", source, content: [{ type: "text", text }] };
+  };
+
   /** A fake dsh agent: its inbox's next-step list, and every message steered back. */
-  const makeAgent = (nextStep: object[]) => {
-    const removed: string[] = [];
+  const makeAgent = (nextStep: Array<Message>) => {
+    const removed: Array<string> = [];
     const steered: Array<{ id: string; text: string }> = [];
-    const agent = {
+
+    const agent = fakeAgent({
       inbox: {
         nextStep,
         replace: () => true,
         remove(id: string) {
           removed.push(id);
+
           return true;
         },
       },
-      steer(m: { id: string; content: Array<{ text: string }> }) {
-        steered.push({ id: m.id, text: m.content[0]!.text });
+      steer(m: Message) {
+        const first = m.content[0];
+
+        steered.push({ id: m.id, text: first?.type === "text" ? first.text : "" });
       },
-    };
+    });
+
     return { agent, removed, steered };
   };
-  const adapterWith = (agent: object | undefined) =>
-    new ClaudeCodeAdapter(fakeCtx({ on() {}, agents: { get: () => agent } }), Config({}));
-  // SAFETY: the fixture's own fields, read back
-  const field = <V>(proc: Record<string, unknown>, k: string) => proc[k] as V;
+
+  const adapterWith = (agent: Agent | undefined) =>
+    new ClaudeCodeAdapter(fakePluginContext({ on() {}, agents: { get: () => agent } }), Config({}));
 
   // Edit one, then save: taken back, out of dsh's inbox, the park flag down, then one new message.
   {
@@ -5786,8 +6940,8 @@ console.log("keeper-mode ok");
     assert.equal(JSON.parse(written[0]!).request.subtype, "cancel_async_message");
     assert.equal(JSON.parse(written[0]!).request.message_uuid, "old");
     assert.deepEqual(removed, ["m1"], "out of dsh's inbox, so nothing delivers it mid-edit");
-    assert.equal(field<Set<string>>(proc, "sent").has("r1"), false);
-    assert.equal(field<number>(proc, "forwarded"), 0);
+    assert.equal(proc.sent.has("r1"), false);
+    assert.equal(proc.forwarded, 0);
     assert.equal(proc.steerPending, false, "nothing left in the CLI to park on");
     assert.deepEqual(adapter.steersFor("s1"), {
       waiting: [],
@@ -5798,15 +6952,17 @@ console.log("keeper-mode ok");
     assert.deepEqual(adapter.steersFor("s1").held, []);
     assert.equal(written.length, 1, "the save goes through dsh's steer, not straight to stdin");
   }
+
   // Edit all: two held as one, joined one per line, and Cancel restores both as they were.
   {
     const { agent, steered } = makeAgent([
       pending("m0", "r0", "zero"),
       pending("m1", "r1", "first"),
     ]);
+
     const adapter = adapterWith(agent);
     const { proc } = makeProc(true, { forwarded: 2 });
-    field<Map<string, unknown>>(proc, "steers").set("m0", {
+    proc.steers.set("m0", {
       uuid: "u0",
       key: "r0",
       text: "zero",
@@ -5826,6 +6982,7 @@ console.log("keeper-mode ok");
       { id: "m1", text: "first" },
     ]);
   }
+
   // Remove: dropped, nothing goes back.
   {
     const { agent, steered } = makeAgent([pending("m1", "r1", "first")]);
@@ -5842,6 +6999,7 @@ console.log("keeper-mode ok");
       reason: "gone",
     });
   }
+
   // The CLI already took it: refused, nothing held, dsh untouched.
   {
     const { agent, removed } = makeAgent([pending("m1", "r1", "first")]);
@@ -5856,6 +7014,7 @@ console.log("keeper-mode ok");
     assert.deepEqual(removed, []);
     assert.deepEqual(adapter.steersFor("s1"), { waiting: [], held: [] });
   }
+
   // dsh already drew it as sent (the park won the race): Claude gets its copy back, nothing held.
   {
     const { agent } = makeAgent([]);
@@ -5867,9 +7026,10 @@ console.log("keeper-mode ok");
       reason: "sent",
     });
     assert.equal(JSON.parse(written[1]!).message.content[0].text, "first");
-    assert.equal(field<number>(proc, "forwarded"), 1);
+    assert.equal(proc.forwarded, 1);
     assert.equal(proc.steerPending, true);
   }
+
   // Something else still forwarded (a child's report): the park flag stays up.
   {
     const { agent } = makeAgent([pending("m1", "r1", "first")]);
@@ -5879,17 +7039,20 @@ console.log("keeper-mode ok");
     await adapter.holdSteers("s1", ["m1"]);
     assert.equal(proc.steerPending, true);
   }
+
   // The session cannot be reached when the hold ends: the hold stays, for a retry.
   {
     const { agent } = makeAgent([pending("m1", "r1", "first")]);
     let reachable = true;
+
     const adapter = new ClaudeCodeAdapter(
-      fakeCtx({
+      fakePluginContext({
         on() {},
         agents: { get: () => (reachable ? agent : undefined) },
       }),
       Config({}),
     );
+
     const { proc } = makeProc(true);
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
     await adapter.holdSteers("s1", ["m1"]);
@@ -5899,6 +7062,7 @@ console.log("keeper-mode ok");
     assert.deepEqual(adapter.steersFor("s1").held, [{ id: "m1", text: "first" }]);
     await adapter.releaseHold("s1", "m1", "drop"); // clear the timer before the suite moves on
   }
+
   // Unknown ids and no process.
   {
     const adapter = adapterWith(makeAgent([]).agent);
@@ -5914,6 +7078,7 @@ console.log("keeper-mode ok");
       reason: "gone",
     });
   }
+
   console.log("steer edit ok");
 
   // A steer typed during a dsh tool: dsh holds it, the CLI never saw it, so a hold skips the cancel
@@ -5922,12 +7087,13 @@ console.log("keeper-mode ok");
     const relayed = () =>
       makeProc(true, {
         busy: false,
-        relays: new Map([["c1", {}]]),
+        relays: new Map<string, RelayEvent>([["c1", pendingRelay("c1")]]),
         steerPending: false,
         forwarded: 0,
         sent: new Set(),
         steers: new Map([["m1", { key: "r1", text: "first", at: 5, relayed: true }]]),
       });
+
     // Relayed hold and save: nothing written to the CLI, out of dsh's inbox, back through steer.
     {
       const { agent, removed, steered } = makeAgent([pending("m1", "r1", "first")]);
@@ -5950,6 +7116,7 @@ console.log("keeper-mode ok");
       assert.deepEqual(steered, [{ id: "m1", text: "second" }]);
       assert.equal(written.length, 0);
     }
+
     // Relayed, already claimed for the tool's result: sent.
     {
       const adapter = adapterWith(makeAgent([]).agent);
@@ -5962,6 +7129,7 @@ console.log("keeper-mode ok");
       assert.equal(written.length, 0);
       assert.deepEqual(adapter.steersFor("s1").waiting, []);
     }
+
     // The rows and the flag: present only while true, so a plain process's JSON is what it was.
     {
       const adapter = adapterWith(makeAgent([]).agent);
@@ -5979,6 +7147,7 @@ console.log("keeper-mode ok");
         held: [],
       });
     }
+
     // Send now during a relay: refused before anything is taken back.
     {
       const { agent, removed } = makeAgent([pending("m1", "r1", "first")]);
@@ -5993,6 +7162,7 @@ console.log("keeper-mode ok");
       assert.deepEqual(removed, []);
       assert.equal(adapter.steersFor("s1").waiting.length, 1);
     }
+
     console.log("steer-card relay hold ok");
   }
 }
@@ -6000,20 +7170,23 @@ console.log("keeper-mode ok");
 // retarget: a model-only spec change switches the live process with set_model and keeps it; any
 // other change, or a refused request, leaves the process untouched so acquire() respawns.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+
   const spec: ClaudeProcessSpec = {
     ...emptySpec,
     cwd: "/w",
     model: "sonnet",
     mode: "default",
   };
-  const written: string[] = [];
+
+  const written: Array<string> = [];
   let answer: "success" | "error" = "success";
   // What the fake CLI says its effort is. A real one answers `success` to a level it does not
   // know and stays where it was, so the fake only moves while it is told to honour the request.
   let cliEffort: string | null = null;
   let honour = true;
-  const proc: any = {
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     spec,
@@ -6022,10 +7195,13 @@ console.log("keeper-mode ok");
     write(line: string) {
       written.push(line);
       const req = JSON.parse(line);
-      if (req.request.subtype === "apply_flag_settings" && answer === "success" && honour)
+
+      if (req.request.subtype === "apply_flag_settings" && answer === "success" && honour) {
         cliEffort = req.request.settings.effortLevel;
+      }
+
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           request_id: req.request_id,
           response: {
@@ -6042,9 +7218,11 @@ console.log("keeper-mode ok");
           },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   const opus = { ...spec, model: "opus" };
   assert.equal(await adapter.retarget(proc, opus), true, "model-only change is live");
   assert.equal(JSON.parse(written[0]!).request.subtype, "set_model");
@@ -6055,7 +7233,7 @@ console.log("keeper-mode ok");
   assert.equal(await adapter.retarget(proc, moved), false, "cwd change is not live");
   assert.equal(written.length, 1, "no request sent for a non-model change");
   // An effort-only change is live too, and is believed only once the CLI reads it back.
-  const subtypes = () => written.splice(0).map((l) => JSON.parse(l).request.subtype);
+  const subtypes = () => written.splice(0).map((l) => pathIn(JSON.parse(l), "request", "subtype"));
   written.length = 0;
   const high = { ...opus, effort: "high" };
   assert.equal(await adapter.retarget(proc, high), true, "effort-only change is live");
@@ -6097,12 +7275,21 @@ console.log("keeper-mode ok");
 // Wake notices: user-sourced only when a restart notice must rearm an active goal; otherwise the
 // plugin notice form, which dsh draws as a collapsed context row.
 assert.deepEqual(noticeSource(RESTART_TEXT, true), { kind: "user" });
+
 assert.equal(noticeSource(RECONNECT_TEXT, true).kind, "user");
+
 assert.equal(noticeSource(RECONNECT_TEXT, false).kind, "plugin");
-assert.equal((noticeSource(RECONNECT_TEXT, false) as { form?: string }).form, "notice");
+
+const reconnectSource = noticeSource(RECONNECT_TEXT, false);
+
+assert.equal("form" in reconnectSource ? reconnectSource.form : undefined, "notice");
+
 assert.equal(noticeSource(LIMIT_TEXT, true).kind, "user", "a limit continue rearms a goal too");
+
 assert.equal(noticeSource(LIMIT_TEXT, false).kind, "plugin");
+
 assert.equal(noticeSource("wake", true).kind, "plugin", "a plain wake never claims the user");
+
 // Session format v4 refuses the `plugin` wrapper: from version 4 the notice carries the
 // producer-owned kind and no `plugin` field, and the goal rearm still claims the user.
 {
@@ -6111,14 +7298,20 @@ assert.equal(noticeSource("wake", true).kind, "plugin", "a plain wake never clai
     form?: string;
     summary?: string;
   };
+
   assert.equal(v4.kind, "plugin:dsh-oh-my-claude");
   assert.equal(v4.form, "notice");
   assert.equal(typeof v4.summary, "string");
 }
+
 assert.equal("plugin" in noticeSource(WAKE_TEXT, false, 4), false, "v4 drops the plugin field");
+
 assert.deepEqual(noticeSource(RESTART_TEXT, true, 4), { kind: "user" });
+
 assert.equal(noticeSource(WAKE_TEXT, false, 3).kind, "plugin", "v3 keeps the wrapper");
+
 assert.equal(noticeSource(WAKE_TEXT, false, 0).kind, "plugin", "unknown version keeps the wrapper");
+
 console.log("notice-source ok");
 
 // An idle result wakes a turn only when it is a real reply, never an error or a rate-limit retry.
@@ -6126,25 +7319,36 @@ assert.equal(
   isIdleReply(JSON.stringify({ type: "result", subtype: "success", result: "hi" })),
   true,
 );
+
 assert.equal(
   isIdleReply(JSON.stringify({ type: "result", is_error: true, subtype: "error" })),
   false,
 );
+
 assert.equal(
   isIdleReply(JSON.stringify({ type: "result", subtype: "error_during_execution" })),
   false,
 );
+
 assert.equal(isIdleReply(JSON.stringify({ type: "assistant" })), false);
+
 assert.equal(isIdleReply("not json"), false);
+
 console.log("idle-reply ok");
 
 // A dsh shutdown under a keeper leaves Claude's turn running; every other abort interrupts it.
 assert.equal(interruptOnAbort("disposed", "keeper"), false);
+
 assert.equal(interruptOnAbort("disposed", "node"), true);
+
 assert.equal(interruptOnAbort("cancelled", "keeper"), true);
+
 assert.equal(interruptOnAbort(undefined, "keeper"), true);
+
 assert.equal(killAfterGrace("keeper"), false, "keeper: the idle watchdog owns hung processes");
+
 assert.equal(killAfterGrace("node"), true);
+
 // A Stop with a steer already forwarded: the CLI runs that steer as a turn of its own after the
 // interrupt, so there is nothing to park on. Left set, the flag made the CLI's interrupt echo
 // look like a tool-result boundary, the step parked, and the interrupted turn's error result was
@@ -6157,36 +7361,41 @@ assert.equal(killAfterGrace("node"), true);
   noteInterrupt(proc);
   assert.equal(proc.steerPending, false, "clearing twice is the same");
 }
+
 // The waiting steers go with the interrupt, and a process object without the map is tolerated.
 {
   const proc = {
     steerPending: true,
     steers: new Map([["m1", { uuid: "u", key: "r1", text: "t", at: 1 }]]),
   };
+
   noteInterrupt(proc);
   assert.equal(proc.steers.size, 0, "an interrupt forgets the waiting steers");
   forgetSteers({});
 }
+
 // The next call after the Stop is a prompt, not a steer continuation: the flag is clear and
 // `parked` was never set, so `continuationFor` drops the steer the CLI already has and keeps the
 // new text. This is the incident's message set (one forwarded steer, one new message).
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+
   const held = {
     alive: true,
     busy: false,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set(["r1"]),
     steerPending: true,
     parked: undefined,
   };
+
   noteInterrupt(held);
   adapter.processes.set(registryKey("claude-code", "s"), fakeProc(held));
+
   const cont = adapter.continuationFor(
-    // SAFETY: the session options carry dsh's branded id; continuationFor reads only these two fields.
-    {
-      sessionId: "s",
-      messages: messageList([
+    // continuationFor reads only the session id and the messages.
+    turnOptions("s", {
+      messages: wireMessages([
         {
           role: "user",
           source: { kind: "user", rpcId: "p0" },
@@ -6204,8 +7413,9 @@ assert.equal(killAfterGrace("node"), true);
           content: [{ type: "text", text: "for mobile that is" }],
         },
       ]),
-    } as unknown as Parameters<ClaudeCodeAdapter["continuationFor"]>[0],
+    }),
   );
+
   assert.equal(
     cont.mode,
     "prompt",
@@ -6218,12 +7428,14 @@ assert.equal(killAfterGrace("node"), true);
   );
   assert.equal(held.parked, undefined, "nothing parked");
 }
+
 console.log("interrupt-on-abort ok");
 
 // contextUsage: decodes the CLI's get_context_usage answer; no live process is a plain error.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  const proc: any = {
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     controlListener: undefined,
@@ -6231,7 +7443,7 @@ console.log("interrupt-on-abort ok");
       const req = JSON.parse(line);
       assert.equal(req.request.subtype, "get_context_usage");
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           request_id: req.request_id,
           response: {
@@ -6242,14 +7454,14 @@ console.log("interrupt-on-abort ok");
                 { name: "System prompt", tokens: 1499, color: "x" },
                 {
                   name: "MCP tools (deferred)",
-                  tokens: 19540,
+                  tokens: 19_540,
                   isDeferred: true,
                 },
                 { name: "Messages", tokens: 3830 },
                 { name: "bogus" },
               ],
-              totalTokens: 19753,
-              maxTokens: 200000,
+              totalTokens: 19_753,
+              maxTokens: 200_000,
               percentage: 10,
               autocompactSource: "auto",
               gridRows: [[]],
@@ -6257,23 +7469,27 @@ console.log("interrupt-on-abort ok");
           },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   adapter.processes.set(registryKey(adapter.providerId, "cu"), proc);
   const got = await adapter.contextUsage("cu");
   assert.equal(got.ok, true);
+
   if (got.ok) {
     assert.deepEqual(got.categories, [
       { name: "System prompt", tokens: 1499, deferred: false },
-      { name: "MCP tools (deferred)", tokens: 19540, deferred: true },
+      { name: "MCP tools (deferred)", tokens: 19_540, deferred: true },
       { name: "Messages", tokens: 3830, deferred: false },
     ]);
-    assert.equal(got.totalTokens, 19753);
-    assert.equal(got.maxTokens, 200000);
+    assert.equal(got.totalTokens, 19_753);
+    assert.equal(got.maxTokens, 200_000);
     assert.equal(got.percentage, 10);
     assert.equal(got.autocompact, "auto");
   }
+
   const none = await adapter.contextUsage("nope");
   assert.equal(none.ok, false);
   console.log("context-usage ok");
@@ -6282,10 +7498,11 @@ console.log("interrupt-on-abort ok");
 // session title: a live process answers generate_session_title and stream() yields the title as
 // one text block; no live process or a declined request returns undefined so one-shot runs.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  const written: string[] = [];
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+  const written: Array<string> = [];
   let decline = false;
-  const proc: any = {
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     controlListener: undefined,
@@ -6293,7 +7510,7 @@ console.log("interrupt-on-abort ok");
       written.push(line);
       const req = JSON.parse(line);
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           request_id: req.request_id,
           response: decline
@@ -6309,32 +7526,39 @@ console.log("interrupt-on-abort ok");
               },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   adapter.processes.set(registryKey(adapter.providerId, "tt"), proc);
-  const chunks: any[] = [];
+  const chunks: Array<StreamChunk> = [];
+
   for await (const c of adapter.stream({
     purpose: "session-title",
-    sessionId: "tt",
-    messages: messageList([
-      {
-        role: "user",
-        content: [{ type: "text", text: "<conversation>login broke</conversation>" }],
-      },
-    ]),
+    provider: "claude-code",
+    model: "haiku",
+    sessionId: asSessionId("tt"),
+    messages: [userTurn("<conversation>login broke</conversation>")],
     signal: new AbortController().signal,
-  } as any))
+  })) {
     chunks.push(c);
+  }
+
   const req = JSON.parse(written[0]!).request;
   assert.equal(req.subtype, "generate_session_title");
   assert.equal(req.persist, true);
   assert.match(req.description, /login broke/);
-  const text = chunks
-    .filter((c) => c.type === "text-delta")
-    .map((c) => c.text)
-    .join("");
-  assert.equal(chunks.find((c) => c.type === "block-start")?.blockType, "text");
+
+  const text = chunks.flatMap((c) => (c.type === "text-delta" ? [c.text] : [])).join("");
+
+  assert.equal(
+    chunkOf(
+      chunks.find((c) => c.type === "block-start"),
+      "block-start",
+    ).blockType,
+    "text",
+  );
   assert.equal(text, "Fix login redirect");
   assert.deepEqual(chunks.at(-1), { type: "finish", reason: { kind: "stop" } });
   assert.equal(await adapter.titleFromCli("nope", "x"), undefined, "no process: undefined");
@@ -6347,8 +7571,9 @@ console.log("interrupt-on-abort ok");
 
 // workspaceDiff: decodes the CLI's get_workspace_diff answer (shape probed on 2.1.261).
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  const proc: any = {
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     controlListener: undefined,
@@ -6356,7 +7581,7 @@ console.log("interrupt-on-abort ok");
       const req = JSON.parse(line);
       assert.equal(req.request.subtype, "get_workspace_diff");
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           request_id: req.request_id,
           response: {
@@ -6403,12 +7628,15 @@ console.log("interrupt-on-abort ok");
           },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   adapter.processes.set(registryKey(adapter.providerId, "wd"), proc);
   const got = await adapter.workspaceDiff("wd");
   assert.equal(got.ok, true);
+
   if (got.ok) {
     assert.equal(got.filesCount, 2);
     assert.equal(got.linesAdded, 1);
@@ -6431,6 +7659,7 @@ console.log("interrupt-on-abort ok");
       },
     ]);
   }
+
   assert.equal((await adapter.workspaceDiff("nope")).ok, false);
   console.log("workspace-diff ok");
 }
@@ -6438,14 +7667,16 @@ console.log("interrupt-on-abort ok");
 // drainAdopted: an adopted process with a reply waiting keeps asking for a wake until one opens a
 // turn; a busy process (a prompt arrived) ends the loop; an empty queue never wakes.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  const calls: string[] = [];
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+  const calls: Array<string> = [];
   let answers = [false, false, true];
   adapter.wake = async (id) => {
     calls.push(id);
+
     return answers.shift() ?? true;
   };
-  const proc: any = { alive: true, busy: false, queue: new LineQueue() };
+
+  const proc = fakeProc({ alive: true, busy: false, queue: new LineQueue() });
   proc.hasTurnOutput = ClaudeProcess.prototype.hasTurnOutput;
   proc.queue.push(JSON.stringify({ type: "result", subtype: "success", is_error: false }));
   await adapter.drainAdopted(proc, "d", 1, 10);
@@ -6455,9 +7686,16 @@ console.log("interrupt-on-abort ok");
   proc.queue = new LineQueue();
   await adapter.drainAdopted(proc, "d", 1, 5);
   assert.equal(calls.length, 0, "nothing queued: no wake");
+
   // A CLI notice no turn asked for, plus stderr noise: neither is a reply to show.
-  proc.queue.push(JSON.stringify({ type: "system", subtype: "status", status: null }));
-  proc.queue.push("not json");
+  // One push per line: LineQueue.push takes a single line, unlike Array.push.
+  for (const line of [
+    JSON.stringify({ type: "system", subtype: "status", status: null }),
+    "not json",
+  ]) {
+    proc.queue.push(line);
+  }
+
   await adapter.drainAdopted(proc, "d", 1, 5);
   assert.equal(calls.length, 0, "only system frames and noise: no wake");
   // A background task that finished while dsh was away: its completion is work to show.
@@ -6485,28 +7723,41 @@ console.log("interrupt-on-abort ok");
 // told to continue: a finished background job Claude has yet to answer starts nothing. A reply it
 // finished on its own while dsh was away is still shown, with the background-task notice.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
   const sent: Array<[string, string | undefined]> = [];
   adapter.wake = async (id, _proc, text) => {
     sent.push([id, text]);
+
     return true;
   };
-  const procs: any[] = [];
-  const queued = (...lines: object[]) => {
-    const proc: any = { alive: true, busy: false, queue: new LineQueue() };
+
+  const procs: Array<any> = [];
+
+  const queued = (...lines: Array<object>) => {
+    const proc = fakeProc({ alive: true, busy: false, queue: new LineQueue() });
     proc.hasTurnOutput = ClaudeProcess.prototype.hasTurnOutput;
     proc.hasIdleReply = ClaudeProcess.prototype.hasIdleReply;
-    for (const line of lines) proc.queue.push(JSON.stringify(line));
+
+    for (const line of lines) {
+      proc.queue.push(JSON.stringify(line));
+    }
+
     procs.push(proc);
+
     return proc;
   };
+
   const notice = { type: "system", subtype: "task_notification", status: "completed" };
   const reply = { type: "result", subtype: "success", is_error: false, result: "bg-done" };
   adapter.reattachWake(queued(notice), "stopped", new Set(["running"]));
   adapter.reattachWake(queued(notice), "running", new Set(["running"]));
   adapter.reattachWake(queued(notice, reply), "answered", new Set(["running"]));
-  await new Promise((r) => setTimeout(r, 2500));
-  for (const proc of procs) proc.alive = false; // ends the drains still polling
+  await sleep(2500);
+
+  for (const proc of procs) {
+    proc.alive = false;
+  } // ends the drains still polling
+
   assert.deepEqual(
     sent.filter(([id]) => id === "stopped"),
     [],
@@ -6527,9 +7778,10 @@ console.log("interrupt-on-abort ok");
 // reconnectBridge: with the bridge mounted, a reattached process is told mcp_reconnect for the
 // `dsh` server; without a bridge nothing is sent.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  const written: string[] = [];
-  const proc: any = {
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+  const written: Array<string> = [];
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     controlListener: undefined,
@@ -6537,7 +7789,7 @@ console.log("interrupt-on-abort ok");
       written.push(line);
       const req = JSON.parse(line);
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           request_id: req.request_id,
           response: {
@@ -6547,12 +7799,14 @@ console.log("interrupt-on-abort ok");
           },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   assert.equal(await adapter.reconnectBridge(proc, "s"), false, "no bridge: nothing sent");
   assert.equal(written.length, 0);
-  (adapter as any).mcp = { url: "http://x", key: "k", toolsFor: () => [], openCalls: () => 0 };
+  adapter.mcp = fakeBridge();
   assert.equal(await adapter.reconnectBridge(proc, "s"), true);
   const req = JSON.parse(written[0]!).request;
   assert.deepEqual(req, { subtype: "mcp_reconnect", serverName: "dsh" });
@@ -6563,7 +7817,7 @@ console.log("interrupt-on-abort ok");
     const r = JSON.parse(line);
     const fail = failures-- > 0;
     setTimeout(() => {
-      proc.controlListener({
+      proc.controlListener!({
         type: "control_response",
         request_id: r.request_id,
         response: fail
@@ -6575,8 +7829,10 @@ console.log("interrupt-on-abort ok");
           : { subtype: "success", request_id: r.request_id, response: {} },
       });
     }, 0);
+
     return true;
   };
+
   written.length = 0;
   assert.equal(await adapter.reconnectBridge(proc, "s", 1, 5), true, "third try succeeds");
   assert.equal(written.length, 3);
@@ -6600,9 +7856,10 @@ console.log("interrupt-on-abort ok");
 // for the mount instead of giving up silently; a bridge that is still not up marks the process
 // stale, so the resumed turn reconnects before it runs.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  const written: string[] = [];
-  const proc: any = {
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+  const written: Array<string> = [];
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     controlListener: undefined,
@@ -6610,24 +7867,26 @@ console.log("interrupt-on-abort ok");
       written.push(line);
       const r = JSON.parse(line);
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           request_id: r.request_id,
           response: { subtype: "success", request_id: r.request_id, response: {} },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   let mount!: () => void;
   adapter.mcpMounting = new Promise<void>((resolve) => {
     mount = () => {
-      (adapter as any).mcp = { url: "http://x", key: "k", toolsFor: () => [], openCalls: () => 0 };
+      adapter.mcp = fakeBridge();
       resolve();
     };
   });
   const pending = adapter.reconnectBridge(proc, "s", 5, 20);
-  await new Promise((r) => setTimeout(r, 10));
+  await sleep(10);
   assert.equal(written.length, 0, "nothing sent before the bridge exists");
   mount();
   assert.equal(await pending, true, "reconnects once the bridge is mounted");
@@ -6638,14 +7897,14 @@ console.log("interrupt-on-abort ok");
 
   // The mount outlasts the retry window: the process is marked stale, and the turn boundary
   // reconnects it once the bridge is there.
-  (adapter as any).mcp = undefined;
+  adapter.mcp = undefined;
   adapter.mcpMounting = new Promise(() => {});
   written.length = 0;
   proc.bridgeStale = false;
   assert.equal(await adapter.reconnectBridge(proc, "s", 1, 2), false);
   assert.equal(written.length, 0);
   assert.equal(proc.bridgeStale, true, "an unmounted bridge is left for the next turn");
-  (adapter as any).mcp = { url: "http://x", key: "k", toolsFor: () => [], openCalls: () => 0 };
+  adapter.mcp = fakeBridge();
   await adapter.reconnectIfStale(proc, "s");
   assert.equal(written.length, 1, "the turn boundary reconnects");
   assert.equal(proc.bridgeStale, false);
@@ -6655,11 +7914,12 @@ console.log("interrupt-on-abort ok");
 // A turn that starts while the post-adoption reconnect is still retrying (dsh had no live agent for
 // the session until this turn) reconnects before its prompt, and the background retries then stop.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  (adapter as any).mcp = { url: "http://x", key: "k", toolsFor: () => [], openCalls: () => 0 };
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+  adapter.mcp = fakeBridge();
   let agentLive = false;
-  const written: string[] = [];
-  const proc: any = {
+  const written: Array<string> = [];
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     bridgeStale: false,
@@ -6669,7 +7929,7 @@ console.log("interrupt-on-abort ok");
       const r = JSON.parse(line);
       const ok = agentLive;
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           request_id: r.request_id,
           response: ok
@@ -6677,11 +7937,13 @@ console.log("interrupt-on-abort ok");
             : { subtype: "error", request_id: r.request_id, error: "no live agent" },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   const background = adapter.reconnectBridge(proc, "s", 30, 100);
-  await new Promise((r) => setTimeout(r, 5));
+  await sleep(5);
   assert.equal(written.length, 1, "the first background try failed");
   assert.equal(proc.bridgeStale, true, "a reconnect still retrying is owed");
   agentLive = true;
@@ -6698,11 +7960,12 @@ console.log("interrupt-on-abort ok");
 // and fail it, so while the bridge has a call of the session open the reconnect stays owed to the
 // next prompt, which makes it (refreshing the tool list) once nothing is open.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
   let open = 1;
-  (adapter as any).mcp = { url: "http://x", key: "k", toolsFor: () => [], openCalls: () => open };
-  const reconnects: string[] = [];
-  const proc: any = {
+  adapter.mcp = fakeBridge({ openCalls: () => open });
+  const reconnects: Array<string> = [];
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     bridgeStale: false,
@@ -6711,15 +7974,17 @@ console.log("interrupt-on-abort ok");
       reconnects.push(line);
       const r = JSON.parse(line);
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           request_id: r.request_id,
           response: { subtype: "success", request_id: r.request_id, response: {} },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   assert.equal(await adapter.reconnectBridge(proc, "s", 1, 3), true);
   assert.equal(reconnects.length, 0, "an open call gets no mcp_reconnect under it");
   assert.equal(proc.bridgeStale, true, "the reconnect stays owed to the next prompt");
@@ -6736,17 +8001,17 @@ console.log("interrupt-on-abort ok");
 // Code then marks a `dsh` server that was still connected as failed, for good. So nothing is sent
 // until the agent exists; a process replaced meanwhile is let go without a reconnect.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
   let agentLive = false;
-  (adapter as any).mcp = {
-    url: "http://x",
-    key: "k",
-    toolsFor: () => (agentLive ? [] : undefined),
-    openCalls: () => 0,
-  };
-  const written: string[] = [];
-  const proc: any = {
-    alive: true,
+  adapter.mcp = fakeBridge({ toolsFor: () => (agentLive ? [] : undefined) });
+  const written: Array<string> = [];
+  // A process replaced under the reconnect reads as dead; `alive` is a getter on the real one.
+  let procAlive = true;
+
+  const proc = fakeProc({
+    get alive() {
+      return procAlive;
+    },
     busy: false,
     bridgeStale: false,
     controlListener: undefined,
@@ -6755,7 +8020,7 @@ console.log("interrupt-on-abort ok");
       const r = JSON.parse(line);
       const ok = agentLive;
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           request_id: r.request_id,
           response: ok
@@ -6763,11 +8028,13 @@ console.log("interrupt-on-abort ok");
             : { subtype: "error", request_id: r.request_id, error: "MCP endpoint not found" },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   const background = adapter.reconnectBridge(proc, "s", 5, 40);
-  await new Promise((r) => setTimeout(r, 30));
+  await sleep(30);
   assert.equal(written.length, 0, "no reconnect while dsh has no agent for the session");
   assert.equal(proc.bridgeStale, true);
   agentLive = true;
@@ -6778,13 +8045,13 @@ console.log("interrupt-on-abort ok");
   written.length = 0;
   proc.bridgeStale = false;
   const replaced = adapter.reconnectBridge(proc, "s", 5, 40);
-  await new Promise((r) => setTimeout(r, 12));
-  proc.alive = false;
+  await sleep(12);
+  procAlive = false;
   assert.equal(await replaced, false);
   assert.equal(written.length, 0, "a replaced process is never asked");
 
   // The turn boundary asks once with no wait: no agent yet leaves it owed, an agent settles it.
-  proc.alive = true;
+  procAlive = true;
   proc.bridgeStale = true;
   agentLive = false;
   written.length = 0;
@@ -6800,9 +8067,10 @@ console.log("interrupt-on-abort ok");
 
 // mcpStatus and mcpReconnect: decode the server list; reconnect names the server.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  const written: string[] = [];
-  const proc: any = {
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+  const written: Array<string> = [];
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     controlListener: undefined,
@@ -6811,7 +8079,7 @@ console.log("interrupt-on-abort ok");
       written.push(line);
       const req = JSON.parse(line);
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           request_id: req.request_id,
           response: {
@@ -6844,9 +8112,11 @@ console.log("interrupt-on-abort ok");
           },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   adapter.processes.set(registryKey(adapter.providerId, "ms"), proc);
   const st = await adapter.mcpStatus("ms");
   assert.deepEqual(st, {
@@ -6904,20 +8174,22 @@ console.log("interrupt-on-abort ok");
 // block above answers one fixed response per request subtype, so it cannot vary the authenticate
 // reply — this block fakes its own process and dispatches that reply by server name.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
-  const written: string[] = [];
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+  const written: Array<string> = [];
+
   const responses: Record<string, any> = {
     dsh: {
       authUrl: "https://x/y",
       requiresUserAction: true,
       callbackExpected: true,
       state: "s",
-      callbackPort: 52389,
+      callbackPort: 52_389,
     },
     in: { requiresUserAction: false, callbackExpected: false },
     empty: {},
   };
-  const proc: any = {
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     controlListener: undefined,
@@ -6929,7 +8201,7 @@ console.log("interrupt-on-abort ok");
       // intact and fails only the assertion that reads the request that went out.
       const response = responses[req.request.serverName] ?? {};
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           request_id: req.request_id,
           response: {
@@ -6939,9 +8211,11 @@ console.log("interrupt-on-abort ok");
           },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   adapter.processes.set(registryKey(adapter.providerId, "ms"), proc);
 
   // A reply carrying a page reports that page.
@@ -6973,8 +8247,11 @@ console.log("interrupt-on-abort ok");
   assert.equal(mcpAuthUrl({ authUrl: "" }), undefined, "drops an empty page");
   assert.equal(mcpAuthUrl({}), undefined, "absent page is undefined");
   assert.equal(mcpAuthUrl(undefined), undefined, "absent reply is undefined");
-  for (const authUrl of ["javascript:alert(1)", "data:text/html,x", "file:///etc/passwd"])
+
+  for (const authUrl of ["javascript:alert(1)", "data:text/html,x", "file:///etc/passwd"]) {
     assert.equal(mcpAuthUrl({ authUrl }), null, `refuses ${authUrl}`);
+  }
+
   assert.equal(
     mcpAuthNeedsNothing({ requiresUserAction: false }),
     true,
@@ -7021,6 +8298,7 @@ console.log("interrupt-on-abort ok");
       efforts: [],
     },
   ];
+
   const merged = mergeCatalog(cli, KNOWN_MODELS);
   assert.deepEqual(
     merged.slice(0, 5).map((m) => [m.id, m.name, m.contextWindow, m.efforts]),
@@ -7041,15 +8319,15 @@ console.log("interrupt-on-abort ok");
     "the CLI's blurb rides along for dsh's picker to draw under the name",
   );
   assert.ok(!("description" in merged[2]!), "no blurb, no key: dsh validates the shape");
-  const rest = merged.slice(5).map((m) => m.id);
+  const rest = new Set(merged.slice(5).map((m) => m.id));
   assert.ok(
-    rest.includes("claude-opus-5"),
+    rest.has("claude-opus-5"),
     "default resolves to the 1M variant and keeps the id `default`, so the plain id stays for " +
       "sessions bound to it",
   );
-  assert.ok(!rest.includes("claude-sonnet-5"), "covered by sonnet");
-  assert.ok(!rest.includes("claude-haiku-4-5"), "covered by haiku (dated id)");
-  assert.ok(!rest.includes("claude-fable-5-1"), "a known model the CLI does not offer leaves");
+  assert.ok(!rest.has("claude-sonnet-5"), "covered by sonnet");
+  assert.ok(!rest.has("claude-haiku-4-5"), "covered by haiku (dated id)");
+  assert.ok(!rest.has("claude-fable-5-1"), "a known model the CLI does not offer leaves");
   assert.deepEqual(mergeCatalog([], KNOWN_MODELS), KNOWN_MODELS, "no CLI list: unchanged");
   assert.deepEqual(
     mergeCatalog(cli, KNOWN_MODELS, undefined),
@@ -7065,20 +8343,25 @@ console.log("interrupt-on-abort ok");
     displayName: id,
     efforts: [],
   }));
+
   const ids = (picker: Parameters<typeof mergeCatalog>[2]) =>
     mergeCatalog([...cli, ...older], KNOWN_MODELS, picker).map((m) => m.id);
+
   const noRows = { options: [], replaceBuiltInOptions: false };
   assert.deepEqual(
     ids({ ...noRows, availableModels: ["haiku"] }),
     ["default", "claude-haiku-4-5"],
     "family alias keeps its versions and Default, drops the rest",
   );
+
   // The point of the stable id: a model allowlisted from one lineup is still offered by the other.
-  for (const id of ["claude-haiku-4-5", "claude-sonnet-5"])
+  for (const id of ["claude-haiku-4-5", "claude-sonnet-5"]) {
     assert.ok(
       mergeCatalog([], KNOWN_MODELS).some((m) => m.id === id) && merged.some((m) => m.id === id),
       `${id} is offered with and without the CLI list`,
     );
+  }
+
   const oneVersion = ids({ ...noRows, availableModels: ["opus-4-5"] });
   assert.ok(oneVersion.includes("claude-opus-4-5"), "version prefix keeps that version");
   assert.ok(!oneVersion.includes("claude-opus-4-6"), "version prefix is not a family alias");
@@ -7105,6 +8388,7 @@ console.log("interrupt-on-abort ok");
       modelFromApi({ id: "claude-next-9", created_at: "2027-01-01T00:00:00Z" }),
       modelFromApi({ id: "claude-old-1", created_at: "2024-01-01T00:00:00Z" }),
     ];
+
     const haikuOnly = cli.filter((c) => c.value === "haiku");
     const marked = mergeCatalog(haikuOnly, base);
     assert.match(marked.find((m) => m.id === "claude-next-9")?.description ?? "", /update/i);
@@ -7116,12 +8400,15 @@ console.log("interrupt-on-abort ok");
     );
     assert.equal(base[1]?.createdAt, Date.parse("2027-01-01T00:00:00Z"), "created_at kept");
   }
+
   // modelPicker rows follow the built-in lineup, or replace it apart from Default.
   const rows = { options: [{ model: "opus-4-5", label: "Cheap Opus" }] };
+
   const appended = mergeCatalog(cli, KNOWN_MODELS, {
     ...rows,
     replaceBuiltInOptions: false,
   });
+
   assert.deepEqual(
     appended.at(-1),
     {
@@ -7134,6 +8421,7 @@ console.log("interrupt-on-abort ok");
     "the row lands last, under its own label",
   );
   assert.ok(appended.length > 1, "the built-in lineup is still there");
+
   // maxEffortLevel does not touch the catalog listing: efforts reach the picker only through
   // resolveModelInfo, so mergeCatalog ignores the cap (the listing drops efforts via modelInfo).
   const capped = mergeCatalog(cli, KNOWN_MODELS, {
@@ -7141,6 +8429,7 @@ console.log("interrupt-on-abort ok");
     replaceBuiltInOptions: false,
     maxEffortLevel: "low",
   });
+
   assert.deepEqual(
     capped.at(-1),
     {
@@ -7173,9 +8462,10 @@ console.log("interrupt-on-abort ok");
   // A config dir of its own: the picker's settings.json shapes the efforts (a `maxEffortLevel` on
   // the box would trim ["max"] away) and this block is about the seed, not the box's settings.
   const cliHome = tempDir("dsh-cli-models-home-");
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({ configDir: cliHome }));
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({ configDir: cliHome }));
   let asked = 0;
-  const proc: any = {
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     controlListener: undefined,
@@ -7184,7 +8474,7 @@ console.log("interrupt-on-abort ok");
       assert.equal(req.request.subtype, "list_models");
       asked++;
       setTimeout(() => {
-        proc.controlListener({
+        proc.controlListener!({
           type: "control_response",
           request_id: req.request_id,
           response: {
@@ -7203,9 +8493,11 @@ console.log("interrupt-on-abort ok");
           },
         });
       }, 0);
+
       return true;
     },
-  };
+  });
+
   assert.equal(await adapter.refreshCliModels(proc), true);
   assert.equal(await adapter.refreshCliModels(proc), false, "once per TTL");
   assert.equal(asked, 1);
@@ -7214,8 +8506,8 @@ console.log("interrupt-on-abort ok");
   const prepared = await adapter.prepareCall("claude-code", "opus[1m]");
   assert.equal(prepared.model.context?.contextWindow, 1_000_000);
   // The answer is kept per box: a fresh adapter lists the same row before any process answers.
-  await new Promise((r) => setTimeout(r, 20));
-  const fresh = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({ configDir: cliHome }));
+  await sleep(20);
+  const fresh = new ClaudeCodeAdapter(bareCtx(), Config({ configDir: cliHome }));
   assert.equal(
     (await fresh.listModels("claude-code"))[0]?.id,
     "opus[1m]",
@@ -7239,24 +8531,34 @@ console.log("interrupt-on-abort ok");
 // A CLI that cannot start leaves the floor and is not asked again; an ssh box is never probed.
 {
   /** A fake `claude -p` that answers `list_models` with `lineup`, or exits at once when null. */
-  const fakeCli = (lineup: Record<string, string | string[]>[] | null) => {
-    const spawned: [string, string[], string][] = [];
-    const written: string[] = [];
+  const fakeCli = (lineup: Array<Record<string, string | Array<string>>> | null) => {
+    const spawned: Array<[string, Array<string>, string]> = [];
+    const written: Array<string> = [];
     let terminated = 0;
-    const spawner = (command: string, args: string[], cwd: string): SubprocessHandle => {
+
+    const spawner = (command: string, args: Array<string>, cwd: string): SubprocessHandle => {
       spawned.push([command, args, cwd]);
       const stdin = new PassThrough();
       const stdout = new PassThrough();
       let finish: (r: { exitCode: number | null; signal: string | null }) => void = () => {};
-      const done = new Promise<{ exitCode: number | null; signal: string | null }>(
-        (r) => (finish = r),
-      );
-      if (lineup === null) finish({ exitCode: 127, signal: null });
+
+      const done = new Promise<{ exitCode: number | null; signal: string | null }>((r) => {
+        finish = r;
+      });
+
+      if (lineup === null) {
+        finish({ exitCode: 127, signal: null });
+      }
+
       stdin.on("data", (d) => {
         for (const line of String(d).split("\n").filter(Boolean)) {
           written.push(line);
           const req = JSON.parse(line);
-          if (req.request?.subtype !== "list_models") continue;
+
+          if (req.request?.subtype !== "list_models") {
+            continue;
+          }
+
           stdout.write(
             `${JSON.stringify({
               type: "control_response",
@@ -7269,6 +8571,7 @@ console.log("interrupt-on-abort ok");
           );
         }
       });
+
       return {
         stdin,
         stdout,
@@ -7280,8 +8583,10 @@ console.log("interrupt-on-abort ok");
         },
       };
     };
+
     return { spawner, spawned, written, terminated: () => terminated };
   };
+
   const lineup = [
     { value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)" },
     { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus" },
@@ -7289,10 +8594,12 @@ console.log("interrupt-on-abort ok");
   ];
 
   const cli = fakeCli(lineup);
+
   const probing = new ClaudeCodeAdapter(
-    fakeCtx({ on() {} }),
+    bareCtx(),
     Config({ providerId: "claude-code-probe", command: "/opt/claude" }),
   );
+
   probing.spawner = () => cli.spawner;
   const listed = await probing.listModels("claude-code-probe");
   assert.deepEqual(
@@ -7313,7 +8620,7 @@ console.log("interrupt-on-abort ok");
   assert.equal(cli.spawned.length, 1, "one probe process");
   assert.deepEqual(cli.spawned[0]?.slice(0, 2), ["/opt/claude", LINEUP_PROBE_ARGS]);
   assert.deepEqual(
-    cli.written.map((line) => JSON.parse(line).type),
+    cli.written.map((line) => pathIn(JSON.parse(line), "type")),
     ["control_request"],
     "control requests only: no prompt is ever written",
   );
@@ -7321,21 +8628,19 @@ console.log("interrupt-on-abort ok");
   await probing.listModels("claude-code-probe");
   assert.equal(cli.spawned.length, 1, "a lineup in hand is not asked for again");
   // The answer went to disk like a session's: the next boot lists it without a probe.
-  await new Promise((r) => setTimeout(r, 20));
+  await sleep(20);
   const nextBoot = fakeCli(lineup);
-  const rebooted = new ClaudeCodeAdapter(
-    fakeCtx({ on() {} }),
-    Config({ providerId: "claude-code-probe" }),
-  );
+
+  const rebooted = new ClaudeCodeAdapter(bareCtx(), Config({ providerId: "claude-code-probe" }));
+
   rebooted.spawner = () => nextBoot.spawner;
   assert.equal((await rebooted.listModels("claude-code-probe"))[0]?.id, "default");
   assert.equal(nextBoot.spawned.length, 0, "the disk seed stands in for the probe");
 
   const missing = fakeCli(null);
-  const bare = new ClaudeCodeAdapter(
-    fakeCtx({ on() {} }),
-    Config({ providerId: "claude-code-missing" }),
-  );
+
+  const bare = new ClaudeCodeAdapter(bareCtx(), Config({ providerId: "claude-code-missing" }));
+
   bare.spawner = () => missing.spawner;
   const started = Date.now();
   const floor = (await bare.listModels("claude-code-missing")).map((m) => m.id);
@@ -7346,10 +8651,12 @@ console.log("interrupt-on-abort ok");
   assert.equal(bare.cliModelsAt, 0, "a probe with no lineup leaves the first session free to ask");
 
   const box = fakeCli(lineup);
+
   const remote = new ClaudeCodeAdapter(
-    fakeCtx({ on() {} }),
+    bareCtx(),
     Config({ providerId: "claude-code-box", sshHost: "box.example" }),
   );
+
   remote.spawner = () => box.spawner;
   await remote.probeCliModels();
   assert.equal(box.spawned.length, 0, "an ssh box is not probed");
@@ -7359,21 +8666,27 @@ console.log("interrupt-on-abort ok");
   // settings.json, which outranks whatever this test process has exported, so both cases below
   // hold on a box with a proxy in its environment.
   const home = tempDir("omc-route-home-");
+
   try {
     const settings = joinPath(home, "settings.json");
+
     const mount = (providerId: string) => {
       const cliForMount = fakeCli(lineup);
+
       const built = new ClaudeCodeAdapter(
-        fakeCtx({ on() {} }),
+        bareCtx(),
         Config({
           providerId,
           configDir: home,
           customModels: [{ model: "router-only", label: "Router Only", contextWindow: 64_000 }],
         }),
       );
+
       built.spawner = () => cliForMount.spawner;
+
       return { built, cli: cliForMount };
     };
+
     const ids = async (a: ClaudeCodeAdapter, provider: string) =>
       (await a.listModels(provider)).map((m) => m.id);
 
@@ -7386,8 +8699,7 @@ console.log("interrupt-on-abort ok");
     const direct = mount("claude-code-route-direct").built;
     assert.deepEqual(await direct.route(), { state: "direct" });
     assert.equal(
-      (await direct.prepare({ messages: messageList([{ role: "user", content: "hi" }]) } as never))
-        .via,
+      (await direct.prepare(promptRequest("hi"))).via,
       undefined,
       "a turn that reaches Anthropic is not tagged",
     );
@@ -7424,18 +8736,22 @@ console.log("interrupt-on-abort ok");
         env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
       }),
     );
+
     const routedLineup = lineup.map((r) =>
       r.value === "sonnet" ? { ...r, displayName: "Local Qwen" } : r,
     );
+
     const routedCli = fakeCli(routedLineup);
+
     const routed = new ClaudeCodeAdapter(
-      fakeCtx({ on() {} }),
+      bareCtx(),
       Config({
         providerId: "claude-code-route-routed",
         configDir: home,
         customModels: [{ model: "router-only", label: "Router Only" }],
       }),
     );
+
     routed.spawner = () => routedCli.spawner;
     assert.deepEqual(await routed.route(), { state: "routed", host: "router.test:15721" });
     const listed = await routed.listModels("claude-code-route-routed");
@@ -7463,7 +8779,7 @@ console.log("interrupt-on-abort ok");
     // that keys it: a session started before the router was switched is replaced on its next
     // turn. An export dsh was started with never moves under a running dsh and stays out, so no
     // spec written before the field existed keys differently.
-    const turn = { messages: messageList([{ role: "user", content: "hi" }]) } as never;
+    const turn = promptRequest("hi");
     assert.equal((await routed.prepare(turn)).spec.route, routerUrl);
 
     // A session on one of the router's rows is started with that row's window, since the CLI
@@ -7471,11 +8787,12 @@ console.log("interrupt-on-abort ok");
     // default until a size is set in Settings, then that size; a row of Claude's own is left to
     // the CLI. Both variables are set: one sizes a model the CLI has never heard of, the other
     // caps one it knows.
-    const on = (model: string) =>
-      ({ messages: messageList([{ role: "user", content: "hi" }]), model }) as never;
+    const on = (model: string) => promptRequest("hi", model);
+
     const routedId =
       (await routed.listModels("claude-code-route-routed")).find((m) => m.name === "Local Qwen")
         ?.id ?? "";
+
     assert.equal((await routed.prepare(on(routedId))).spec.window, 200_000);
     // The turn is tagged with the router that will answer it, which is what keeps its record
     // out of the money: the CLI prices it at Claude's rates whoever answers.
@@ -7555,10 +8872,20 @@ console.log("interrupt-on-abort ok");
     );
     assert.equal((await routed.prepare(turn)).settingsKey?.host, "router.test:15721");
     const refusedKey = { is_error: true, api_error_status: 401, result: "Invalid bearer token" };
-    const loggedOut = (a: ClaudeCodeAdapter) => (a as unknown as { loggedOut: boolean }).loggedOut;
+    // Logged out shows as the "(not logged in)" suffix on the provider's name.
+    const loggedOut = (a: ClaudeCodeAdapter) => a.providerInfo(a.providerId).name !== a.displayName;
     routed.processes.set(
       registryKey(routed.providerId, "keyed"),
-      fakeProc({ alive: true, prep: { settingsKey: { host: "router.test:15721" } } }),
+      fakeProc({
+        alive: true,
+        prep: {
+          cwd: "",
+          args: [],
+          spec: emptySpec,
+          input: null,
+          settingsKey: { host: "router.test:15721" },
+        },
+      }),
     );
     routed.noteTurnLogin("keyed", refusedKey);
     assert.equal(loggedOut(routed), false, "a refused settings key is not a logout");
@@ -7573,20 +8900,23 @@ console.log("interrupt-on-abort ok");
         env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
       }),
     );
-    await new Promise((r) => setTimeout(r, 700));
+    await sleep(700);
 
     // A router switched while Settings is open: the file changes, and the CLI is asked for its
     // lineup again, since the one in hand was answered under the old file.
     const before = routedCli.spawned.length;
     await writeFile(settings, JSON.stringify({ env: {} }));
-    for (let i = 0; i < 40 && routedCli.spawned.length === before; i++)
-      await new Promise((r) => setTimeout(r, 50));
+
+    for (let i = 0; i < 40 && routedCli.spawned.length === before; i++) {
+      await sleep(50);
+    }
+
     assert.equal(routedCli.spawned.length, before + 1, "a routing change re-asks the lineup");
     // A write that leaves the routing variables alone asks nothing.
-    await new Promise((r) => setTimeout(r, 100));
+    await sleep(100);
     const settled = routedCli.spawned.length;
     await writeFile(settings, JSON.stringify({ env: {}, theme: "dark" }));
-    await new Promise((r) => setTimeout(r, 900));
+    await sleep(900);
     assert.equal(routedCli.spawned.length, settled, "an unrelated settings write asks nothing");
     assert.equal(
       (await routed.prepare(turn)).spec.route,
@@ -7603,19 +8933,27 @@ console.log("interrupt-on-abort ok");
         env: { ANTHROPIC_BASE_URL: routerUrl, ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Local Qwen" },
       }),
     );
+
     const boot = async () => {
       const cliAtBoot = fakeCli(routedLineup);
+
       const booted = new ClaudeCodeAdapter(
-        fakeCtx({ on() {} }),
+        bareCtx(),
         Config({ providerId: "claude-code-route-routed", configDir: home }),
       );
+
       booted.spawner = () => cliAtBoot.spawner;
       await booted.listModels("claude-code-route-routed");
-      for (let i = 0; i < 10 && cliAtBoot.spawned.length === 0; i++)
-        await new Promise((r) => setTimeout(r, 50));
-      await new Promise((r) => setTimeout(r, 50));
+
+      for (let i = 0; i < 10 && cliAtBoot.spawned.length === 0; i++) {
+        await sleep(50);
+      }
+
+      await sleep(50);
+
       return cliAtBoot.spawned.length;
     };
+
     assert.equal(await boot(), 1, "a boot that finds other routing variables re-asks the lineup");
     assert.equal(await boot(), 0, "a boot that finds the same ones does not");
     console.log("route listing ok");
@@ -7631,28 +8969,36 @@ console.log("interrupt-on-abort ok");
 // the CLI's next tool result (2026-09-16: a zip on a mid-turn message arrived as its text alone).
 {
   const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+
   const adapter = new ClaudeCodeAdapter(
-    fakeCtx({
-      on(name: string, fn: (session: unknown, event: unknown) => void) {
-        handlers[name] = fn;
-      },
-    }),
+    withoutAttachments(
+      fakePluginContext({
+        on(name: string, fn: (session: unknown, event: unknown) => void) {
+          handlers[name] = fn;
+        },
+      }),
+    ),
     Config({}),
   );
-  const writes: string[] = [];
+
+  const writes: Array<string> = [];
+
   const proc = {
     alive: true,
     busy: true,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set<string>(),
     steerPending: false,
     write(line: string) {
       writes.push(line);
+
       return true;
     },
   };
+
   adapter.processes.set(registryKey("claude-code", "s"), fakeProc(proc));
-  const steer = (content: object[]) => {
+
+  const steer = (content: Array<object>) => {
     writes.length = 0;
     proc.sent.clear();
     proc.steerPending = false;
@@ -7667,11 +9013,14 @@ console.log("interrupt-on-abort ok");
       },
     );
   };
+
   const text = { type: "text", text: "also check /tmp" };
+
   const file = {
     type: "file",
     attachment: { attachmentId: "sha256:abc", name: "a.zip", bytes: 3 },
   };
+
   const image = {
     type: "image",
     attachment: { attachmentId: "sha256:def", mediaType: "image/png" },
@@ -7703,44 +9052,53 @@ console.log("interrupt-on-abort ok");
   );
   console.log("live-steer ok");
 }
+
 // The steer card's side of the listener: a typed steer is recorded with the uuid its line carries,
 // what dsh sends on its own behalf is forwarded but not offered for editing, and the re-insert a
 // card edit causes (dsh's inbox.replace) is not written a second time.
 {
   const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+
   const adapter = new ClaudeCodeAdapter(
-    fakeCtx({
+    fakePluginContext({
       on(name: string, fn: (session: unknown, event: unknown) => void) {
         handlers[name] = fn;
       },
     }),
     Config({}),
   );
-  const writes: string[] = [];
+
+  const writes: Array<string> = [];
+
   const proc = {
     alive: true,
     busy: true,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set<string>(),
     steerPending: false,
     steers: new Map<string, { uuid: string; key: string; text: string; at: number }>(),
     write(line: string) {
       writes.push(line);
+
       return true;
     },
   };
+
   adapter.processes.set(registryKey("claude-code", "k"), fakeProc(proc));
-  const splice = (inserted: object[]) =>
+
+  const splice = (inserted: Array<object>) =>
     handlers["session/event"]?.(
       { id: "k" },
       { type: "agent/inbox/spliced", data: { target: "next-step", inserted } },
     );
+
   const typed = {
     id: "m1",
     role: "user",
     source: { kind: "user", rpcId: "r1" },
     content: [{ type: "text", text: "check the README too" }],
   };
+
   splice([typed]);
   assert.equal(writes.length, 1);
   assert.equal(proc.steers.get("m1")?.text, "check the README too");
@@ -7777,49 +9135,55 @@ console.log("interrupt-on-abort ok");
 // drops the records dsh no longer holds.
 {
   const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
-  let nextStep: Array<{ id: string }> = [];
+  let nextStep: Array<Message> = [];
+
   const adapter = new ClaudeCodeAdapter(
-    fakeCtx({
+    fakePluginContext({
       on(name: string, fn: (session: unknown, event: unknown) => void) {
         handlers[name] = fn;
       },
       agents: {
-        get: () => ({
-          inbox: { nextStep, replace: () => true, remove: () => true },
-        }),
+        get: () =>
+          fakeAgent({
+            inbox: { nextStep, replace: () => true, remove: () => true },
+          }),
       },
     }),
     Config({}),
   );
+
   const typed = {
     id: "m1",
     role: "user",
     source: { kind: "user", rpcId: "r1" },
     content: [{ type: "text", text: "check the README too" }],
   };
-  const relayWrites: string[] = [];
+
+  const relayWrites: Array<string> = [];
+
   const relayProc = {
     alive: true,
     busy: false,
-    relays: new Map([["c1", {}]]),
+    relays: new Map<string, RelayEvent>([["c1", pendingRelay("c1")]]),
     sent: new Set<string>(),
     steerPending: false,
     forwarded: 0,
-    steers: new Map<
-      string,
-      { uuid?: string; key: string; text: string; at: number; relayed?: true }
-    >(),
+    steers: new Map<string, WaitingSteer>(),
     write(line: string) {
       relayWrites.push(line);
+
       return true;
     },
   };
+
   adapter.processes.set(registryKey("claude-code", "r"), fakeProc(relayProc));
-  const relaySplice = (inserted: object[]) =>
+
+  const relaySplice = (inserted: Array<object>) =>
     handlers["session/event"]?.(
       { id: "r" },
       { type: "agent/inbox/spliced", data: { target: "next-step", inserted } },
     );
+
   relaySplice([typed]);
   assert.equal(relayWrites.length, 0, "relayed: nothing written to stdin");
   assert.deepEqual(relayProc.steers.get("m1"), {
@@ -7853,37 +9217,45 @@ console.log("interrupt-on-abort ok");
   assert.equal(relayProc.steers.has("m1"), false, "relayed: follows dsh's inbox");
   console.log("steer-card relay listener ok");
 }
+
 // What dsh sends on its own behalf goes live the same way a typed steer does, marked by its id. On
 // 2026-09-16 three child reports (a send_message relay, two settlement notices) were spliced a few
 // seconds after a typed steer, claimed into a step the plugin ran in steer mode, and never written.
 {
   const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+
   const adapter = new ClaudeCodeAdapter(
-    fakeCtx({
+    fakePluginContext({
       on(name: string, fn: (session: unknown, event: unknown) => void) {
         handlers[name] = fn;
       },
     }),
     Config({}),
   );
-  const writes: string[] = [];
+
+  const writes: Array<string> = [];
+
   const proc = {
     alive: true,
     busy: true,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set<string>(),
     steerPending: false,
     write(line: string) {
       writes.push(line);
+
       return true;
     },
   };
+
   adapter.processes.set(registryKey("claude-code", "n"), fakeProc(proc));
-  const splice = (inserted: object[]) =>
+
+  const splice = (inserted: Array<object>) =>
     handlers["session/event"]?.(
       { id: "n" },
       { type: "agent/inbox/spliced", data: { target: "next-step", inserted } },
     );
+
   const relay = {
     id: "m1",
     role: "user",
@@ -7893,6 +9265,7 @@ console.log("interrupt-on-abort ok");
       { type: "text", text: "chunk 4 done, gates green" },
     ],
   };
+
   const settled = {
     id: "m2",
     role: "user",
@@ -7905,12 +9278,14 @@ console.log("interrupt-on-abort ok");
       { type: "text", text: "It left no closing message." },
     ],
   };
+
   const job = {
     id: "m3",
     role: "user",
     source: { kind: "plugin", plugin: "dsh-jobs", form: "notice" },
     content: [{ type: "text", text: "background job bash-4 finished" }],
   };
+
   splice([relay, settled, job]);
   assert.equal(writes.length, 3, "three dsh messages: three writes");
   assert.ok(writes[0]?.includes("chunk 4 done, gates green"), "the relay's body goes over stdin");
@@ -7928,6 +9303,7 @@ console.log("interrupt-on-abort ok");
     source: { kind: "tool", callId: "c9" },
     content: [{ type: "tool-result", toolCallId: "c9", content: [] }],
   };
+
   writes.length = 0;
   splice([tool, { role: "assistant", content: [{ type: "text", text: "x" }] }]);
   assert.equal(writes.length, 0, "a tool result or an assistant message never goes over stdin");
@@ -7965,53 +9341,47 @@ console.log("interrupt-on-abort ok");
 // noted the way a prompt's is; and a fresh turn clears a steer flag left by the last turn, unless
 // the process is still busy with a turn of its own.
 {
-  const writes: string[] = [];
+  const writes: Array<string> = [];
+
   const adapter = new ClaudeCodeAdapter(
-    fakeCtx({
+    fakePluginContext({
       on() {},
       attachments: {
-        readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }),
+        readImage: async (ref) => ({ data: new Uint8Array([0, 1, 2]).buffer, ref }),
       },
     }),
     Config({}),
   );
+
   const proc = {
     alive: true,
     busy: true,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set<string>(),
     steerPending: false,
     parked: "steer" as "steer" | undefined,
     write(line: string) {
       writes.push(line);
+
       return true;
     },
   };
-  // SAFETY: openTurn reads only input and drops off the prep; the rest is the spawn path's.
-  const prep = {
+
+  // openTurn reads only input and drops off the prep; the rest is the spawn path's.
+  const prep: TurnPrep = {
     input: "{}",
     args: [],
     cwd: "/tmp",
     spec: emptySpec,
-  } as unknown as TurnPrep;
-  // SAFETY: the session options carry dsh's branded id; continuationFor and openTurn read only
-  // these two fields of them.
-  const opts = (sessionId: string, messages: LooseMessage[]) =>
-    ({ sessionId, messages }) as unknown as Parameters<ClaudeCodeAdapter["continuationFor"]>[0];
-  const line = () => {
-    // SAFETY: the line is what buildInput wrote; the assertions below read its shape.
-    const parsed = JSON.parse(writes[0] ?? "{}") as {
-      message?: {
-        content?: Array<{
-          type: string;
-          text?: string;
-          source?: { media_type?: string; data?: string };
-        }>;
-      };
-    };
-    return parsed.message?.content ?? [];
   };
-  const run = async (content: object[], rpcId: string) => {
+
+  // continuationFor and openTurn read only the session id and the messages.
+  const opts = (sessionId: string, messages: Array<LooseMessage>) =>
+    turnOptions(sessionId, { messages: wireMessages(messages) });
+
+  const line = () => stdinLine(writes[0]).blocks;
+
+  const run = async (content: Array<ContentBlock>, rpcId: string) => {
     writes.length = 0;
     proc.parked = "steer";
     await adapter.openTurn(
@@ -8038,6 +9408,7 @@ console.log("interrupt-on-abort ok");
 
   const handle =
     '[File "a.zip" (3 bytes, sha256:abc): verbatim read-only copy saved at "/x/a.zip"]';
+
   await run([{ type: "text", text: handle }], "r1");
   assert.equal(writes.length, 1, "handle text: one write");
   assert.deepEqual(
@@ -8048,10 +9419,11 @@ console.log("interrupt-on-abort ok");
   assert.ok(proc.sent.has("r1"), "handle text: marked sent");
   assert.equal(proc.parked, undefined, "steer mode clears parked");
 
-  const image = {
+  const image: ImageBlock = {
     type: "image",
     attachment: { attachmentId: "sha256:def", mediaType: "image/png" },
   };
+
   await run([image, { type: "text", text: "look" }], "r2");
   assert.equal(writes.length, 1, "image and text: one write");
   const blocks = line();
@@ -8064,7 +9436,7 @@ console.log("interrupt-on-abort ok");
   assert.equal(blocks[1]?.source?.data, "AAEC", "image and text: the bytes inline, base64");
   assert.ok(proc.sent.has("r2"), "image and text: marked sent");
 
-  const noStore = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const noStore = new ClaudeCodeAdapter(withoutAttachments(bareCtx()), Config({}));
   writes.length = 0;
   proc.parked = "steer";
   await noStore.openTurn(
@@ -8136,12 +9508,14 @@ console.log("interrupt-on-abort ok");
   const idle = {
     alive: true,
     busy: false,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set<string>(),
     steerPending: true,
     parked: undefined,
   };
+
   adapter.processes.set(registryKey("claude-code", "t"), fakeProc(idle));
+
   const hi = (rpcId: string) =>
     messageList([
       {
@@ -8150,6 +9524,7 @@ console.log("interrupt-on-abort ok");
         content: [{ type: "text", text: "hi" }],
       },
     ]);
+
   const fresh = adapter.continuationFor(opts("t", hi("q1")));
   assert.equal(fresh.mode, "prompt");
   assert.equal(idle.steerPending, false, "a fresh turn clears the last turn's stale steer flag");
@@ -8160,6 +9535,7 @@ console.log("interrupt-on-abort ok");
     sent: new Set<string>(),
     steerPending: true,
   };
+
   adapter.processes.set(registryKey("claude-code", "u"), fakeProc(busy));
   adapter.continuationFor(opts("u", hi("q2")));
   assert.equal(busy.steerPending, true, "a busy process keeps its flag: its own turn parks on it");
@@ -8173,6 +9549,7 @@ console.log("interrupt-on-abort ok");
     steerPending: true,
     parked: "steer" as const,
   };
+
   adapter.processes.set(registryKey("claude-code", "v"), fakeProc(parkedProc));
   const cont = adapter.continuationFor(opts("v", hi("q3")));
   assert.equal(cont.mode, "steer", "a parked process continues its turn");
@@ -8182,13 +9559,14 @@ console.log("interrupt-on-abort ok");
   // next-step inbox first), so openTurn clears the park flag in relay and steer mode alike. Left
   // set across a relay boundary it parked the step into an empty inbox: dsh closed the turn and
   // Claude worked on unseen (2026-09-16, 17:39 and 21:56).
-  const resolved: string[] = [];
+  const resolved: Array<string> = [];
+
   const relayed = {
     ...idle,
     busy: true,
     sent: new Set<string>(),
     steerPending: true,
-    relays: new Map([
+    relays: new Map<string, RelayEvent>([
       [
         "r1",
         {
@@ -8196,12 +9574,13 @@ console.log("interrupt-on-abort ok");
           id: "r1",
           name: "bash",
           args: {},
-          resolve: (v: { text: string }) => resolved.push(v.text),
+          resolve: (v: RelayResult) => resolved.push(v.text),
           reject: () => {},
         },
       ],
     ]),
   };
+
   await adapter.openTurn(
     {
       mode: "relay",
@@ -8226,6 +9605,7 @@ console.log("interrupt-on-abort ok");
     sent: new Set<string>(),
     steerPending: true,
   };
+
   await adapter.openTurn(
     { mode: "steer", proc: fakeProc(resumed), options: opts("x", []) },
     fakeProc(resumed),
@@ -8241,7 +9621,7 @@ console.log("interrupt-on-abort ok");
     id: "r2",
     name: "job_output",
     args: {},
-    resolve: (v: { text: string }) => resolved.push(v.text),
+    resolve: (v: RelayResult) => resolved.push(v.text),
     reject: () => {},
   });
   adapter.liveTurn.set("w", {
@@ -8280,61 +9660,72 @@ console.log("interrupt-on-abort ok");
 // inbox without a CLI cancel and gives back its count; a save keeps every file and image and swaps
 // only the words; and the turn writers never lose an image to the text-only paths.
 {
-  const file = {
+  const file: FileBlock = {
     type: "file",
     attachment: { attachmentId: "sha256:abc", name: "a.zip", bytes: 3 },
   };
-  const image = {
+
+  const image: ImageBlock = {
     type: "image",
     attachment: { attachmentId: "sha256:def", mediaType: "image/png" },
   };
-  const words = (text: string) => ({ type: "text", text });
-  const fileChip = { kind: "file", name: "a.zip", bytes: 3 };
-  const imageChip = { kind: "image", bytes: 0 };
-  // SAFETY: wire-shaped blocks, as dsh splices them; attachmentsOf reads only type and attachment
-  const content = (blocks: object[]) => blocks as unknown as LooseMessage["content"];
+
+  const words = (text: string): TextBlock => ({ type: "text", text });
+  const fileChip: SteerAttachment = { kind: "file", name: "a.zip", bytes: 3 };
+  const imageChip: SteerAttachment = { kind: "image", bytes: 0 };
 
   assert.deepEqual(attachmentsOf("plain"), [], "a string content has none");
-  assert.deepEqual(attachmentsOf(content([words("hi")])), [], "text alone has none");
-  assert.deepEqual(attachmentsOf(content([{ type: "image" }])), [], "a block without a reference");
+  assert.deepEqual(attachmentsOf([words("hi")]), [], "text alone has none");
+  // An image block with no attachment, which dsh's type rules out, as it could come off the wire.
+  const [bare] = wireMessages([{ role: "user", content: [{ type: "image" }] }]);
+  assert.deepEqual(attachmentsOf(bare?.content), [], "a block without a reference");
   assert.deepEqual(
-    attachmentsOf(content([file, image, words("x")])),
+    attachmentsOf([file, image, words("x")]),
     [fileChip, imageChip],
     "named in block order; an image without a size reads 0",
   );
 
   // The listener.
   const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
-  let nextStep: Array<{ id: string }> = [];
+  let nextStep: Array<Message> = [];
+
   const listener = new ClaudeCodeAdapter(
-    fakeCtx({
-      on(name: string, fn: (session: unknown, event: unknown) => void) {
-        handlers[name] = fn;
-      },
-      agents: {
-        get: () => ({
-          inbox: { nextStep, replace: () => true, remove: () => true },
-        }),
-      },
-    }),
+    withoutAttachments(
+      fakePluginContext({
+        on(name: string, fn: (session: unknown, event: unknown) => void) {
+          handlers[name] = fn;
+        },
+        agents: {
+          get: () =>
+            fakeAgent({
+              inbox: { nextStep, replace: () => true, remove: () => true },
+            }),
+        },
+      }),
+    ),
     Config({}),
   );
-  const writes: string[] = [];
+
+  const writes: Array<string> = [];
+
   const native = {
     alive: true,
     busy: true,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set<string>(),
     steerPending: false,
     forwarded: 0,
-    steers: new Map<string, Record<string, unknown>>(),
+    steers: new Map<string, WaitingSteer>(),
     write(line: string) {
       writes.push(line);
+
       return true;
     },
   };
+
   listener.processes.set(registryKey("claude-code", "n"), fakeProc(native));
-  const splice = (session: string, inserted: object[], removedCount = 0) =>
+
+  const splice = (session: string, inserted: Array<object>, removedCount = 0) =>
     handlers["session/event"]?.(
       { id: session },
       {
@@ -8342,12 +9733,14 @@ console.log("interrupt-on-abort ok");
         data: { target: "next-step", inserted, removedCount },
       },
     );
-  const typed = (id: string, blocks: object[]) => ({
-    id,
-    role: "user",
-    source: { kind: "user", rpcId: `r-${id}` },
-    content: blocks,
-  });
+
+  /** A typed steer as dsh splices it; its user source carries the `rpcId`, which dsh's
+   *  `MessageSource` type leaves out. */
+  const typed = (id: string, blocks: Array<ContentBlock>): Message => {
+    const source: MessageSource & { rpcId: string } = { kind: "user", rpcId: `r-${id}` };
+
+    return { id: MessageId(id), role: "user", source, content: blocks };
+  };
 
   splice("n", [typed("m1", [file, words("see")])]);
   assert.equal(writes.length, 0, "native, file and text: nothing over stdin");
@@ -8385,13 +9778,21 @@ console.log("interrupt-on-abort ok");
   assert.equal(native.forwarded, 3, "a child's file parks the step");
   assert.equal(native.steers.has("m3"), false, "but is not the person's to edit");
 
-  splice("n", [typed("m4", [{ type: "image" }, words("x")])]);
+  // An image block with no attachment, which dsh's own type rules out, so it is wire data here.
+  splice("n", [
+    {
+      id: "m4",
+      role: "user",
+      source: { kind: "user", rpcId: "r-m4" },
+      content: [{ type: "image" }, words("x")],
+    },
+  ]);
   assert.equal(writes.length, 0, "a block without a reference still cannot go over stdin");
   assert.equal(native.forwarded, 4, "so it parks");
   assert.equal("attachments" in (native.steers.get("m4") ?? {}), false, "and shows no chip");
 
   // dsh drops m2 some other way than a claim: the record goes and its count with it.
-  nextStep = [{ id: "m1" }, { id: "m4" }];
+  nextStep = [inboxMessage("m1"), inboxMessage("m4")];
   splice("n", [], 1);
   assert.equal(native.steers.has("m2"), false, "the sweep follows dsh's inbox");
   assert.equal(native.forwarded, 3, "and gives back the dropped row's count");
@@ -8415,16 +9816,18 @@ console.log("interrupt-on-abort ok");
   const relayed = {
     alive: true,
     busy: false,
-    relays: new Map([["c1", {}]]),
+    relays: new Map<string, RelayEvent>([["c1", pendingRelay("c1")]]),
     sent: new Set<string>(),
     steerPending: false,
     forwarded: 0,
-    steers: new Map<string, Record<string, unknown>>(),
+    steers: new Map<string, WaitingSteer>(),
     write(line: string) {
       writes.push(line);
+
       return true;
     },
   };
+
   listener.processes.set(registryKey("claude-code", "d"), fakeProc(relayed));
   splice("d", [typed("m5", [image, words("look")])]);
   assert.deepEqual(relayed.steers.get("m5"), {
@@ -8439,54 +9842,63 @@ console.log("interrupt-on-abort ok");
 
   // The hold and the save.
   /** A fake dsh agent: its inbox's next-step list, what left it, and every message steered back. */
-  const makeAgent = (pending: object[], onGet?: () => void) => {
-    const removed: string[] = [];
-    const steered: Array<{ id: string; content: unknown[] }> = [];
-    const agent = {
+  const makeAgent = (pending: Array<Message>, onGet?: () => void) => {
+    const removed: Array<string> = [];
+    const steered: Array<{ id: string; content: Array<ContentBlock> }> = [];
+
+    const agent = fakeAgent({
       inbox: {
         nextStep: pending,
         replace: () => true,
         remove(id: string) {
           removed.push(id);
+
           return true;
         },
       },
-      steer(m: { id: string; content: unknown[] }) {
+      steer(m: Message) {
         steered.push({ id: m.id, content: m.content });
       },
-    };
+    });
+
     const adapter = new ClaudeCodeAdapter(
-      fakeCtx({
+      fakePluginContext({
         on() {},
         agents: {
           get: () => {
             onGet?.();
+
             return agent;
           },
         },
       }),
       Config({}),
     );
+
     return { adapter, removed, steered };
   };
+
   /** A live process holding one `boundary` row, m1, carrying `blocks`. */
-  const boundaryProc = (text: string, attachments: object[]) => {
-    const written: string[] = [];
+  const boundaryProc = (text: string, attachments: Array<SteerAttachment>) => {
+    const written: Array<string> = [];
+
     const proc = {
       alive: true,
       busy: true,
-      relays: new Map(),
+      relays: new Map<string, RelayEvent>(),
       sent: new Set<string>(),
       steerPending: true,
       forwarded: 1,
-      steers: new Map<string, Record<string, unknown>>([
+      steers: new Map<string, WaitingSteer>([
         ["m1", { key: "r-m1", text, at: 1, boundary: true, attachments }],
       ]),
       write(line: string) {
         written.push(line);
+
         return true;
       },
     };
+
     return { proc, written };
   };
 
@@ -8509,6 +9921,7 @@ console.log("interrupt-on-abort ok");
     assert.deepEqual(await adapter.releaseHold("s1", "m1", { text: "new words" }), { ok: true });
     assert.deepEqual(steered, [{ id: "m1", content: [file, words("new words")] }], "file kept");
   }
+
   {
     const { adapter, steered } = makeAgent([typed("m1", [file, words("see")])]);
     const { proc } = boundaryProc("see", [fileChip]);
@@ -8519,6 +9932,7 @@ console.log("interrupt-on-abort ok");
     });
     assert.deepEqual(steered, [{ id: "m1", content: [file] }], "blank words: the file alone");
   }
+
   {
     const { adapter, steered } = makeAgent([typed("m1", [words("first")])]);
     const { proc } = boundaryProc("first", []);
@@ -8533,6 +9947,7 @@ console.log("interrupt-on-abort ok");
     assert.equal(adapter.steersFor("s1").held.length, 1, "a refused blank save keeps the hold");
     assert.deepEqual(steered, []);
   }
+
   // Edit all over an image alone and a text: the editor opens on the words, the save keeps it.
   {
     const { adapter, steered } = makeAgent([typed("m1", [image]), typed("m2", [words("fix it")])]);
@@ -8554,10 +9969,12 @@ console.log("interrupt-on-abort ok");
     await adapter.releaseHold("s1", "m1", { text: "fixed" });
     assert.deepEqual(steered, [{ id: "m1", content: [image, words("fixed")] }]);
   }
+
   // A park during the hold's await clears the map and a new boundary steer counts itself: the stale
   // row must not spend that count.
   {
     const { proc } = boundaryProc("see", [fileChip]);
+
     const { adapter } = makeAgent([typed("m1", [file, words("see")])], () => {
       proc.steers.clear();
       proc.forwarded = 1;
@@ -8569,6 +9986,7 @@ console.log("interrupt-on-abort ok");
         boundary: true,
       });
     });
+
     adapter.processes.set(registryKey(adapter.providerId, "s1"), fakeProc(proc));
     await adapter.holdSteers("s1", ["m1"]);
     assert.equal(proc.forwarded, 1, "the newer steer keeps its count");
@@ -8576,47 +9994,48 @@ console.log("interrupt-on-abort ok");
   }
 
   // The turn writers.
-  const turnWrites: string[] = [];
+  const turnWrites: Array<string> = [];
+
   const withStore = new ClaudeCodeAdapter(
-    fakeCtx({
+    fakePluginContext({
       on() {},
       attachments: {
-        readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }),
+        readImage: async (ref) => ({ data: new Uint8Array([0, 1, 2]).buffer, ref }),
       },
     }),
     Config({}),
   );
-  const noStore = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+
+  const noStore = new ClaudeCodeAdapter(withoutAttachments(bareCtx()), Config({}));
+
   const turnProc = {
     alive: true,
     busy: true,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set<string>(),
     steerPending: false,
     parked: "steer" as "steer" | undefined,
     write(line: string) {
       turnWrites.push(line);
+
       return true;
     },
   };
-  // SAFETY: openTurn reads only input and drops off the prep; the rest is the spawn path's.
-  const prep = {
+
+  // openTurn reads only input and drops off the prep; the rest is the spawn path's.
+  const prep: TurnPrep = {
     input: "{}",
     args: [],
     cwd: "/tmp",
     spec: emptySpec,
-  } as unknown as TurnPrep;
-  // SAFETY: the session options carry dsh's branded id; openTurn reads only these two fields
-  const opts = (sessionId: string, messages: LooseMessage[]) =>
-    ({ sessionId, messages }) as unknown as Parameters<ClaudeCodeAdapter["continuationFor"]>[0];
+  };
+
+  // continuationFor and openTurn read only the session id and the messages.
+  const opts = (sessionId: string, messages: Array<LooseMessage>) =>
+    turnOptions(sessionId, { messages: wireMessages(messages) });
+
   /** The content blocks of the nth stdin line. */
-  const blocksOf = (n: number) =>
-    // SAFETY: the line is what buildInput wrote
-    (
-      JSON.parse(turnWrites[n] ?? "{}") as {
-        message?: { content?: Array<Record<string, unknown>> };
-      }
-    ).message?.content ?? [];
+  const blocksOf = (n: number) => stdinLine(turnWrites[n]).blocks;
 
   await noStore.openTurn(
     {
@@ -8642,7 +10061,7 @@ console.log("interrupt-on-abort ok");
   assert.ok(turnProc.sent.has("r-img"));
 
   turnWrites.length = 0;
-  const resolved: string[] = [];
+  const resolved: Array<string> = [];
   turnProc.relays = new Map([
     [
       "c1",
@@ -8651,7 +10070,7 @@ console.log("interrupt-on-abort ok");
         id: "c1",
         name: "job_output",
         args: {},
-        resolve: (v: { text: string }) => resolved.push(v.text),
+        resolve: (v: RelayResult) => resolved.push(v.text),
         reject: () => {},
       },
     ],
@@ -8702,39 +10121,45 @@ console.log("interrupt-on-abort ok");
 // the boundary as before.
 {
   const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
-  const adapter = new ClaudeCodeAdapter(
-    fakeCtx({
-      on(name: string, fn: (session: unknown, event: unknown) => void) {
-        handlers[name] = fn;
+
+  // The handle text says "handle" only when the adapter calls `fileRequestText` as a method of
+  // `ctx.llm`, the way dsh's own service runs with its `this`.
+  const ctx: PluginContext = fakePluginContext({
+    on(name: string, fn: (session: unknown, event: unknown) => void) {
+      handlers[name] = fn;
+    },
+    llm: {
+      fileRequestText(ref) {
+        return `[File "${ref.name}" ${this === ctx.llm ? "handle" : "unbound"}]`;
       },
-      llm: {
-        fileRequestText(this: { tag: string }, ref: { name: string }) {
-          return `[File "${ref.name}" ${this.tag}]`;
-        },
-        tag: "handle",
-      },
-      attachments: {
-        readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }),
-      },
-    }),
-    Config({}),
-  );
-  const writes: string[] = [];
+    },
+    attachments: {
+      readImage: async (ref) => ({ data: new Uint8Array([0, 1, 2]).buffer, ref }),
+    },
+  });
+
+  const adapter = new ClaudeCodeAdapter(ctx, Config({}));
+
+  const writes: Array<string> = [];
+
   const proc = {
     alive: true,
     busy: true,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set<string>(),
     steerPending: false,
     forwarded: 0,
-    steers: new Map<string, Record<string, unknown>>(),
+    steers: new Map<string, WaitingSteer>(),
     write(line: string) {
       writes.push(line);
+
       return true;
     },
   };
+
   adapter.processes.set(registryKey("claude-code", "n"), fakeProc(proc));
-  const splice = (id: string, content: object[]) =>
+
+  const splice = (id: string, content: Array<object>) =>
     handlers["session/event"]?.(
       { id: "n" },
       {
@@ -8752,18 +10177,18 @@ console.log("interrupt-on-abort ok");
         },
       },
     );
+
   /** The content blocks of the nth stdin line, and its uuid. */
-  const lineOf = (n: number) =>
-    // SAFETY: the line is what buildInput wrote
-    JSON.parse(writes[n] ?? "{}") as {
-      uuid?: string;
-      message?: { content?: Array<Record<string, unknown>> };
-    };
-  const settle = () => new Promise((r) => setTimeout(r, 10));
+  const lineOf = (n: number) => stdinLine(writes[n]);
+
+  const settle = () => sleep(10);
+
   /** Waits up to two seconds for the nth stdin line: an image steer saves a copy to disk first,
    *  which a loaded machine (the gate runs eight test files at once) can take past a fixed 10 ms. */
   const written = async (n: number) => {
-    for (let i = 0; i < 400 && writes.length < n; i++) await new Promise((r) => setTimeout(r, 5));
+    for (let i = 0; i < 400 && writes.length < n; i++) {
+      await sleep(5);
+    }
   };
 
   splice("m1", [
@@ -8780,7 +10205,7 @@ console.log("interrupt-on-abort ok");
   assert.equal(writes.length, 1, "file and text: written live");
   const fileLine = lineOf(0);
   assert.equal(
-    fileLine.message?.content?.[0]?.text,
+    fileLine.blocks[0]?.text,
     '[File "a.zip" handle]\nsee',
     "the file as dsh's own handle text, called on the runtime, then the words",
   );
@@ -8799,7 +10224,7 @@ console.log("interrupt-on-abort ok");
     },
   ]);
   await written(2);
-  const imageLine = lineOf(1).message?.content ?? [];
+  const imageLine = lineOf(1).blocks;
   assert.equal(imageLine[1]?.type, "image", "an image alone: written live with its bytes");
   assert.ok(String(imageLine[0]?.text).includes('saved at "'), "and its saved-copy note");
   assert.equal(proc.steers.get("m2")?.uuid, lineOf(1).uuid, "listed as a stdin row");
@@ -8819,19 +10244,21 @@ console.log("interrupt-on-abort ok");
 
   // A dsh that cannot name the file: it waits for the boundary, as before.
   const old = new ClaudeCodeAdapter(
-    fakeCtx({
+    fakePluginContext({
       on(name: string, fn: (session: unknown, event: unknown) => void) {
         handlers.old = fn;
       },
     }),
     Config({}),
   );
+
   const oldProc = {
     ...proc,
     sent: new Set<string>(),
     steers: new Map(),
     forwarded: 0,
   };
+
   old.processes.set(registryKey("claude-code", "o"), fakeProc(oldProc));
   handlers.old?.(
     { id: "o" },
@@ -8865,25 +10292,28 @@ console.log("interrupt-on-abort ok");
 
   // A load that throws leaves it to the boundary rather than marked sent and lost.
   const throwing = new ClaudeCodeAdapter(
-    fakeCtx({
+    fakePluginContext({
       on(name: string, fn: (session: unknown, event: unknown) => void) {
         handlers.throwing = fn;
       },
       attachments: {
-        readImage: async () => ({ data: new Uint8Array([0]).buffer }),
+        readImage: async (ref) => ({ data: new Uint8Array([0]).buffer, ref }),
       },
     }),
     Config({}),
   );
+
   throwing.loadImages = async () => {
     throw new Error("store gone");
   };
+
   const throwProc = {
     ...proc,
     sent: new Set<string>(),
     steers: new Map(),
     forwarded: 0,
   };
+
   throwing.processes.set(registryKey("claude-code", "t"), fakeProc(throwProc));
   handlers.throwing?.(
     { id: "t" },
@@ -8922,18 +10352,24 @@ console.log("interrupt-on-abort ok");
 {
   const tail =
     " Read that path with your file tools when its contents are needed; copy it to a writable location before modifying it.]";
+
   const handle = (name: string, sha: string, path: string) =>
     `[File ${JSON.stringify(name)} (34 bytes, sha256:${sha}): verbatim read-only copy saved at ${JSON.stringify(path)}.${tail}`;
+
   const blind =
     '[File "c.bin" (9 bytes, sha256:0badf00d) was uploaded, but the current execution environment cannot access a readable path.]';
-  const odd = '/store/we"ird\\dir/b.pdf';
+
+  const odd = String.raw`/store/we"ird\dir/b.pdf`;
   const text = `see these\n${handle("a.zip", "abc12345", "/store/aa")}\nand ${handle("sub/b.pdf", "def67890", odd)}\n${blind}\n${handle("a.zip", "abc12345", "/store/aa")}`;
 
-  const copies: string[][] = [];
+  const copies: Array<Array<string>> = [];
+
   const copy = async (local: string, name: string) => {
     copies.push([local, name]);
+
     return `/far/att/${name}`;
   };
+
   const moved = await relayFileHandles(text, copy);
   assert.deepEqual(
     copies,
@@ -8950,15 +10386,20 @@ console.log("interrupt-on-abort ok");
   );
 
   // One file that will not copy keeps its handle; the others still move.
-  const warned: string[] = [];
+  const warned: Array<string> = [];
+
   const partly = await relayFileHandles(
     text,
     async (local, name) => {
-      if (local === odd) throw new Error("far: Permission denied");
+      if (local === odd) {
+        throw new Error("far: Permission denied");
+      }
+
       return `/far/att/${name}`;
     },
     (_level, message) => warned.push(message),
   );
+
   assert.ok(partly.includes(JSON.stringify(odd)), "a failed copy leaves its handle as it was");
   assert.ok(partly.includes('"/far/att/abc12345-a.zip"'), "and the other handle still moves");
   assert.equal(warned.length, 1, "the failure is logged once");
@@ -8972,43 +10413,51 @@ console.log("interrupt-on-abort ok");
 
   // Through the adapter, at a step boundary on an ssh box: the file's handle and the image's saved
   // copy both reach the box, under the short cap, and a second steer copies nothing again.
-  const writes: string[] = [];
+  const writes: Array<string> = [];
+
   const adapter = new ClaudeCodeAdapter(
-    fakeCtx({
+    fakePluginContext({
       on() {},
       attachments: {
-        readImage: async () => ({ data: new Uint8Array([0, 1, 2]).buffer }),
+        readImage: async (ref) => ({ data: new Uint8Array([0, 1, 2]).buffer, ref }),
       },
     }),
     Config({ sshHost: "far" }),
   );
-  const sent: { host: string; local: string; name: string; capMs: number }[] = [];
+
+  const sent: Array<{ host: string; local: string; name: string; capMs: number }> = [];
   adapter.copyToBox = async (host, local, name, capMs) => {
     sent.push({ host, local, name, capMs });
+
     return `/home/far/att/${name}`;
   };
+
   const proc = {
     alive: true,
     busy: true,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set<string>(),
     steerPending: false,
     parked: "steer" as "steer" | undefined,
     write(line: string) {
       writes.push(line);
+
       return true;
     },
   };
-  // SAFETY: openTurn reads only input and drops off the prep; the rest is the spawn path's.
-  const prep = {
+
+  // openTurn reads only input and drops off the prep; the rest is the spawn path's.
+  const prep: TurnPrep = {
     input: "{}",
     args: [],
     cwd: "/tmp",
     spec: emptySpec,
-  } as unknown as TurnPrep;
-  // SAFETY: the session options carry dsh's branded id; openTurn reads only these two fields.
-  const opts = (sessionId: string, messages: LooseMessage[]) =>
-    ({ sessionId, messages }) as unknown as Parameters<ClaudeCodeAdapter["continuationFor"]>[0];
+  };
+
+  // continuationFor and openTurn read only the session id and the messages.
+  const opts = (sessionId: string, messages: Array<LooseMessage>) =>
+    turnOptions(sessionId, { messages: wireMessages(messages) });
+
   const steer = (rpcId: string) =>
     adapter.openTurn(
       {
@@ -9041,14 +10490,15 @@ console.log("interrupt-on-abort ok");
       fakeProc(proc),
       prep,
     );
+
   await steer("b1");
   assert.equal(writes.length, 1, "on a box: one write");
   assert.ok(
-    writes[0]?.includes('\\"/home/far/att/abc12345-a.zip\\"'),
+    writes[0]?.includes(String.raw`\"/home/far/att/abc12345-a.zip\"`),
     "on a box: the file handle names the far path",
   );
   assert.ok(
-    writes[0]?.includes('saved at \\"/home/far/att/feed01.png\\"'),
+    writes[0]?.includes(String.raw`saved at \"/home/far/att/feed01.png\"`),
     "on a box: the image note names the far copy",
   );
   assert.ok(!writes[0]?.includes("/store/aa"), "on a box: this PC's path is gone from the line");
@@ -9073,7 +10523,7 @@ console.log("interrupt-on-abort ok");
 // dsh-compaction-basic, whose model-switch check (dsh 0.2.2-alpha.2) fails the request, message
 // and all, when the target reports no capacity. Identity and reasoning agree on both.
 {
-  const adapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
   const prepared = await adapter.prepareCall("claude-code", "claude-opus-5");
   const resolved = await adapter.resolveModel("claude-code", "claude-opus-5");
   assert.ok((prepared.model.context?.contextWindow ?? 0) > 0, "prepareCall reports capacity");
@@ -9105,6 +10555,7 @@ console.log("interrupt-on-abort ok");
       },
     },
   };
+
   const qs = elicitationQuestions(request, "r1")!;
   assert.equal(qs.length, 4);
   assert.deepEqual(qs[0], {
@@ -9118,6 +10569,7 @@ console.log("interrupt-on-abort ok");
   assert.deepEqual(qs[1]!.options, [{ label: "s" }, { label: "m" }, { label: "l" }]);
   assert.deepEqual(qs[2]!.options, [{ label: "Yes" }, { label: "No" }]);
   assert.equal(qs[3]!.question, "count");
+
   const result = elicitationResult(
     request,
     {
@@ -9130,6 +10582,7 @@ console.log("interrupt-on-abort ok");
     },
     "r1",
   );
+
   assert.deepEqual(result, {
     action: "accept",
     content: { name: "Ada", size: "m", ok: false, count: 3 },
@@ -9173,6 +10626,7 @@ console.log("interrupt-on-abort ok");
       "mcp___stanbul__weather",
     ],
   );
+
   assert.deepEqual(byServer.get("dsh"), ["bash", "job_output"], "sorted, prefix stripped");
   assert.deepEqual(byServer.get("my server.v2"), ["search"], "space and dot normalized");
   assert.deepEqual(byServer.get("svc:api"), ["list"], "colon normalized");
@@ -9202,9 +10656,11 @@ console.log("interrupt-on-abort ok");
 // Auto mode's classifier refusal ends the turn with its own notice, reasons named and deduped,
 // and does not count as a "needed approval" denial, whose advice (Full Access) would not help.
 {
-  const t = new Translator() as any;
+  const t = new Translator();
+
   const refusal = (why: string) =>
     `Permission for this action was denied by the Claude Code auto mode classifier. Reason: [${why}]. If you have other tasks, continue.`;
+
   t.toolResults(
     [
       {
@@ -9238,17 +10694,17 @@ console.log("interrupt-on-abort ok");
     ],
     null,
   );
+
   const out = t.translate({
     type: "result",
     subtype: "success",
     is_error: false,
     result: "",
   });
+
   const text =
-    out
-      .filter((e: any) => e.type === "text-delta" || e.type === "delta")
-      .map((e: any) => e.text ?? e.delta ?? "")
-      .join("") || JSON.stringify(out);
+    out.flatMap((e) => (e.type === "text-delta" ? [e.text] : [])).join("") || JSON.stringify(out);
+
   assert.ok(
     text.includes("Auto mode blocked 3 tool calls (Exfil Scouting, Code from External)"),
     text,
@@ -9260,7 +10716,7 @@ console.log("interrupt-on-abort ok");
 // extension, so Read treats it as an image), its name and size, and an image without a copy says
 // nothing rather than pointing nowhere.
 {
-  const turns: LooseMessage[] = [
+  const turns: Array<LooseMessage> = [
     {
       role: "user",
       content: [
@@ -9280,8 +10736,9 @@ console.log("interrupt-on-abort ok");
           attachment: { attachmentId: "sha256:def", mediaType: "image/png" },
         },
       ],
-    } as LooseMessage,
+    },
   ];
+
   const notes = attachmentNotes(turns, [
     {
       mediaType: "image/png",
@@ -9290,6 +10747,7 @@ console.log("interrupt-on-abort ok");
       path: "/state/attachments/abc.png",
     },
   ]);
+
   assert.ok(notes.includes('"/state/attachments/abc.png"'), "the note names the kept copy");
   assert.ok(notes.includes('"logo.png"') && notes.includes("4x2px"), "name and size ride along");
   assert.ok(!notes.includes("sha256:def"), "an image with no copy gets no note");
@@ -9298,7 +10756,7 @@ console.log("interrupt-on-abort ok");
 
   // Over 2000px on a side the image rides by path only: the stdin line carries no image block
   // (the API refuses it once the conversation holds many images) and the note says to Read it.
-  const wide: LooseMessage[] = [
+  const wide: Array<LooseMessage> = [
     {
       role: "user",
       content: [
@@ -9313,8 +10771,9 @@ console.log("interrupt-on-abort ok");
           },
         },
       ],
-    } as LooseMessage,
+    },
   ];
+
   const wideNote = attachmentNotes(wide, [
     {
       mediaType: "image/png",
@@ -9323,11 +10782,18 @@ console.log("interrupt-on-abort ok");
       path: "/state/wide.png",
     },
   ]);
+
   assert.ok(wideNote.includes("not shown inline") && wideNote.includes("2000px"), wideNote);
   assert.ok(wideNote.includes('"/state/wide.png"'), "the note still names the copy to Read");
-  const byPath = JSON.parse(buildInput("look", [{ mediaType: "image/png", data: "" }]));
+
+  const byPath = pathIn(
+    JSON.parse(buildInput("look", [{ mediaType: "image/png", data: "" }])),
+    "message",
+    "content",
+  );
+
   assert.deepEqual(
-    byPath.message.content.map((b: { type: string }) => b.type),
+    Array.isArray(byPath) ? byPath.map((b) => pathIn(b, "type")) : byPath,
     ["text"],
     "an image with no data adds no block to the stdin line",
   );
@@ -9352,8 +10818,8 @@ console.log("interrupt-on-abort ok");
 // The status row's figure climbs across the turn: each `message_delta` reports the message it
 // closes, so the translator sums them, and the result frame's total closes the turn.
 {
-  const seen: { thinking?: number; thinkingOpen?: boolean; output?: number }[] = [];
-  const t = new Translator({ onProgress: (p) => seen.push(p) }) as any;
+  const seen: Array<{ thinking?: number; thinkingOpen?: boolean; output?: number }> = [];
+  const t = new Translator({ onProgress: (p) => seen.push(p) });
   t.partial({ type: "message_delta", usage: { output_tokens: 600 } });
   t.partial({ type: "message_delta", usage: { output_tokens: 250 } });
   t.partial({ type: "message_start", message: { id: "m3" } });
@@ -9389,13 +10855,14 @@ console.log("interrupt-on-abort ok");
 // line shows collapsed), stays quiet while thinking text is streaming, and closes with the block it
 // stood in for.
 {
-  const think = (t: any, total: number) =>
+  const think = (t: Translator, total: number) =>
     t.translate({
       type: "system",
       subtype: "thinking_tokens",
       estimated_tokens: total,
     });
-  const t = new Translator() as any;
+
+  const t = new Translator();
   t.partial({ type: "message_start" });
   t.partial({
     type: "content_block_start",
@@ -9404,25 +10871,29 @@ console.log("interrupt-on-abort ok");
   });
   assert.deepEqual(think(t, 400), [], "below the first mark nothing draws");
   const open = think(t, 1200);
-  assert.equal(open[0].type, "block-start");
-  assert.equal(open[0].blockType, "reasoning");
-  assert.equal(open[1].text, "~1.2k tokens");
+  assert.equal(open[0]?.type, "block-start");
+  assert.equal(chunkOf(open[0], "block-start").blockType, "reasoning");
+  assert.equal(deltaTextOf(open[1]), "~1.2k tokens");
   assert.deepEqual(think(t, 1900), [], "a frame short of the next mark is silent");
-  assert.equal(think(t, 2100)[0].text, "\n~2.1k tokens", "the mark adds a fresh line");
+  assert.equal(deltaTextOf(think(t, 2100)[0]), "\n~2.1k tokens", "the mark adds a fresh line");
   assert.deepEqual(think(t, 4999), []);
-  assert.equal(think(t, 26_000)[0].text, "\n~26k tokens", "past the ladder it repeats every 20k");
+  assert.equal(
+    deltaTextOf(think(t, 26_000)[0]),
+    "\n~26k tokens",
+    "past the ladder it repeats every 20k",
+  );
   const closed = t.partial({ type: "content_block_stop", index: 0 });
   assert.equal(
     closed.length,
     1,
     "the counter and the silent block it stood in for close once, not twice",
   );
-  assert.equal(closed[0].type, "block-end", "the thinking block ending closes the counter");
-  assert.equal(closed[0].block.text, "~1.2k tokens\n~2.1k tokens\n~26k tokens");
+  assert.equal(closed[0]?.type, "block-end", "the thinking block ending closes the counter");
+  assert.equal(blockTextOf(closed[0]), "~1.2k tokens\n~2.1k tokens\n~26k tokens");
   assert.equal(t.thinking, undefined);
 
   // Thinking whose text is streaming needs no counter, and an open one closes.
-  const t2 = new Translator() as any;
+  const t2 = new Translator();
   t2.partial({ type: "message_start" });
   t2.partial({
     type: "content_block_start",
@@ -9436,11 +10907,11 @@ console.log("interrupt-on-abort ok");
     delta: { thinking: "words" },
   });
   const hushed = think(t2, 5000);
-  assert.equal(hushed[0].type, "block-end", "visible thinking closes the counter");
+  assert.equal(hushed[0]?.type, "block-end", "visible thinking closes the counter");
   assert.deepEqual(think(t2, 9000), [], "and it does not reopen");
 
   // A counter still open when the turn ends is closed by the result frame.
-  const t3 = new Translator() as any;
+  const t3 = new Translator();
   t3.partial({ type: "message_start" });
   t3.partial({
     type: "content_block_start",
@@ -9480,7 +10951,8 @@ console.log("interrupt-on-abort ok");
 // diffContext caps output at DIFF_CONTEXT_CAP, appends a truncated marker when files are dropped,
 // and names each file with no-hunks/binary/untracked when it has no diff to paste.
 {
-  const longLine = "x".repeat(4_500);
+  const longLine = "x".repeat(4500);
+
   const makeDiff = (count: number): WorkspaceDiff => ({
     filesCount: count,
     linesAdded: count,
@@ -9494,6 +10966,7 @@ console.log("interrupt-on-abort ok");
       hunks: [{ oldStart: 1, newStart: 1, lines: [longLine] }],
     })),
   });
+
   // 300 files each push past the cap; the reply stops before the 8th and appends a marker whose N
   // matches the number of `--- ` headers in the output.
   const diff300 = makeDiff(300);
@@ -9502,7 +10975,7 @@ console.log("interrupt-on-abort ok");
   // what breaks the cap. The literal is the point: derived from the output, the assertion would hold
   // for any number the function happened to produce.
   assert.equal((out300.match(/--- /g) ?? []).length, 7, "seven files fit under the cap");
-  assert.ok(out300.length <= 32_000 + 4_500 + 30, "300-file output stays under cap plus one file");
+  assert.ok(out300.length <= 32_000 + 4500 + 30, "300-file output stays under cap plus one file");
   assert.match(out300, /… diff truncated \(7 of 300 files\)/, "marker names the seven it sent");
   // Two files fit comfortably: no truncation marker at all.
   const diff2 = makeDiff(2);
@@ -9522,14 +10995,15 @@ console.log("interrupt-on-abort ok");
   const { join: j } = await import("node:path");
   const home = tempDir("omc-home-");
   const cwd = j(home, "ws");
-  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const a = new ClaudeCodeAdapter(bareCtx(), Config({}));
   a.claudeHome = home;
   const path = (await a.transcriptLocation(cwd, "c1"))!.path;
   assert.equal(path, j(home, "projects", projectDirName(cwd), "c1.jsonl"));
   assert.equal(await a.transcriptLocation(cwd, undefined), undefined, "no session id");
-  const row = (o: object) => JSON.stringify(o);
+  const row = (o: Record<string, JsonValue>) => JSON.stringify(o);
   const T = "2026-09-10T22:00:00.000Z";
-  const user = (uuid: string, ep: string, content: unknown) =>
+
+  const user = (uuid: string, ep: string, content: JsonValue) =>
     row({
       type: "user",
       uuid,
@@ -9537,6 +11011,7 @@ console.log("interrupt-on-abort ok");
       entrypoint: ep,
       message: { role: "user", content },
     });
+
   const asst = (uuid: string, ep: string, text: string) =>
     row({
       type: "assistant",
@@ -9549,6 +11024,7 @@ console.log("interrupt-on-abort ok");
         content: [{ type: "text", text }],
       },
     });
+
   a.terminalSync = true; // the mirror ships off; these cases are about what it does when on
   await a.watchTranscript("s1", cwd, "c1");
   assert.equal(a.watchers.has("s1"), false, "no file yet: nothing to watch");
@@ -9562,18 +11038,18 @@ console.log("interrupt-on-abort ok");
   assert.equal(w.seen, 0, "a first watch starts back in the tail, not at the end");
   // Starting back in the tail means the watch fires a catch-up scan of its own. Let it finish, or it
   // is still holding `scanning` when the next scan runs and that one defers instead of doing the work.
-  await new Promise((r) => setTimeout(r, 50));
+  await sleep(50);
   assert.equal(w.seen, (await fsp.stat(path)).size, "and the catch-up scan moves it to the end");
-  const sent: Array<{
-    id: string;
-    content: Array<{ type: string; text?: string }>;
-    source: { kind: string };
-  }> = [];
-  // SAFETY: the test's agent only records followups; agentFor reads nothing else off it
+
+  const sent: Array<Message> = [];
+
+  // The test's agent only records followups; agentFor reads nothing else off it.
   a.agentFor = async () => ({
-    agent: {
-      followup: (m: unknown) => sent.push(m as (typeof sent)[0]),
-    } as unknown as Agent,
+    agent: fakeAgent({
+      followup: (m) => {
+        sent.push(m);
+      },
+    }),
     how: "live",
   });
   const proc = fakeProc({ alive: true, staleContext: false, kill() {} });
@@ -9587,7 +11063,7 @@ console.log("interrupt-on-abort ok");
   );
   await a.scanTranscript("s1");
   assert.equal(sent.length, 1, "a terminal exchange opens a mirror turn");
-  assert.equal(sent[0]!.content[0]!.text, "typed in a terminal", "the prompt is the user message");
+  assert.equal(firstText(sent[0]), "typed in a terminal", "the prompt is the user message");
   assert.equal(sent[0]!.source.kind, "user", "shown as the user's own bubble");
   assert.equal(a.mirrors.get("s1")!.inFlight!.id, sent[0]!.id, "the turn is matched by message id");
   assert.equal(proc.staleContext, true, "the live process is stale");
@@ -9601,7 +11077,7 @@ console.log("interrupt-on-abort ok");
   a.mirrors.get("s1")!.inFlight = undefined;
   await a.pumpMirror("s1");
   assert.equal(sent.length, 2, "pumped once the turn is free");
-  assert.equal(sent[1]!.content[0]!.text, "second");
+  assert.equal(firstText(sent[1]), "second");
   // A mirror whose turn never opened is put back and sent again after the timeout.
   a.mirrors.get("s1")!.inFlight!.at = 0;
   await a.pumpMirror("s1");
@@ -9622,58 +11098,54 @@ console.log("interrupt-on-abort ok");
     a.mirrors.get("s1")!.inFlight = undefined;
     await a.pumpMirror("s1");
     assert.ok(sent.length > before, "a watch with no FSWatcher still mirrors, from the poll");
-    assert.equal(
-      sent.at(-1)!.content[0]!.text,
-      "no inotify here",
-      "and it is the exchange that landed",
-    );
+    assert.equal(firstText(sent.at(-1)), "no inotify here", "and it is the exchange that landed");
   }
-  assert.equal(sent[2]!.content[0]!.text, "second");
+
+  assert.equal(firstText(sent[2]), "second");
   // A second turn ending on the same session keeps the watcher; the baseline moves by scans only.
   await fsp.appendFile(path, `${user("d2", "dsh-oh-my-claude", "ours again")}\n`);
   await a.watchTranscript("s1", cwd, "c1");
   assert.equal(a.watchers.get("s1"), w, "same watcher");
-  await new Promise((r) => setTimeout(r, 50)); // the scan the watch call started
+  await sleep(50); // the scan the watch call started
   assert.equal(w.seen, (await fsp.stat(path)).size);
   // A new adapter (dsh restarted) carries on from the persisted baseline rather than the end, and
   // a first watch on a file with a terminal prompt still being answered starts at that prompt.
-  const c = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const c = new ClaudeCodeAdapter(bareCtx(), Config({}));
   c.claudeHome = home;
   c.terminalSync = true;
   await fsp.appendFile(
     path,
     `${user("t9", "cli", "landed during the restart")}\n${asst("t10", "cli", "yes")}\n`,
   );
-  const sentC: Array<{ content: Array<{ text?: string }> }> = [];
-  // SAFETY: as above, a recording agent
+  const sentC: Array<Message> = [];
+  // A recording agent, as above.
   c.agentFor = async () => ({
-    agent: {
-      followup: (m: unknown) => sentC.push(m as (typeof sentC)[0]),
-    } as unknown as Agent,
+    agent: fakeAgent({
+      followup: (m) => {
+        sentC.push(m);
+      },
+    }),
     how: "live",
   });
   await c.watchTranscript("s1", cwd, "c1");
-  await new Promise((r) => setTimeout(r, 50));
-  assert.equal(
-    sentC[0]?.content[0]?.text,
-    "landed during the restart",
-    "the restart missed nothing",
-  );
+  await sleep(50);
+  assert.equal(firstText(sentC[0]), "landed during the restart", "the restart missed nothing");
 
   // The sweep watches a loaded session only from the record its own turn saved (another instance's
   // session, or one that never spoke here, is left to the instance that runs it).
   const b = new ClaudeCodeAdapter(
-    fakeCtx({
+    fakePluginContext({
       on() {},
       sessions: {
         list: () => [
-          { id: "dsh-a", header: { cwd } },
-          { id: "dsh-b", header: { cwd } },
+          fakeSession({ id: asSessionId("dsh-a"), header: { cwd } }),
+          fakeSession({ id: asSessionId("dsh-b"), header: { cwd } }),
         ],
       },
     }),
     Config({}),
   );
+
   b.claudeHome = home;
   b.terminalSync = true;
   const hashed = (await a.transcriptLocation(cwd, claudeSessionId("dsh-a")))!.path;
@@ -9698,10 +11170,8 @@ console.log("interrupt-on-abort ok");
   assert.equal(b.watchers.get("dsh-a")!.path, hashed);
   // Terminal sync off: watchTranscript and the sweep do nothing, and turning it off clears watchers.
   {
-    const off = new ClaudeCodeAdapter(
-      fakeCtx({ on() {}, sessions: { list: () => [] } }),
-      Config({}),
-    );
+    const off = new ClaudeCodeAdapter(bareCtx({ sessions: { list: () => [] } }), Config({}));
+
     off.claudeHome = home;
     off.terminalSync = false;
     await off.watchTranscript("s-off", cwd, "c-off");
@@ -9718,7 +11188,7 @@ console.log("interrupt-on-abort ok");
       seen: 0,
       claudeId: "c",
       box: {},
-    } as never);
+    });
     await off.setTerminalSync(false);
     assert.equal(off.watchers.size, 0, "setTerminalSync(false) clears watchers");
     assert.equal(
@@ -9727,25 +11197,36 @@ console.log("interrupt-on-abort ok");
     );
     await off.setTerminalSync(true); // restore the shared state file and registry mounts
   }
+
   // An archived session is left alone: the baseline stays and no turn opens, so nothing restores
   // it; once it is open again, the poll finds the file past the baseline and the exchange shows.
   let archived = true;
+
+  // The registry's other methods throw until faked; the getter stays live, so flipping
+  // `archived` reaches the adapter.
+  const { workspaceRegistry } = fakePluginContext({
+    workspaceRegistry: {
+      get archivedSessionIds() {
+        return archived ? [asSessionId("s9")] : [];
+      },
+    },
+  });
+
   const d = new ClaudeCodeAdapter(
-    fakeCtx({
-      on() {},
-      get: (name: string) =>
-        name === "workspaceRegistry" ? { archivedSessionIds: archived ? ["s9"] : [] } : undefined,
-    }),
+    fakePluginContext({ on() {}, services: { workspaceRegistry } }),
     Config({}),
   );
+
   d.claudeHome = home;
   d.terminalSync = true;
-  const sentD: Array<{ content: Array<{ text?: string }> }> = [];
-  // SAFETY: a recording agent, as above
+  const sentD: Array<Message> = [];
+  // A recording agent, as above.
   d.agentFor = async () => ({
-    agent: {
-      followup: (m: unknown) => sentD.push(m as (typeof sentD)[0]),
-    } as unknown as Agent,
+    agent: fakeAgent({
+      followup: (m) => {
+        sentD.push(m);
+      },
+    }),
     how: "live",
   });
   const nine = (await d.transcriptLocation(cwd, "c9"))!.path;
@@ -9754,7 +11235,7 @@ console.log("interrupt-on-abort ok");
   const w9 = d.watchers.get("s9")!;
   // The watch starts back in the tail and scans to catch up. Let that finish before reading the
   // baseline: while it runs, the scan below stands down and poll finds one already in flight.
-  await new Promise((r) => setTimeout(r, 50));
+  await sleep(50);
   const before9 = w9.seen;
   await fsp.appendFile(
     nine,
@@ -9765,36 +11246,40 @@ console.log("interrupt-on-abort ok");
   assert.equal(w9.seen, before9, "archived: baseline kept");
   archived = false;
   await d.pollTranscript("s9");
-  assert.equal(sentD[0]?.content[0]?.text, "while archived", "opened again: the exchange shows");
+  assert.equal(firstText(sentD[0]), "while archived", "opened again: the exchange shows");
   assert.equal(w9.seen, (await fsp.stat(nine)).size, "and the baseline moves");
   // Catch-up dedup: when the dsh log already shows an exchange, re-reading it (as opening a session
   // does) does not mirror it again. The fake session reports one assistant message; a scan of a
   // transcript whose only foreign exchange matches it opens no mirror turn.
   {
     const shownText = "you asked me something\nhere is the whole answer";
+
     const e2 = new ClaudeCodeAdapter(
-      fakeCtx({
+      fakePluginContext({
         on() {},
         sessions: {
-          get: () => ({
-            snapshotEvents: () => [
-              {
-                type: "assistant/message",
-                data: {
+          get: () =>
+            fakeSession({
+              snapshotEvents: () => [
+                sessionEvent("assistant/message", {
                   message: { content: [{ type: "text", text: shownText }] },
-                },
-              },
-            ],
-          }),
+                }),
+              ],
+            }),
         },
       }),
       Config({}),
     );
+
     e2.claudeHome = home;
     e2.terminalSync = true;
-    const sentE: Array<unknown> = [];
+    const sentE: Array<Message> = [];
     e2.agentFor = async () => ({
-      agent: { followup: (m: unknown) => sentE.push(m) } as unknown as Agent,
+      agent: fakeAgent({
+        followup: (m) => {
+          sentE.push(m);
+        },
+      }),
       how: "live",
     });
     const ep = (await e2.transcriptLocation(cwd, "ce"))!.path;
@@ -9809,29 +11294,35 @@ console.log("interrupt-on-abort ok");
     const w = e2.watchers.get("se")!;
     const start = await e2.latestExchangeStart(w.box, w.path, (await fsp.stat(ep)).size);
     assert.equal(start, 0, "one exchange: the latest starts at the file's head");
-    for (const w2 of e2.watchers.values()) w2.fw?.close(); // e2 owns no processes, just this watcher
+
+    for (const w2 of e2.watchers.values()) {
+      w2.fw?.close();
+    } // e2 owns no processes, just this watcher
+
     e2.watchers.clear();
   }
+
   // Live streaming: a terminal turn still running past the threshold opens a streaming mirror (its
   // prompt goes out, the render fills as it grows), and once the turn ends the scan marks it done
   // and advances the baseline past it, so the completed path never doubles it.
   {
-    const g = new ClaudeCodeAdapter(
-      fakeCtx({ on() {}, sessions: { get: () => undefined } }),
-      Config({}),
-    );
+    const g = new ClaudeCodeAdapter(bareCtx(), Config({}));
+
     g.claudeHome = home;
     g.terminalSync = true;
-    const sentG: Array<{ id: string; content: Array<{ text?: string }> }> = [];
+    const sentG: Array<Message> = [];
     g.agentFor = async () => ({
-      agent: {
-        followup: (m: unknown) => sentG.push(m as (typeof sentG)[0]),
-      } as unknown as Agent,
+      agent: fakeAgent({
+        followup: (m) => {
+          sentG.push(m);
+        },
+      }),
       how: "live",
     });
     const gp = (await g.transcriptLocation(cwd, "cg"))!.path;
     const oldT = new Date(Date.now() - 10_000).toISOString(); // older than the stream threshold
-    const runRow = (uuid: string, blocks: unknown[], reason: string) =>
+
+    const runRow = (uuid: string, blocks: Array<unknown>, reason: string) =>
       JSON.stringify({
         type: "assistant",
         uuid,
@@ -9844,6 +11335,7 @@ console.log("interrupt-on-abort ok");
           stop_reason: reason,
         },
       });
+
     const userRow = (uuid: string, content: unknown) =>
       JSON.stringify({
         type: "user",
@@ -9852,17 +11344,19 @@ console.log("interrupt-on-abort ok");
         entrypoint: "cli",
         message: { role: "user", content },
       });
+
     // A turn in flight: prompt, one finished tool step, and no terminal stop yet.
     const inflight =
       `${userRow("g1", "long job")}\n` +
       `${runRow("g2", [{ type: "tool_use", id: "k", name: "Bash", input: { command: "sleep" } }], "tool_use")}\n` +
       `${userRow("g3", [{ type: "tool_result", tool_use_id: "k", content: "tick" }])}\n`;
+
     await fsp.writeFile(gp, inflight);
     await g.watchTranscript("sg", cwd, "cg");
     await g.scanTranscript("sg");
-    await new Promise((r) => setTimeout(r, 60)); // watchTranscript's own scan opens the stream async
+    await sleep(60); // watchTranscript's own scan opens the stream async
     assert.equal(g.streaming.has("sg"), true, "a long-running turn opens a stream");
-    assert.equal(sentG[0]?.content[0]?.text, "long job", "the stream turn carries the prompt");
+    assert.equal(firstText(sentG[0]), "long job", "the stream turn carries the prompt");
     const sg = g.streaming.get("sg")!;
     assert.equal(sg.done, false, "still running");
     // The render loop yields the finished step's block, then can be told to stop.
@@ -9871,9 +11365,15 @@ console.log("interrupt-on-abort ok");
     assert.equal(first.done, false, "the render yields something");
     sg.done = true;
     sg.wake?.();
+
     // Drain to completion. The bound is generous on purpose: a call and its output are separate
     // blocks, so the chunk count per rendered step is not something this test should pin.
-    for (let i = 0; i < 50 && !(await gen.next()).done; i++) {}
+    for (let i = 0; i < 50; i++) {
+      if ((await gen.next()).done) {
+        break;
+      }
+    }
+
     assert.equal(g.streaming.has("sg"), false, "the render clears its stream when it ends");
     // The turn finishes in the transcript; the scan marks the stream done and moves the baseline.
     g.streaming.set("sg", { ...sg, done: false, shown: 0 });
@@ -9888,7 +11388,7 @@ console.log("interrupt-on-abort ok");
     // stops at its end, leaving the newer exchange ahead of it for the completed path.
     // Settling schedules one more scan for whatever landed behind the exchange; let it finish, or it
     // lands mid-setup below and settles that stream instead.
-    await new Promise((r) => setTimeout(r, 60));
+    await sleep(60);
     g.watchers.get("sg")!.seen = before;
     g.streaming.set("sg", { ...sg, done: false, shown: 0 });
     await fsp.appendFile(gp, `${userRow("g5", "next question")}\n`);
@@ -9900,12 +11400,22 @@ console.log("interrupt-on-abort ok");
       after < (await fsp.stat(gp)).size,
       "and stops short of the newer exchange, which the completed path still mirrors",
     );
-    for (const w2 of g.watchers.values()) w2.fw?.close();
+
+    for (const w2 of g.watchers.values()) {
+      w2.fw?.close();
+    }
+
     g.watchers.clear();
     g.streaming.clear();
   }
+
   // The registry is shared across adapters; fakes earlier tests left in it have no kill().
-  for (const p of a.processes.values()) if (typeof p.kill !== "function") p.kill = () => {};
+  for (const p of a.processes.values()) {
+    if (typeof p.kill !== "function") {
+      p.kill = () => {};
+    }
+  }
+
   b.disposeProcesses();
   c.disposeProcesses();
   d.disposeProcesses();
@@ -9913,6 +11423,7 @@ console.log("interrupt-on-abort ok");
   assert.equal(a.watchers.size, 0, "dispose closes the watchers");
   console.log("terminal turns adapter ok");
 }
+
 {
   // The context switches. dsh injects three kinds of block into every prompt; two of them the
   // owner can withhold from Settings, and the third is the approval snapshot, which never goes.
@@ -9921,11 +11432,13 @@ console.log("interrupt-on-abort ok");
     source: { kind: "agent-instructions" },
     content: [{ type: "text", text: "Instructions from: AGENTS.md\n\nbe lazy" }],
   });
+
   const cat = message({
     role: "user",
     source: { kind: "skill-catalog" },
     content: [{ type: "text", text: "SKILL CATALOG: design-pass, unslop" }],
   });
+
   const snap = message({
     role: "user",
     source: {
@@ -9935,11 +11448,13 @@ console.log("interrupt-on-abort ok");
     },
     content: [{ type: "text", text: "approval policy: ask" }],
   });
+
   const job = message({
     role: "user",
     source: { kind: "plugin", plugin: "tool-jobs" },
     content: [{ type: "text", text: "background job finished" }],
   });
+
   const typed = message({ role: "user", content: "do the thing" });
 
   assert.equal(contextSourceOf(instr), "instructions");
@@ -9975,16 +11490,18 @@ console.log("interrupt-on-abort ok");
     {
       role: "user",
       source: { kind: "tool", callId: "x" },
-      content: [{ type: "tool-result" }],
+      content: [{ type: "tool-result", toolCallId: ToolCallId("x"), content: [] }],
     },
     cat,
     { role: "user", content: "and also this" },
   ]);
+
   assert.ok(stepContextFor(midTurn).includes("SKILL CATALOG"), "default sends it mid-turn too");
   const midDropped = stepContextFor(midTurn, new Set(["skills"]));
   assert.ok(!midDropped.includes("SKILL CATALOG"), "and the switch reaches the mid-turn path");
   assert.ok(midDropped.includes("and also this"), "a steer typed in the same batch survives");
 }
+
 {
   // The seam: `prepare` is what reads hints.json, and nothing above this block touches it. Without
   // this, an omitted argument in `prepare` leaks every block back into the prompt with a green suite.
@@ -9992,10 +11509,12 @@ console.log("interrupt-on-abort ok");
   // Master switch on, one block cleared: with the switch off (the default) both blocks drop and the
   // per-source key proves nothing about whether `prepare` read the file.
   await writeFile(hints, '{"dshContextOn":true,"dshContextSkillsOff":true}');
-  // SAFETY: partial fake for tests; PluginContext requires many fields not used here
-  const adapter = new ClaudeCodeAdapter({ on() {} } as unknown as PluginContext, Config({}));
+  const adapter = new ClaudeCodeAdapter(bareCtx(), Config({}));
+
   const prep = await adapter.prepare({
-    messages: messageList([
+    provider: "claude-code",
+    model: "",
+    messages: wireMessages([
       {
         role: "user",
         source: { kind: "skill-catalog" },
@@ -10003,13 +11522,15 @@ console.log("interrupt-on-abort ok");
       },
       { role: "user", content: "do the thing" },
     ]),
-  } as never);
+  });
+
   await writeFile(hints, "{}");
   assert.deepEqual([...(prep.drops ?? [])], ["skills"], "prepare read the switch off disk");
   assert.ok(!(prep.input ?? "").includes("CATALOG"), "and the built input has no catalog in it");
   assert.ok((prep.input ?? "").includes("do the thing"), "the typed turn still reached the CLI");
   adapter.disposeProcesses();
 }
+
 {
   // contextSizes: what each dsh block cost this turn, measured before any switch removed it.
   const bundle = [
@@ -10027,11 +11548,13 @@ console.log("interrupt-on-abort ok");
     "",
     "</system-reminder>",
   ].join("\n");
+
   const instr = message({
     role: "user",
     source: { kind: "agent-instructions" },
     content: [{ type: "text", text: bundle }],
   });
+
   const sizes = contextSizes([instr]);
   assert.ok(sizes.instructions !== undefined && sizes.instructions > 0, "instructions is non-zero");
   assert.ok(sizes.claudemd !== undefined && sizes.claudemd > 0, "claudemd is non-zero");
@@ -10046,6 +11569,7 @@ console.log("interrupt-on-abort ok");
     source: { kind: "skill-catalog" },
     content: [{ type: "text", text: "SKILL CATALOG: design-pass, unslop" }],
   });
+
   const snap = message({
     role: "user",
     source: {
@@ -10055,6 +11579,7 @@ console.log("interrupt-on-abort ok");
     },
     content: [{ type: "text", text: "approval policy: ask" }],
   });
+
   const typed = message({ role: "user", content: "do the thing" });
 
   const allSizes = contextSizes([instr, cat, snap, typed]);
@@ -10077,8 +11602,8 @@ console.log("interrupt-on-abort ok");
 {
   const capDir = tempDir("dsh-effortcap-int-");
   await writeFile(joinPath(capDir, "settings.json"), JSON.stringify({ maxEffortLevel: "medium" }));
-  const capAdapter = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({ configDir: capDir }));
-  const capInfo = await (capAdapter as any).fullModelInfo("claude-code", "claude-fable-5-1");
+  const capAdapter = new ClaudeCodeAdapter(bareCtx(), Config({ configDir: capDir }));
+  const capInfo = await capAdapter.resolveModel("claude-code", "claude-fable-5-1");
   assert.deepEqual(
     capInfo.reasoning?.efforts,
     [
@@ -10096,14 +11621,11 @@ console.log("interrupt-on-abort ok");
       modelSettings: { "claude-fable-5-1": { maxEffortLevel: "low" } },
     }),
   );
-  const perModelAdapter = new ClaudeCodeAdapter(
-    fakeCtx({ on() {} }),
-    Config({ configDir: perModelDir }),
-  );
-  const perModelInfo = await (perModelAdapter as any).fullModelInfo(
-    "claude-code",
-    "claude-fable-5-1",
-  );
+
+  const perModelAdapter = new ClaudeCodeAdapter(bareCtx(), Config({ configDir: perModelDir }));
+
+  const perModelInfo = await perModelAdapter.resolveModel("claude-code", "claude-fable-5-1");
+
   assert.deepEqual(
     perModelInfo.reasoning?.efforts,
     [{ id: "low", name: "low" }],
@@ -10111,6 +11633,7 @@ console.log("interrupt-on-abort ok");
   );
   console.log("effort-cap integration ok");
 }
+
 // skillDoctorReply maps the CLI's result frame to a reply: a clean report, a decline shown
 // verbatim, a missing frame as a start failure, and a scratch-cwd run marked partial.
 {
@@ -10135,13 +11658,14 @@ console.log("interrupt-on-abort ok");
     "a scratch-cwd run is marked partial",
   );
 }
+
 console.log("skill-doctor ok");
 
 // The awaiting map is what the /awaiting route serves, and the route is a one-line read of this
 // snapshot, so pinning the snapshot pins the wire. A session waiting on a permission dialog keeps
 // its stream open and still reads as running, which is why the browser cannot infer this itself.
 {
-  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const a = new ClaudeCodeAdapter(bareCtx(), Config({}));
   assert.deepEqual(a.awaitingSnapshot(), {}, "nothing waiting on a fresh adapter");
   a.awaitingInput.set("s1", { kind: "approval", id: "r1", since: 111 });
   a.awaitingInput.set("s2", { kind: "plan", id: "r2", since: 222 });
@@ -10160,6 +11684,7 @@ console.log("skill-doctor ok");
     "an answered prompt leaves the snapshot",
   );
 }
+
 console.log("awaiting ok");
 
 // Forgetting a session: every per-session map is dropped when its process goes. Each of these used
@@ -10167,7 +11692,7 @@ console.log("awaiting ok");
 // all of them until dsh restarted. Nothing was ever read wrongly, since a dsh session id is not
 // reused; the cost was memory, and the fix is one call beside each `processes.delete`.
 {
-  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const a = new ClaudeCodeAdapter(bareCtx(), Config({}));
   a.sessionTools.set("s1", ["Bash"]);
   a.sessionPluginErrors.set("s1", []);
   a.sessionPluginWarnings.set("s1", []);
@@ -10192,6 +11717,7 @@ console.log("awaiting ok");
   );
   assert.equal(a.sessionTools.has("s2"), true, "another session is untouched");
 }
+
 console.log("forget-session ok");
 
 // Watch saves fired together, as scans and a turn's end do, all land. Each one used to read the
@@ -10200,12 +11726,17 @@ console.log("forget-session ok");
   const { saveWatch: save, loadWatches: load } = await import("./state.js");
   const dir = tempDir("omc-watch-race-");
   const saves = [];
-  for (let i = 0; i < 20; i++) saves.push(save(dir, `s${i}`, { path: "/t", seen: i }));
+
+  for (let i = 0; i < 20; i++) {
+    saves.push(save(dir, `s${i}`, { path: "/t", seen: i }));
+  }
+
   const kept = await load(dir); // not awaiting the saves: the load itself waits for them
   assert.equal(kept.size, 20, "no concurrent save is lost");
   assert.equal(kept.get("s19")?.seen, 19);
   await Promise.all(saves);
 }
+
 console.log("watch-save-race ok");
 
 // Regression (2026-09-23, a session lost to this): a turn that ends with a native tool call still
@@ -10217,20 +11748,24 @@ console.log("watch-save-race ok");
 // process is spawned; the fake process announces one native call, then nextEvent returns null the
 // way a killed process ends its stream.
 {
-  const appended: Array<{ type: string; data: any }> = [];
-  const session = {
+  const appended: Array<{ type: string; data: Record<string, JsonValue> }> = [];
+
+  const session = fakeSession({
     header: { version: 0 }, // format 0 takes native rows without the probe, so onToolCall fires
     snapshotEvents: () => [
-      { type: "turn/start", data: { turn: 1 } },
-      { type: "step/start", data: { step: 1 } },
+      sessionEvent("turn/start", { turn: 1 }),
+      sessionEvent("step/start", { step: 1 }),
     ],
-    append: (type: string, data: any) => {
-      appended.push({ type, data });
-      return { seq: appended.length };
+    append: (type, data) => {
+      const logged = loggedData(data);
+      appended.push({ type, data: logged });
+
+      return sessionEvent(type, logged, appended.length);
     },
-  };
+  });
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    bareCtx({ sessions: { get: () => session } }),
     Config({
       resume: true,
       toolActivity: true,
@@ -10238,8 +11773,10 @@ console.log("watch-save-race ok");
       dshTools: false,
     }),
   );
+
   a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite"); // busy.json write here is caught, not needed
-  const queue: Array<unknown> = [
+
+  const queue: Array<ClaudeEvent | null> = [
     {
       type: "assistant",
       message: {
@@ -10257,17 +11794,18 @@ console.log("watch-save-race ok");
     },
     null, // process died before the result: the corruption trigger
   ];
-  const proc: any = {
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     parked: undefined,
     steerPending: false,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     dshIds: new Set(),
     relayed: new Set(),
     sent: new Set(),
     // The interrupt notes where the queue stood when it went out.
-    queue: { lines: [] },
+    queue: new LineQueue(),
     queuedIndexes: [],
     idleKilled: false,
     exitCode: 0,
@@ -10276,34 +11814,42 @@ console.log("watch-save-race ok");
     staleResults: 0,
     countStaleResults: () => 0,
     write: () => true,
-    nextEvent: async () => (queue.length ? queue.shift() : null),
+    nextEvent: async () => queue.shift() ?? null,
     kill: () => {},
-  };
-  const prep = {
+  });
+
+  const prep: TurnPrep = {
     input: "go",
-    spec: { model: "m" },
+    spec: { ...emptySpec, model: "m" },
     cwd: "/tmp",
-    session: undefined,
     args: [],
   };
-  a.acquire = async () => ({ prep, proc }) as any;
+
+  a.acquire = async () => ({ prep, proc: fakeProc(proc) });
   a.reconnectIfStale = async () => {};
-  a.watchTranscript = (async () => {}) as any;
-  a.pumpMirror = (async () => {}) as any;
-  for await (const _ of a.stream({
-    sessionId: "sdead",
-    model: "m",
-    messages: messageList([{ role: "user", content: [{ type: "text", text: "run it" }] }]),
-    signal: new AbortController().signal,
-  } as any)) {
-    void _;
-  }
-  const calls = appended.filter((e) => e.type === "tool/call").map((e) => e.data.callId);
+
+  a.watchTranscript = async () => {};
+
+  a.pumpMirror = async () => {};
+
+  await drain(
+    a.stream({
+      sessionId: asSessionId("sdead"),
+      model: "m",
+      provider: "claude-code",
+      messages: [userTurn("run it")],
+      signal: new AbortController().signal,
+    }),
+  );
+
+  const calls = appended.flatMap((e) => (e.type === "tool/call" ? [e.data.callId] : []));
+
   // dsh's createToolResultMessage carries the call id at message.source.callId (and inside the
   // tool-result content block), never at message.toolCallId, so link the result to its call there.
-  const results = appended
-    .filter((e) => e.type === "tool/result")
-    .map((e) => e.data.message.source.callId);
+  const results = appended.flatMap((e) =>
+    e.type === "tool/result" ? [pathIn(e.data, "message", "source", "callId")] : [],
+  );
+
   assert.deepEqual(calls, ["toolu_dead"], "the native call was recorded as a tool/call");
   assert.ok(
     results.includes("toolu_dead"),
@@ -10312,8 +11858,9 @@ console.log("watch-save-race ok");
   // The message is a tool-result block wrapping the text block, so the note sits two levels deep:
   // message.content[0] is the tool-result, its .content[0] the text.
   const placeholder = appended.find((e) => e.type === "tool/result");
+  const note = pathIn(placeholder?.data, "message", "content", "0", "content", "0", "text");
   assert.match(
-    placeholder!.data.message.content[0].content[0].text,
+    typeof note === "string" ? note : "",
     /next step/,
     "the placeholder carries the pending note",
   );
@@ -10324,27 +11871,30 @@ console.log("watch-save-race ok");
 // an Agent Team notice beside it opens a turn so the notice reaches Claude. acquire and openTurn
 // are stubbed, so no process is spawned and the test reads whether the prompt went out.
 {
-  const session = {
+  const session = fakeSession({
     header: { version: 0 },
     snapshotEvents: () => [],
-    append: () => ({ seq: 1 }),
-  };
+    append: (type, data) => sessionEvent(type, loggedData(data), 1),
+  });
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    bareCtx({ sessions: { get: () => session } }),
     Config({ resume: true, dshTools: false }),
   );
+
   a.stateDir = joinPath(tmpdir(), "omc-wake-team-nowrite");
-  const opened: string[] = [];
-  const proc: any = {
+  const opened: Array<string> = [];
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     parked: undefined,
     steerPending: false,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     dshIds: new Set(),
     relayed: new Set(),
     sent: new Set(),
-    queue: { lines: [] },
+    queue: new LineQueue(),
     queuedIndexes: [],
     idleKilled: false,
     exitCode: 0,
@@ -10356,20 +11906,26 @@ console.log("watch-save-race ok");
     write: () => true,
     nextEvent: async () => null,
     kill: () => {},
-  };
-  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
-  a.acquire = async () => ({ prep, proc }) as any;
+  });
+
+  const prep: TurnPrep = { input: "go", spec: { ...emptySpec, model: "m" }, cwd: "/tmp", args: [] };
+  a.acquire = async () => ({ prep, proc: fakeProc(proc) });
   a.reconnectIfStale = async () => {};
-  a.watchTranscript = (async () => {}) as any;
-  a.pumpMirror = (async () => {}) as any;
-  a.openTurn = (async (_cont: unknown, _proc: unknown, p: { input: string }) => {
-    opened.push(p.input);
-  }) as any;
+
+  a.watchTranscript = async () => {};
+
+  a.pumpMirror = async () => {};
+
+  a.openTurn = async (_cont, _proc, p) => {
+    opened.push(p.input ?? "");
+  };
+
   const wake = {
     role: "user",
     source: { kind: "plugin:dsh-oh-my-claude", form: "notice" },
     content: [{ type: "text", text: WAKE_TEXT }],
   };
+
   const team = {
     role: "user",
     id: "team-2",
@@ -10380,24 +11936,29 @@ console.log("watch-save-race ok");
     },
     content: [{ type: "text", text: "Team Inbox has unread work." }],
   };
+
   const history = [
     { role: "user", source: { kind: "user" }, content: [{ type: "text", text: "start" }] },
     { role: "assistant", content: [{ type: "text", text: "on it" }] },
   ];
+
   /** Runs one turn over `extra` after the history; a dead process ending the drain is expected. */
-  const turn = async (extra: object[]) => {
+  const turn = async (extra: Array<object>) => {
     try {
-      for await (const _ of a.stream({
-        sessionId: "s311",
-        model: "m",
-        messages: messageList([...history, ...extra]),
-        signal: new AbortController().signal,
-      } as any))
-        void _;
+      await drain(
+        a.stream({
+          sessionId: asSessionId("s311"),
+          model: "m",
+          provider: "claude-code",
+          messages: wireMessages([...history, ...extra]),
+          signal: new AbortController().signal,
+        }),
+      );
     } catch {
       // nextEvent answers null at once, which the loop reads as the process ending
     }
   };
+
   await turn([wake]);
   assert.deepEqual(opened, [], "a wake alone drains what Claude wrote, no prompt");
   await turn([wake, team]);
@@ -10412,28 +11973,31 @@ console.log("watch-save-race ok");
 // second time as a bridge row and wait_session's own row was dropped. Same stubbed stream() as
 // above; a timed read on the empty queue answers the timeout a real process would.
 {
-  const session = {
+  const session = fakeSession({
     header: { version: 0 },
     snapshotEvents: () => [
-      { type: "turn/start", data: { turn: 1 } },
-      { type: "step/start", data: { step: 1 } },
+      sessionEvent("turn/start", { turn: 1 }),
+      sessionEvent("step/start", { step: 1 }),
     ],
-    append: () => ({ seq: 1 }),
-  };
+    append: (type, data) => sessionEvent(type, loggedData(data), 1),
+  });
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    bareCtx({ sessions: { get: () => session } }),
     Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
   );
+
   a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
   // A mounted bridge is what turns relaying on.
-  (a as any).mcp = {
+  a.mcp = {
     base: "http://127.0.0.1:1",
     key: "k",
     via: "webserver",
     toolsFor: () => [],
     openCalls: () => 0,
   };
-  const queue: Array<unknown> = [
+
+  const queue: Array<ClaudeEvent | null> = [
     {
       type: "assistant",
       message: {
@@ -10447,15 +12011,17 @@ console.log("watch-save-race ok");
     },
     { type: "dsh_relay", id: "r1", name: "subagent", args: {}, resolve() {}, reject() {} },
   ];
-  const timedReads: number[] = [];
-  const proc: any = {
+
+  const timedReads: Array<number> = [];
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     parked: undefined,
     steerPending: false,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set(),
-    queue: { lines: [] },
+    queue: new LineQueue(),
     queuedIndexes: [],
     idleKilled: false,
     exitCode: 0,
@@ -10465,31 +12031,54 @@ console.log("watch-save-race ok");
     countStaleResults: () => 0,
     write: () => true,
     nextEvent: async (ms?: number) => {
-      if (queue.length) return queue.shift();
-      if (ms === undefined) return null;
+      if (queue.length) {
+        return queue.shift() ?? null;
+      }
+
+      if (ms === undefined) {
+        return null;
+      }
+
       timedReads.push(ms);
+
       return { type: "timeout" };
     },
     kill: () => {},
-  };
-  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
-  a.acquire = async () => ({ prep, proc }) as any;
+  });
+
+  const prep: TurnPrep = { input: "go", spec: { ...emptySpec, model: "m" }, cwd: "/tmp", args: [] };
+  a.acquire = async () => ({ prep, proc: fakeProc(proc) });
   a.reconnectIfStale = async () => {};
-  a.watchTranscript = (async () => {}) as any;
-  a.pumpMirror = (async () => {}) as any;
-  const chunks: any[] = [];
+
+  a.watchTranscript = async () => {};
+
+  a.pumpMirror = async () => {};
+
+  const chunks: Array<StreamChunk> = [];
+
   for await (const c of a.stream({
-    sessionId: "sbatch",
+    sessionId: asSessionId("sbatch"),
     model: "m",
-    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    provider: "claude-code",
+    messages: [userTurn("go")],
     signal: new AbortController().signal,
-  } as any))
+  })) {
     chunks.push(c);
-  assert.equal(chunks.at(-1)?.reason?.kind, "tool-calls", "the step ends on the relayed call");
+  }
+
+  assert.equal(finishOf(chunks.at(-1)).kind, "tool-calls", "the step ends on the relayed call");
   assert.deepEqual([...proc.relays.keys()], ["r1"], "the subagent relay is parked for dsh");
-  assert.deepEqual([...proc.relayed], ["d1"], "the mark goes to the subagent, not wait_session");
+  assert.deepEqual(
+    [...(proc.relayed ?? [])],
+    ["d1"],
+    "the mark goes to the subagent, not wait_session",
+  );
   assert.deepEqual(timedReads, [], "no window spent waiting on a relay wait_session never sends");
-  assert.deepEqual([...proc.dshIds], ["w1", "d1"], "wait_session stays tracked for its own row");
+  assert.deepEqual(
+    [...(proc.dshIds ?? [])],
+    ["w1", "d1"],
+    "wait_session stays tracked for its own row",
+  );
   console.log("relay beside own tool ok");
 }
 
@@ -10499,28 +12088,31 @@ console.log("watch-save-race ok");
 // the bridge, and its result landed in the reply as text. The gather now lasts while the message
 // streams, so both calls relay in one batch, each marked by the tool_use id the CLI stamped on it.
 {
-  const session = {
+  const session = fakeSession({
     header: { version: 0 },
     snapshotEvents: () => [
-      { type: "turn/start", data: { turn: 1 } },
-      { type: "step/start", data: { step: 1 } },
+      sessionEvent("turn/start", { turn: 1 }),
+      sessionEvent("step/start", { step: 1 }),
     ],
-    append: () => ({ seq: 1 }),
-  };
+    append: (type, data) => sessionEvent(type, loggedData(data), 1),
+  });
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    bareCtx({ sessions: { get: () => session } }),
     Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
   );
+
   a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
-  (a as any).mcp = {
+  a.mcp = {
     base: "http://127.0.0.1:1",
     key: "k",
     via: "webserver",
     toolsFor: () => [],
     openCalls: () => 0,
   };
-  const frame = (event: object) => ({ type: "stream_event", event });
-  const relay = (id: string, name: string, toolUseId: string) => ({
+  const frame = (event: ClaudeStreamPartial): ClaudeEvent => ({ type: "stream_event", event });
+
+  const relay = (id: string, name: string, toolUseId: string): RelayEvent => ({
     type: "dsh_relay",
     id,
     name,
@@ -10529,9 +12121,11 @@ console.log("watch-save-race ok");
     resolve() {},
     reject() {},
   });
+
   const block = (index: number, id: string, name: string) =>
     frame({ type: "content_block_start", index, content_block: { type: "tool_use", id, name } });
-  const queue: Array<unknown> = [
+
+  const queue: Array<ClaudeEvent | null> = [
     frame({ type: "message_start", message: { id: "m1" } }),
     block(0, "d1", "mcp__dsh__bash"),
     frame({ type: "content_block_stop", index: 0 }),
@@ -10543,14 +12137,15 @@ console.log("watch-save-race ok");
     frame({ type: "message_stop" }),
     relay("r2", "edit", "d2"),
   ];
-  const proc: any = {
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     parked: undefined,
     steerPending: false,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set(),
-    queue: { lines: [] },
+    queue: new LineQueue(),
     queuedIndexes: [],
     idleKilled: false,
     exitCode: 0,
@@ -10560,51 +12155,72 @@ console.log("watch-save-race ok");
     countStaleResults: () => 0,
     write: () => true,
     nextEvent: async (ms?: number) => {
-      if (queue.length) return queue.shift();
+      if (queue.length) {
+        return queue.shift() ?? null;
+      }
+
       return ms === undefined ? null : { type: "timeout" };
     },
     kill: () => {},
-  };
-  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
-  a.acquire = async () => ({ prep, proc }) as any;
+  });
+
+  const prep: TurnPrep = { input: "go", spec: { ...emptySpec, model: "m" }, cwd: "/tmp", args: [] };
+  a.acquire = async () => ({ prep, proc: fakeProc(proc) });
   a.reconnectIfStale = async () => {};
-  a.watchTranscript = (async () => {}) as any;
-  a.pumpMirror = (async () => {}) as any;
-  const chunks: any[] = [];
+
+  a.watchTranscript = async () => {};
+
+  a.pumpMirror = async () => {};
+
+  const chunks: Array<StreamChunk> = [];
+
   for await (const c of a.stream({
-    sessionId: "sstream",
+    sessionId: asSessionId("sstream"),
     model: "m",
-    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    provider: "claude-code",
+    messages: [userTurn("go")],
     signal: new AbortController().signal,
-  } as any))
+  })) {
     chunks.push(c);
-  assert.equal(chunks.at(-1)?.reason?.kind, "tool-calls", "the step ends on the relayed calls");
+  }
+
+  assert.equal(finishOf(chunks.at(-1)).kind, "tool-calls", "the step ends on the relayed calls");
   assert.deepEqual([...proc.relays.keys()], ["r1", "r2"], "both calls of the message relay");
-  assert.deepEqual([...proc.relayed], ["d1", "d2"], "each marked by its own tool_use id");
+  assert.deepEqual([...(proc.relayed ?? [])], ["d1", "d2"], "each marked by its own tool_use id");
   console.log("relay waits for the streaming message ok");
 }
+
 // The withdrawal is wired to the start of a prompt turn: a turn for a person's message (or a
 // subagent's) takes back the drain notices a wake queued for the same session.
 {
-  const removed: string[] = [];
+  const removed: Array<string> = [];
   ClaudeCodeAdapter.drainNotices.set("sdrain", new Set(["n1"]));
+
   const holder = fakeAgent({
     inbox: { nextStep: [], replace: () => true, remove: (id: string) => removed.push(id) > 0 },
   });
-  const session = { header: { version: 0 }, snapshotEvents: () => [], append: () => ({ seq: 1 }) };
+
+  const session = fakeSession({
+    header: { version: 0 },
+    snapshotEvents: () => [],
+    append: (type, data) => sessionEvent(type, loggedData(data), 1),
+  });
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {}, sessions: { get: () => session }, agents: { get: () => holder } }),
+    bareCtx({ sessions: { get: () => session }, agents: { get: () => holder } }),
     Config({ resume: true }),
   );
+
   a.stateDir = joinPath(tmpdir(), "omc-drain-test-nowrite");
-  const proc: any = {
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     parked: undefined,
     steerPending: false,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set(),
-    queue: { lines: [] },
+    queue: new LineQueue(),
     queuedIndexes: [],
     idleKilled: false,
     exitCode: 0,
@@ -10615,23 +12231,31 @@ console.log("watch-save-race ok");
     write: () => true,
     nextEvent: async () => null,
     kill: () => {},
-  };
-  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
-  a.acquire = async () => ({ prep, proc }) as any;
+  });
+
+  const prep: TurnPrep = { input: "go", spec: { ...emptySpec, model: "m" }, cwd: "/tmp", args: [] };
+  a.acquire = async () => ({ prep, proc: fakeProc(proc) });
   a.reconnectIfStale = async () => {};
-  a.watchTranscript = (async () => {}) as any;
-  a.pumpMirror = (async () => {}) as any;
+
+  a.watchTranscript = async () => {};
+
+  a.pumpMirror = async () => {};
+
   try {
-    for await (const _ of a.stream({
-      sessionId: "sdrain",
-      model: "m",
-      messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
-      signal: new AbortController().signal,
-    } as any));
+    await drain(
+      a.stream({
+        sessionId: asSessionId("sdrain"),
+        model: "m",
+        provider: "claude-code",
+        messages: [userTurn("go")],
+        signal: new AbortController().signal,
+      }),
+    );
   } catch {
     // the fake process ends at once; only the turn's start matters here
   }
-  await new Promise((r) => setTimeout(r, 0));
+
+  await sleep(0);
   assert.deepEqual(removed, ["n1"], "a prompt turn takes back the queued drain notice");
   assert.equal(ClaudeCodeAdapter.drainNotices.has("sdrain"), false);
   console.log("prompt turn withdraws drain notices ok");
@@ -10641,29 +12265,32 @@ console.log("watch-save-race ok");
 // the gather, before the calls are parked on the process. A call left there was never answered,
 // so its MCP request stayed open. Same stubbed stream() as above.
 {
-  const session = {
+  const session = fakeSession({
     header: { version: 0 },
     snapshotEvents: () => [
-      { type: "turn/start", data: { turn: 1 } },
-      { type: "step/start", data: { step: 1 } },
+      sessionEvent("turn/start", { turn: 1 }),
+      sessionEvent("step/start", { step: 1 }),
     ],
-    append: () => ({ seq: 1 }),
-  };
+    append: (type, data) => sessionEvent(type, loggedData(data), 1),
+  });
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    bareCtx({ sessions: { get: () => session } }),
     Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
   );
+
   a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
-  (a as any).mcp = {
+  a.mcp = {
     base: "http://127.0.0.1:1",
     key: "k",
     via: "webserver",
     toolsFor: () => [],
     openCalls: () => 0,
   };
-  const rejected: string[] = [];
+  const rejected: Array<string> = [];
   let relayTaken = false;
-  const queue: Array<any> = [
+
+  const queue: Array<ClaudeEvent> = [
     {
       type: "assistant",
       message: {
@@ -10689,14 +12316,15 @@ console.log("watch-save-race ok");
       message: { id: "m2", role: "assistant", content: [{ type: "text", text: "one moment" }] },
     },
   ];
-  const proc: any = {
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     parked: undefined,
     steerPending: false,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set(),
-    queue: { lines: [] },
+    queue: new LineQueue(),
     queuedIndexes: [],
     idleKilled: false,
     exitCode: 0,
@@ -10707,29 +12335,47 @@ console.log("watch-save-race ok");
     write: () => true,
     nextEvent: async (ms?: number) => {
       const next = queue.shift();
-      if (next?.type === "dsh_relay") relayTaken = true;
-      if (next) return next;
+
+      if (next?.type === "dsh_relay") {
+        relayTaken = true;
+      }
+
+      if (next) {
+        return next;
+      }
+
       return ms === undefined ? null : { type: "timeout" };
     },
     kill: () => {},
-  };
-  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
-  a.acquire = async () => ({ prep, proc }) as any;
+  });
+
+  const prep: TurnPrep = { input: "go", spec: { ...emptySpec, model: "m" }, cwd: "/tmp", args: [] };
+  a.acquire = async () => ({ prep, proc: fakeProc(proc) });
   a.reconnectIfStale = async () => {};
-  a.watchTranscript = (async () => {}) as any;
-  a.pumpMirror = (async () => {}) as any;
+
+  a.watchTranscript = async () => {};
+
+  a.pumpMirror = async () => {};
+
   const run = a.stream({
-    sessionId: "sstop",
+    sessionId: asSessionId("sstop"),
     model: "m",
-    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    provider: "claude-code",
+    messages: [userTurn("go")],
     signal: new AbortController().signal,
-  } as any);
+  });
+
   const it = run[Symbol.asyncIterator]();
+
   // Pull until a chunk arrives from inside the gather, then end the step the way a Stop does.
   for (let i = 0; i < 50; i++) {
     const step = await it.next();
-    if (step.done || relayTaken) break;
+
+    if (step.done || relayTaken) {
+      break;
+    }
   }
+
   assert.equal(relayTaken, true, "the first call was gathered");
   await it.return?.(undefined);
   assert.equal(proc.relays.size, 0, "the call never reached the process's parked relays");
@@ -10748,42 +12394,49 @@ for (const [outcome, behavior, message] of [
   ["allowed-once", "allow", undefined],
   ["rejected", "deny", "The user denied this action in dsh."],
 ] as const) {
-  const session = {
+  const session = fakeSession({
     header: { version: 0 },
     snapshotEvents: () => [
-      { type: "turn/start", data: { turn: 1 } },
-      { type: "step/start", data: { step: 1 } },
+      sessionEvent("turn/start", { turn: 1 }),
+      sessionEvent("step/start", { step: 1 }),
     ],
-    append: () => ({ seq: 1 }),
-  };
-  let grant: ((outcome: string) => void) | undefined;
+    append: (type, data) => sessionEvent(type, loggedData(data), 1),
+  });
+
+  let grant: ((outcome: ApprovalOutcome) => void) | undefined;
   let asked = 0;
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({
+    fakePluginContext({
       on() {},
       sessions: { get: () => session },
-      agents: { get: () => ({ id: "ag", session: { id: "sask" } }) },
+      agents: {
+        get: () =>
+          fakeAgent({ id: asSessionId("ag"), session: fakeSession({ id: asSessionId("sask") }) }),
+      },
       approval: {
         // dsh's approval settles "cancelled" when the request's signal aborts.
-        request: ({ signal }: { signal: AbortSignal }) =>
-          new Promise<string>((resolve) => {
+        request: ({ signal }) =>
+          new Promise<ApprovalOutcome>((resolve) => {
             asked++;
             grant = resolve;
-            signal.addEventListener("abort", () => resolve("cancelled"), { once: true });
+            signal?.addEventListener("abort", () => resolve("cancelled"), { once: true });
           }),
       },
     }),
     Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
   );
+
   a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
-  (a as any).mcp = {
+  a.mcp = {
     base: "http://127.0.0.1:1",
     key: "k",
     via: "webserver",
     toolsFor: () => [],
     openCalls: () => 0,
   };
-  const queue: Array<unknown> = [
+
+  const queue: Array<ClaudeEvent | null> = [
     {
       type: "assistant",
       message: {
@@ -10807,16 +12460,18 @@ for (const [outcome, behavior, message] of [
     },
     { type: "dsh_relay", id: "r1", name: "subagent", args: {}, resolve() {}, reject() {} },
   ];
-  const written: string[] = [];
+
+  const written: Array<string> = [];
   let timedReads = 0;
-  const proc: any = {
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     parked: undefined,
     steerPending: false,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set(),
-    queue: { lines: [] },
+    queue: new LineQueue(),
     queuedIndexes: [],
     idleKilled: false,
     exitCode: 0,
@@ -10826,55 +12481,66 @@ for (const [outcome, behavior, message] of [
     countStaleResults: () => 0,
     write: (line: string) => (written.push(line), true),
     nextEvent: async (ms?: number) => {
-      if (queue.length) return queue.shift();
-      if (ms === undefined) return null;
-      if (++timedReads === 2) grant?.(outcome);
+      if (queue.length) {
+        return queue.shift() ?? null;
+      }
+
+      if (ms === undefined) {
+        return null;
+      }
+
+      if (++timedReads === 2) {
+        grant?.(outcome);
+      }
+
       return { type: "timeout" };
     },
     kill: () => {},
-  };
-  const prep = {
+  });
+
+  const prep: TurnPrep = {
     input: "go",
-    spec: { model: "m" },
+    spec: { ...emptySpec, model: "m" },
     cwd: "/tmp",
-    session: undefined,
     args: [],
     accessMode: "workspace-write",
   };
-  a.acquire = async () => ({ prep, proc }) as any;
+
+  a.acquire = async () => ({ prep, proc: fakeProc(proc) });
   a.reconnectIfStale = async () => {};
-  a.watchTranscript = (async () => {}) as any;
-  a.pumpMirror = (async () => {}) as any;
-  const chunks: any[] = [];
+
+  a.watchTranscript = async () => {};
+
+  a.pumpMirror = async () => {};
+
+  const chunks: Array<StreamChunk> = [];
+
   for await (const c of a.stream({
-    sessionId: "sask",
+    sessionId: asSessionId("sask"),
     model: "m",
-    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    provider: "claude-code",
+    messages: [userTurn("go")],
     signal: new AbortController().signal,
-  } as any))
+  })) {
     chunks.push(c);
+  }
+
   // Let a decision that settled as the stream closed write its answer.
-  await new Promise((r) => setTimeout(r, 20));
-  const answers = written
-    // The prompt itself goes down the same pipe and is not always JSON.
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line)];
-      } catch {
-        return [];
-      }
-    })
-    .filter((m) => m.type === "control_response")
-    .map((m) => m.response.response);
+  await sleep(20);
+
+  // The prompt itself goes down the same pipe and is not always JSON.
+  const answers = controlAnswers(written);
+
   assert.equal(asked, 1, "the approval was put to dsh");
   assert.deepEqual(
-    answers.map((r) => [r.behavior, r.toolUseID, r.message]),
+    answers.map((r) => [pathIn(r, "behavior"), pathIn(r, "toolUseID"), pathIn(r, "message")]),
     [[behavior, "w1", message]],
     "the person's answer reaches Claude: the dialog is not cancelled by the relay",
   );
-  assert.equal(chunks.at(-1)?.reason?.kind, "tool-calls", "the step still ends on the relay");
+  assert.equal(finishOf(chunks.at(-1)).kind, "tool-calls", "the step still ends on the relay");
   assert.deepEqual([...proc.relays.keys()], ["r1"], "and the subagent relay is parked for dsh");
 }
+
 console.log("approval beside relay ok");
 
 // Regression, the same exit by another door: a message typed while two approvals were open. The
@@ -10885,39 +12551,46 @@ console.log("approval beside relay ok");
 // Same stubbed stream(); a function in the queue runs when the loop reaches it, then the next
 // event is read, the way a click lands between two frames.
 {
-  const session = {
+  const session = fakeSession({
     header: { version: 0 },
     snapshotEvents: () => [
-      { type: "turn/start", data: { turn: 1 } },
-      { type: "step/start", data: { step: 1 } },
+      sessionEvent("turn/start", { turn: 1 }),
+      sessionEvent("step/start", { step: 1 }),
     ],
-    append: () => ({ seq: 1 }),
-  };
-  const grants: Array<(outcome: string) => void> = [];
+    append: (type, data) => sessionEvent(type, loggedData(data), 1),
+  });
+
+  const grants: Array<(outcome: ApprovalOutcome) => void> = [];
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({
+    fakePluginContext({
       on() {},
       sessions: { get: () => session },
-      agents: { get: () => ({ id: "ag", session: { id: "ssteer" } }) },
+      agents: {
+        get: () =>
+          fakeAgent({ id: asSessionId("ag"), session: fakeSession({ id: asSessionId("ssteer") }) }),
+      },
       approval: {
-        request: ({ signal }: { signal: AbortSignal }) =>
-          new Promise<string>((resolve) => {
+        request: ({ signal }) =>
+          new Promise<ApprovalOutcome>((resolve) => {
             grants.push(resolve);
-            signal.addEventListener("abort", () => resolve("cancelled"), { once: true });
+            signal?.addEventListener("abort", () => resolve("cancelled"), { once: true });
           }),
       },
     }),
     Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
   );
+
   a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
-  (a as any).mcp = {
+  a.mcp = {
     base: "http://127.0.0.1:1",
     key: "k",
     via: "webserver",
     toolsFor: () => [],
     openCalls: () => 0,
   };
-  const ask = (requestId: string, toolUseId: string) => ({
+
+  const ask = (requestId: string, toolUseId: string): ClaudeEvent => ({
     type: "control_request",
     request_id: requestId,
     request: {
@@ -10927,11 +12600,13 @@ console.log("approval beside relay ok");
       tool_use_id: toolUseId,
     },
   });
-  const result = (toolUseId: string) => ({
+
+  const result = (toolUseId: string): ClaudeEvent => ({
     type: "user",
     message: { content: [{ type: "tool_result", tool_use_id: toolUseId, content: "waited" }] },
   });
-  const queue: Array<unknown> = [
+
+  const queue: Array<ClaudeEvent | (() => void)> = [
     {
       type: "assistant",
       message: {
@@ -10950,17 +12625,19 @@ console.log("approval beside relay ok");
     () => grants[1]?.("allowed-once"),
     result("w2"),
   ];
-  const written: string[] = [];
-  const proc: any = {
+
+  const written: Array<string> = [];
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     parked: undefined,
     // A steer typed a moment ago is already on the CLI's stdin.
     steerPending: true,
     forwarded: 1,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set(),
-    queue: { lines: [] },
+    queue: new LineQueue(),
     queuedIndexes: [],
     idleKilled: false,
     exitCode: 0,
@@ -10971,47 +12648,53 @@ console.log("approval beside relay ok");
     write: (line: string) => (written.push(line), true),
     nextEvent: async () => {
       let item = queue.shift();
+
       while (typeof item === "function") {
         item();
         // Let the decision settle and write its answer before the next frame is read.
-        await new Promise((r) => setTimeout(r, 5));
+        await sleep(5);
         item = queue.shift();
       }
+
       return item ?? null;
     },
     kill: () => {},
-  };
-  const prep = {
+  });
+
+  const prep: TurnPrep = {
     input: "go",
-    spec: { model: "m" },
+    spec: { ...emptySpec, model: "m" },
     cwd: "/tmp",
-    session: undefined,
     args: [],
     accessMode: "workspace-write",
   };
-  a.acquire = async () => ({ prep, proc }) as any;
+
+  a.acquire = async () => ({ prep, proc: fakeProc(proc) });
   a.reconnectIfStale = async () => {};
-  a.watchTranscript = (async () => {}) as any;
-  a.pumpMirror = (async () => {}) as any;
-  const chunks: any[] = [];
+
+  a.watchTranscript = async () => {};
+
+  a.pumpMirror = async () => {};
+
+  const chunks: Array<StreamChunk> = [];
+
   for await (const c of a.stream({
-    sessionId: "ssteer",
+    sessionId: asSessionId("ssteer"),
     model: "m",
-    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    provider: "claude-code",
+    messages: [userTurn("go")],
     signal: new AbortController().signal,
-  } as any))
+  })) {
     chunks.push(c);
-  await new Promise((r) => setTimeout(r, 20));
-  const answers = written
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line)];
-      } catch {
-        return [];
-      }
-    })
-    .filter((m) => m.type === "control_response")
-    .map((m) => [m.response.response.behavior, m.response.response.toolUseID]);
+  }
+
+  await sleep(20);
+
+  const answers = controlAnswers(written).map((r) => [
+    pathIn(r, "behavior"),
+    pathIn(r, "toolUseID"),
+  ]);
+
   assert.deepEqual(
     answers,
     [
@@ -11021,7 +12704,7 @@ console.log("approval beside relay ok");
     "both answers are the person's: the park does not cancel the dialog still open",
   );
   assert.equal(proc.parked, "steer", "the step still parks for the steer");
-  assert.equal(chunks.at(-1)?.reason?.kind, "stop");
+  assert.equal(finishOf(chunks.at(-1)).kind, "stop");
   assert.deepEqual(queue, [], "and it parks at the second result, with no dialog open");
   console.log("approval beside steer park ok");
 }
@@ -11029,43 +12712,51 @@ console.log("approval beside relay ok");
 // The same hold covers a question: AskUserQuestion beside a relayed subagent. dsh's question
 // dialog rejects when its signal aborts, which used to reach Claude as "question cancelled".
 {
-  const session = {
+  const session = fakeSession({
     header: { version: 0 },
     snapshotEvents: () => [
-      { type: "turn/start", data: { turn: 1 } },
-      { type: "step/start", data: { step: 1 } },
+      sessionEvent("turn/start", { turn: 1 }),
+      sessionEvent("step/start", { step: 1 }),
     ],
-    append: () => ({ seq: 1 }),
-  };
-  let answer: ((response: object) => void) | undefined;
+    append: (type, data) => sessionEvent(type, loggedData(data), 1),
+  });
+
+  let answer: ((response: AskUserQuestionAnswer) => void) | undefined;
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({
+    fakePluginContext({
       on() {},
       sessions: { get: () => session },
-      agents: { get: () => ({ id: "ag", session: { id: "sq" } }) },
+      agents: {
+        get: () =>
+          fakeAgent({ id: asSessionId("ag"), session: fakeSession({ id: asSessionId("sq") }) }),
+      },
       userQuestions: {
-        ask: ({ signal }: { signal: AbortSignal }) =>
-          new Promise<object>((resolve, reject) => {
+        ask: ({ signal }) =>
+          new Promise<AskUserQuestionAnswer>((resolve, reject) => {
             answer = resolve;
-            signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+            signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
           }),
       },
     }),
     Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
   );
+
   a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
-  (a as any).mcp = {
+  a.mcp = {
     base: "http://127.0.0.1:1",
     key: "k",
     via: "webserver",
     toolsFor: () => [],
     openCalls: () => 0,
   };
+
   const input = {
     questions: [{ question: "Pick a colour?", options: [{ label: "Blue" }] }],
     afkTimeoutMs: 60_000,
   };
-  const queue: Array<unknown> = [
+
+  const queue: Array<ClaudeEvent | null> = [
     {
       type: "assistant",
       message: {
@@ -11084,16 +12775,18 @@ console.log("approval beside relay ok");
     },
     { type: "dsh_relay", id: "r1", name: "subagent", args: {}, resolve() {}, reject() {} },
   ];
-  const written: string[] = [];
+
+  const written: Array<string> = [];
   let timedReads = 0;
-  const proc: any = {
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     parked: undefined,
     steerPending: false,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set(),
-    queue: { lines: [] },
+    queue: new LineQueue(),
     queuedIndexes: [],
     idleKilled: false,
     exitCode: 0,
@@ -11103,50 +12796,63 @@ console.log("approval beside relay ok");
     countStaleResults: () => 0,
     write: (line: string) => (written.push(line), true),
     nextEvent: async (ms?: number) => {
-      if (queue.length) return queue.shift();
-      if (ms === undefined) return null;
-      if (++timedReads === 2) answer?.({ answers: [{ id: "q1:0", selected: ["Blue"] }] });
+      if (queue.length) {
+        return queue.shift() ?? null;
+      }
+
+      if (ms === undefined) {
+        return null;
+      }
+
+      if (++timedReads === 2) {
+        answer?.({ answers: [{ id: "q1:0", selected: ["Blue"] }] });
+      }
+
       return { type: "timeout" };
     },
     kill: () => {},
-  };
-  const prep = {
+  });
+
+  const prep: TurnPrep = {
     input: "go",
-    spec: { model: "m" },
+    spec: { ...emptySpec, model: "m" },
     cwd: "/tmp",
-    session: undefined,
     args: [],
     accessMode: "workspace-write",
   };
-  a.acquire = async () => ({ prep, proc }) as any;
+
+  a.acquire = async () => ({ prep, proc: fakeProc(proc) });
   a.reconnectIfStale = async () => {};
-  a.watchTranscript = (async () => {}) as any;
-  a.pumpMirror = (async () => {}) as any;
-  const chunks: any[] = [];
+
+  a.watchTranscript = async () => {};
+
+  a.pumpMirror = async () => {};
+
+  const chunks: Array<StreamChunk> = [];
+
   for await (const c of a.stream({
-    sessionId: "sq",
+    sessionId: asSessionId("sq"),
     model: "m",
-    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    provider: "claude-code",
+    messages: [userTurn("go")],
     signal: new AbortController().signal,
-  } as any))
+  })) {
     chunks.push(c);
-  await new Promise((r) => setTimeout(r, 20));
-  const answers = written
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line)];
-      } catch {
-        return [];
-      }
-    })
-    .filter((m) => m.type === "control_response")
-    .map((m) => [m.response.response.behavior, m.response.response.updatedInput?.answers]);
+  }
+
+  await sleep(20);
+
+  const answers = controlAnswers(written).map((r) => [
+    pathIn(r, "behavior"),
+    pathIn(r, "updatedInput", "answers"),
+  ]);
+
   assert.deepEqual(
     answers,
     [["allow", { "Pick a colour?": "Blue" }]],
     "the person's pick reaches Claude: the question is not cancelled by the relay",
   );
-  assert.equal(chunks.at(-1)?.reason?.kind, "tool-calls");
+  assert.equal(finishOf(chunks.at(-1)).kind, "tool-calls");
   assert.ok(
     written.some((line) => line.includes('"answers"')) &&
       !written.some((line) => line.includes("afkTimeoutMs")),
@@ -11162,32 +12868,38 @@ console.log("approval beside relay ok");
 // subagent's call ("claude turn ended before dsh could run the tool") although nothing had ended.
 // A step already ending on a relay does not park. dsh draws the steer when it opens the next step.
 {
-  const appended: Array<{ type: string; data: any }> = [];
-  const session = {
+  const appended: Array<{ type: string; data: Record<string, JsonValue> }> = [];
+
+  const session = fakeSession({
     header: { version: 0 },
     snapshotEvents: () => [
-      { type: "turn/start", data: { turn: 1 } },
-      { type: "step/start", data: { step: 1 } },
+      sessionEvent("turn/start", { turn: 1 }),
+      sessionEvent("step/start", { step: 1 }),
     ],
-    append: (type: string, data: any) => {
-      appended.push({ type, data });
-      return { seq: appended.length };
+    append: (type, data) => {
+      const logged = loggedData(data);
+      appended.push({ type, data: logged });
+
+      return sessionEvent(type, logged, appended.length);
     },
-  };
+  });
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    bareCtx({ sessions: { get: () => session } }),
     Config({ resume: true, toolActivity: true, toolsInline: false, dshTools: true }),
   );
+
   a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
-  (a as any).mcp = {
+  a.mcp = {
     base: "http://127.0.0.1:1",
     key: "k",
     via: "webserver",
     toolsFor: () => [],
     openCalls: () => 0,
   };
-  const rejected: string[] = [];
-  const queue: Array<unknown> = [
+  const rejected: Array<string> = [];
+
+  const queue: Array<ClaudeEvent | null> = [
     {
       type: "assistant",
       message: {
@@ -11212,15 +12924,16 @@ console.log("approval beside relay ok");
       message: { content: [{ type: "tool_result", tool_use_id: "b1", content: "file.txt" }] },
     },
   ];
-  const proc: any = {
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     parked: undefined,
     steerPending: true,
     forwarded: 1,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     sent: new Set(),
-    queue: { lines: [] },
+    queue: new LineQueue(),
     queuedIndexes: [],
     idleKilled: false,
     exitCode: 0,
@@ -11230,25 +12943,33 @@ console.log("approval beside relay ok");
     countStaleResults: () => 0,
     write: () => true,
     nextEvent: async (ms?: number) =>
-      queue.length ? queue.shift() : ms === undefined ? null : { type: "timeout" },
+      queue.length ? (queue.shift() ?? null) : ms === undefined ? null : { type: "timeout" },
     kill: () => {},
-  };
-  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
-  a.acquire = async () => ({ prep, proc }) as any;
+  });
+
+  const prep: TurnPrep = { input: "go", spec: { ...emptySpec, model: "m" }, cwd: "/tmp", args: [] };
+  a.acquire = async () => ({ prep, proc: fakeProc(proc) });
   a.reconnectIfStale = async () => {};
-  a.watchTranscript = (async () => {}) as any;
-  a.pumpMirror = (async () => {}) as any;
-  const chunks: any[] = [];
+
+  a.watchTranscript = async () => {};
+
+  a.pumpMirror = async () => {};
+
+  const chunks: Array<StreamChunk> = [];
+
   for await (const c of a.stream({
-    sessionId: "ssr",
+    sessionId: asSessionId("ssr"),
     model: "m",
-    messages: messageList([{ role: "user", content: [{ type: "text", text: "go" }] }]),
+    provider: "claude-code",
+    messages: [userTurn("go")],
     signal: new AbortController().signal,
-  } as any))
+  })) {
     chunks.push(c);
+  }
+
   assert.deepEqual(rejected, [], "the subagent's call is not rejected");
   assert.deepEqual([...proc.relays.keys()], ["r1"], "it is parked for dsh to run");
-  assert.equal(chunks.at(-1)?.reason?.kind, "tool-calls", "and the step ends on the relay");
+  assert.equal(finishOf(chunks.at(-1)).kind, "tool-calls", "and the step ends on the relay");
   assert.equal(proc.parked, undefined, "not on a park for the steer");
   assert.ok(
     appended.some((e) => e.type === "tool/result"),
@@ -11267,20 +12988,24 @@ console.log("approval beside relay ok");
 // no chunk for the call itself, so the break must wait for that result chunk or the loop would
 // spin on timeouts with the consumer never regaining control.
 {
-  const appended: Array<{ type: string; data: any }> = [];
-  const session = {
+  const appended: Array<{ type: string; data: Record<string, JsonValue> }> = [];
+
+  const session = fakeSession({
     header: { version: 0 },
     snapshotEvents: () => [
-      { type: "turn/start", data: { turn: 1 } },
-      { type: "step/start", data: { step: 1 } },
+      sessionEvent("turn/start", { turn: 1 }),
+      sessionEvent("step/start", { step: 1 }),
     ],
-    append: (type: string, data: any) => {
-      appended.push({ type, data });
-      return { seq: appended.length };
+    append: (type, data) => {
+      const logged = loggedData(data);
+      appended.push({ type, data: logged });
+
+      return sessionEvent(type, logged, appended.length);
     },
-  };
+  });
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {}, sessions: { get: () => session } }),
+    bareCtx({ sessions: { get: () => session } }),
     Config({
       resume: true,
       toolActivity: true,
@@ -11288,8 +13013,10 @@ console.log("approval beside relay ok");
       dshTools: false,
     }),
   );
+
   a.stateDir = joinPath(tmpdir(), "omc-flush-test-nowrite");
-  const queue: Array<unknown> = [
+
+  const queue: Array<ClaudeEvent | null> = [
     {
       type: "assistant",
       message: {
@@ -11306,18 +13033,20 @@ console.log("approval beside relay ok");
       },
     },
   ];
+
   const stop = new AbortController();
-  const proc: any = {
+
+  const proc = fakeProc({
     alive: true,
     busy: false,
     parked: undefined,
     steerPending: false,
-    relays: new Map(),
+    relays: new Map<string, RelayEvent>(),
     dshIds: new Set(),
     relayed: new Set(),
     sent: new Set(),
     // The interrupt notes where the queue stood when it went out.
-    queue: { lines: [] },
+    queue: new LineQueue(),
     queuedIndexes: [],
     idleKilled: false,
     exitCode: 0,
@@ -11329,8 +13058,12 @@ console.log("approval beside relay ok");
     // After the call: the user presses Stop while the tool runs, and the CLI answers the
     // interrupt with a result frame.
     nextEvent: async () => {
-      if (queue.length) return queue.shift();
+      if (queue.length) {
+        return queue.shift() ?? null;
+      }
+
       stop.abort();
+
       return {
         type: "result",
         subtype: "success",
@@ -11340,34 +13073,43 @@ console.log("approval beside relay ok");
       };
     },
     kill: () => {},
-  };
-  const prep = {
+  });
+
+  const prep: TurnPrep = {
     input: "go",
-    spec: { model: "m" },
+    spec: { ...emptySpec, model: "m" },
     cwd: "/tmp",
-    session: undefined,
     args: [],
   };
-  a.acquire = async () => ({ prep, proc }) as any;
+
+  a.acquire = async () => ({ prep, proc: fakeProc(proc) });
   a.reconnectIfStale = async () => {};
-  a.watchTranscript = (async () => {}) as any;
-  a.pumpMirror = (async () => {}) as any;
+
+  a.watchTranscript = async () => {};
+
+  a.pumpMirror = async () => {};
+
   for await (const _ of a.stream({
-    sessionId: "sstopped",
+    sessionId: asSessionId("sstopped"),
     model: "m",
-    messages: messageList([{ role: "user", content: [{ type: "text", text: "run it" }] }]),
+    provider: "claude-code",
+    messages: [userTurn("run it")],
     signal: stop.signal,
-  } as any)) {
-    void _;
+  })) {
     // dsh's loop: break on abort, which calls return() on the generator at this yield.
-    if (stop.signal.aborted) break;
+    if (stop.signal.aborted) {
+      break;
+    }
   }
+
   assert.ok(
     appended.some((e) => e.type === "tool/call"),
     "the native call was recorded before the Stop",
   );
   assert.deepEqual(
-    appended.filter((e) => e.type === "tool/result").map((e) => e.data.message.source.callId),
+    appended.flatMap((e) =>
+      e.type === "tool/result" ? [pathIn(e.data, "message", "source", "callId")] : [],
+    ),
     ["toolu_stopped"],
     "a Stop with a native call open still leaves its placeholder result behind",
   );
@@ -11383,9 +13125,9 @@ console.log("approval beside relay ok");
     "The passage I selected in our conversation:\n\n> a\n>\n> b",
     "the context is a lead line and the passage quoted line by line",
   );
-  const a = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const a = new ClaudeCodeAdapter(bareCtx(), Config({}));
   a.stateDir = tempDir("omc-aside-quote-");
-  const wrote: string[] = [];
+  const wrote: Array<string> = [];
   a.processes.set(
     registryKey("claude-code", "sel"),
     fakeProc({
@@ -11419,28 +13161,27 @@ console.log("approval beside relay ok");
       response: { response: "a" },
     },
   });
-  await new Promise((r) => setTimeout(r, 0));
+  await sleep(0);
   console.log("aside selection ok");
 }
 
 // Claude-only commands: the provider resolves like dsh (pick, then last request, then box default),
 // and a command typed in a session on another provider refuses. Found by the Omni fork (@namastex888).
 {
-  const session = (events: { type: string; data?: unknown }[], header?: string) => ({
-    snapshotEvents: () => events,
-    requestHeader: () => (header ? { version: 1, config: { provider: header } } : undefined),
-  });
-  const live = new Map<string, ReturnType<typeof session>>([
-    [
-      "picked",
-      session([{ type: "model/selection", data: { provider: "deepseek" } }], "claude-code"),
-    ],
+  const session = (events: Array<SessionEvent>, header?: string) =>
+    fakeSession({
+      snapshotEvents: () => events,
+      requestHeader: () => (header ? { version: 1, config: { provider: header } } : undefined),
+    });
+
+  const live = new Map<string, Session>([
+    ["picked", session([sessionEvent("model/selection", { provider: "deepseek" })], "claude-code")],
     [
       "forked",
       session(
         [
-          { type: "model/selection", data: { provider: "lutechi-llm" } },
-          { type: "request/header", data: {} },
+          sessionEvent("model/selection", { provider: "lutechi-llm" }),
+          sessionEvent("request/header"),
         ],
         "claude-code",
       ),
@@ -11448,17 +13189,16 @@ console.log("approval beside relay ok");
     ["ran", session([], "claude-code-box")],
     ["fresh", session([])],
   ]);
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({
+    fakePluginContext({
       on() {},
       sessions: { get: (id: string) => live.get(id) },
-      get: (name: string) =>
-        name === "agentDefaultModel"
-          ? { currentSelection: () => ({ provider: "lutechi-llm" }) }
-          : undefined,
+      services: { agentDefaultModel: { currentSelection: () => ({ provider: "lutechi-llm" }) } },
     }),
     Config({}),
   );
+
   assert.equal(a.sessionProvider("picked"), "deepseek", "the pick wins over the last request");
   assert.equal(a.sessionProvider("ran"), "claude-code-box", "no pick: the last request's provider");
   assert.equal(
@@ -11468,14 +13208,16 @@ console.log("approval beside relay ok");
   );
   assert.equal(a.sessionProvider("fresh"), "lutechi-llm", "neither: the box default");
   assert.equal(a.sessionProvider("gone"), undefined, "an unknown session is not guessed");
-  // SAFETY: partial fake; notClaude reads only id and session.id
+
+  // notClaude reads only id and session.id.
   const agent = (id: string) =>
-    ({ id, session: { id } }) as unknown as Parameters<typeof a.notClaude>[0];
+    fakeAgent({ id: asSessionId(id), session: fakeSession({ id: asSessionId(id) }) });
+
   assert.equal(a.notClaude(agent("ran"), "btw"), undefined, "an SSH box session keeps the command");
   assert.match(a.notClaude(agent("fresh"), "btw")?.text ?? "", /^\/btw .*lutechi-llm/);
   assert.equal(a.notClaude(agent("picked"), "review")?.kind, "error");
   assert.equal(a.notClaude(agent("gone"), "btw"), undefined, "unknown provider lets it through");
-  const blind = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const blind = new ClaudeCodeAdapter(bareCtx(), Config({}));
   assert.equal(blind.sessionProvider("x"), undefined, "no session service: undefined");
   console.log("claude-only commands ok");
 }
@@ -11483,13 +13225,10 @@ console.log("approval beside relay ok");
 // A bridged name dsh also serves as a skill runs on any model: on a session that is not on Claude,
 // the line goes out as the user's turn so dsh expands the skill; a name dsh does not serve refuses.
 {
-  type Handler = (i: {
-    agent: Agent;
-    rawInput: string;
-    attachments: [];
-    signal: AbortSignal;
-  }) => { kind: string; text?: string } | Promise<{ kind: string; text?: string }>;
+  type Handler = Parameters<OptionalServices["commands"]["register"]>[0]["handler"];
+
   const handlers = new Map<string, Handler>();
+
   const commands = {
     register: (d: { name: string; handler: Handler }) => (
       handlers.set(d.name, d.handler),
@@ -11497,51 +13236,61 @@ console.log("approval beside relay ok");
     ),
     find: () => undefined,
   };
+
   const skills = {
     get: async (name: string) =>
       name === "mint" ? { invocation: { userInvocable: true } } : undefined,
   };
+
   const ctx = {
     on() {},
     logger: { info() {}, warn() {} },
-    sessions: { get: () => ({ snapshotEvents: () => [], requestHeader: () => undefined }) },
-    get: (n: string) =>
-      n === "commands"
-        ? commands
-        : n === "skills"
-          ? skills
-          : n === "agentDefaultModel"
-            ? { currentSelection: () => ({ provider: "lutechi-llm" }) }
-            : undefined,
+    sessions: {
+      get: () => fakeSession({ snapshotEvents: () => [], requestHeader: () => undefined }),
+    },
+    services: {
+      commands,
+      skills,
+      agentDefaultModel: { currentSelection: () => ({ provider: "lutechi-llm" }) },
+    },
   };
-  const a = new ClaudeCodeAdapter(fakeCtx(ctx), Config({ commandBridge: true }));
+
+  const a = new ClaudeCodeAdapter(fakePluginContext(ctx), Config({ commandBridge: true }));
   a.bridgeCommands(["mint", "verify"], undefined);
-  const sent: Message[] = [];
+  const sent: Array<Message> = [];
+
   const target = fakeAgent({
-    id: "s",
-    session: { id: "s" },
-    followup: (m: Message) => sent.push(m),
+    id: asSessionId("s"),
+    session: fakeSession({ id: asSessionId("s") }),
+    followup: (m: Message) => {
+      sent.push(m);
+    },
   });
+
   const signal = new AbortController().signal;
+
   const mint = await handlers.get("mint")!({
     agent: target,
     rawInput: " now",
     attachments: [],
     signal,
   });
+
   assert.equal(mint.kind, "success", "a skill dsh serves passes on a local-model session");
   assert.equal(sent.length, 1, "and goes out as the user's turn for dsh to expand");
   assert.ok(!/Claude Code/.test(mint.text ?? ""), "the notice does not say it went to Claude Code");
+
   const verify = await handlers.get("verify")!({
     agent: target,
     rawInput: "",
     attachments: [],
     signal,
   });
+
   assert.equal(verify.kind, "error", "a name without a file anywhere still refuses");
   assert.equal(sent.length, 1, "and sends nothing");
   assert.equal(await a.dshServesSkill(target, "verify"), false);
-  const bare = new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({}));
+  const bare = new ClaudeCodeAdapter(bareCtx(), Config({}));
   assert.equal(
     await bare.dshServesSkill(target, "mint"),
     false,
@@ -11559,16 +13308,23 @@ console.log("approval beside relay ok");
   );
   await mkdir(joinPath(home, "commands"), { recursive: true });
   await writeFile(joinPath(home, "commands", "probe.md"), "Probe the box.\n");
-  const own = new ClaudeCodeAdapter(fakeCtx(ctx), Config({ commandBridge: true, configDir: home }));
+
+  const own = new ClaudeCodeAdapter(
+    fakePluginContext(ctx),
+    Config({ commandBridge: true, configDir: home }),
+  );
+
   await rm(joinPath(own.stateDir, "hints.json"), { force: true });
   own.bridgeCommands(["wish", "probe", "verify"], undefined);
   sent.length = 0;
+
   const wish = await handlers.get("wish")!({
     agent: target,
     rawInput: " a pony",
     attachments: [],
     signal,
   });
+
   assert.equal(wish.kind, "success", "a skill only Claude Code has runs on the session's model");
   assert.match(wish.text ?? "", /Claude Code's \/wish instructions/);
   assert.equal(sent.length, 2, "the line and the instructions");
@@ -11591,21 +13347,25 @@ console.log("approval beside relay ok");
     "a dollar pattern typed as an argument is inserted as text",
   );
   sent.length = 0;
+
   const probe = await handlers.get("probe")!({
     agent: target,
     rawInput: "",
     attachments: [],
     signal,
   });
+
   assert.equal(probe.kind, "success", "a custom command too");
   assert.match(textOf(sent[1]!), /custom command; it has no resources/);
   sent.length = 0;
+
   const none = await handlers.get("verify")!({
     agent: target,
     rawInput: "",
     attachments: [],
     signal,
   });
+
   assert.equal(none.kind, "error", "no file: refused as before");
   assert.equal(sent.length, 0);
   await mkdir(own.stateDir, { recursive: true });
@@ -11617,10 +13377,12 @@ console.log("approval beside relay ok");
   assert.equal(off.kind, "error", "the switch off refuses the name again");
   assert.equal(sent.length, 0);
   await rm(joinPath(own.stateDir, "hints.json"), { force: true });
+
   const remote = new ClaudeCodeAdapter(
-    fakeCtx(ctx),
+    fakePluginContext(ctx),
     Config({ commandBridge: true, configDir: home, sshHost: "far" }),
   );
+
   remote.bridgeCommands(["wish"], undefined);
   const far = await handlers.get("wish")!({ agent: target, rawInput: "", attachments: [], signal });
   assert.equal(far.kind, "error", "an ssh box does not read this box's skill files");
@@ -11632,10 +13394,8 @@ console.log("approval beside relay ok");
 // The picker's hide list: the plugin config's `hiddenModels` first, then the Settings switches from
 // the box-wide hints file; a switch turned back on leaves no key, and other hints do not count.
 {
-  const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {} }),
-    Config({ hiddenModels: ["claude-opus-5"] }),
-  );
+  const a = new ClaudeCodeAdapter(bareCtx(), Config({ hiddenModels: ["claude-opus-5"] }));
+
   const hintsPath = joinPath(STATE_DIR, "hints.json");
   await mkdir(STATE_DIR, { recursive: true });
   await rm(hintsPath, { force: true });
@@ -11660,16 +13420,18 @@ console.log("approval beside relay ok");
 // A hide switch announces the changed picker to dsh the way its own providers do, once per mount
 // under this mount's provider id; a host context without `emit` is left alone.
 {
-  const emitted: unknown[][] = [];
+  const emitted: Array<Array<unknown>> = [];
+
   const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {}, emit: (...args: unknown[]) => emitted.push(args) }),
+    fakePluginContext({ on() {}, emit: (...args: Array<unknown>) => emitted.push(args) }),
     Config({}),
   );
+
   a.modelsUpdated();
   assert.ok(
     emitted.some((e) => e[0] === "llm/models-updated" && e[1] === "claude-code"),
     "dsh's models-updated event for this provider",
   );
-  new ClaudeCodeAdapter(fakeCtx({ on() {} }), Config({})).modelsUpdated();
+  new ClaudeCodeAdapter(bareCtx(), Config({})).modelsUpdated();
   console.log("models updated ok");
 }

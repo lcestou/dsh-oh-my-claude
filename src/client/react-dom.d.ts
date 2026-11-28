@@ -3,6 +3,7 @@
 // carries no @types/react-dom for two functions.
 declare module "react-dom" {
   import type { ReactNode, ReactPortal } from "react";
+
   export function createPortal(children: ReactNode, container: Element): ReactPortal;
   export function flushSync(fn: () => void): void;
 }

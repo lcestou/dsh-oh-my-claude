@@ -5,14 +5,19 @@ import { forgetStars, stargazerCount, stars, REPO_URL, STAR_REPO } from "./stars
 // The count off the repo JSON: a real count is returned, zero is a real count, and anything else
 // is treated as no count.
 assert.equal(stargazerCount('{"stargazers_count":3}'), 3);
+
 assert.equal(
   stargazerCount('{"stargazers_count":0}'),
   0,
   "zero is a real answer, not a missing one",
 );
+
 assert.equal(stargazerCount('{"stargazers_count":-1}'), undefined, "a negative is missing");
+
 assert.equal(stargazerCount('{"stargazers_count":1.5}'), undefined, "a fraction is missing");
+
 assert.equal(stargazerCount('{"message":"Not Found"}'), undefined, "an error document is missing");
+
 assert.equal(stargazerCount("not json"), undefined, "non-JSON is missing");
 
 // A successful read is cached for a day; a second ask, even with a fetch that throws, is served
@@ -20,14 +25,17 @@ assert.equal(stargazerCount("not json"), undefined, "non-JSON is missing");
 {
   forgetStars();
   let calls = 0;
-  const fetchFn = (async () => {
+
+  const fetchFn = async () => {
     calls++;
-    // SAFETY: the reader only calls `ok` and `text()`; a whole Response is more than the check needs
-    return { ok: true, text: async () => '{"stargazers_count":7}' } as Response;
-  }) as typeof fetch;
-  const boom = (async () => {
+
+    return new Response('{"stargazers_count":7}');
+  };
+
+  const boom = async () => {
     throw new Error("ENOTFOUND");
-  }) as typeof fetch;
+  };
+
   const t0 = 1_000_000;
   assert.equal(await stars(fetchFn, t0), 7);
   assert.equal(await stars(boom, t0 + 1000), 7, "served from memory, the throw never runs");
@@ -38,10 +46,13 @@ assert.equal(stargazerCount("not json"), undefined, "non-JSON is missing");
 {
   forgetStars();
   let calls = 0;
-  const fetchFn = (async () => {
+
+  const fetchFn = async () => {
     calls++;
-    return { ok: false, text: async () => '{"stargazers_count":99}' } as Response;
-  }) as typeof fetch;
+
+    return new Response('{"stargazers_count":99}', { status: 500 });
+  };
+
   assert.equal(await stars(fetchFn, 1_000_000), undefined, "a non-ok response is a miss");
   assert.equal(calls, 1);
 }
@@ -49,9 +60,11 @@ assert.equal(stargazerCount("not json"), undefined, "non-JSON is missing");
 // A fetch that throws (offline) is swallowed, not rejected.
 {
   forgetStars();
-  const boom = (async () => {
+
+  const boom = async () => {
     throw new Error("ENOTFOUND");
-  }) as typeof fetch;
+  };
+
   assert.equal(await stars(boom, 1_000_000), undefined);
 }
 
@@ -59,10 +72,13 @@ assert.equal(stargazerCount("not json"), undefined, "non-JSON is missing");
 {
   forgetStars();
   let calls = 0;
-  const fetchFn = (async () => {
+
+  const fetchFn = async () => {
     calls++;
-    return { ok: false, text: async () => '{"message":"Not Found"}' } as Response;
-  }) as typeof fetch;
+
+    return new Response('{"message":"Not Found"}', { status: 500 });
+  };
+
   const t0 = 1_000_000;
   assert.equal(await stars(fetchFn, t0), undefined);
   assert.equal(calls, 1);
@@ -75,10 +91,13 @@ assert.equal(stargazerCount("not json"), undefined, "non-JSON is missing");
 {
   forgetStars();
   let calls = 0;
-  const fetchFn = (async () => {
+
+  const fetchFn = async () => {
     calls++;
-    return { ok: true, text: async () => '{"stargazers_count":0}' } as Response;
-  }) as typeof fetch;
+
+    return new Response('{"stargazers_count":0}');
+  };
+
   const t0 = 1_000_000;
   assert.equal(await stars(fetchFn, t0), 0);
   assert.equal(await stars(fetchFn, t0 + 2 * 60 * 60_000), 0, "still cached two hours later");

@@ -15,7 +15,7 @@ export interface HistoryRow {
 /** The file under STATE_DIR: rows per login key, oldest first. */
 export interface HistoryFile {
     version: 1;
-    logins: Record<string, HistoryRow[]>;
+    logins: Record<string, Array<HistoryRow>>;
 }
 /** One ended window as the popover draws it. */
 export interface HistoryEnded {
@@ -27,7 +27,7 @@ export interface HistoryEnded {
 }
 /** What the usage route adds to an ok reply: ended windows per series, oldest first, at most
  *  `SHOW_MAX` each. Every list empty means nothing has ended yet since recording began. */
-export type UsageHistory = Record<string, HistoryEnded[]>;
+export type UsageHistory = Record<string, Array<HistoryEnded>>;
 /** The part of a usage window the history reads. */
 export interface HistoryWindow {
     label: string;
@@ -57,7 +57,7 @@ export declare const seriesOf: (w: HistoryWindow) => string;
  * lands after a newer one cannot lower `lastAt`. Rows past `HISTORY_KEEP_MS` or beyond
  * `HISTORY_ROWS_MAX` are dropped, oldest first.
  */
-export declare function recordWindows(rows: HistoryRow[], windows: readonly HistoryWindow[], fetchedAt: number): HistoryRow[];
+export declare function recordWindows(rows: Array<HistoryRow>, windows: ReadonlyArray<HistoryWindow>, fetchedAt: number): Array<HistoryRow>;
 /**
  * The ended windows of each series, oldest first. A window has ended when its reset is past, or
  * when a later window of the same series exists (Anthropic reset it early, so the old reset time
@@ -66,11 +66,11 @@ export declare function recordWindows(rows: HistoryRow[], windows: readonly Hist
  * moment it was replaced is not partial. Every series the rows know is present, empty when none
  * of its windows has ended.
  */
-export declare function historyView(rows: readonly HistoryRow[], now: number): UsageHistory;
+export declare function historyView(rows: ReadonlyArray<HistoryRow>, now: number): UsageHistory;
 /** Every login's rows with those whose reset is older than `HISTORY_KEEP_MS` before `now` taken
  *  out; a login left with none is dropped. Answers the same map when nothing went. */
-export declare function pruneLogins(logins: ReadonlyMap<string, HistoryRow[]>, now: number): Map<string, HistoryRow[]>;
+export declare function pruneLogins(logins: ReadonlyMap<string, Array<HistoryRow>>, now: number): Map<string, Array<HistoryRow>>;
 /** The median end percent of at least three ended windows, rounded; undefined below three, where a
  *  "typical" figure would be one window's figure under another name. Partial windows count at the
  *  percent last read, which pulls the median down a little when many were read early. */
-export declare function typicalPercent(list: readonly HistoryEnded[]): number | undefined;
+export declare function typicalPercent(list: ReadonlyArray<HistoryEnded>): number | undefined;

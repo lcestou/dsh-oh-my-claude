@@ -2,14 +2,16 @@
 // the user's to say: a router's alias, and a model added in Settings. The same list of sizes
 // feeds the Add a model form. Where a size is stored is the caller's business; this draws the
 // control and hands back a number.
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { t, useLocale } from "./i18n.js";
 import { inputStyle, select } from "./shared.js";
 
 /** The window sizes offered by name; anything else is typed under "Other". */
 export const WINDOWS = [128_000, 200_000, 256_000, 512_000, 1_000_000] as const;
+
 /** The dropdown's value for "type an exact number". */
 export const OTHER = "other";
+
 /** The smallest and largest window the server takes (`checkCustomModels`). */
 const MIN_WINDOW = 1000;
 const MAX_WINDOW = 10_000_000;
@@ -49,16 +51,25 @@ export function SizeSelect({
   // and stores nothing until a number is typed.
   const [typing, setTyping] = useState(stored === OTHER);
   const [tokens, setTokens] = useState(value === undefined ? "" : String(value));
-  // A value changed elsewhere (another tab, the form below) moves the control with it.
-  useEffect(() => {
+  // A value changed elsewhere (another tab, the form below) moves the control with it, during the
+  // render that brings it.
+  const [valueSeen, setValueSeen] = useState(value);
+
+  if (valueSeen !== value) {
+    setValueSeen(value);
     setTyping(value !== undefined && !isNamed(value));
     setTokens(value === undefined ? "" : String(value));
-  }, [value]);
+  }
+
   /** Hand the typed number on, when it is one the server would take and not what is stored. */
   const commit = () => {
     const n = /^\d+$/.test(tokens.trim()) ? Number(tokens.trim()) : Number.NaN;
-    if (Number.isInteger(n) && n >= MIN_WINDOW && n <= MAX_WINDOW && n !== value) onChange(n);
+
+    if (Number.isInteger(n) && n >= MIN_WINDOW && n <= MAX_WINDOW && n !== value) {
+      onChange(n);
+    }
   };
+
   return (
     <span data-omc-model-size="" style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
       <select
@@ -70,7 +81,11 @@ export function SizeSelect({
         onChange={(e) => {
           const pick = e.target.value;
           setTyping(pick === OTHER);
-          if (pick === OTHER) return;
+
+          if (pick === OTHER) {
+            return;
+          }
+
           onChange(pick === "" ? undefined : Number(pick));
         }}
       >
@@ -93,7 +108,9 @@ export function SizeSelect({
           onChange={(e) => setTokens(e.target.value)}
           onBlur={commit}
           onKeyDown={(e) => {
-            if (e.key === "Enter") commit();
+            if (e.key === "Enter") {
+              commit();
+            }
           }}
         />
       )}

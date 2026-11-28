@@ -58,7 +58,7 @@ export declare const ISOLATED_ENV: {
  * are at their defaults, so a spec on a default config keys exactly as it did before they existed.
  */
 export declare function engineDigest(config: {
-    builtinTools: readonly string[];
+    builtinTools: ReadonlyArray<string>;
     toolLoading: string;
     isolate: boolean;
     thinkingDisplay?: string;

@@ -35,28 +35,52 @@ export const requireFieldLabelRule = defineRule({
   createOnce(context) {
     return {
       JSXOpeningElement(node) {
-        if (node.name.type !== "JSXIdentifier") return;
-        const tag = node.name.name;
-        if (tag !== "input" && tag !== "select" && tag !== "textarea") return;
-        let typeValue: string | undefined;
-        for (const attr of node.attributes) {
-          if (attr.type !== "JSXAttribute" || attr.name.type !== "JSXIdentifier") continue;
-          // A spread could carry a name this rule cannot see, so it is given the benefit.
-          if (NAMING.has(attr.name.name)) return;
-          if (attr.name.name === "type" && attr.value?.type === "Literal")
-            typeValue = String(attr.value.value);
+        if (node.name.type !== "JSXIdentifier") {
+          return;
         }
-        if (node.attributes.some((a) => a.type === "JSXSpreadAttribute")) return;
-        if (typeValue !== undefined && UNNAMED_TYPES.has(typeValue)) return;
+
+        const tag = node.name.name;
+
+        if (tag !== "input" && tag !== "select" && tag !== "textarea") {
+          return;
+        }
+
+        let typeValue: string | undefined;
+
+        for (const attr of node.attributes) {
+          if (attr.type !== "JSXAttribute" || attr.name.type !== "JSXIdentifier") {
+            continue;
+          }
+
+          // A spread could carry a name this rule cannot see, so it is given the benefit.
+          if (NAMING.has(attr.name.name)) {
+            return;
+          }
+
+          if (attr.name.name === "type" && attr.value?.type === "Literal") {
+            typeValue = attr.value.value;
+          }
+        }
+
+        if (node.attributes.some((a) => a.type === "JSXSpreadAttribute")) {
+          return;
+        }
+
+        if (typeValue !== undefined && UNNAMED_TYPES.has(typeValue)) {
+          return;
+        }
+
         // Inside a `<label>` element, that label names it.
         for (let up = node.parent?.parent; up; up = up.parent) {
           if (
             up.type === "JSXElement" &&
             up.openingElement.name.type === "JSXIdentifier" &&
             up.openingElement.name.name === "label"
-          )
+          ) {
             return;
+          }
         }
+
         context.report({ node, messageId: "unnamed" });
       },
     };

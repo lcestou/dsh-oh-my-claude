@@ -80,8 +80,10 @@ import { tempDir } from "./test-tmp.js";
 }
 
 // projectKey: forward slashes on a Windows host only, and never for a path on an SSH box.
-assert.equal(projectKey({}, "C:\\src\\main", "win32"), "C:/src/main");
+assert.equal(projectKey({}, String.raw`C:\src\main`, "win32"), "C:/src/main");
+
 assert.equal(projectKey({}, "/src/main", "linux"), "/src/main");
-assert.equal(projectKey({ sshHost: "box" }, "/srv/a\\b", "win32"), "/srv/a\\b");
+
+assert.equal(projectKey({ sshHost: "box" }, String.raw`/srv/a\b`, "win32"), String.raw`/srv/a\b`);
 
 console.log("repo.test: ok");

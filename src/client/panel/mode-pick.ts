@@ -20,16 +20,17 @@ const PRESET_RANK = {
   "danger-full-access": 2,
 } as const satisfies Record<string, number>;
 
-/** A preset's place from strictest, or `fallback` for a preset this table does not know. */
-const rankOf = (preset: string, fallback: number): number =>
-  // SAFETY: the key is checked against the table before it is used as its index
-  Object.hasOwn(PRESET_RANK, preset) ? PRESET_RANK[preset as keyof typeof PRESET_RANK] : fallback;
+/** PRESET_RANK by name, for a lookup with whatever preset dsh reports. */
+const RANK_BY_PRESET = new Map<string, number>(Object.entries(PRESET_RANK));
 
-/** The dsh permission preset that matches a Claude mode. Callers pass one of the six mode keys; any
- *  other string gives undefined despite the type. */
-export const presetForMode = (m: string): string =>
-  // SAFETY: PRESET_FOR_MODE has exactly the six Claude modes as keys; all callers pass a known key.
-  PRESET_FOR_MODE[m as keyof typeof PRESET_FOR_MODE];
+/** A preset's place from strictest, or `fallback` for a preset this table does not know. */
+const rankOf = (preset: string, fallback: number): number => RANK_BY_PRESET.get(preset) ?? fallback;
+
+/** The dsh permission preset that matches one of the six Claude modes. */
+export const presetForMode = (m: keyof typeof PRESET_FOR_MODE): string => PRESET_FOR_MODE[m];
+
+/** PRESET_FOR_MODE by mode, for a mode named by a string from elsewhere; an unknown one has none. */
+const PRESET_BY_MODE = new Map<string, string>(Object.entries(PRESET_FOR_MODE));
 
 /** What each shield gives a session with no override when `permissionMode` is `dsh`. */
 const DSH_DEFAULTS = {
@@ -50,7 +51,7 @@ const defaultsOf = (snap: PermissionModeState): Record<string, string> =>
 export const clearsOverride = (mode: string, snap: PermissionModeState): boolean =>
   // A snapshot from a server older than this client has no map (the client hot-reloads, the
   // server waits for a restart): the `dsh` mapping is what that server uses, so it stands in.
-  mode === defaultsOf(snap)[presetForMode(mode)];
+  mode === defaultsOf(snap)[PRESET_BY_MODE.get(mode) ?? ""];
 
 /** Whether a pick of `mode` must leave everything as it is: the mode is already in force and its
  *  preset is looser than the shield. Only a pinned config puts a session there (a pinned Auto on
@@ -60,4 +61,4 @@ export const clearsOverride = (mode: string, snap: PermissionModeState): boolean
 export const keepsShield = (mode: string, snap: PermissionModeState): boolean =>
   mode === snap.mode &&
   snap.accessMode !== null &&
-  rankOf(presetForMode(mode), 0) > rankOf(snap.accessMode, 2);
+  rankOf(PRESET_BY_MODE.get(mode) ?? "", 0) > rankOf(snap.accessMode, 2);

@@ -1,4 +1,4 @@
-import { type VapidKeys } from "./adapter/web-push.js";
+import type { VapidKeys } from "./adapter/web-push.js";
 /** `notify.json`: the webhook and the address its links open at. `openUrl` is the origin of the
  *  browser that saved the form (the box only knows its own bind address, which a phone cannot
  *  reach through a proxy); null until a form is saved. */
@@ -41,7 +41,7 @@ export declare function validateNotifyConfig(body: unknown): {
  *  the password to read it, a Home Assistant webhook id is the trigger). */
 export declare function writeNotifyConfig(dir: string, config: NotifyConfig): Promise<void>;
 /** The saved devices, `{ devices: [...] }` on disk, dropping any row that lost a field. */
-export declare function readDevices(dir: string): Promise<PushDevice[]>;
+export declare function readDevices(dir: string): Promise<Array<PushDevice>>;
 /** A device's id: the first 16 hex of the endpoint's SHA-256, so the list can name a device
  *  without handing the endpoint to every tab. */
 export declare const deviceId: (endpoint: string) => string;
@@ -49,7 +49,7 @@ export declare const deviceId: (endpoint: string) => string;
  *  PUSH_SERVICES or an endpoint that is not a URL. */
 export declare function serviceOf(endpoint: string): string | null;
 /** The list rows, oldest first. */
-export declare const deviceRows: (devices: PushDevice[]) => DeviceRow[];
+export declare const deviceRows: (devices: Array<PushDevice>) => Array<DeviceRow>;
 /**
  * Check a subscription a browser sent: an `https:` endpoint on one of PUSH_SERVICES and the two
  * keys at the sizes the

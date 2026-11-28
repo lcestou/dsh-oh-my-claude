@@ -2,12 +2,13 @@
 // Push, and the VAPID pair those devices subscribed with. Box-wide on purpose: the phone that
 // subscribes and the desktop that sets the webhook are different browsers looking at one list.
 // An I/O module like state.ts: it parses what a browser sent and what sits in hand-editable files,
-// which is why `.oxlintrc.json` lists it with the other I/O modules.
+// which is why `oxlint.config.ts` lists it with the other I/O modules.
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { writeJson } from "./state.js";
-import { newVapidKeys, type VapidKeys } from "./adapter/web-push.js";
+import { newVapidKeys } from "./adapter/web-push.js";
+import type { VapidKeys } from "./adapter/web-push.js";
 
 /** `notify.json`: the webhook and the address its links open at. `openUrl` is the origin of the
  *  browser that saved the form (the box only knows its own bind address, which a phone cannot
@@ -35,6 +36,7 @@ export interface DeviceRow {
 
 /** The longest webhook or endpoint address kept; a longer one is refused rather than cut. */
 export const WEBHOOK_URL_MAX = 2000;
+
 /** Devices kept per box. A twenty-first subscription is refused: each notice costs one request per
  *  device, and a list that long is stale subscriptions nobody removed. */
 export const DEVICES_MAX = 20;
@@ -65,10 +67,17 @@ const textOrNull = (v: unknown): string | null => (typeof v === "string" && v !=
 
 /** An `http:` or `https:` URL; null for absent or empty; "bad" for anything else. */
 function httpUrl(v: unknown): URL | null | "bad" {
-  if (v === null || v === undefined || v === "") return null;
-  if (typeof v !== "string") return "bad";
+  if (v === null || v === undefined || v === "") {
+    return null;
+  }
+
+  if (typeof v !== "string") {
+    return "bad";
+  }
+
   try {
     const u = new URL(v.trim());
+
     return u.protocol === "https:" || u.protocol === "http:" ? u : "bad";
   } catch {
     return "bad";
@@ -82,6 +91,7 @@ const decodedLength = (v: unknown): number =>
 /** The saved config, each field null when absent or not a string. */
 export async function readNotifyConfig(dir: string): Promise<NotifyConfig> {
   const o = await readFields(join(dir, CONFIG_FILE));
+
   return { webhookUrl: textOrNull(o.webhookUrl), openUrl: textOrNull(o.openUrl) };
 }
 
@@ -94,11 +104,18 @@ export function validateNotifyConfig(
   body: unknown,
 ): { config: NotifyConfig } | { error: "notifyBadUrl" | "notifyLongUrl" } {
   const o = fieldsOf(body);
-  if (typeof o.webhookUrl === "string" && o.webhookUrl.length > WEBHOOK_URL_MAX)
+
+  if (typeof o.webhookUrl === "string" && o.webhookUrl.length > WEBHOOK_URL_MAX) {
     return { error: "notifyLongUrl" };
+  }
+
   const hook = httpUrl(o.webhookUrl);
   const open = httpUrl(o.openUrl);
-  if (hook === "bad" || open === "bad") return { error: "notifyBadUrl" };
+
+  if (hook === "bad" || open === "bad") {
+    return { error: "notifyBadUrl" };
+  }
+
   return { config: { webhookUrl: hook?.href ?? null, openUrl: open?.origin ?? null } };
 }
 
@@ -111,6 +128,7 @@ export function writeNotifyConfig(dir: string, config: NotifyConfig): Promise<vo
 /** One stored row as a device, or null when it lost a field to a hand edit. */
 function deviceOf(v: unknown): PushDevice | null {
   const d = fieldsOf(v);
+
   return typeof d.endpoint === "string" &&
     typeof d.p256dh === "string" &&
     typeof d.auth === "string" &&
@@ -120,9 +138,13 @@ function deviceOf(v: unknown): PushDevice | null {
 }
 
 /** The saved devices, `{ devices: [...] }` on disk, dropping any row that lost a field. */
-export async function readDevices(dir: string): Promise<PushDevice[]> {
+export async function readDevices(dir: string): Promise<Array<PushDevice>> {
   const { devices } = await readFields(join(dir, DEVICES_FILE));
-  if (!Array.isArray(devices)) return [];
+
+  if (!Array.isArray(devices)) {
+    return [];
+  }
+
   return devices.map(deviceOf).filter((d): d is PushDevice => d !== null);
 }
 
@@ -145,22 +167,29 @@ const PUSH_SERVICES: ReadonlyArray<readonly [string, string]> = [
  *  PUSH_SERVICES or an endpoint that is not a URL. */
 export function serviceOf(endpoint: string): string | null {
   let host = "";
+
   try {
     host = new URL(endpoint).hostname;
   } catch {
     return null;
   }
+
   return PUSH_SERVICES.find(([suffix]) => `.${host}`.endsWith(suffix))?.[1] ?? null;
 }
 
+/** The host of an `http:` or `https:` URL, or "?" for anything else. */
+const hostOf = (v: string): string => {
+  const u = httpUrl(v);
+
+  return u === null || u === "bad" ? "?" : u.host;
+};
+
 /** The list rows, oldest first. */
-export const deviceRows = (devices: PushDevice[]): DeviceRow[] =>
+export const deviceRows = (devices: Array<PushDevice>): Array<DeviceRow> =>
   devices.map((d) => ({
     id: deviceId(d.endpoint),
     // A hand-edited row with an unknown host still lists, by its host, so it can be deleted.
-    service:
-      serviceOf(d.endpoint) ??
-      (httpUrl(d.endpoint) instanceof URL ? new URL(d.endpoint).host : "?"),
+    service: serviceOf(d.endpoint) ?? hostOf(d.endpoint),
     added: d.added,
   }));
 
@@ -173,16 +202,30 @@ export const deviceRows = (devices: PushDevice[]): DeviceRow[] =>
 export function validateDevice(body: unknown, now = Date.now()): PushDevice | null {
   const o = fieldsOf(body);
   const keys = fieldsOf(o.keys);
-  if (typeof o.endpoint !== "string" || o.endpoint.length > WEBHOOK_URL_MAX) return null;
+
+  if (typeof o.endpoint !== "string" || o.endpoint.length > WEBHOOK_URL_MAX) {
+    return null;
+  }
+
   const url = httpUrl(o.endpoint);
-  if (url === null || url === "bad" || url.protocol !== "https:") return null;
-  if (serviceOf(o.endpoint) === null) return null;
-  if (decodedLength(keys.p256dh) !== 65 || decodedLength(keys.auth) !== 16) return null;
+
+  if (url === null || url === "bad" || url.protocol !== "https:") {
+    return null;
+  }
+
+  if (serviceOf(o.endpoint) === null) {
+    return null;
+  }
+
+  if (decodedLength(keys.p256dh) !== 65 || decodedLength(keys.auth) !== 16) {
+    return null;
+  }
+
   return { endpoint: o.endpoint, p256dh: String(keys.p256dh), auth: String(keys.auth), added: now };
 }
 
 /** Save the device list owner-only: each endpoint is an address anyone holding it can push to. */
-function writeDevices(dir: string, devices: PushDevice[]): Promise<void> {
+function writeDevices(dir: string, devices: Array<PushDevice>): Promise<void> {
   return writeJson(join(dir, DEVICES_FILE), { devices }, { pretty: true, mode: 0o600 });
 }
 
@@ -195,6 +238,7 @@ let devicesChain: Promise<unknown> = Promise.resolve();
 function inDevicesChain<R>(job: () => Promise<R>): Promise<R> {
   const next = devicesChain.then(job, job);
   devicesChain = next.catch(() => undefined);
+
   return next;
 }
 
@@ -203,8 +247,13 @@ function inDevicesChain<R>(job: () => Promise<R>): Promise<R> {
 export function addDevice(dir: string, device: PushDevice): Promise<boolean> {
   return inDevicesChain(async () => {
     const others = (await readDevices(dir)).filter((d) => d.endpoint !== device.endpoint);
-    if (others.length >= DEVICES_MAX) return false;
+
+    if (others.length >= DEVICES_MAX) {
+      return false;
+    }
+
     await writeDevices(dir, [...others, device]);
+
     return true;
   });
 }
@@ -214,7 +263,10 @@ export function removeDevices(dir: string, ids: ReadonlySet<string>): Promise<vo
   return inDevicesChain(async () => {
     const all = await readDevices(dir);
     const kept = all.filter((d) => !ids.has(deviceId(d.endpoint)));
-    if (kept.length !== all.length) await writeDevices(dir, kept);
+
+    if (kept.length !== all.length) {
+      await writeDevices(dir, kept);
+    }
   });
 }
 
@@ -226,11 +278,13 @@ const vapidMemo = new Map<string, Promise<VapidKeys>>();
  *  is forgotten so the next call tries again. */
 export function vapidKeys(dir: string): Promise<VapidKeys> {
   let pending = vapidMemo.get(dir);
+
   if (pending === undefined) {
     pending = loadOrMakeVapid(dir);
     vapidMemo.set(dir, pending);
     pending.catch(() => vapidMemo.delete(dir));
   }
+
   return pending;
 }
 
@@ -238,11 +292,16 @@ export function vapidKeys(dir: string): Promise<VapidKeys> {
 async function loadOrMakeVapid(dir: string): Promise<VapidKeys> {
   const o = await readFields(join(dir, VAPID_FILE));
   const jwk = fieldsOf(o.privateJwk);
+
   if (typeof o.publicKey === "string" && typeof jwk.d === "string")
-    // SAFETY: the file is the JWK `newVapidKeys` exported; a hand-broken one that still has a `d`
-    // fails `createPrivateKey` inside `deliver`'s per-device try, which counts and logs it.
-    return { publicKey: o.publicKey, privateJwk: jwk as JsonWebKey };
+  // SAFETY: the file is the JWK `newVapidKeys` exported; a hand-broken one that still has a `d`
+  // fails `createPrivateKey` inside `deliver`'s per-device try, which counts and logs it.
+  {
+    return { publicKey: o.publicKey, privateJwk: jwk };
+  }
+
   const keys = newVapidKeys();
   await writeJson(join(dir, VAPID_FILE), keys, { pretty: true, mode: 0o600 });
+
   return keys;
 }

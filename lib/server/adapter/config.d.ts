@@ -3,7 +3,7 @@ import type { RemoteWorkspace } from "../sessions.js";
 export declare const DSH_VERSION: string | null;
 /** Replace the redirect map: the boot read and every panel edit land here. Exported so the offline
  * suite can drive the two lookups below without a dsh mount. */
-export declare function setRemoteWorkspaces(workspaces: RemoteWorkspace[]): void;
+export declare function setRemoteWorkspaces(workspaces: Array<RemoteWorkspace>): void;
 /**
  * Whether `cwd` is the stand-in of a remote workspace that no longer exists. Removing a box, or
  * deleting the workspace, drops its row and its stand-in folder, but dsh keeps the sessions and
@@ -32,16 +32,16 @@ export type Config = {
     sshHost: string;
     configDir: string;
     permissionMode: "dsh" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto" | "manual";
-    hiddenModels: string[];
-    customModels: CustomModel[];
-    allowedTools: string[];
-    disallowedTools: string[];
-    builtinTools: string[];
+    hiddenModels: Array<string>;
+    customModels: Array<CustomModel>;
+    allowedTools: Array<string>;
+    disallowedTools: Array<string>;
+    builtinTools: Array<string>;
     toolLoading: "claude" | "dsh";
     followToolSet: boolean;
-    addDirs: string[];
-    pluginDirs: string[];
-    pluginUrls: string[];
+    addDirs: Array<string>;
+    pluginDirs: Array<string>;
+    pluginUrls: Array<string>;
     maxTurns?: number;
     maxBudgetUsd?: number;
     titleModel: string;
@@ -82,7 +82,7 @@ export interface CustomModel {
     /** The model's context window in tokens; 200,000 when absent. */
     contextWindow?: number;
     /** Effort levels the model takes; none when absent, and the effort picker stays hidden. */
-    efforts?: string[];
+    efforts?: Array<string>;
 }
 /** Configuration schema for Claude Code plugin settings. */
 export declare const Config: z<Schemastery.ObjectS<{

@@ -8,6 +8,7 @@ import { rmSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { attachKeeper, pidAlive, readKeeperInfo, spawnKeeper } from "./process.js";
 import { tempDir } from "./test-tmp.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 // A stand-in for claude: on "go", a turn's five lines, the last one its result.
 const fake = `
@@ -18,16 +19,20 @@ process.stdin.on("data", (d) => {
     setTimeout(() => process.stdout.write(JSON.stringify({ type: name }) + "\\n"), 40 * i));
 });
 `;
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const wait = (ms: number) => sleep(ms);
+
 const lines = (r: NodeJS.ReadableStream) => {
-  const out: string[] = [];
+  const out: Array<string> = [];
   createInterface({ input: r, crlfDelay: Infinity }).on("line", (l) =>
     out.push(JSON.parse(l).type),
   );
+
   return out;
 };
 
 const dir = tempDir("omc-replay-");
+
 const a = await spawnKeeper(
   dir,
   {
@@ -42,23 +47,32 @@ const a = await spawnKeeper(
     c.unref();
   },
 );
+
 // Client A: reads every line, but its turn uses only the first two, then dsh shuts down.
 const seenByA = lines(a.stdout);
+
 a.stdin.write("go\n");
+
 await wait(600);
+
 assert.deepEqual(
   seenByA,
   ["system", "assistant-1", "tool", "assistant-2", "result"],
   "A read the whole turn",
 );
+
 a.ack?.(0);
+
 a.ack?.(1);
+
 await wait(100);
 
 // Client B, the restarted dsh, replaces A and is replayed what no turn used.
 const b = await attachKeeper(dir, 2000);
 const seenByB = lines(b.stdout);
+
 await wait(400);
+
 assert.deepEqual(
   seenByB,
   ["tool", "assistant-2", "result"],
@@ -67,20 +81,34 @@ assert.deepEqual(
 
 // Used by B, they are gone: the next attach gets nothing again.
 b.ack?.(0);
+
 b.ack?.(1);
+
 b.ack?.(2);
+
 await wait(100);
+
 const c = await attachKeeper(dir, 2000);
 const seenByC = lines(c.stdout);
+
 await wait(300);
+
 assert.deepEqual(seenByC, [], "a line a turn used is not replayed");
+
 console.log("keeper-replay ok");
 
 c.terminate();
+
 await Promise.race([c.done, wait(3000)]);
+
 const pid = readKeeperInfo(dir)?.pid;
 const deadline = Date.now() + 8000;
 const keeperAlive = () => pid !== undefined && pidAlive(pid);
-while (keeperAlive() && Date.now() < deadline) await wait(200);
+
+while (keeperAlive() && Date.now() < deadline) {
+  await wait(200);
+}
+
 assert.ok(!keeperAlive(), "the keeper is gone");
+
 rmSync(dir, { recursive: true, force: true });

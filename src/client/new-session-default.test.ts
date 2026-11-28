@@ -12,11 +12,13 @@ assert.deepEqual(blankSessionTarget({ current: "claude-code", picked: undefined,
   model: "claude-sonnet-5-5",
   reasoningEffort: "medium",
 });
+
 // Nothing remembered: the default, on the box it names, even when the blank is already Claude.
 assert.deepEqual(
   blankSessionTarget({ current: "claude-code-lilly", picked: undefined, saved: undefined, def }),
   { provider: "claude-code", model: "claude-opus-5-5", reasoningEffort: "high" },
 );
+
 assert.deepEqual(
   blankSessionTarget({
     current: "claude-code",
@@ -26,6 +28,7 @@ assert.deepEqual(
   }),
   { provider: "claude-code-lilly", model: "claude-opus-5-5", reasoningEffort: "high" },
 );
+
 // A Claude mount picked by hand keeps its box; the default only fills in the model.
 assert.deepEqual(
   blankSessionTarget({
@@ -36,11 +39,13 @@ assert.deepEqual(
   }),
   { provider: "claude-code-lilly", model: "claude-opus-5-5", reasoningEffort: "high" },
 );
+
 // A blank that is not Claude stays put unless the default says all workspaces...
 assert.equal(
   blankSessionTarget({ current: undefined, picked: undefined, saved: undefined, def }),
   undefined,
 );
+
 assert.deepEqual(
   blankSessionTarget({
     current: undefined,
@@ -50,6 +55,7 @@ assert.deepEqual(
   }),
   { provider: "claude-code", model: "claude-opus-5-5", reasoningEffort: "high" },
 );
+
 // ...and never against a provider someone picked by hand.
 assert.equal(
   blankSessionTarget({
@@ -60,7 +66,9 @@ assert.equal(
   }),
   undefined,
 );
+
 assert.equal(blankSessionTarget({ current: undefined, picked: "llama", saved, def }), undefined);
+
 // The memory pulls a non-Claude blank onto the Claude it last ran there; an old row has no effort.
 assert.deepEqual(
   blankSessionTarget({
@@ -71,6 +79,7 @@ assert.deepEqual(
   }),
   { provider: "claude-code", model: "claude-opus-5" },
 );
+
 // A default without an effort leaves the model's own.
 assert.deepEqual(
   blankSessionTarget({
@@ -81,6 +90,7 @@ assert.deepEqual(
   }),
   { provider: "claude-code", model: "claude-opus-5-5" },
 );
+
 // A box picked by hand after the blank came up local: the pick decides the mount, for the default
 // and for the memory alike (`current` is read at mount, `picked` just before the apply).
 assert.deepEqual(
@@ -92,10 +102,12 @@ assert.deepEqual(
   }),
   { provider: "claude-code-lilly", model: "claude-opus-5-5", reasoningEffort: "high" },
 );
+
 assert.deepEqual(
   blankSessionTarget({ current: "claude-code", picked: "claude-code-lilly", saved, def }),
   { provider: "claude-code-lilly", model: "claude-sonnet-5-5", reasoningEffort: "medium" },
 );
+
 // Nothing at all: leave the blank alone.
 assert.equal(
   blankSessionTarget({
@@ -106,4 +118,5 @@ assert.equal(
   }),
   undefined,
 );
+
 console.log("new-session-default ok");

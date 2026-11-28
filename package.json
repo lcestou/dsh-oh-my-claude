@@ -40,28 +40,33 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "find src -name '*.test.ts' | xargs -P 8 -I{} sh -c 'd=$(mktemp -d /tmp/omc-test.XXXXXX); DSH_OMC_STATE_DIR=$d bun \"$1\"; s=$?; rm -rf \"$d\"; exit $s' _ {}",
-    "lint": "oxlint src/ tools/ --max-warnings=0",
-    "format": "oxfmt src/ tools/",
+    "lint": "oxlint src/ tools/ oxlint.config.ts --max-warnings=0",
+    "test:rules": "node --test 'tools/oxlint/**/*.test.ts'",
+    "format": "oxfmt src/ tools/ oxlint.config.ts",
     "deadcode": "fallow dead-code",
     "build:server": "rm -rf lib/server && tsc -p tsconfig.build.json",
-    "build:client": "NODE_ENV=production bun build src/client/index.tsx --format=cjs --target=browser --minify --outfile=lib/client.js --external react --external react/jsx-runtime --external react-dom --external '@deepseek-ai/*' --banner='window.__ModuleLoader__.load({ id: \"dsh-oh-my-claude\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' --footer='return module.exports; } });'",
+    "build:client": "NODE_ENV=production bun build src/client/index.tsx --format=cjs --target=browser --minify --outfile=lib/client.js --external react --external react/jsx-runtime --external react-dom --external '@deepseek-ai/dsh-client-*' --banner='window.__ModuleLoader__.load({ id: \"dsh-oh-my-claude\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;' --footer='return module.exports; } });'",
     "build": "bun run build:server && bun run build:client",
     "validate": "bun tools/validate.ts"
   },
   "dependencies": {},
   "devDependencies": {
+    "@cloudflare/oxlint-config": "0.2.0",
+    "@deepseek-ai/dsh-brand": "0.1.6-alpha.1",
     "@deepseek-ai/dsh-client-ui-primitives": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-llm": "0.1.6-alpha.1",
-    "@oxlint/plugins": "1.80.0",
+    "@oxlint/plugins": "^1.95.0",
     "@types/node": "^26.4.1",
     "@types/react": "18",
     "fallow": "^3.17.0",
     "oxfmt": "^0.66.0",
-    "oxlint": "^1.80.0",
+    "oxlint": "^1.95.0",
     "react": "18",
+    "tsrs": "7.1.0-beta.tsrs5",
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
+    "@deepseek-ai/dsh-brand": ">=0.2.2-alpha.2 <0.3.0",
     "@deepseek-ai/dsh-llm": ">=0.2.2-alpha.2 <0.3.0",
     "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/schemastery": "^3.18.0",
@@ -69,12 +74,14 @@
     "react-dom": "^18.3.1"
   },
   "engines": {
-    "node": ">=22.15.0",
+    "node": ">=24.9.0",
     "dsh": ">=0.2.2-alpha.2 <0.3.0"
   },
   "files": [
     "src",
     "!src/**/*.test.ts",
+    "!src/test-context.ts",
+    "!src/test-dsh.ts",
     "lib",
     "locale",
     "icon.svg",
@@ -95,6 +102,9 @@
     }
   },
   "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-brand": {
+      "optional": true
+    },
     "@deepseek-ai/dsh-llm": {
       "optional": true
     },

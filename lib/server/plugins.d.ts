@@ -1,5 +1,5 @@
 import type { JsonValue } from "./dsh.js";
-import { type ScopeText } from "./switches.js";
+import type { ScopeText } from "./switches.js";
 /** One `enabledPlugins` entry, keyed `plugin-id@marketplace-id`. */
 export interface PluginRow {
     key: string;
@@ -18,8 +18,8 @@ export interface MarketplaceRow {
     alias?: boolean;
 }
 export interface PluginRoster {
-    plugins: PluginRow[];
-    marketplaces: MarketplaceRow[];
+    plugins: Array<PluginRow>;
+    marketplaces: Array<MarketplaceRow>;
 }
 /** One entry of the init frame's `plugin_errors`: a plugin the CLI could not load, and why.
  *  `plugin` is the id, or a synthetic `inline[N]` for a `--plugin-dir` load; `message` is a full
@@ -32,7 +32,7 @@ export interface PluginLoadError {
 /** Parse the init frame's `plugin_errors` into typed rows. Absent or malformed entries drop out; a
  *  clean load has no key and yields `[]`. `typeof` is allowed here (developing.md: the runtime-typeof
  *  rule names only adapter.ts and client/index.tsx). */
-export declare function pluginErrorsOf(value: JsonValue): PluginLoadError[];
+export declare function pluginErrorsOf(value: JsonValue): Array<PluginLoadError>;
 /** Read a numeric field off a control-response object, `undefined` when absent or not a number.
  *  Lives here so adapter.ts (which forbids `typeof`) can read `reload_plugins`' `error_count`. */
 export declare function numberOf(value: JsonValue | undefined, key: string): number | undefined;
@@ -63,5 +63,5 @@ export declare const isMarketplaceSource: (value: unknown) => value is string;
  * `additionalMarketplaces` is read as `extraKnownMarketplaces`, except in a file that spells both,
  * where the CLI ignores the alias with a warning.
  */
-export declare function pluginRoster(scopes: readonly ScopeText[]): PluginRoster;
+export declare function pluginRoster(scopes: ReadonlyArray<ScopeText>): PluginRoster;
 export {};

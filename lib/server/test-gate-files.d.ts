@@ -1,8 +1,10 @@
-import { type TestGateConfig, type TestGateFile, type TestGateRun } from "./test-gate.js";
+import type { TestGateConfig, TestGateFile, TestGateRun } from "./test-gate.js";
 /** A parsed JSON value: what `JSON.parse` can hand back. */
-type Json = string | number | boolean | null | Json[] | {
+type Json = string | number | boolean | null | Array<Json> | {
     [key: string]: Json;
 };
+/** A failure's text for the hook's stderr; the hook cannot load `process.ts`'s `errorText`. */
+export declare const failureText: (cause: unknown) => string;
 /** The gate file under a state dir. */
 export declare const gatePathIn: (stateDir: string) => string;
 /** The run directory under a state dir: one `<session>.json` per gated session. */

@@ -11,34 +11,34 @@ import {
   ACCENT,
   isClaudeSession,
   claudeProviderOf,
-  type ClientCtx,
   DOCK_CARD,
+  readJson,
 } from "./shared.js";
-import {
-  newestWins,
-  pollEvery,
-  subscribe,
-  type AsideItem,
-  type IdleReply,
-  type LoginNeed,
-  type HeldSteerRow,
-  type SteerCardData,
-  type WaitingSteerRow,
+import type { ClientCtx } from "./shared.js";
+import { newestWins, pollEvery, subscribe } from "./events.js";
+import type {
+  AsideItem,
+  IdleReply,
+  LoginNeed,
+  HeldSteerRow,
+  SteerCardData,
+  WaitingSteerRow,
 } from "./events.js";
 import { Spark } from "./spark.js";
 import { compactThreshold } from "./nudge.js";
-import { type RestoreWatch, startWatch, stepRestore, withdrawnSince } from "./steer-restore.js";
+import { startWatch, stepRestore, withdrawnSince } from "./steer-restore.js";
+import type { RestoreWatch } from "./steer-restore.js";
 import { useHintValue, useHintFlag } from "./hints.js";
 import { useComposerRecall } from "./recall.js";
 import { useEditLastPrompt } from "./edit-last.js";
 import { HistorySearch, useHistoryOpen } from "./history-search.js";
 import { Chevron } from "./boxes.js";
-import { type ContextReply, windowLabel } from "./context-meter.js";
+import { windowLabel } from "./context-meter.js";
+import type { ContextReply } from "./context-meter.js";
 import {
   sameNeed,
   iconBtn,
   HEADER_TOGGLE,
-  type ClaudeUpdateCardData,
   sameCard,
   useBindingLimit,
   SteerCard,
@@ -48,6 +48,7 @@ import {
   LoginCard,
   ClaudeUpdateCard,
 } from "./cards.js";
+import type { ClaudeUpdateCardData } from "./cards.js";
 
 /** The composer actions of the aside dock entry on screen, for the Run button, which is drawn
  *  outside any React tree. Null without a composer, so no button is offered. */
@@ -62,11 +63,13 @@ type ComposerSlot = {
     /** dsh 0.2.1: sends the draft the way Enter does (queued as a steer while a turn runs). */
     submit?: () => void;
   };
-  useInput?: <T>(select: (state: { draft: string; attachmentIds?: readonly string[] }) => T) => T;
+  useInput?: <T>(
+    select: (state: { draft: string; attachmentIds?: ReadonlyArray<string> }) => T,
+  ) => T;
 };
 
 /** A composer with no attachments, one identity so the selector does not churn. */
-const NO_ATTACHMENTS: readonly string[] = [];
+const NO_ATTACHMENTS: ReadonlyArray<string> = [];
 
 /**
  * Undo dsh's composer restore of an attachment steer the card took back. dsh counts a send with a
@@ -80,17 +83,23 @@ const NO_ATTACHMENTS: readonly string[] = [];
  * step does not recognise and leaves in place. Does nothing on a dsh without `removeAttachment`.
  */
 function useUndoSteerRestore(
-  waiting: WaitingSteerRow[],
-  held: HeldSteerRow[],
+  waiting: Array<WaitingSteerRow>,
+  held: Array<HeldSteerRow>,
   { inputActions, useInput }: ComposerSlot,
 ) {
+  // oxlint-disable-next-line react/hooks -- dsh hands its selector hooks in as slot props (SessionStandardProps), and one slot mount always gets the same hook.
   const ids = useInput?.((state) => state.attachmentIds) ?? NO_ATTACHMENTS;
+  // oxlint-disable-next-line react/hooks -- dsh hands its selector hooks in as slot props (SessionStandardProps), and one slot mount always gets the same hook.
   const draft = useInput?.((state) => state.draft) ?? "";
   const watch = useRef<RestoreWatch>(startWatch(ids, waiting, draft));
   useEffect(() => {
     const at = Date.now();
     const withdrawn = withdrawnSince(at);
-    for (const h of held) withdrawn.add(h.id);
+
+    for (const h of held) {
+      withdrawn.add(h.id);
+    }
+
     const { next, remove, clearDraft } = stepRestore(watch.current, {
       ids,
       rows: waiting,
@@ -98,11 +107,21 @@ function useUndoSteerRestore(
       at,
       withdrawn,
     });
+
     watch.current = next;
     const drop = inputActions?.removeAttachment;
-    if (!inputActions || !drop) return;
-    for (const id of remove) drop(id);
-    if (clearDraft) inputActions.setDraft("");
+
+    if (!inputActions || !drop) {
+      return;
+    }
+
+    for (const id of remove) {
+      drop(id);
+    }
+
+    if (clearDraft) {
+      inputActions.setDraft("");
+    }
   }, [waiting, held, ids, draft, inputActions]);
 }
 
@@ -121,9 +140,9 @@ export function AsideBubble({
   useInput,
 }: { sessionId: string; ctx: ClientCtx } & ComposerSlot) {
   useLocale();
-  const [items, setItems] = useState<AsideItem[]>([]);
+  const [items, setItems] = useState<Array<AsideItem>>([]);
   // What the poll compares its answer against, without listing `items` as a dependency of its effect.
-  const itemsRef = useRef<AsideItem[]>([]);
+  const itemsRef = useRef<Array<AsideItem>>([]);
   const [steers, setSteers] = useState<SteerCardData>({ waiting: [], held: [] });
   // The CLI's predicted next prompt, text only, so an unchanged poll answer is the same string
   // and React skips the render.
@@ -133,10 +152,15 @@ export function AsideBubble({
   const [suggestionHidden, setSuggestionHidden] = useState<string | null>(null);
   // What the poll compares its steers against, the same way `itemsRef` serves `items`.
   const steersRef = useRef<SteerCardData>({ waiting: [], held: [] });
-  steersRef.current = steers;
+
+  // Both refs follow what is on screen once it is committed, for the poll and the stream below.
+  useEffect(() => {
+    itemsRef.current = items;
+    steersRef.current = steers;
+  }, [items, steers]);
+
   // The poll itself, so the steer card can re-poll the moment an edit lands instead of in 3 s.
   const pollRef = useRef<() => void>(() => {});
-  itemsRef.current = items;
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
   /** The box whose login the last turn wanted, from the same poll; null once a turn or a login
    *  clears it on the server. Dismissal is this tab's alone. */
@@ -166,8 +190,10 @@ export function AsideBubble({
     let alive = true;
     // A read sent before an aside was dismissed can answer after the event that dropped it.
     const order = newestWins();
+
     const fetchItems = async () => {
       const fresh = order.ask();
+
       try {
         // `provider` is the mount the model picker names, so the update card reports the Claude
         // Code that was chosen rather than whichever box this session's turns happen to run on.
@@ -175,88 +201,135 @@ export function AsideBubble({
         // poll that was already happening: no extra request, and the server answers it with a map
         // lookup against updaters its own tick keeps fresh, so nothing here probes a box.
         const picked = claudeProviderOf(ctx, sessionId);
-        const r = await fetch(
-          `${ROUTE}/side-questions?session=${encodeURIComponent(sessionId)}${
-            picked === undefined ? "" : `&provider=${encodeURIComponent(picked)}`
-          }`,
-        );
-        if (!r.ok) return;
-        // SAFETY: our own JSON route; the union names both shapes the caller checks.
-        const body = (await r.json()) as
+
+        // A refused read throws, and the catch below keeps the last items on screen.
+        const body = await readJson<
           | {
-              items: AsideItem[];
+              items: Array<AsideItem>;
               loginNeeded?: LoginNeed | null;
               claudeUpdate?: ClaudeUpdateCardData | null;
               steers?: SteerCardData;
               suggestion?: { text: string } | null;
             }
-          | { error: string };
-        if ("error" in body) return;
+          | { error: string }
+        >(
+          await fetch(
+            `${ROUTE}/side-questions?session=${encodeURIComponent(sessionId)}${
+              picked === undefined ? "" : `&provider=${encodeURIComponent(picked)}`
+            }`,
+          ),
+        );
+
+        if ("error" in body) {
+          return;
+        }
+
         // The fields the stream also carries are taken only if no event landed meanwhile;
         // `claudeUpdate` is the read's alone, so it is always taken.
         const current = alive && fresh();
+
         if (current) {
           const nextNeed = body.loginNeeded ?? null;
           setNeed((cur) => (sameNeed(cur, nextNeed) ? cur : nextNeed));
           // The text alone: a fresh object on every poll would re-render the dock each time.
           setSuggestion(body.suggestion?.text ?? null);
         }
+
         if (alive) {
           // The card names a box's Claude Code, so it belongs to a session that runs on Claude
           // Code; the route answers it for any session it is asked about, and a local-model
           // session drew it too (owner, 2026-09-23). Read here, on every poll, rather than once:
           // the provider binding is briefly undefined during a restart, and a poll later it is back.
           const nextUpd = isClaudeSession(ctx, sessionId) ? (body.claudeUpdate ?? null) : null;
+
           // A card that was acted on stays until it says it is gone (its own countdown after a
           // success, the close otherwise): the server stops naming the release the moment the
           // install lands, and dropping the card on that poll left "Updated" on screen for a
           // blink. Only a newer release takes it over.
-          if (nextUpd !== null && nextUpd.latest !== actedRef.current) actedRef.current = null;
+          if (nextUpd !== null && nextUpd.latest !== actedRef.current) {
+            actedRef.current = null;
+          }
+
           setClaudeUpdate((cur) =>
             actedRef.current !== null ? cur : sameCard(cur, nextUpd) ? cur : nextUpd,
           );
         }
+
         // A fresh array every three seconds re-rendered the dock in every conversation forever,
         // answer or no answer; only a list that actually moved is worth a render.
         const next = body.items ?? [];
-        if (current && JSON.stringify(next) !== JSON.stringify(itemsRef.current)) setItems(next);
+
+        if (current && JSON.stringify(next) !== JSON.stringify(itemsRef.current)) {
+          setItems(next);
+        }
+
         const nextSteers = body.steers ?? { waiting: [], held: [] };
-        if (current && JSON.stringify(nextSteers) !== JSON.stringify(steersRef.current))
+
+        if (current && JSON.stringify(nextSteers) !== JSON.stringify(steersRef.current)) {
           setSteers(nextSteers);
+        }
       } catch {
         // network error: keep the last items on screen
       }
     };
+
+    // fetchItems never rejects: a failed read keeps the last items on screen.
     pollRef.current = () => void fetchItems();
-    fetchItems();
+    void fetchItems();
+
     // The items, the steers and the login card arrive on the event stream the moment they change;
     // `claudeUpdate` does not (the updater's tick lives on the route), so the read below stays as
     // the fallback: every 30 s while the stream is up, else every second during a running turn
     // and every three at rest. Self-scheduling so the rate follows the turn without a restart.
     const offAsides = subscribe("asides", (session, data) => {
-      if (session !== sessionId || !alive) return;
+      if (session !== sessionId || !alive) {
+        return;
+      }
+
       order.pushed();
       setNeed((cur) => (sameNeed(cur, data.loginNeeded) ? cur : data.loginNeeded));
       setSuggestion(data.suggestion?.text ?? null);
-      if (JSON.stringify(data.items) !== JSON.stringify(itemsRef.current)) setItems(data.items);
-      if (JSON.stringify(data.steers) !== JSON.stringify(steersRef.current)) setSteers(data.steers);
+
+      if (JSON.stringify(data.items) !== JSON.stringify(itemsRef.current)) {
+        setItems(data.items);
+      }
+
+      if (JSON.stringify(data.steers) !== JSON.stringify(steersRef.current)) {
+        setSteers(data.steers);
+      }
     });
+
     let timer: ReturnType<typeof setTimeout> | undefined;
+
     const tick = () => {
-      if (visibleRef.current) fetchItems();
+      if (visibleRef.current) {
+        void fetchItems();
+      }
+
       const running = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running === true;
       timer = setTimeout(tick, pollEvery(running, 1000, 3000));
     };
+
     timer = setTimeout(tick, 1000);
+
     const onVisibility = () => {
       visibleRef.current = document.visibilityState === "visible";
-      if (visibleRef.current) fetchItems();
+
+      if (visibleRef.current) {
+        void fetchItems();
+      }
     };
+
     document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
       alive = false;
       offAsides();
-      if (timer !== undefined) clearTimeout(timer);
+
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [ctx, sessionId]);
@@ -268,6 +341,7 @@ export function AsideBubble({
   const [warningsOff] = useHintFlag("limitWarningsOff");
   const [noticeOff] = useHintFlag("limitNoticeOff");
   const [limitDismissed, setLimitDismissed] = useHintValue("limitNoticeDismissed");
+
   const limitCard =
     limit?.level === "critical" &&
     !warningsOff &&
@@ -279,18 +353,22 @@ export function AsideBubble({
       Math.round(Number(limitDismissed) / 60_000) !== Math.round(limit.window.resetsAt / 60_000))
       ? limit.window
       : null;
+
   const shown = items.filter((it) => !it.dismissed && !dismissed.has(it.id));
   // No `activeClaudeSession` gate here either: the card shows this session's own persisted asides,
   // which only exist for a Claude session, so an empty list is the only reason to hide it. Reading
   // the provider binding at render blinked the card out whenever the binding reloaded.
   const loginCard = need && needDismissed !== need.host ? need : null;
+
   // Only with a composer to fill: dsh hands `inputActions` to dock entries, so a mount without it
   // (a dsh without the hook) has no Use to offer and shows nothing.
   const suggestionCard =
     suggestion !== null && inputActions && suggestionHidden !== suggestion ? suggestion : null;
+
   // The guess is what you might type; once you are typing something else it folds away (a short
   // fade, like the update card), and comes back if the box is cleared. Use's own text in the box
   // does not count as typing, so the card hides through `suggestionHidden` there instead.
+  // oxlint-disable-next-line react/hooks -- dsh hands its selector hooks in as slot props (SessionStandardProps), and one slot mount always gets the same hook.
   const draft = useInput?.((state) => state.draft) ?? "";
   const typingElse = draft.trim() !== "" && draft !== suggestionCard;
   // Sending what was typed empties the box a beat before the server's clear takes the card down,
@@ -317,29 +395,36 @@ export function AsideBubble({
   const [context, setContext] = useState<{ percentage: number; totalTokens: number } | null>(null);
   const [compactDismissed, setCompactDismissed] = useState(-1);
   useEffect(() => {
-    if (compactOff || running) return;
     let live = true;
+
+    /** One read of the session's context use; never rejects, a failed read changes nothing. The
+     *  route answers 200 with `ok: false` when there is no live process to ask. */
+    const readContext = async () => {
+      try {
+        const r = await readJson<ContextReply>(
+          await fetch(`${ROUTE}/context?session=${encodeURIComponent(sessionId)}`),
+        );
+
+        if (live) {
+          setContext(r.ok ? { percentage: r.percentage, totalTokens: r.totalTokens } : null);
+        }
+      } catch {
+        // the card keeps what it showed
+      }
+    };
+
     // A beat after the turn ends, and past `loadContext`'s cache: the read taken at mount, before
     // any process was up, answered "no live process" and a cached copy of that hid the card for
-    // the turn that followed (seen 2026-10-22 in the sweep check).
-    const timer = setTimeout(() => {
-      // SAFETY: the body is our own JSON route; both shapes carry `ok`
-      const read = fetch(`${ROUTE}/context?session=${encodeURIComponent(sessionId)}`).then(
-        (r) => r.json() as Promise<ContextReply>,
-      );
-      void read
-        .then((r) => {
-          if (live)
-            setContext(r.ok ? { percentage: r.percentage, totalTokens: r.totalTokens } : null);
-        })
-        .catch(() => {});
-    }, 1500);
+    // the turn that followed (seen 2026-10-22 in the sweep check). Never mid-turn or switched off.
+    const timer = compactOff || running ? undefined : setTimeout(() => void readContext(), 1500);
+
     return () => {
       live = false;
       clearTimeout(timer);
     };
   }, [sessionId, running, compactOff]);
   const compactBucket = context ? Math.floor(context.percentage / 10) : -1;
+
   const compactCard =
     !compactOff &&
     context !== null &&
@@ -347,29 +432,40 @@ export function AsideBubble({
     compactBucket !== compactDismissed
       ? context
       : null;
+
   // The Run button on shell snippets lives outside React (a body scan); it borrows this entry's
   // composer while the entry is on screen.
   useEffect(() => {
     dockComposer = inputActions ?? null;
+
     return () => {
       dockComposer = null;
     };
   }, [inputActions]);
   const [foldHold, setFoldHold] = useState(false);
-  const wasTyping = useRef(false);
-  useEffect(() => {
-    if (typingElse) {
-      wasTyping.current = true;
-      return;
+  // Typing that stops starts the hold, noticed during render the moment `typingElse` flips; the
+  // effect below lets it go 800 ms after the LATEST stop. Each stop bumps `holdStarts`, so a stop,
+  // a resume and a second stop inside the 800 ms restart the timer instead of ending the hold early.
+  const [wasTyping, setWasTyping] = useState(typingElse);
+  const [holdStarts, setHoldStarts] = useState(0);
+
+  if (wasTyping !== typingElse) {
+    setWasTyping(typingElse);
+
+    if (!typingElse) {
+      setFoldHold(true);
+      setHoldStarts((n) => n + 1);
     }
-    if (!wasTyping.current) return;
-    wasTyping.current = false;
-    setFoldHold(true);
-    const timer = setTimeout(() => setFoldHold(false), 800);
+  }
+
+  useEffect(() => {
+    const timer = holdStarts === 0 ? undefined : setTimeout(() => setFoldHold(false), 800);
+
     return () => clearTimeout(timer);
-  }, [typingElse]);
+  }, [holdStarts]);
   // Before the early return below: the card is gone once its last row goes, and so would be this.
   useUndoSteerRestore(steers.waiting, steers.held, { inputActions, useInput });
+
   // Ctrl+R's search card: its open state lives up here because the card has to draw even when
   // this entry has nothing else to show.
   const [historyOpen, setHistoryOpen] = useHistoryOpen({
@@ -377,7 +473,9 @@ export function AsideBubble({
     ctx,
     setDraft: inputActions?.setDraft,
   });
+
   const anySteers = steers.waiting.length > 0 || steers.held.length > 0;
+
   if (
     shown.length === 0 &&
     !loginCard &&
@@ -387,8 +485,9 @@ export function AsideBubble({
     !suggestionCard &&
     !compactCard &&
     !historyOpen
-  )
+  ) {
     return null;
+  }
 
   const dismissAside = (id: string) => {
     // Hide now, but tell the server to drop it so the next poll (or a remount) does not bring it back.
@@ -402,20 +501,35 @@ export function AsideBubble({
 
   const copy = (it: AsideItem) => {
     const text = it.answer ?? it.error ?? it.question;
-    void navigator.clipboard?.writeText(text).then(() => {
+    // A refused clipboard write shows no Copied mark and nothing else.
+    void (async () => {
+      try {
+        // No `?.`: a page without the clipboard API (plain http off localhost) throws here and
+        // shows no mark, the same as a refused write.
+        await navigator.clipboard.writeText(text);
+      } catch {
+        return;
+      }
+
       setCopied(it.id);
       setTimeout(() => setCopied((cur) => (cur === it.id ? null : cur)), 1200);
-    });
+    })();
   };
 
   const toggle = (id: string) =>
     setToggled((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+
       return next;
     });
-  const newest = shown[shown.length - 1]?.id;
+
+  const newest = shown.at(-1)?.id;
 
   return (
     // data-omc-dock-stack: on a phone the whole stack stops at 45% of the screen and scrolls
@@ -493,6 +607,7 @@ export function AsideBubble({
       )}
       {shown.map((it) => {
         const open = (it.id === newest) !== toggled.has(it.id);
+
         return (
           <div
             key={it.id}
@@ -619,62 +734,96 @@ export function AsideBubble({
 /** Small chip that warns when the idle watchdog is about to kill the process. */
 export function IdleChip({ sessionId }: { sessionId: string }) {
   useLocale();
-  const [deadline, setDeadline] = useState<number | null>(null);
+  // How long the watchdog has left, worked out when a deadline arrives (each one re-renders the
+  // chip, about once a second while a turn re-arms it); null while there is none.
+  const [remainingMs, setRemainingMs] = useState<number | null>(null);
   const visibleRef = useRef(true);
 
   useEffect(() => {
     let alive = true;
+
+    /** Puts a deadline from the read or the stream on screen; none or 0 hides the chip. */
+    const show = (deadline: number | null | undefined) =>
+      setRemainingMs(deadline ? deadline - Date.now() : null);
+
+    /** Never rejects: a refused or failed read keeps the previous deadline. */
     const fetchIdle = async () => {
       try {
-        const r = await fetch(`${ROUTE}/idle?session=${encodeURIComponent(sessionId)}`);
-        if (!r.ok) return;
-        // SAFETY: the body is our own JSON route; the union type names both shapes the caller checks
-        const body = (await r.json()) as IdleReply | { error: string };
-        if ("error" in body) return;
-        if (alive) setDeadline(body.deadline ?? null);
+        const body = await readJson<IdleReply | { error: string }>(
+          await fetch(`${ROUTE}/idle?session=${encodeURIComponent(sessionId)}`),
+        );
+
+        if ("error" in body) {
+          return;
+        }
+
+        if (alive) {
+          show(body.deadline);
+        }
       } catch {
         // network error: keep previous deadline
       }
     };
-    fetchIdle();
+
+    void fetchIdle();
+
     // The deadline arrives on the event stream (once a second while a turn re-arms it); the read
     // is the fallback: every 30 s while the stream is up, every 5 s when it is not.
     const offIdle = subscribe("idle", (session, data) => {
-      if (session === sessionId && alive) setDeadline(data.deadline ?? null);
+      if (session === sessionId && alive) {
+        show(data.deadline);
+      }
     });
+
     let timer: ReturnType<typeof setTimeout> | undefined;
+
     const tick = () => {
-      if (visibleRef.current) fetchIdle();
-      timer = setTimeout(tick, pollEvery(false, 5_000, 5_000));
+      if (visibleRef.current) {
+        void fetchIdle();
+      }
+
+      timer = setTimeout(tick, pollEvery(false, 5000, 5000));
     };
-    timer = setTimeout(tick, 5_000);
+
+    timer = setTimeout(tick, 5000);
+
     const onVisibility = () => {
       visibleRef.current = document.visibilityState === "visible";
-      if (visibleRef.current) fetchIdle();
+
+      if (visibleRef.current) {
+        void fetchIdle();
+      }
     };
+
     document.addEventListener("visibilitychange", onVisibility);
+
     return () => {
       alive = false;
       offIdle();
-      if (timer !== undefined) clearTimeout(timer);
+
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [sessionId]);
 
-  const remainingMs = deadline ? deadline - Date.now() : 0;
-  if (!deadline || remainingMs > 60_000) return null;
+  if (remainingMs === null || remainingMs > 60_000) {
+    return null;
+  }
+
   const seconds = Math.max(0, Math.round(remainingMs / 1000));
-  const extend = async () => {
-    try {
-      await fetch(`${ROUTE}/idle/extend`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ session: sessionId }),
-      });
-    } catch {
-      // extend failed silently; next poll will reflect state
-    }
+
+  const extend = () => {
+    // extend failed silently; next poll will reflect state
+    fetch(`${ROUTE}/idle/extend`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session: sessionId }),
+    }).catch(() => {});
   };
+
   return (
     <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
       <span style={{ fontSize: 11, color: T.warn, fontFamily: T.mono }}>

@@ -4,17 +4,8 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { STATE_DIR } from "./state.js";
-import {
-  frame,
-  knownRefusal,
-  readLog,
-  repair,
-  restoreBak,
-  writeLog,
-  type Block,
-  type Data,
-  type Row,
-} from "./session-repair.js";
+import { frame, knownRefusal, readLog, repair, restoreBak, writeLog } from "./session-repair.js";
+import type { Block, Data, Row } from "./session-repair.js";
 
 /** Build an event row with a seq, time and data for the self-check, the shape dsh's migration chain
  *  expects.
@@ -26,10 +17,11 @@ const ev = (seq: number, type: string, data: Data, extra: Partial<Row> = {}): Ro
   data,
   ...extra,
 });
+
 /** Build an assistant message row for the self-check, tagged as a model with placeholder provider
  *  and model.
  */
-const msg = (id: string, content: Block[]) => ({
+const msg = (id: string, content: Array<Block>) => ({
   role: "assistant",
   id,
   source: { kind: "model", provider: "p", model: "m" },
@@ -41,7 +33,7 @@ const msg = (id: string, content: Block[]) => ({
  */
 
 {
-  const rows: Row[] = [
+  const rows: Array<Row> = [
     ev(0, "turn/start", { turn: 1 }),
     ev(1, "step/start", { turn: 1, step: 1 }),
     ev(2, "assistant/chunk", {
@@ -115,6 +107,7 @@ const msg = (id: string, content: Block[]) => ({
     ev(18, "step/end", { turn: 2, step: 1 }),
     ev(19, "turn/end", { turn: 2, reason: "aborted" }),
   ];
+
   const { rows: out, droppedCalls, addedHead, closedCalls } = repair(structuredClone(rows));
   assert.equal(droppedCalls, 1, "one unadvertised call dropped");
   assert.equal(closedCalls, 1, "one call still open at its step/end got a placeholder result");
@@ -189,8 +182,10 @@ const msg = (id: string, content: Block[]) => ({
     "system/message requires a protected first surface head",
     "step/end leaves unresolved tool call z",
     "headless",
-  ])
+  ]) {
     assert.equal(knownRefusal(s), true, s);
+  }
+
   assert.equal(
     knownRefusal("V3 catalog migration requires explicit historical child facts"),
     false,
@@ -205,7 +200,7 @@ const msg = (id: string, content: Block[]) => ({
   mkdirSync(dir, { recursive: true });
   const file = join(dir, "session.v4.jsonl.zstd");
   const header = { type: "session", version: 4, id: "s" };
-  const rows: Row[] = [ev(0, "turn/start", { turn: 1 }), ev(1, "turn/end", { turn: 1 })];
+  const rows: Array<Row> = [ev(0, "turn/start", { turn: 1 }), ev(1, "turn/end", { turn: 1 })];
   writeFileSync(
     file,
     Buffer.concat([

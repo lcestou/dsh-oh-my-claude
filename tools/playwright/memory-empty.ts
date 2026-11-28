@@ -6,7 +6,8 @@
 // so asking the browser for light changes nothing.
 //
 // Point PLAYWRIGHT_ROOT at any project with Playwright installed; arg 1 is the dsh launch token.
-import { dshUrl, launch, type JsonDoc } from "./pw.js";
+import { dshUrl, launch } from "./pw.js";
+import type { JsonDoc } from "./pw.js";
 
 const [token, out = "/tmp/pw"] = process.argv.slice(2);
 
@@ -23,7 +24,7 @@ interface Case {
   dir: boolean;
 }
 
-const cases: Case[] = [
+const cases: Array<Case> = [
   { name: "empty", status: 200, body: { dir: DIR, files: [] }, shows: "Looked in", dir: true },
   {
     name: "failed",
@@ -51,7 +52,8 @@ const views = [
 
 const b = await launch();
 let failed = false;
-for (const c of cases)
+
+for (const c of cases) {
   for (const view of views) {
     const ctx = await b.newContext({ viewport: view.viewport, colorScheme: "dark" });
     const p = await ctx.newPage();
@@ -62,18 +64,22 @@ for (const c of cases)
     await p.waitForTimeout(2500);
     // Open a session so the panel has one to read.
     const wsItem = p.locator('[role="treeitem"]').first();
+
     if (await wsItem.count()) {
       await wsItem.click({ force: true });
       await p.waitForTimeout(1000);
     }
+
     const sessionRow = p
       .locator('[role="treeitem"]')
       .filter({ hasText: /Running|\bnow\b|\d+min/ })
       .first();
+
     if (await sessionRow.count()) {
       await sessionRow.click({ force: true });
       await p.waitForTimeout(1500);
     }
+
     await p.locator('button[aria-label="Oh My Claude"]').first().click();
     await p.waitForTimeout(600);
     await p.locator("#omc-tab-Memory").click();
@@ -83,17 +89,23 @@ for (const c of cases)
     const text = await panel.innerText().catch(() => "");
     const dirLine = p.locator('[data-omc-memory-dir=""]');
     const dirShown = (await dirLine.count()) === 1;
+
     // The line shows the path under `~`, and carries the whole of it for a hover.
     const dirOk = c.dir
       ? dirShown &&
         (await dirLine.innerText()).includes("~/.claude/projects") &&
         (await dirLine.getAttribute("title")) === DIR
       : !dirShown;
+
     // Nothing in the panel may run past the viewport's right edge at phone width.
     const box = c.dir ? await dirLine.boundingBox() : null;
     const fits = box === null || box.x + box.width <= view.viewport.width;
     const ok = text.includes(c.shows) && dirOk && fits;
-    if (!ok) failed = true;
+
+    if (!ok) {
+      failed = true;
+    }
+
     const shot = `${out}/memory-${c.name}-${view.name}.png`;
     await p.screenshot({ path: shot });
     console.log(
@@ -102,5 +114,10 @@ for (const c of cases)
     await p.unrouteAll({ behavior: "ignoreErrors" });
     await ctx.close();
   }
+}
+
 await b.close();
-if (failed) process.exit(1);
+
+if (failed) {
+  process.exit(1);
+}
