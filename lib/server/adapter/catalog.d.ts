@@ -66,6 +66,12 @@ export declare const LINEUP_PROBE_WAIT_MS = 5000;
 export declare const LINEUP_PROBE_ARGS: string[];
 /** Parse a persisted catalog file. Anything malformed reads as empty, so the caller falls back. */
 export declare function parseCatalogCache(text: string): Array<ReturnType<typeof M>>;
+/** The effort capability block of a Models API row, keeping the flags and level blocks it can read
+ *  and skipping any other value, so a field the API adds later does not cost the model its
+ *  efforts. Undefined when the row has no block. */
+export declare function effortCapsOf(row: {
+    effort?: unknown;
+}): EffortCaps | undefined;
 /** One entry of the Anthropic Models API list, in the shape the picker uses. */
 export declare function modelFromApi(m: {
     id?: string;

@@ -444,22 +444,25 @@ export function AsideBubble({
   }, [inputActions]);
   const [foldHold, setFoldHold] = useState(false);
   // Typing that stops starts the hold, noticed during render the moment `typingElse` flips; the
-  // effect below lets it go 800 ms later.
+  // effect below lets it go 800 ms after the LATEST stop. Each stop bumps `holdStarts`, so a stop,
+  // a resume and a second stop inside the 800 ms restart the timer instead of ending the hold early.
   const [wasTyping, setWasTyping] = useState(typingElse);
+  const [holdStarts, setHoldStarts] = useState(0);
 
   if (wasTyping !== typingElse) {
     setWasTyping(typingElse);
 
     if (!typingElse) {
       setFoldHold(true);
+      setHoldStarts((n) => n + 1);
     }
   }
 
   useEffect(() => {
-    const timer = foldHold ? setTimeout(() => setFoldHold(false), 800) : undefined;
+    const timer = holdStarts === 0 ? undefined : setTimeout(() => setFoldHold(false), 800);
 
     return () => clearTimeout(timer);
-  }, [foldHold]);
+  }, [holdStarts]);
   // Before the early return below: the card is gone once its last row goes, and so would be this.
   useUndoSteerRestore(steers.waiting, steers.held, { inputActions, useInput });
 
@@ -501,7 +504,9 @@ export function AsideBubble({
     // A refused clipboard write shows no Copied mark and nothing else.
     void (async () => {
       try {
-        await navigator.clipboard?.writeText(text);
+        // No `?.`: a page without the clipboard API (plain http off localhost) throws here and
+        // shows no mark, the same as a refused write.
+        await navigator.clipboard.writeText(text);
       } catch {
         return;
       }

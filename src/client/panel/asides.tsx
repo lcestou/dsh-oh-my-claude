@@ -103,7 +103,9 @@ export function AsidesBody({ sessionId }: { sessionId: string }) {
     // A refused clipboard write shows no Copied mark and nothing else.
     void (async () => {
       try {
-        await navigator.clipboard?.writeText(text);
+        // No `?.`: a page without the clipboard API (plain http off localhost) throws here and
+        // shows no mark, the same as a refused write.
+        await navigator.clipboard.writeText(text);
       } catch {
         return;
       }

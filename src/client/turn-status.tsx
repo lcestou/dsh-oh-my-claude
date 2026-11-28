@@ -1504,11 +1504,8 @@ const ROW_MARK = "data-omc-claude";
  *  scan's title-match fallback on a dsh without the row-action slot. */
 export const claudeRunningTitles = (ctx: ClientCtx): Set<string> => {
   const set = new Set<string>();
+  // dsh's SnapshotStore always answers a SessionListState, so there is no missing snapshot to skip.
   const snap = ctx.sessions.list.getSnapshot();
-
-  if (!snap) {
-    return set;
-  }
 
   for (const [id, s] of Object.entries(snap.byId)) {
     if (s.running && s.displayTitle && isClaudeSession(ctx, id)) {

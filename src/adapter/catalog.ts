@@ -256,10 +256,32 @@ async function persistCatalog(models: Array<ReturnType<typeof M>>) {
   }
 }
 
-/** True for an effort capability block: an object whose every value is a flag or a level's block. */
-const isEffortCaps = (v: unknown): v is EffortCaps =>
-  isRec(v) &&
-  Object.values(v).every((x) => x === undefined || x === true || x === false || isRec(x));
+/** True for a value the effort block can hold: the overall flag, or a level's block. */
+const isEffortEntry = (x: unknown): x is EffortLevelCaps | boolean =>
+  x === true ||
+  x === false ||
+  (isRec(x) && (x.supported === undefined || x.supported === true || x.supported === false));
+
+/** The effort capability block of a Models API row, keeping the flags and level blocks it can read
+ *  and skipping any other value, so a field the API adds later does not cost the model its
+ *  efforts. Undefined when the row has no block. */
+export function effortCapsOf(row: { effort?: unknown }): EffortCaps | undefined {
+  const raw = row.effort;
+
+  if (!isRec(raw)) {
+    return undefined;
+  }
+
+  const caps: EffortCaps = {};
+
+  for (const [key, value] of Object.entries(raw)) {
+    if (isEffortEntry(value)) {
+      caps[key] = value;
+    }
+  }
+
+  return caps;
+}
 
 /** One entry of the Anthropic Models API list, in the shape the picker uses. */
 export function modelFromApi(m: {
@@ -933,8 +955,7 @@ async function refreshFromApi(fetchImpl: typeof fetch): Promise<void> {
               id: stringOf(v.id),
               display_name: stringOf(v.display_name),
               max_input_tokens: numberValue(v.max_input_tokens),
-              capabilities:
-                isRec(caps) && isEffortCaps(caps.effort) ? { effort: caps.effort } : undefined,
+              capabilities: isRec(caps) ? { effort: effortCapsOf(caps) } : undefined,
               created_at: stringOf(v.created_at),
             }),
           ];

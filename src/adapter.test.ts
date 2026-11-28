@@ -9436,7 +9436,7 @@ console.log("interrupt-on-abort ok");
   assert.equal(blocks[1]?.source?.data, "AAEC", "image and text: the bytes inline, base64");
   assert.ok(proc.sent.has("r2"), "image and text: marked sent");
 
-  const noStore = new ClaudeCodeAdapter(bareCtx(), Config({}));
+  const noStore = new ClaudeCodeAdapter(withoutAttachments(bareCtx()), Config({}));
   writes.length = 0;
   proc.parked = "steer";
   await noStore.openTurn(
@@ -10006,7 +10006,7 @@ console.log("interrupt-on-abort ok");
     Config({}),
   );
 
-  const noStore = new ClaudeCodeAdapter(bareCtx(), Config({}));
+  const noStore = new ClaudeCodeAdapter(withoutAttachments(bareCtx()), Config({}));
 
   const turnProc = {
     alive: true,

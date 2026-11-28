@@ -1114,12 +1114,18 @@ function useSystemPromptSent(
   const key = `${provider}\n${sessionId}`;
   useEffect(() => {
     let live = true;
+    // Newest read wins: a hints change starts a fresh read, and the one still out from before it
+    // must not land after and put the old answer back.
+    let latest = 0;
 
     /** Puts this key's answer on screen, asking the server only when no read is cached. */
     const show = () => {
       if (provider === undefined || sessionId === undefined || !started) {
         return;
       }
+
+      latest += 1;
+      const mine = latest;
 
       let read = promptModes.get(key);
 
@@ -1136,7 +1142,7 @@ function useSystemPromptSent(
         promptModes.set(key, read);
       }
 
-      void read.then((value) => live && setSent({ key, value }));
+      void read.then((value) => live && mine === latest && setSent({ key, value }));
     };
 
     const changed = () => {
