@@ -87,6 +87,34 @@ await Promise.all([
 // the above passed, and the two are strictly ordered.
 if (results.every((r) => r.ok) && (await step("build", "bun", "run", "build"))) {
   await step("typecheck", "bun", "run", "typecheck");
+  checkClientRequires();
+}
+
+/**
+ * 4b. CLIENT REQUIRES. dsh loads `lib/client.js` against its own client module table, which serves
+ * React and dsh's `@deepseek-ai/dsh-client-*` packages and nothing else. A require of any other
+ * package passes the tests, the build and the typecheck, then fails in the browser with "missed the
+ * module table" and the plugin's client never loads: on 2026-11-27 `@deepseek-ai/dsh-brand` came in
+ * through `asSessionId` and took the whole client out. So the bundle's requires are read back here.
+ */
+function checkClientRequires(): void {
+  const start = Date.now();
+  const bundle = readFileSync(`${ROOT}lib/client.js`, "utf8");
+  const served = /^(react|react\/jsx-runtime|react-dom|@deepseek-ai\/dsh-client-[a-z-]+)$/;
+
+  const stray = [...bundle.matchAll(/require\("([^"]+)"\)/g)].flatMap((m) => {
+    const name = m[1] ?? "";
+
+    return served.test(name) ? [] : [name];
+  });
+
+  results.push({ name: "client requires", ok: stray.length === 0, ms: Date.now() - start });
+
+  if (stray.length > 0) {
+    console.error(
+      `\n─── lib/client.js requires what dsh's module table does not serve ───\n${[...new Set(stray)].join("\n")}\n`,
+    );
+  }
 }
 
 // 5. CONFLICT MARKERS, whole repo. `git grep` rather than `grep -r` so the search
