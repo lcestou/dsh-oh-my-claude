@@ -2,7 +2,7 @@
 // the user's to say: a router's alias, and a model added in Settings. The same list of sizes
 // feeds the Add a model form. Where a size is stored is the caller's business; this draws the
 // control and hands back a number.
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { t, useLocale } from "./i18n.js";
 import { inputStyle, select } from "./shared.js";
 
@@ -51,11 +51,15 @@ export function SizeSelect({
   // and stores nothing until a number is typed.
   const [typing, setTyping] = useState(stored === OTHER);
   const [tokens, setTokens] = useState(value === undefined ? "" : String(value));
-  // A value changed elsewhere (another tab, the form below) moves the control with it.
-  useEffect(() => {
+  // A value changed elsewhere (another tab, the form below) moves the control with it, during the
+  // render that brings it.
+  const [valueSeen, setValueSeen] = useState(value);
+
+  if (valueSeen !== value) {
+    setValueSeen(value);
     setTyping(value !== undefined && !isNamed(value));
     setTokens(value === undefined ? "" : String(value));
-  }, [value]);
+  }
 
   /** Hand the typed number on, when it is one the server would take and not what is stored. */
   const commit = () => {

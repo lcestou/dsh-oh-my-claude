@@ -1,4 +1,4 @@
-import { type SubprocessHandle } from "./process.js";
+import type { SubprocessHandle } from "./process.js";
 /** The part of a mount this module needs: an empty `sshHost` means this PC. */
 export interface FsBox {
     sshHost?: string;
@@ -36,7 +36,7 @@ export declare const makeDirScript: (dir: string) => string;
 export interface DirLevel {
     path: string;
     home: string;
-    names: string[];
+    names: Array<string>;
 }
 /**
  * Split `dirsScript`'s answer: the level, then `$HOME`, then the names. The names are sorted here
@@ -74,7 +74,7 @@ export declare function readFromAt(box: FsBox, path: string, offset: number): Pr
 /** The file's text, or null when it does not exist. */
 export declare function readTextAt(box: FsBox, path: string): Promise<string | null>;
 /** The names in a directory; an absent directory lists empty, the way a local read does. */
-export declare function listNamesAt(box: FsBox, dir: string): Promise<string[]>;
+export declare function listNamesAt(box: FsBox, dir: string): Promise<Array<string>>;
 /**
  * One directory level on the box, or null when the level is gone or unreadable. The picker opens on
  * the box's home, so an empty `dir` asks for that rather than this PC's.

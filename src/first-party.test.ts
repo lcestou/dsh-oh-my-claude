@@ -10,6 +10,7 @@ import {
   readsAsAnthropic,
   wantsFirstParty,
 } from "./first-party.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 // The 401 a proxy that forwards hands back, recorded from headroom and from api.anthropic.com on
 // 2026-09-17: the same body, down to the request id's shape.
@@ -41,14 +42,11 @@ assert.equal(readsAsAnthropic(ProbeBody({}), ""), false);
 {
   const calls: Array<string> = [];
 
-  const fake = (async (url: string) => {
-    calls.push(url);
+  const fake: typeof fetch = async (input) => {
+    calls.push(new Request(input).url);
 
-    return {
-      json: async () => ANTHROPIC_401,
-      headers: { get: () => null },
-    };
-  }) as unknown as typeof fetch;
+    return new Response(JSON.stringify(ANTHROPIC_401));
+  };
 
   assert.equal(await probeFirstParty("http://127.0.0.1:8787", fake), true);
   // One request, and the path is appended without doubling the separator.
@@ -61,9 +59,9 @@ assert.equal(readsAsAnthropic(ProbeBody({}), ""), false);
 
 // A refused connection is "not asked", not "not Anthropic".
 {
-  const fake = (async () => {
+  const fake: typeof fetch = async () => {
     throw new Error("ECONNREFUSED");
-  }) as unknown as typeof fetch;
+  };
 
   assert.equal(await probeFirstParty("http://127.0.0.1:9", fake), undefined);
 }
@@ -141,7 +139,7 @@ assert.equal(readsAsAnthropic(ProbeBody(CC_SWITCH_400), ""), false);
     firstPartyKnown(url, () => changed++, probe, t0),
     undefined,
   );
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await sleep(5);
   assert.equal(changed, 1, "the first answer is a change from not knowing");
   assert.equal(
     firstPartyKnown(url, () => changed++, probe, t0 + 1),
@@ -153,7 +151,7 @@ assert.equal(readsAsAnthropic(ProbeBody(CC_SWITCH_400), ""), false);
     firstPartyKnown(url, () => changed++, probe, late),
     false,
   );
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await sleep(5);
   assert.equal(calls, 2);
   assert.equal(changed, 1);
   // The endpoint stops answering: the kept answer is dropped and the listing is told.
@@ -162,14 +160,14 @@ assert.equal(readsAsAnthropic(ProbeBody(CC_SWITCH_400), ""), false);
     firstPartyKnown(url, () => changed++, probe, t0 + 4 * PROBE_TTL_MS),
     false,
   );
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await sleep(5);
   assert.equal(changed, 2);
   assert.equal(
     firstPartyKnown(url, () => changed++, probe, Date.now()),
     undefined,
     "an endpoint that went quiet is no longer known",
   );
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await sleep(5);
   assert.equal(changed, 2, "still unanswered is not a change");
   forgetFirstParty();
 }

@@ -1,5 +1,5 @@
 import type { ContextSource } from "../context-sources.js";
-import { type LooseMessage, type NativeCopies } from "./prompt.js";
+import type { LooseMessage, NativeCopies } from "./prompt.js";
 /** What stands in for a result the log never got (the turn was cut off before the tool answered). */
 export declare const NO_RESULT = "No result was recorded for this call.";
 /** The tool name Claude saw: dsh's tools reach it over the bridge as `mcp__dsh__<name>`; a name
@@ -16,7 +16,7 @@ export declare function announcementOf(callId: string, toolName: string): {
 /** Where the history a seed holds ends: just past the last assistant message and the results that
  *  answer its calls. Everything after it is the new turn the prompt carries. 0 when no assistant
  *  message exists, which leaves nothing to seed. */
-export declare function historyEnd(messages: readonly LooseMessage[]): number;
+export declare function historyEnd(messages: ReadonlyArray<LooseMessage>): number;
 export interface SeedOptions {
     sessionId: string;
     cwd: string;
@@ -38,7 +38,7 @@ export interface SeedOptions {
  * signature the API would accept). A call the log has no result for gets one saying so, since the
  * API refuses a `tool_use` left unanswered. Empty when there is nothing to seed.
  */
-export declare function seedTranscriptText(messages: readonly LooseMessage[], o: SeedOptions): string;
+export declare function seedTranscriptText(messages: ReadonlyArray<LooseMessage>, o: SeedOptions): string;
 /** How many moved-aside copies of one transcript a rebuild keeps. */
 export declare const REPLACED_KEEP = 2;
 /**

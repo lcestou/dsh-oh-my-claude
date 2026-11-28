@@ -1,6 +1,7 @@
 // Claude Code's compaction summary, read back from the transcript. The CLI feeds the summary
 // straight into its next prompt and never puts it on the stream, but it writes it to the session's
 // transcript as a `user` row flagged `isCompactSummary`, right after the `compact_boundary` row.
+import { fits } from "./schema-fits.js";
 import z from "@deepseek-ai/schemastery";
 import { readFromAt, sizeAt } from "./remote-fs.js";
 import type { FsBox } from "./remote-fs.js";
@@ -26,25 +27,39 @@ const BoundaryRow = z.object({
 
 /** The summary row's text, or undefined when the line is not one. */
 function summaryText(line: string): string | undefined {
+  let raw: unknown;
+
   try {
-    const row = TextRow(JSON.parse(line));
+    raw = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+
+  if (fits(TextRow, raw)) {
+    const row = TextRow(raw);
 
     return row.isCompactSummary ? row.message.content : undefined;
-  } catch {
-    try {
-      const row = BlockRow(JSON.parse(line));
-
-      return row.isCompactSummary ? row.message.content.map((b) => b.text).join("\n") : undefined;
-    } catch {
-      return undefined;
-    }
   }
+
+  if (fits(BlockRow, raw)) {
+    const row = BlockRow(raw);
+
+    return row.isCompactSummary ? row.message.content.map((b) => b.text).join("\n") : undefined;
+  }
+
+  return undefined;
 }
 
 /** The `preTokens` of a `compact_boundary` row, or undefined when the line is not one. */
 function boundaryPreTokens(line: string): number | undefined {
   try {
-    const row = BoundaryRow(JSON.parse(line));
+    const raw: unknown = JSON.parse(line);
+
+    if (!fits(BoundaryRow, raw)) {
+      return undefined;
+    }
+
+    const row = BoundaryRow(raw);
 
     return row.subtype === "compact_boundary" ? row.compactMetadata.preTokens : undefined;
   } catch {

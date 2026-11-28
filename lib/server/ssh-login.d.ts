@@ -1,5 +1,6 @@
-import { spawn } from "node:child_process";
-type SpawnFn = typeof spawn;
+import type { ChildProcess, SpawnOptions } from "node:child_process";
+/** The one `spawn` overload the login uses: piped stdio, so a fake needs only this shape. */
+type SpawnFn = (command: string, args: ReadonlyArray<string>, options: SpawnOptions) => ChildProcess;
 /** The host string that means the box this plugin runs on; its token sits beside the ssh ones. */
 export declare const THIS_BOX = "";
 /**
@@ -14,7 +15,7 @@ export declare function deleteSshToken(stateDir: string, host: string): void;
 /** A process to start: the binary and its argument list. */
 export interface Invocation {
     command: string;
-    args: string[];
+    args: Array<string>;
 }
 /**
  * The command line that runs `claude auth login` under a PTY. On a box it rides `ssh -tt`. On this

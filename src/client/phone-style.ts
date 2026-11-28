@@ -1,3 +1,4 @@
+import { isStyleElement } from "./dom-guards.js";
 // The phone layer: larger touch targets and rows that wrap, for the plugin's own surfaces on a
 // phone. Every rule sits inside a media query no desktop window with a mouse matches, so the
 // desktop look stays as it is; phone-style.test.ts fails the gate on a rule outside one.
@@ -38,7 +39,7 @@ export const PHONE_CSS = [
 /** Puts the phone sheet in the page, or rewrites it in place so a hot reload replaces the rules. */
 export function ensurePhoneStyle(): void {
   const existing = document.getElementById(STYLE_ID);
-  const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
+  const el = isStyleElement(existing) ? existing : document.createElement("style");
   el.id = STYLE_ID;
   el.textContent = PHONE_CSS;
 

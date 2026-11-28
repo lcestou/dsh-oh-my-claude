@@ -75,8 +75,11 @@ export const PLUGIN_NOTICE = "[Oh My Claude] ";
  *  dropped, and a prompt sent twice in a row kept once, the way a shell's history collapses repeats. */
 export const recallEntries = (prompts: ReadonlyArray<{ text: string }>): Array<string> =>
   prompts
-    .map((p) => p.text.trim())
-    .filter((text) => text !== "" && !text.startsWith(PLUGIN_NOTICE))
+    .flatMap((p) => {
+      const text = p.text.trim();
+
+      return text !== "" && !text.startsWith(PLUGIN_NOTICE) ? [text] : [];
+    })
     .filter((text, i, all) => text !== all[i - 1]);
 
 /** The full prompts of one transcript, by the dsh session's id or a bare transcript id (the route
@@ -148,10 +151,15 @@ export function useComposerRecall({
   const state = useRef<RecallState>(IDLE);
   const stale = useRef(true);
   const loading = useRef<Promise<Array<string>> | null>(null);
+  // The newest of each, for the key listener below, which stays mounted across renders.
   const draftRef = useRef(draft);
-  draftRef.current = draft;
   const setRef = useRef(setDraft);
-  setRef.current = setDraft;
+
+  useEffect(() => {
+    draftRef.current = draft;
+    setRef.current = setDraft;
+  }, [draft, setDraft]);
+
   // An emptied box (sent, cleared, or walked down past the newest) ends the walk. Whitespace alone,
   // a stray newline after a send, counts as empty: the walk starts from it and replaces it.
   const empty = draft.trim() === "";
@@ -160,11 +168,6 @@ export function useComposerRecall({
       state.current = { ...state.current, at: null, shown: null };
     }
   }, [empty]);
-  useEffect(() => {
-    state.current = IDLE;
-    stale.current = true;
-    loading.current = null;
-  }, [sessionId]);
   // A turn ending or a rewind marks the list stale, and disowns a read still in flight: its
   // answer is kept for the walk it was asked for, but it does not count as fresh.
   useEffect(() => {
@@ -186,9 +189,10 @@ export function useComposerRecall({
     return () => window.removeEventListener(REWOUND_EVENT, onRewound);
   }, []);
   useEffect(() => {
-    if (off) {
-      return;
-    }
+    // Another session starts a fresh walk over its own list.
+    state.current = IDLE;
+    stale.current = true;
+    loading.current = null;
 
     /** The list, read now if stale, shared between presses that land during one read. */
     const entries = (): Promise<Array<string>> => {
@@ -257,7 +261,9 @@ export function useComposerRecall({
 
         e.preventDefault();
         e.stopPropagation();
-        void entries().then(() => {
+        void (async () => {
+          await entries();
+
           // Presses queued behind one read each step once: the second continues from where the
           // first left the walk instead of restarting at the newest. Typed text in the meantime
           // ends it.
@@ -276,7 +282,7 @@ export function useComposerRecall({
 
           state.current = next.state;
           set(next.set);
-        });
+        })();
 
         return;
       }
@@ -299,7 +305,10 @@ export function useComposerRecall({
       set(next.set);
     };
 
-    document.addEventListener("keydown", onKey, true);
+    // Off with the hint: nothing listens, and removing what was never added is a no-op.
+    if (!off) {
+      document.addEventListener("keydown", onKey, true);
+    }
 
     return () => document.removeEventListener("keydown", onKey, true);
   }, [off, ctx, sessionId]);

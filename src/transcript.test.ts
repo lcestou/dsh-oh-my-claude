@@ -27,6 +27,9 @@ import {
   validateBoxes,
 } from "./sessions.js";
 import { tempDir } from "./test-tmp.js";
+import { fieldsOf, objectOf, rowsOf } from "./test-context.js";
+import type { JsonValue } from "./dsh.js";
+import type { FetchLike } from "./sessions.js";
 
 const line = (o: any) => JSON.stringify(o);
 const T = "2026-09-03T08:00:00.000Z";
@@ -257,7 +260,7 @@ assert.deepEqual(head.data, {
   turn: 1,
   step: 1,
   message: {
-    id: `${(firstPrompt.data as { id: string }).id}:system`,
+    id: `${fieldsOf(firstPrompt.data, { id: "string" }).id}:system`,
     role: "system",
     content: [{ type: "text", text: serverText("seededSystemPrompt") }],
     source: { kind: "plugin", plugin: "claude-code" },
@@ -270,8 +273,8 @@ const v4Head = toSessionEvents(folded, 4)[2];
 
 assert.ok(v4Head);
 
-// SAFETY: the v4 seed has the same shape; index 2 is the head asserted above
-assert.deepEqual((v4Head.data.message as { source: unknown }).source, { kind: "system-prompt" });
+// The v4 seed has the same shape; index 2 is the head asserted above.
+assert.deepEqual(objectOf(v4Head.data.message).source, { kind: "system-prompt" });
 
 // SAFETY: transcript contains exactly one tool/call event
 const call = events.find((e) => e.type === "tool/call");
@@ -287,11 +290,10 @@ assert.ok(result);
 
 assert.deepEqual(result.sourceEventSeqs, [call.seq]);
 
-// SAFETY: result data has the expected message shape
-const resultMsg = result.data.message as { content: Array<{ toolCallId?: string }> };
-
-// SAFETY: content[0] exists for this transcript
-const firstResultContent = resultMsg.content[0];
+// content[0] exists for this transcript.
+const firstResultContent = rowsOf(objectOf(result.data.message).content, {
+  toolCallId: "string?",
+})[0];
 
 assert.ok(firstResultContent);
 
@@ -314,10 +316,10 @@ for (const e of events) {
   }
 }
 
-const assistantData = assistantMsg.data.message as { content: Array<{ arguments?: string }> };
-
-// SAFETY: content[1] exists for this transcript
-const secondContent = assistantData.content[1];
+// content[1] exists for this transcript.
+const secondContent = rowsOf(objectOf(assistantMsg.data.message).content, {
+  arguments: "string?",
+})[1];
 
 assert.ok(secondContent);
 
@@ -370,11 +372,16 @@ const orphanResult = orphanEvents.find((e) => e.type === "tool/result");
 
 assert.ok(orphanResult);
 
-const orphanContent = (
-  orphanResult.data.message as {
-    content: Array<{ content?: Array<{ text?: string }>; isError?: boolean }>;
-  }
-).content[0];
+const orphanBlocks = objectOf(orphanResult.data.message).content;
+
+assert.ok(Array.isArray(orphanBlocks));
+
+const [orphanBlock] = orphanBlocks;
+
+const orphanContent = {
+  isError: fieldsOf(orphanBlock, { isError: "boolean?" }).isError,
+  content: rowsOf(objectOf(orphanBlock).content, { text: "string?" }),
+};
 
 assert.ok(orphanContent);
 
@@ -571,7 +578,7 @@ assert.ok(validateBoxes("nope").error);
 // probeBox: token login sets the cookie, a proxy redirect to /?token= is followed once, 401 is
 // reported as a login problem, a dead host as its error text. Fake fetch, no network.
 {
-  // SAFETY: partial fake for tests
+  // A fake for tests: the reply fields probeBox reads.
   const calls: Array<[string, string]> = [];
 
   const res = (
@@ -586,23 +593,22 @@ assert.ok(validateBoxes("nope").error);
     text: async () => JSON.stringify(body),
   });
 
-  // SAFETY: partial fake for tests
-  const fakeFetch = async (u: string, init?: { headers?: Record<string, string> }) => {
-    calls.push([u, init?.headers?.cookie ?? ""]);
+  const fakeFetch: FetchLike = async (u, init) => {
+    calls.push([u, init.headers?.cookie ?? ""]);
 
     if (u === "http://box/?token=T") {
       return res(303, { "set-cookie": "dsh-auth-x=1; Path=/" });
     }
 
     if (u === "http://box/dsh-oh-my-claude/status") {
-      return init?.headers?.cookie === "dsh-auth-x=1" ? res(200, {}, { host: "box" }) : res(401);
+      return init.headers?.cookie === "dsh-auth-x=1" ? res(200, {}, { host: "box" }) : res(401);
     }
 
     if (u === "http://box/") {
       return { ...res(200), text: async () => "<html>plain dsh</html>" };
     }
 
-    if (u === "http://proxy/dsh-oh-my-claude/status" && !init?.headers?.cookie) {
+    if (u === "http://proxy/dsh-oh-my-claude/status" && !init.headers?.cookie) {
       return res(401);
     }
 
@@ -624,44 +630,26 @@ assert.ok(validateBoxes("nope").error);
     throw new Error("ECONNREFUSED");
   };
 
-  // SAFETY: partial fake for tests; Box requires name but probeBox only uses url/token
-  // SAFETY: cast to fetch signature for test double
-  const boxResult = await probeBox(
-    { name: "box", url: "http://box", token: "T" },
-    fakeFetch as unknown as typeof fetch,
-  );
+  // Box requires name but probeBox only uses url/token.
+  const boxResult = await probeBox({ name: "box", url: "http://box", token: "T" }, fakeFetch);
 
-  assert.equal(boxResult.ok, true);
-  assert.equal(
-    (boxResult as { ok: true; status: { host: string; name?: string } }).status.host,
-    "box",
-  );
+  assert.ok(boxResult.ok);
+  assert.equal(boxResult.status.host, "box");
 
-  const proxyResult = await probeBox(
-    { name: "proxy", url: "http://proxy" },
-    fakeFetch as unknown as typeof fetch,
-  );
+  const proxyResult = await probeBox({ name: "proxy", url: "http://proxy" }, fakeFetch);
 
-  assert.equal(proxyResult.ok, true);
-  assert.equal(
-    (proxyResult as { ok: true; status: { host: string; name?: string } }).status.host,
-    "proxy",
-  );
+  assert.ok(proxyResult.ok);
+  assert.equal(proxyResult.status.host, "proxy");
 
-  const boxFail = await probeBox(
-    { name: "box", url: "http://box" },
-    fakeFetch as unknown as typeof fetch,
-  );
+  const boxFail = await probeBox({ name: "box", url: "http://box" }, fakeFetch);
 
   assert.equal(boxFail.ok, false);
   assert.match(boxFail.error, /token/);
 
-  const deadResult = await probeBox(
-    { name: "dead", url: "http://dead" },
-    fakeFetch as unknown as typeof fetch,
-  );
+  const deadResult = await probeBox({ name: "dead", url: "http://dead" }, fakeFetch);
 
-  assert.match((deadResult as { ok: false; error: string }).error, /ECONNREFUSED/);
+  assert.ok(!deadResult.ok);
+  assert.match(deadResult.error, /ECONNREFUSED/);
 }
 
 // Subagents: a Task result names the subagent that answered it, and that subagent's own text lives
@@ -804,12 +792,12 @@ console.log("transcript ok");
   const { readFromAt } = await import("./remote-fs.js");
   const readTranscriptFrom = (p: string, o: number) => readFromAt({}, p, o);
   const own = "dsh-oh-my-claude";
-  const row = (o: object) => JSON.stringify(o);
+  const row = (o: JsonValue) => JSON.stringify(o);
 
-  const user = (uuid: string, ep: string, content: unknown) =>
+  const user = (uuid: string, ep: string, content: JsonValue) =>
     row({ type: "user", uuid, timestamp: T, entrypoint: ep, message: { role: "user", content } });
 
-  const asst = (uuid: string, ep: string, content: unknown) =>
+  const asst = (uuid: string, ep: string, content: JsonValue) =>
     row({
       type: "assistant",
       uuid,
@@ -926,7 +914,7 @@ console.log("transcript ok");
   // The real terminal shape: a reply writes a sentence, calls a tool, then writes the answer. Every
   // row before the tool carries stop_reason "tool_use"; only the last carries a terminal one. The
   // exchange must not be cut at the opening sentence — its tool call and closing text belong to it.
-  const stop = (uuid: string, blocks: Array<unknown>, reason: string) =>
+  const stop = (uuid: string, blocks: Array<JsonValue>, reason: string) =>
     row({
       type: "assistant",
       uuid,
@@ -1337,7 +1325,7 @@ assert.equal(commandTitle("<local-command-stdout>Set model</local-command-stdout
   const dir = join(home, ".claude", "projects", "-p");
   await mkdir(dir, { recursive: true });
 
-  const user = (content: string, extra: object = {}) =>
+  const user = (content: string, extra: Record<string, JsonValue> = {}) =>
     line({ type: "user", cwd: "/p", message: { role: "user", content }, ...extra });
 
   const reply = (id: string, text: string) =>
@@ -1396,12 +1384,15 @@ assert.equal(commandTitle("<local-command-stdout>Set model</local-command-stdout
   const local = Object.fromEntries((await listTranscripts(dir)).map((r) => [r.id, r.title]));
   assert.deepEqual(local, want, "local lister");
 
-  // SAFETY: the script writes `JSON.stringify` of the rows it built.
-  const remote = JSON.parse(
-    execFileSync(process.execPath, ["-e", SSH_TRANSCRIPT_LISTER], {
-      env: { ...process.env, HOME: home },
-    }).toString(),
-  ) as Array<{ id: string; title: string }>;
+  // The script writes `JSON.stringify` of the rows it built.
+  const remote = rowsOf(
+    JSON.parse(
+      execFileSync(process.execPath, ["-e", SSH_TRANSCRIPT_LISTER], {
+        env: { ...process.env, HOME: home },
+      }).toString(),
+    ),
+    { id: "string", title: "string" },
+  );
 
   assert.deepEqual(Object.fromEntries(remote.map((r) => [r.id, r.title])), want, "ssh lister");
 

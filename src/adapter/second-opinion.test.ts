@@ -13,6 +13,7 @@ import {
 } from "./second-opinion.js";
 import type { WorkspaceDiff } from "../process.js";
 import type { TurnDeps } from "./second-opinion.js";
+import { fakePluginContext } from "../test-context.js";
 
 /** A diff with one tracked file and one new file, the shape `decodeWorkspaceDiff` returns. */
 const diff = (aLines: Array<string>, newFile = true): WorkspaceDiff => ({
@@ -126,8 +127,8 @@ assert.deepEqual(parseFindings("The change looks fine to me.", seen), [
       return Promise.resolve({ ok: false, error: "not asked" });
     },
     read: () => Promise.resolve(null),
-    // SAFETY: the off path returns before it touches the model service
-    llm: {} as TurnDeps["llm"],
+    // The off path returns before it touches the model service, whose methods all throw.
+    llm: fakePluginContext().llm,
   };
 
   opinions.turnStarting("s-off", "request", deps);
@@ -152,8 +153,8 @@ assert.deepEqual(parseFindings("The change looks fine to me.", seen), [
       return Promise.resolve({ ok: true as const, ...diff([" a", `+${calls}`], false) });
     },
     read: () => Promise.resolve(null),
-    // SAFETY: no review runs in this block (auto is off), so the model service is never touched
-    llm: {} as TurnDeps["llm"],
+    // No review runs in this block (auto is off), so the model service is never touched.
+    llm: fakePluginContext().llm,
   };
 
   opinions.turnStarting("s-race", "one", deps);
@@ -167,17 +168,19 @@ assert.deepEqual(parseFindings("The change looks fine to me.", seen), [
   // shows as a failed card with its message.
   let prepared = 0;
 
-  const llm = {
-    listProviders: () => [{ id: "p" }],
-    listModels: async () => [{ id: "m" }],
-    prepareCall: async () => {
-      prepared++;
-      throw new Error("provider down");
+  // The review reads only these three methods off the model service.
+  const { llm } = fakePluginContext({
+    llm: {
+      listProviders: () => [{ id: "p" }],
+      listModels: async () => [{ id: "m" }],
+      prepareCall: async () => {
+        prepared++;
+        throw new Error("provider down");
+      },
     },
-  };
+  });
 
-  // SAFETY: the review reads only these three methods off the model service
-  const runDeps: TurnDeps = { ...deps, llm: llm as never };
+  const runDeps: TurnDeps = { ...deps, llm };
   opinions.turnStarting("s-run", "fix it", runDeps);
   await opinions.turnEnded("s-run");
   assert.equal(opinions.reply("s-run").card?.state, "ready");

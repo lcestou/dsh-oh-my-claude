@@ -1,6 +1,7 @@
 // The settings scopes the editor in index.tsx switches between, and the note it shows when a
 // higher-precedence file overrides what you are looking at. Pure: no fetch, no DOM.
 import { t } from "./i18n.js";
+import { isJsonObject, parseJson } from "./shared.js";
 
 /** The settings files the CLI merges, highest precedence first. */
 /**
@@ -12,6 +13,10 @@ export const SETTINGS_SCOPES = ["managed", "local", "project", "user"] as const;
 
 /** One of the four settings files, named as the CLI's own layers are. */
 export type SettingsScope = (typeof SETTINGS_SCOPES)[number];
+
+/** True when `value` names one of the four scopes, such as a `<select>` option's value. */
+export const isSettingsScope = (value: string): value is SettingsScope =>
+  SETTINGS_SCOPES.some((scope) => scope === value);
 
 /** One scope's file, as `GET /settings/scopes` reports it. */
 export interface SettingsScopeInfo {
@@ -44,9 +49,9 @@ export const SCOPE_LABELS = {
  *  not an object, so a hand-edited file contributes no keys instead of throwing. */
 const topLevelKeys = (text: string): Array<string> => {
   try {
-    const value: unknown = JSON.parse(text);
+    const value = parseJson(text);
 
-    return value instanceof Object && !Array.isArray(value) ? Object.keys(value) : [];
+    return isJsonObject(value) ? Object.keys(value) : [];
   } catch {
     return [];
   }

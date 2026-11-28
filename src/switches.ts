@@ -1,5 +1,6 @@
 // Settings and environment that switch off a feature this panel offers. Pure: the caller reads the
 // files and the environment, this works out what the CLI would do with them.
+import { stringOf, isJsonValue, isRec } from "./decode.js";
 import type { JsonValue } from "./dsh.js";
 
 /** One scope's text, in the order the CLI merges them: highest precedence first. */
@@ -78,7 +79,7 @@ export function claudeMdDisabledBy(
   for (const { scope, text } of scopes) {
     const block = parseSettings(text).env;
 
-    if (!(block instanceof Object) || Array.isArray(block)) {
+    if (!isRec(block)) {
       continue;
     }
 
@@ -88,7 +89,8 @@ export function claudeMdDisabledBy(
       continue;
     }
 
-    return cliTrue(String(value)) ? scope : undefined;
+    // A JSON true or 1 reads the way the CLI reads its string form.
+    return cliTrue(stringOf(value) ?? JSON.stringify(value)) ? scope : undefined;
   }
 
   return local && cliTrue(env) ? "env" : undefined;
@@ -97,10 +99,10 @@ export function claudeMdDisabledBy(
 /** One settings file read back as an object, or an empty one when it is not JSON. */
 export const parseSettings = (text: string): Record<string, JsonValue> => {
   try {
-    const value: JsonValue = JSON.parse(text);
+    const value: unknown = JSON.parse(text);
 
-    // SAFETY: JSON.parse answers a JsonValue; the guard leaves only the object arm of that union.
-    return value instanceof Object && !Array.isArray(value) ? value : {};
+    // JSON.parse answers a JsonValue; the check leaves only the object arm of that union.
+    return isJsonValue(value) && isRec(value) ? value : {};
   } catch {
     // A file the CLI would refuse to start on says nothing about these keys; Diagnostics reports
     // the parse error separately.
@@ -145,11 +147,7 @@ export function featureSwitches(
 
     const permissions = settings.permissions;
 
-    if (
-      out.bypassDisabled === undefined &&
-      permissions instanceof Object &&
-      !Array.isArray(permissions)
-    ) {
+    if (out.bypassDisabled === undefined && isRec(permissions)) {
       const disabled = permissions.disableBypassPermissionsMode;
 
       // The CLI's own check is `=== "disable"`, but a hand-written `true` means the same thing to

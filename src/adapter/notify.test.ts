@@ -10,12 +10,13 @@ import { clickUrl, deliver, Notifier, notifyDelayIn } from "./notify.js";
 import type { Note, NotifyRequest } from "./notify.js";
 import { addDevice, readDevices, validateDevice, writeNotifyConfig } from "../notify-store.js";
 import { hub } from "../events.js";
-import type { ServerResponse } from "node:http";
+import { setTimeout as sleep } from "node:timers/promises";
+import { recordingResponse } from "../test-context.js";
 
 /** Poll `cond` every 5 ms for up to 2 s; a fixed sleep flakes under a loaded suite. */
 async function until(cond: () => boolean): Promise<void> {
   for (let i = 0; i < 400 && !cond(); i++) {
-    await new Promise((r) => setTimeout(r, 5));
+    await sleep(5);
   }
 }
 
@@ -69,7 +70,7 @@ const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
 {
   const { n, sent } = rig({ notifyDelayMs: 0 });
   n.schedule(req());
-  await new Promise((r) => setTimeout(r, 50));
+  await sleep(50);
   assert.equal(sent.length, 0, "switch off (absent): nothing is sent");
 }
 
@@ -77,7 +78,7 @@ const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
   const { n, sent } = rig({ notifyOn: true, notifyDelayMs: 0 });
   n.schedule(req());
   n.cancel("s1");
-  await new Promise((r) => setTimeout(r, 50));
+  await sleep(50);
   assert.equal(sent.length, 0, "a prompt sent before the hints read lands cancels the notice");
 }
 
@@ -87,7 +88,7 @@ const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
   n.schedule(req({ sessionId: "child", isChild: async () => true }));
   n.schedule(req({ sessionId: "s2", event: "question" }));
   await until(() => sent.length > 0);
-  await new Promise((r) => setTimeout(r, 30));
+  await sleep(30);
   assert.deepEqual(
     sent.map((s) => [s.session, s.event]),
     [["s2", "question"]],
@@ -113,7 +114,7 @@ const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
   n.schedule(req({ event: "approval", tool: "Bash" }));
   n.schedule(req({ event: "finished" }));
   await until(() => sent.length > 0);
-  await new Promise((r) => setTimeout(r, 30));
+  await sleep(30);
   assert.deepEqual(
     sent.map((s) => s.event),
     ["finished"],
@@ -148,31 +149,24 @@ const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
     redirect?: string;
   }> = [];
 
-  const fake = (async (url: string, init: RequestInit) => {
+  const fake: typeof fetch = async (input, init) => {
+    const url = typeof input === "string" ? input : new Request(input).url;
+
     calls.push({
       url,
-      headers: Object.fromEntries(new Headers(init.headers)),
-      body: init.body,
-      redirect: init.redirect,
+      headers: Object.fromEntries(new Headers(init?.headers)),
+      body: init?.body,
+      redirect: init?.redirect,
     });
 
     return new Response(null, { status: url.endsWith("/dead") ? 410 : 201 });
-  }) as unknown as typeof fetch;
+  };
 
   const note: Note = { event: "approval", session: "s1", title: "T", message: "M", tool: "Bash" };
   // A stand-in stream on the hub, to see the removal reach open Settings tabs.
-  const frames: Array<string> = [];
+  const { res: stream, written: frames } = recordingResponse();
 
-  const stream = {
-    write: (t: string) => frames.push(t),
-    writeHead: () => stream,
-    on: () => stream,
-    once: () => stream,
-    end: () => undefined,
-    writableNeedDrain: false,
-  };
-
-  hub.attach(stream as unknown as ServerResponse, null, []);
+  hub.attach(stream, null, []);
   const report = await deliver(dir, note, quiet, fake);
   assert.deepEqual(report, { webhook: "ok", sent: 1, failed: 0, removed: 1 });
   const hook = calls.find((c) => c.url === "https://hook.example/x");
@@ -222,7 +216,7 @@ const req = (over: Partial<NotifyRequest> = {}): NotifyRequest => ({
   process.on("unhandledRejection", onUnhandled);
   n.schedule(req({ log: (_level, msg) => logged.push(msg) }));
   await until(() => logged.length > 0);
-  await new Promise((r) => setTimeout(r, 20));
+  await sleep(20);
   process.off("unhandledRejection", onUnhandled);
   assert.equal(unhandled, false, "a failed send is not an unhandled rejection");
   assert.match(logged[0] ?? "", /send failed: EACCES/);

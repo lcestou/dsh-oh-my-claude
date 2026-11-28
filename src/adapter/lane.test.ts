@@ -3,9 +3,10 @@
 // steer), and a steer rewritten into a Claude command or skill line goes to the queue.
 import { strict as assert } from "node:assert";
 
+import { MessageId } from "@deepseek-ai/dsh-llm";
 import type { Message } from "@deepseek-ai/dsh-llm";
 
-import type { PluginContext } from "../dsh.js";
+import { fakeAgent, fakePluginContext, notFaked } from "../test-context.js";
 import { tempDir } from "../test-tmp.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
@@ -21,6 +22,14 @@ const row = (id: string, text: string, kind = "user") =>
     source: { kind },
     content: [{ type: "text", text }],
   }) as LooseMessage;
+
+/** The same row as dsh's inbox holds it: a whole message a person typed. */
+const typed = (id: string, text: string): Message => ({
+  id: MessageId(id),
+  role: "user",
+  source: { kind: "user" },
+  content: [{ type: "text", text }],
+});
 
 // A command line is a slash and a name, leading space ignored, as dsh's composer reads a draft.
 assert.equal(commandNameOf("/unslop tidy this"), "unslop");
@@ -89,15 +98,16 @@ interface Moves {
 
 /** An adapter over a fake dsh: one agent holding `pending` in its queue, the busy-Enter preference
  *  as given, and the `session/event` handler the adapter registered. */
-function setup(pending: Array<LooseMessage>, busyEnter: string | undefined, status = "running") {
+function setup(pending: Array<Message>, busyEnter: string | undefined, status = "running") {
   const moves: Moves = { removed: [], steered: [], queued: [] };
-  const handlers: Record<string, (session: unknown, event: unknown) => void> = {};
+  const handlers: Record<string, (...args: Array<unknown>) => void> = {};
 
-  const agent = {
+  const agent = fakeAgent({
     status,
     inbox: {
       nextStep: [],
       nextTurn: pending,
+      replace: notFaked("inbox.replace"),
       remove(id: string) {
         moves.removed.push(id);
 
@@ -110,19 +120,19 @@ function setup(pending: Array<LooseMessage>, busyEnter: string | undefined, stat
     followup(m: Message) {
       moves.queued.push(String(m.id));
     },
-  };
+  });
 
-  // SAFETY: partial fake; the code under test reads the event hook, the agent and the settings form
-  const ctx = {
-    on(name: string, fn: (session: unknown, event: unknown) => void) {
+  // The code under test reads the event hook, the agent and the settings form.
+  const ctx = fakePluginContext({
+    on(name, fn) {
       handlers[name] = fn;
     },
     agents: { get: () => agent },
-    get: (name: string) =>
-      name === "settings" && busyEnter !== undefined
-        ? { describe: () => [{ ns: "ui-conversation", value: { busyEnter } }] }
-        : undefined,
-  } as unknown as PluginContext;
+    services:
+      busyEnter === undefined
+        ? {}
+        : { settings: { describe: () => [{ ns: "ui-conversation", value: { busyEnter } }] } },
+  });
 
   const adapter = new ClaudeCodeAdapter(ctx, Config({}));
   adapter.stateDir = tempDir("omc-lane-");
@@ -144,7 +154,7 @@ function setup(pending: Array<LooseMessage>, busyEnter: string | undefined, stat
 
 // Queue to steer: a command row edited into plain text is taken out and steered, once.
 {
-  const plain = row("q1", "skip that, just check the changelog");
+  const plain = typed("q1", "skip that, just check the changelog");
   const { adapter, moves, edited } = setup([plain], "steer");
   adapter.commandRows.add("q1");
   await edited(plain);
@@ -157,7 +167,7 @@ function setup(pending: Array<LooseMessage>, busyEnter: string | undefined, stat
 // It stays in the queue when plain Enter queues, when the preference cannot be read, when the edit
 // left it a command, when the bridge never queued it, and when no turn is running.
 {
-  const plain = row("q1", "plain words");
+  const plain = typed("q1", "plain words");
 
   for (const pref of ["queue", undefined]) {
     const { adapter, moves, edited } = setup([plain], pref);
@@ -167,7 +177,7 @@ function setup(pending: Array<LooseMessage>, busyEnter: string | undefined, stat
   }
 
   {
-    const still = row("q1", "/unslop the other file");
+    const still = typed("q1", "/unslop the other file");
     const { adapter, moves, edited } = setup([still], "steer");
     adapter.commandRows.add("q1");
     await edited(still);
@@ -199,7 +209,7 @@ function setup(pending: Array<LooseMessage>, busyEnter: string | undefined, stat
 
 // A steer that throws after the row left the queue puts the row back: it is never lost.
 {
-  const plain = row("q1", "plain words");
+  const plain = typed("q1", "plain words");
   const { adapter, moves, edited } = setup([plain], "steer");
   const agent = (await adapter.agentFor("s1"))?.agent;
   assert.ok(agent);
@@ -221,8 +231,8 @@ async function saveHeld(text: string, bridged: Array<string>) {
     adapter.bridged.set(name, () => {});
   }
 
-  // SAFETY: the held message as dsh's inbox handed it over
-  const held = row("m1", "also look at the tests") as unknown as Message;
+  // The held message as dsh's inbox handed it over.
+  const held = typed("m1", "also look at the tests");
   const timer = setTimeout(() => {}, 60_000);
   adapter.heldSteers.set("s1", new Map([["m1", { messages: [held], text: "x", timer }]]));
   const reply = await adapter.releaseHold("s1", "m1", { text });

@@ -1,4 +1,4 @@
-import { type RunningTotals } from "./process.js";
+import type { RunningTotals } from "./process.js";
 /** The part of a stored turn the repair reads and rewrites. */
 export interface StoredTurn {
     costUsd: number;
@@ -11,7 +11,7 @@ export interface StoredTurn {
 }
 /** What a repair answers: the session's records, changed ones as copies, and how many changed. */
 export interface Repaired<T> {
-    turns: T[];
+    turns: Array<T>;
     repaired: number;
 }
 /**
@@ -36,7 +36,7 @@ export interface Repaired<T> {
  * @param whole the session's first record is still among `turns` (the ring has not dropped any)
  * @returns the records, repaired ones as copies, and how many changed
  */
-export declare function repairTurns<T extends StoredTurn>(turns: readonly T[], exits: readonly RunningTotals[], whole?: boolean): Repaired<T>;
+export declare function repairTurns<T extends StoredTurn>(turns: ReadonlyArray<T>, exits: ReadonlyArray<RunningTotals>, whole?: boolean): Repaired<T>;
 /** What `repairStoredTurns` needs from the adapter that owns the records. */
 export interface RepairHost {
     /** The plugin's state directory: `turns.json`, its copy and the marker live here. */
@@ -44,7 +44,7 @@ export interface RepairHost {
     /** Claude Code's home on this box; transcripts are under `projects/` in it. */
     claudeHome: string;
     /** The live records, by dsh session id. Repaired lists are rewritten in place. */
-    buffer: Map<string, StoredTurn[]>;
+    buffer: Map<string, Array<StoredTurn>>;
     /** The sessions whose records came from this state directory; others are another mount's. */
     ids: ReadonlySet<string>;
     /** How many records a session keeps; a shorter list still has the session's first record. */
@@ -52,7 +52,7 @@ export interface RepairHost {
     /** The Claude transcript id a dsh session id maps to. */
     claudeIdOf: (sessionId: string) => string;
     /** Persist one session's records. */
-    save: (sessionId: string, turns: StoredTurn[]) => Promise<void>;
+    save: (sessionId: string, turns: Array<StoredTurn>) => Promise<void>;
 }
 /** What one pass did, as written to the marker and the log. */
 export interface RepairReport {

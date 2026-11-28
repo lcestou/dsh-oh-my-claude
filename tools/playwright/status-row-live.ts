@@ -98,9 +98,9 @@ try {
       }
     }
 
-    if (stopped && Date.now() - sentAt - stoppedAt > 16_000) {
-      // SAFETY: `stopped` is only set after `pid` was found
-      process.kill(pid!, "SIGCONT");
+    // `stopped` is only set after `pid` was found.
+    if (stopped && pid !== undefined && Date.now() - sentAt - stoppedAt > 16_000) {
+      process.kill(pid, "SIGCONT");
       stopped = false;
       resumedAt = Date.now() - sentAt;
       await p.screenshot({ path: `${out}-after-stall.png` });

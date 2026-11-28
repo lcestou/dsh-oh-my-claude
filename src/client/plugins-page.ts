@@ -3,7 +3,7 @@
 // plugin manager provides the `pluginNavigation` service that opens it; a dsh without that plugin
 // has none, so the opener is undefined then and callers fall back to what they did before.
 import { useSyncExternalStore } from "react";
-import type { ClientCtx, PluginNavigation } from "./shared.js";
+import type { ClientCtx } from "./shared.js";
 
 /** The npm name dsh lists this plugin under, which is what `openBundle` looks it up by. */
 export const PACKAGE_NAME = "dsh-oh-my-claude";
@@ -28,7 +28,7 @@ export function watchPluginsPage(ctx: ClientCtx): void {
   ctx.inject?.(["pluginNavigation"], (scope) => {
     scope.effect(() => {
       // Read at click time, not captured: a hot reload of the plugin manager swaps the service.
-      opener = () => ctx.get?.<PluginNavigation>("pluginNavigation")?.openBundle(PACKAGE_NAME);
+      opener = () => ctx.get?.("pluginNavigation")?.openBundle(PACKAGE_NAME);
       changed();
 
       return () => {

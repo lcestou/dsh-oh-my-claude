@@ -12,7 +12,9 @@
 // PLAYWRIGHT_ROOT names a project with Playwright; arg 1 is dsh's launch token; PW_WIDTH and
 // PW_SCHEME pick the viewport (1280, dark by default). Screenshots go to /tmp/pw/.
 import { mkdirSync } from "node:fs";
-import { dshUrl, launch } from "./pw.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import z from "@deepseek-ai/schemastery";
+import { dshUrl, fetchJson, launch } from "./pw.js";
 import type { Locator, Page, Route } from "./pw.js";
 
 const [token] = process.argv.slice(2);
@@ -52,13 +54,14 @@ const selectReply = async (p: Page, back = 0) => {
     const text = para && document.createTreeWalker(para, NodeFilter.SHOW_TEXT).nextNode();
     const sel = document.getSelection();
 
-    if (!(text instanceof Text) || sel === null) {
+    // SHOW_TEXT walks text nodes only, so a node found here is the paragraph's first text node.
+    if (!text || sel === null) {
       return "";
     }
 
     const range = document.createRange();
     range.setStart(text, 0);
-    range.setEnd(text, Math.min(19, text.length));
+    range.setEnd(text, Math.min(19, text.textContent?.length ?? 0));
     sel.removeAllRanges();
     sel.addRange(range);
 
@@ -271,8 +274,9 @@ let held = { readOnly: false, disabled: true, focused: false, label: "" };
 
 const sent409 = await stubSends(async (route) => {
   held = await field.evaluate((el) => ({
-    readOnly: el instanceof HTMLTextAreaElement && el.readOnly,
-    disabled: el instanceof HTMLTextAreaElement && el.disabled,
+    // Both properties reflect their attribute, so the selector reads the same state.
+    readOnly: el.matches("textarea[readonly]"),
+    disabled: el.matches("textarea[disabled]"),
     focused: el === document.activeElement,
     label: document.querySelector('[data-omc-selection-action="send"]')?.textContent ?? "",
   }));
@@ -315,7 +319,7 @@ await p.unrouteAll({ behavior: "ignoreErrors" });
 // A send still in flight when the person clicks away and selects another passage: its late answer
 // must not clear that selection or close its popover.
 const lateSent = await stubSends(async (route) => {
-  await new Promise((resolve) => setTimeout(resolve, 2500));
+  await sleep(2500);
   await route.fulfill({ status: 200, json: { ok: true } });
 });
 
@@ -394,11 +398,9 @@ const setHint = (value: boolean | null) =>
     { url: hintsUrl, value },
   );
 
-const was = await p.evaluate(async (url) => {
-  const hints: Record<string, boolean | number> = await (await fetch(url)).json();
-
-  return hints.selectionOff === true;
-}, hintsUrl);
+// An unset `selectionOff` reads as false, the way the plugin reads it.
+const was = (await fetchJson(p, hintsUrl, z.object({ selectionOff: z.boolean().default(false) })))
+  .selectionOff;
 
 try {
   await setHint(true);

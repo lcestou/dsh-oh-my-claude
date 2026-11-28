@@ -98,8 +98,7 @@ export const loadSessionDefault = (): Promise<SessionDefault | undefined> =>
   fetch(`${ROUTE}/new-session-default`)
     .then((r) => readJson<Partial<SessionDefault>>(r))
     .then((d) =>
-      // SAFETY: provider and model were just checked; effort and all are optional on the type
-      d.provider && d.model ? (d as SessionDefault) : undefined,
+      d.provider && d.model ? { ...d, provider: d.provider, model: d.model } : undefined,
     )
     .catch(() => undefined);
 
@@ -131,16 +130,17 @@ export function NewSessionDefaultRow() {
     // the older answer arriving last would put back the lineup from before the second flip.
     let latest = 0;
 
+    /** Reads the model lineup; a failed read keeps the one on screen. */
     const loadModels = () => {
       const mine = ++latest;
 
-      return fetch(`${ROUTE}/models?all=1`)
+      fetch(`${ROUTE}/models?all=1`)
         .then((r) => readJson<{ models?: Array<PickerBox> }>(r))
         .then((b) => live && mine === latest && setBoxes(b.models ?? []))
         .catch(() => {});
     };
 
-    void loadModels();
+    loadModels();
     // A model switched off or on in the Models block, and a box added or removed in the Boxes
     // card, change this list. Read once at mount, the dropdown kept the old lineup until Settings
     // was reopened (owner, 2026-11-04). The hints event fires after the hint is saved, so the
@@ -170,20 +170,25 @@ export function NewSessionDefaultRow() {
 
   const save = (next: SessionDefault | undefined) => {
     setError("");
-    fetch(`${ROUTE}/new-session-default`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(next ?? {}),
-    })
-      .then(async (r) => {
-        // The route's refusal text is English and for logs; the row says it in the UI's language.
-        if (!r.ok) {
-          throw new Error(String(r.status));
-        }
+    // Never rejects: a refused or failed write is the row's error.
+    void (async () => {
+      try {
+        const r = await fetch(`${ROUTE}/new-session-default`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(next ?? {}),
+        });
 
-        setValue(next);
-      })
-      .catch(() => setError(t("main.settingsUi.newDefaultSaveFailed")));
+        // The route's refusal text is English and for logs; the row says it in the UI's language.
+        if (r.ok) {
+          setValue(next);
+        } else {
+          setError(t("main.settingsUi.newDefaultSaveFailed"));
+        }
+      } catch {
+        setError(t("main.settingsUi.newDefaultSaveFailed"));
+      }
+    })();
   };
 
   const key = value ? `${value.provider}\n${value.model}` : "";

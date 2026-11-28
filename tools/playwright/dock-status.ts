@@ -4,7 +4,8 @@
 // Reads the dockStatusOff hint and reports it: with the switch off the dock never shows.
 // Point PLAYWRIGHT_ROOT at any project with Playwright installed; arg 1 is the dsh launch token;
 // arg 2 an optional screenshot path.
-import { dshUrl, launch } from "./pw.js";
+import z from "@deepseek-ai/schemastery";
+import { dshUrl, fetchJson, launch } from "./pw.js";
 
 const [token, out = "/tmp/pw/dock-status.png"] = process.argv.slice(2);
 const name = process.env.PW_SESSION;
@@ -59,12 +60,14 @@ await row.click();
 
 await p.waitForTimeout(4000);
 
-const off = await p.evaluate(async () => {
-  const r = await fetch("/dsh-oh-my-claude/hints");
-  const h: { dockStatusOff?: boolean } = await r.json();
+// An unset switch reads as off, the way the plugin reads it.
+const hints = await fetchJson(
+  p,
+  "/dsh-oh-my-claude/hints",
+  z.object({ dockStatusOff: z.boolean().default(false) }),
+);
 
-  return h.dockStatusOff === true;
-});
+const off = hints.dockStatusOff;
 
 console.log("dockStatusOff:", off);
 

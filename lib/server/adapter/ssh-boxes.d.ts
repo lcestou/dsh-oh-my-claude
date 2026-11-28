@@ -1,6 +1,6 @@
-import { type SshBox } from "../sessions.js";
+import type { SshBox } from "../sessions.js";
 import type { PluginContext } from "../dsh.js";
-import { Config } from "./config.js";
+import type { Config } from "./config.js";
 import { ClaudeCodeAdapter } from "./class.js";
 /** The mark a mount this plugin made from its own state file (an SSH box, an account) carries in
  *  the shared registry. `Symbol.for`, so a module loaded again still reads it. An untagged entry is
@@ -42,7 +42,7 @@ export interface SshBoxMount {
  * on a hot reload, so trusting a cross-reload map would leave a box gone from the picker but recorded
  * as present. `adapters` is the cross-process `ADAPTER_CURRENT` registry the resume timer walks.
  */
-export declare function reconcileSshBoxes(ctx: PluginContext, base: Schemastery.TypeT<typeof Config>, boxes: SshBox[], mounts: Map<string, SshBoxMount>, adapters: Map<string, ClaudeCodeAdapter>, log: (level: string, msg: string) => void): void;
+export declare function reconcileSshBoxes(ctx: PluginContext, base: Schemastery.TypeT<typeof Config>, boxes: Array<SshBox>, mounts: Map<string, SshBoxMount>, adapters: Map<string, ClaudeCodeAdapter>, log: (level: string, msg: string) => void): void;
 /** One `claude auth status` at mount, so the picker names a logged-out box before its first turn.
  *  A panel token counts too: the CLI's own status cannot see one, and without this a restart named
  *  a box logged in only from the panel as logged out until someone opened Settings. */

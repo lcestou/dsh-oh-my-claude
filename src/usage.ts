@@ -1,6 +1,7 @@
 // Plan usage for the context-meter popover: the OAuth usage endpoint behind Claude Code's /usage
 // command, read with the login Claude Code stores, projected to the few fields the panel shows.
 // This is an I/O boundary: the payload is undocumented and decoded here into a closed shape.
+import { parsedWith } from "./schema-fits.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { execFile } from "node:child_process";
 import { authHeaders, authHeadersFrom, STATE_DIR, writeJson } from "./state.js";
@@ -583,11 +584,9 @@ const CachedBreakdown = z.object({
 export function parseBreakdownCache(
   text: string,
 ): Record<string, { at: number; reply: UsageBreakdownReply }> | undefined {
-  let parsed: ReturnType<typeof CachedBreakdown>;
+  const parsed = parsedWith(CachedBreakdown, text);
 
-  try {
-    parsed = CachedBreakdown(JSON.parse(text));
-  } catch {
+  if (parsed === undefined) {
     return undefined;
   }
 
@@ -620,6 +619,17 @@ export interface UsageMemo {
 /** A persisted number, or 0 for anything that is not a finite one. */
 const finite = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
+/** True for a saved successful reply: ok, its fetch time, and every window's label and percent
+ *  checked; the other window fields are optional and the client reads them defensively. */
+const isOkReply = (r: unknown): r is Extract<UsageReply, { ok: true }> =>
+  isRec(r) &&
+  r.ok === true &&
+  typeof r.fetchedAt === "number" &&
+  Array.isArray(r.windows) &&
+  r.windows.every(
+    (w) => isRec(w) && typeof w.label === "string" && typeof w.usedPercent === "number",
+  );
+
 /** The persisted plan-usage memo, or undefined when the file is not the shape the reader needs: an
  *  older build's, a torn write, a hand edit. Checked by hand rather than by schema because most
  *  window fields are optional; a reply is kept only once its `ok`, `fetchedAt` and window list are
@@ -650,20 +660,8 @@ export function parseUsageMemo(text: string): Record<string, UsageMemo> | undefi
       strikes: finite(e.strikes),
     };
 
-    const r = e.reply;
-
-    if (
-      isRec(r) &&
-      r.ok === true &&
-      typeof r.fetchedAt === "number" &&
-      Array.isArray(r.windows) &&
-      r.windows.every(
-        (w) => isRec(w) && typeof w.label === "string" && typeof w.usedPercent === "number",
-      )
-    ) {
-      // SAFETY: ok, fetchedAt and every window's label and percent were checked just above; the
-      // other window fields are optional and the client reads them defensively.
-      entry.reply = r as Extract<UsageReply, { ok: true }>;
+    if (isOkReply(e.reply)) {
+      entry.reply = e.reply;
     }
 
     out[key] = entry;
@@ -703,17 +701,20 @@ export function createUsageReader(
 
   /** Reads the file once per reader; a missing or damaged file leaves the memo empty, never throws,
    *  and an entry already in memory wins over the one on disk. */
-  const usageLoad = (): Promise<void> =>
-    (usageLoaded ??= readFile(file, "utf8")
+  const usageLoad = (): Promise<void> => (usageLoaded ??= usageFill());
+
+  /** The one read behind `usageLoad`: a missing or damaged file reads as no entries. */
+  async function usageFill(): Promise<void> {
+    const entries = await readFile(file, "utf8")
       .then(parseUsageMemo)
-      .catch(() => undefined)
-      .then((entries) => {
-        for (const [key, entry] of Object.entries(entries ?? {})) {
-          if (!memo.has(key)) {
-            memo.set(key, entry);
-          }
-        }
-      }));
+      .catch(() => undefined);
+
+    for (const [key, entry] of Object.entries(entries ?? {})) {
+      if (!memo.has(key)) {
+        memo.set(key, entry);
+      }
+    }
+  }
 
   let saving: Promise<void> = Promise.resolve();
 
@@ -760,38 +761,41 @@ export function createUsageReader(
       return miss.reply;
     }
 
-    if (!inFlight.has(key)) {
-      inFlight.set(
-        key,
-        readUsage(fetchImpl, home, sshHost).then((reply) => {
-          inFlight.delete(key);
+    const pending = inFlight.get(key);
 
-          if (reply.ok) {
-            m.reply = reply;
-            m.at = now();
-            m.limitedUntil = 0;
-            m.strikes = 0;
-            failed.delete(key);
-            usageSave();
-
-            return reply;
-          }
-
-          if (reply.retryAfterMs) {
-            m.strikes += 1;
-            m.limitedUntil = now() + backoffMs(reply.retryAfterMs, m.strikes);
-            usageSave();
-          }
-
-          const out = fallback(m, reply);
-          failed.set(key, { at: now(), reply: out });
-
-          return out;
-        }),
-      );
+    if (pending) {
+      return pending;
     }
 
-    return inFlight.get(key)!;
+    const started = readUsage(fetchImpl, home, sshHost).then((reply) => {
+      inFlight.delete(key);
+
+      if (reply.ok) {
+        m.reply = reply;
+        m.at = now();
+        m.limitedUntil = 0;
+        m.strikes = 0;
+        failed.delete(key);
+        usageSave();
+
+        return reply;
+      }
+
+      if (reply.retryAfterMs) {
+        m.strikes += 1;
+        m.limitedUntil = now() + backoffMs(reply.retryAfterMs, m.strikes);
+        usageSave();
+      }
+
+      const out = fallback(m, reply);
+      failed.set(key, { at: now(), reply: out });
+
+      return out;
+    });
+
+    inFlight.set(key, started);
+
+    return started;
   };
 
   return read;
@@ -922,26 +926,30 @@ export function registerUsageRoute(
         return entry.reply;
       }
 
-      if (!bdInFlight.has(key)) {
-        bdInFlight.set(
-          key,
-          readUsageBreakdown(command, realHome, sshHost).then((reply) => {
-            if (reply.ok || !entry?.reply.ok) {
-              bdCached.set(key, { at: Date.now(), reply });
+      const pending = bdInFlight.get(key);
 
-              if (reply.ok) {
-                bdSave();
-              }
-            }
-
-            bdInFlight.delete(key);
-
-            return bdCached.get(key)!.reply;
-          }),
-        );
+      if (pending) {
+        return pending;
       }
 
-      return bdInFlight.get(key)!;
+      const started = readUsageBreakdown(command, realHome, sshHost).then((reply) => {
+        if (reply.ok || !entry?.reply.ok) {
+          bdCached.set(key, { at: Date.now(), reply });
+
+          if (reply.ok) {
+            bdSave();
+          }
+        }
+
+        bdInFlight.delete(key);
+
+        // Not kept only when a good answer was already cached, so that is the answer.
+        return bdCached.get(key)?.reply ?? reply;
+      });
+
+      bdInFlight.set(key, started);
+
+      return started;
     });
   };
 

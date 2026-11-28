@@ -24,13 +24,12 @@ const dir = tempDir("omc-claude-update-");
 {
   let calls = 0;
 
-  const fetchFn = (async (url: string) => {
+  const fetchFn = async (url: string) => {
     calls++;
     assert.equal(url, "https://downloads.claude.ai/claude-code-releases/latest");
 
-    // SAFETY: the reader only calls `ok` and `text()`; a whole Response is more than the check needs
-    return { ok: true, text: async () => "2.1.274\n" } as Response;
-  }) as typeof fetch;
+    return new Response("2.1.274\n");
+  };
 
   const t0 = 1_000_000;
   assert.equal(await latestClaude("latest", fetchFn, t0), "2.1.274");
@@ -42,11 +41,11 @@ const dir = tempDir("omc-claude-update-");
   forgetLatestClaude();
   calls = 0;
 
-  const failFetch = (async () => {
+  const failFetch = async () => {
     calls++;
 
-    return { ok: false } as Response;
-  }) as typeof fetch;
+    return new Response(null, { status: 500 });
+  };
 
   assert.equal(await latestClaude("latest", failFetch, t0), undefined);
   assert.equal(await latestClaude("latest", failFetch, t0 + 30 * 60_000), undefined);
@@ -56,21 +55,21 @@ const dir = tempDir("omc-claude-update-");
 
   forgetLatestClaude();
 
-  const junkFetch = (async () => {
-    return { ok: true, text: async () => "not a version" } as Response;
-  }) as typeof fetch;
+  const junkFetch = async () => {
+    return new Response("not a version");
+  };
 
   assert.equal(await latestClaude("latest", junkFetch, t0), undefined);
 
   forgetLatestClaude();
   calls = 0;
 
-  const stableFetch = (async (url: string) => {
+  const stableFetch = async (url: string) => {
     calls++;
     assert.equal(url.split("/").pop(), "stable");
 
-    return { ok: true, text: async () => "2.1.274\n" } as Response;
-  }) as typeof fetch;
+    return new Response("2.1.274\n");
+  };
 
   assert.equal(await latestClaude("stable", stableFetch, t0), "2.1.274");
 }
@@ -270,11 +269,11 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
     return { out: "" };
   };
 
-  const fetchFn = (async (_url: string) => {
+  const fetchFn = async (_url: string) => {
     fetchCallCount++;
 
-    return { ok: true, text: async () => "2.1.274\n" } as Response;
-  }) as typeof fetch;
+    return new Response("2.1.274\n");
+  };
 
   const updated: Array<string> = [];
 
@@ -390,9 +389,9 @@ assert.equal(lastLine("x".repeat(300), undefined)?.length, 200);
     return { out: "" };
   };
 
-  const declinedFetch = (async () => {
-    return { ok: true, text: async () => "2.1.275\n" } as Response;
-  }) as typeof fetch;
+  const declinedFetch = async () => {
+    return new Response("2.1.275\n");
+  };
 
   const u2 = new ClaudeUpdater({
     dir: dir2,

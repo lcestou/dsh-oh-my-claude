@@ -8,6 +8,7 @@ import { rmSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { attachKeeper, pidAlive, readKeeperInfo, spawnKeeper } from "./process.js";
 import { tempDir } from "./test-tmp.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 // A stand-in for claude: on "go", a turn's five lines, the last one its result.
 const fake = `
@@ -19,7 +20,7 @@ process.stdin.on("data", (d) => {
 });
 `;
 
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const wait = (ms: number) => sleep(ms);
 
 const lines = (r: NodeJS.ReadableStream) => {
   const out: Array<string> = [];

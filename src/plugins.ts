@@ -1,5 +1,6 @@
 // Which Claude Code plugins and marketplaces a session's settings turn on. Pure: the caller reads
 // the files, this works out what the CLI would load from them.
+import { stringOf, isRec } from "./decode.js";
 import type { JsonValue } from "./dsh.js";
 import { parseSettings } from "./switches.js";
 import type { ScopeText } from "./switches.js";
@@ -112,18 +113,16 @@ export const isMarketplaceSource = (value: unknown): value is string =>
 
 /** The value as a record, or null for an array or a scalar. */
 const object = (value: JsonValue | undefined): Record<string, JsonValue> | null => {
-  if (!(value instanceof Object) || Array.isArray(value)) {
-    return null;
-  }
-
-  // SAFETY: the guard above leaves only the object arm of JsonValue, whose values are JsonValue.
-  return value;
+  // The check leaves only the object arm of JsonValue, whose values are JsonValue.
+  return isRec(value) ? value : null;
 };
 
 /** What the panel shows for a value that is neither `true` nor `false`. */
 const extended = (value: JsonValue) => {
-  if (String(value) === value) {
-    return { enabled: true, detail: value };
+  const text = stringOf(value);
+
+  if (text !== undefined) {
+    return { enabled: true, detail: text };
   }
 
   const fields = object(value);
@@ -132,7 +131,7 @@ const extended = (value: JsonValue) => {
   const enabled = fields?.enabled !== false;
   const version = fields?.version;
 
-  return { enabled, detail: String(version) === version ? version : JSON.stringify(value) };
+  return { enabled, detail: stringOf(version) ?? JSON.stringify(value) };
 };
 
 /**
@@ -142,8 +141,10 @@ const extended = (value: JsonValue) => {
  * unwrapped one level before the kind and location are read off it.
  */
 const sourceLine = (value: JsonValue): string => {
-  if (String(value) === value) {
-    return value;
+  const text = stringOf(value);
+
+  if (text !== undefined) {
+    return text;
   }
 
   const outer = object(value);
@@ -155,9 +156,10 @@ const sourceLine = (value: JsonValue): string => {
   const descriptor = object(outer.source) ?? outer;
   const kind = descriptor.source;
   const where = descriptor.repo ?? descriptor.url ?? descriptor.path;
-  const kindText = String(kind) === kind ? kind : JSON.stringify(descriptor);
+  const kindText = stringOf(kind) ?? JSON.stringify(descriptor);
+  const whereText = stringOf(where);
 
-  return String(where) === where ? `${kindText}:${where}` : kindText;
+  return whereText === undefined ? kindText : `${kindText}:${whereText}`;
 };
 
 /**

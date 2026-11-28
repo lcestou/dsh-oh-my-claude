@@ -4,10 +4,9 @@ import { strict as assert } from "node:assert";
 import { execFile, execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 
-import type { PluginContext } from "../dsh.js";
+import { fakePluginContext, userTurn } from "../test-context.js";
 import { sshTokenPath } from "../ssh-login.js";
 import { STATE_DIR, stateDir } from "../state.js";
 import { tempDir } from "../test-tmp.js";
@@ -104,14 +103,14 @@ assert.equal(parseBoxProbe(undefined), undefined);
 const shellAt =
   (home: string): BoxRunner =>
   (_host, script) =>
-    new Promise((resolve) =>
+    new Promise((resolve) => {
       execFile(
         "sh",
         ["-c", script],
         { env: { HOME: home, PATH: process.env.PATH }, timeout: 10_000 },
-        (e, out) => resolve(e ? undefined : String(out)),
-      ),
-    );
+        (e, out) => resolve(e ? undefined : out),
+      );
+    });
 
 // The real scripts against a router that answers: the box reads as routed, by its own address.
 {
@@ -120,9 +119,14 @@ const shellAt =
     res.end(JSON.stringify({ detail: "unauthorized" }));
   });
 
-  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
-  // SAFETY: a listening TCP server's address is the object form
-  const host = `127.0.0.1:${(server.address() as AddressInfo).port}`;
+  await new Promise<void>((done) => {
+    server.listen(0, "127.0.0.1", done);
+  });
+  const address = server.address();
+
+  assert.ok(typeof address === "object" && address !== null, "a TCP listener has a port");
+
+  const host = `127.0.0.1:${address.port}`;
   const home = tempDir("omc-box-route-");
   mkdirSync(join(home, ".claude"), { recursive: true });
   writeFileSync(
@@ -240,8 +244,8 @@ const shellAt =
 
   /** A panel login in the shape the store accepts. */
   const loginOf = (host: string) => `sk-ant-oat01-${host}-${"a".repeat(50)}`;
-  // SAFETY: partial fake; a listing and a turn's preparation read the event hook and nothing else
-  const ctx = { on() {} } as unknown as PluginContext;
+  // A listing and a turn's preparation read the event hook and nothing else.
+  const ctx = fakePluginContext({ on() {} });
 
   /** A mount for `host` whose box has answered, with its lineup and a panel login on file. */
   const mountOn = async (host: string, routed: boolean) => {
@@ -260,11 +264,10 @@ const shellAt =
     mkdirSync(join(token, ".."), { recursive: true });
     writeFileSync(token, loginOf(host));
 
-    // SAFETY: the cases below read private members of the mount
     return new ClaudeCodeAdapter(
       ctx,
       Config({ providerId, sshHost: host, dshTools: false, spawn: "node" }),
-    ) as any;
+    );
   };
 
   const nova = await mountOn("nova", true);
@@ -272,19 +275,20 @@ const shellAt =
     state: "routed",
     host: "127.0.0.1:15721",
   });
-  const names = (await nova.listModels("claude-code-nova")).map((m: { name: string }) => m.name);
+  const names = (await nova.listModels("claude-code-nova")).map((m) => m.name);
   assert.ok(names.includes("GLM 4.6"), "the box's router names its row");
-  assert.ok(!names.some((n: string) => /Haiku/.test(n)), "Claude's own rows are set aside there");
+  assert.ok(
+    !names.some((n) => n !== undefined && /Haiku/.test(n)),
+    "Claude's own rows are set aside there",
+  );
 
-  const turn = await nova.prepare({
-    messages: [{ role: "user", content: "hi" }],
-    model: "sonnet",
-  });
+  const turn = await nova.prepare(userTurn(undefined, "hi", { model: "sonnet" }));
 
   assert.equal(turn.via, "127.0.0.1:15721", "the turn is recorded as the router's");
   assert.equal(turn.spec.routed, true);
   assert.equal(turn.spec.window, 200_000, "the window for a router's row rides to the box");
-  assert.deepEqual(nova.farEnv("nova", turn.spec.routed, turn.spec.window), {
+  // farEnv is private: element access reaches it with its types intact.
+  assert.deepEqual(nova["farEnv"]("nova", turn.spec.routed, turn.spec.window), {
     token: undefined,
     window: 200_000,
   });
@@ -292,15 +296,12 @@ const shellAt =
   const vega = await mountOn("vega", false);
   assert.deepEqual(await vega.route(), { state: "direct" });
 
-  const plain = await vega.prepare({
-    messages: [{ role: "user", content: "hi" }],
-    model: "sonnet",
-  });
+  const plain = await vega.prepare(userTurn(undefined, "hi", { model: "sonnet" }));
 
   assert.equal(plain.via, undefined);
   assert.equal(plain.spec.routed, undefined);
   assert.equal(plain.spec.window, undefined);
-  assert.equal(vega.farEnv("vega", plain.spec.routed, plain.spec.window).token, loginOf("vega"));
+  assert.equal(vega["farEnv"]("vega", plain.spec.routed, plain.spec.window).token, loginOf("vega"));
 }
 
 console.log("box route ok");

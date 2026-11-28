@@ -14,7 +14,9 @@ import {
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PluginContext } from "../dsh.js";
+import { ToolCallId } from "@deepseek-ai/dsh-llm";
+import type { JsonValue } from "../dsh.js";
+import { fakePluginContext } from "../test-context.js";
 import { loadStarted } from "../state.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
@@ -37,13 +39,15 @@ const reply = (t: string, provider = "claude-code"): LooseMessage => ({
   source: { kind: "model", provider, model: "m" },
 });
 
-// SAFETY: hand-written dsh messages in the shapes dsh 0.1.7+ logs
-const call = (id: string, name: string, args: string, say = ""): LooseMessage =>
-  ({
-    role: "assistant",
-    content: [...(say ? text(say) : []), { type: "tool-call", id, name, arguments: args }],
-    source: { kind: "model", provider: "claude-code", model: "m" },
-  }) as unknown as LooseMessage;
+// Hand-written dsh messages in the shapes dsh 0.1.7+ logs.
+const call = (id: string, name: string, args: string, say = ""): LooseMessage => ({
+  role: "assistant",
+  content: [
+    ...(say ? text(say) : []),
+    { type: "tool-call", id: ToolCallId(id), name, arguments: args },
+  ],
+  source: { kind: "model", provider: "claude-code", model: "m" },
+});
 
 const result = (id: string, t: string, isError = false): LooseMessage => ({
   role: "tool",
@@ -73,11 +77,41 @@ const history: Array<LooseMessage> = [
   person("怎么样了"),
 ];
 
-const rows = (t: string) =>
+/** One content block of a seeded transcript message, with the fields the assertions read. */
+interface SeedBlock {
+  type: string;
+  id?: string;
+  text?: string;
+  name?: string;
+  input?: JsonValue;
+  tool_use_id?: string;
+  content?: Array<SeedBlock>;
+  is_error?: boolean;
+}
+
+/** One parsed transcript line as the seed writes it, with the fields the assertions read; the
+ *  assertions fail on any shape the seed did not write. */
+interface TranscriptRow {
+  type: string;
+  uuid: string;
+  parentUuid: string | null;
+  timestamp: string;
+  message: { role?: string; id?: string; content: Array<SeedBlock> };
+  version?: string;
+  sessionId?: string;
+  cwd?: string;
+}
+
+/** The JSON lines of a written transcript, parsed. */
+const rows = (t: string): Array<TranscriptRow> =>
   t
     .trim()
     .split("\n")
-    .map((l) => JSON.parse(l));
+    .map((l) => {
+      const row: TranscriptRow = JSON.parse(l);
+
+      return row;
+    });
 
 // The history ends after the last reply; the person's newest message is the new turn.
 assert.equal(historyEnd(history), history.length - 1);
@@ -98,7 +132,7 @@ const seed = rows(
 
 // Turns, not one block: who said what stays with its role.
 assert.deepEqual(
-  seed.map((r) => `${r.type}:${r.message.content.map((b: { type: string }) => b.type).join("+")}`),
+  seed.map((r) => `${r.type}:${r.message.content.map((b) => b.type).join("+")}`),
   [
     "user:text",
     "user:text",
@@ -114,39 +148,53 @@ assert.deepEqual(
   ],
 );
 
-assert.equal(seed[1].message.content[0].text, "帮我看看构建", "the person's own words, unlabelled");
+assert.equal(
+  seed[1]?.message.content[0]?.text,
+  "帮我看看构建",
+  "the person's own words, unlabelled",
+);
 
 assert.ok(!JSON.stringify(seed).includes("You are Sakina."), "the system prompt rides on its flag");
 
 assert.ok(!JSON.stringify(seed).includes("[assistant]"), "no role labels inside a message");
 
-assert.equal(seed[2].message.content[1].name, "mcp__dsh__bash", "named as Claude saw it");
+assert.equal(seed[2]?.message.content[1]?.name, "mcp__dsh__bash", "named as Claude saw it");
 
-assert.deepEqual(seed[2].message.content[1].input, { command: "ci status 1" });
+assert.deepEqual(seed[2]?.message.content[1]?.input, { command: "ci status 1" });
 
 assert.deepEqual(
-  seed[8].message.content[0].input,
+  seed[8]?.message.content[0]?.input,
   { input: "{not json" },
   "unparsable kept as text",
 );
 
-assert.equal(seed[9].message.content[0].tool_use_id, "c3");
+assert.equal(seed[9]?.message.content[0]?.tool_use_id, "c3");
 
-assert.equal(seed[9].message.content[0].content[0].text, NO_RESULT, "an unanswered call is closed");
+assert.equal(
+  seed[9]?.message.content[0]?.content?.[0]?.text,
+  NO_RESULT,
+  "an unanswered call is closed",
+);
 
-assert.equal(seed[9].message.content[0].is_error, true);
+assert.equal(seed[9]?.message.content[0]?.is_error, true);
 
-assert.equal(seed[10].message.content[0].text, "已经派人去修了。", "another route's reply counts");
+assert.equal(
+  seed[10]?.message.content[0]?.text,
+  "已经派人去修了。",
+  "another route's reply counts",
+);
 
 // A chain the CLI walks back from the last row, with the fields its loader reads.
 for (const [i, r] of seed.entries()) {
-  assert.equal(r.parentUuid, i === 0 ? null : seed[i - 1].uuid);
+  assert.equal(r.parentUuid, i === 0 ? null : seed[i - 1]?.uuid);
   assert.equal(r.sessionId, "s");
   assert.equal(r.cwd, "/w");
   assert.equal(r.version, "2.1.325");
 
   if (i > 0) {
-    assert.ok(r.timestamp > seed[i - 1].timestamp, "time order is write order");
+    const before = seed[i - 1];
+
+    assert.ok(before && r.timestamp > before.timestamp, "time order is write order");
   }
 }
 
@@ -172,7 +220,7 @@ assert.match(buildPrompt(selectTurns(history, false)), /^\[user\]\n/);
   );
 
   assert.equal(
-    capped[2].message.content[0].content[0].text,
+    capped[2]?.message.content[0]?.content?.[0]?.text,
     `${"x".repeat(10)}… (40 more characters)`,
   );
 }
@@ -187,7 +235,7 @@ assert.match(buildPrompt(selectTurns(history, false)), /^\[user\]\n/);
 
   const msgs = [person("go"), call("e", "bash", "{}"), result("e", "boom", true), dev, reply("ok")];
   const plain = rows(seedTranscriptText(msgs, { sessionId: "s", cwd: "/w", version: "1" }));
-  assert.equal(plain[2].message.content[0].is_error, true);
+  assert.equal(plain[2]?.message.content[0]?.is_error, true);
   assert.ok(!JSON.stringify(plain).includes("Tools changed."));
 
   const dsh = rows(
@@ -207,10 +255,10 @@ assert.match(buildPrompt(selectTurns(history, false)), /^\[user\]\n/);
     }),
   );
 
-  assert.equal(opened[0].type, "user");
-  assert.equal(opened[0].parentUuid, null);
-  assert.equal(opened[1].parentUuid, opened[0].uuid);
-  assert.ok(opened[0].timestamp < opened[1].timestamp, "the opening row sorts first");
+  assert.equal(opened[0]?.type, "user");
+  assert.equal(opened[0]?.parentUuid, null);
+  assert.equal(opened[1]?.parentUuid, opened[0]?.uuid);
+  assert.ok(opened[0]?.timestamp < opened[1]?.timestamp, "the opening row sorts first");
 }
 
 assert.equal(bridgedName("bash"), "mcp__dsh__bash");
@@ -237,7 +285,7 @@ assert.deepEqual(announcementOf("t3", "ToolSearch"), { id: "t3:call", name: "Too
         ],
         { sessionId: "s", cwd: "/w", version: "2.1.325" },
       ),
-    )[1].message.content[0].name;
+    )[1]?.message.content[0]?.name;
   };
 
   assert.equal(named("toolu_a", "Bash"), "Bash");
@@ -271,8 +319,8 @@ assert.deepEqual(announcementOf("t3", "ToolSearch"), { id: "t3:call", name: "Too
     ),
   )
     .flatMap((r) => r.message.content)
-    .filter((b: { type: string }) => b.type === "tool_use")
-    .map((b: { name: string }) => b.name);
+    .filter((b) => b.type === "tool_use")
+    .map((b) => b.name);
 
   assert.deepEqual(named, ["Bash", "Edit", "MultiEdit", "mcp__dsh__bash"]);
 
@@ -294,8 +342,8 @@ assert.deepEqual(announcementOf("t3", "ToolSearch"), { id: "t3:call", name: "Too
     ),
   )
     .flatMap((r) => r.message.content)
-    .filter((b: { type: string }) => b.type === "tool_use")
-    .map((b: { name: string }) => b.name);
+    .filter((b) => b.type === "tool_use")
+    .map((b) => b.name);
 
   assert.deepEqual(imported, ["Bash", "mcp__dsh__bash", "mcp__dsh__subagent"]);
 
@@ -316,9 +364,7 @@ assert.deepEqual(announcementOf("t3", "ToolSearch"), { id: "t3:call", name: "Too
   );
 
   assert.deepEqual(
-    parallel.map(
-      (r) => `${r.type}:${r.message.content.map((b: { type: string }) => b.type).join("+")}`,
-    ),
+    parallel.map((r) => `${r.type}:${r.message.content.map((b) => b.type).join("+")}`),
     [
       "user:text",
       "assistant:tool_use+tool_use",
@@ -341,10 +387,10 @@ assert.deepEqual(announcementOf("t3", "ToolSearch"), { id: "t3:call", name: "Too
 
   assert.equal(historyEnd(endsParallel), 5);
 
-  const dev = {
+  const dev: LooseMessage = {
     role: "developer",
-    content: [{ type: "text", text: "note" }],
-  } as unknown as LooseMessage;
+    content: text("note"),
+  };
 
   assert.equal(
     historyEnd([person("go"), native("e1", "bash"), dev, result("e1", "one")]),
@@ -377,8 +423,8 @@ assert.deepEqual(announcementOf("t3", "ToolSearch"), { id: "t3:call", name: "Too
     ),
   )
     .flatMap((r) => r.message.content)
-    .filter((b: { type: string }) => b.type === "tool_use")
-    .map((b: { name: string }) => b.name);
+    .filter((b) => b.type === "tool_use")
+    .map((b) => b.name);
 
   assert.deepEqual(bridgedRun, ["mcp__dsh__bash"]);
 
@@ -389,7 +435,7 @@ assert.deepEqual(announcementOf("t3", "ToolSearch"), { id: "t3:call", name: "Too
       [
         person("go"),
         native("d1", "bash"),
-        { role: "developer", content: [{ type: "text", text: "note" }] } as unknown as LooseMessage,
+        { role: "developer", content: text("note") },
         native("d2", "read"),
         result("d1", "late"),
         result("d2", "two"),
@@ -400,9 +446,7 @@ assert.deepEqual(announcementOf("t3", "ToolSearch"), { id: "t3:call", name: "Too
   );
 
   assert.deepEqual(
-    developerBetween.map(
-      (r) => `${r.type}:${r.message.content.map((b: { type: string }) => b.type).join("+")}`,
-    ),
+    developerBetween.map((r) => `${r.type}:${r.message.content.map((b) => b.type).join("+")}`),
     [
       "user:text",
       "assistant:tool_use",
@@ -423,8 +467,8 @@ assert.equal(bridgedName("mcp__other__x"), "mcp__other__x");
 // transcript aside rather than deleting it.
 {
   const home = mkdtempSync(join(tmpdir(), "omc-seed-"));
-  // SAFETY: partial fake; the constructor reads nothing past `on`
-  const adapter = new ClaudeCodeAdapter({ on() {} } as unknown as PluginContext, Config({}));
+  // The constructor reads nothing past `on`.
+  const adapter = new ClaudeCodeAdapter(fakePluginContext({ on() {} }), Config({}));
   adapter.claudeHome = home;
   const dir = join(home, "projects", projectDirName("/w"));
   assert.equal(await adapter.seedTranscript([person("hi")], "/w", "fresh", "2.1.325", {}), false);
@@ -435,7 +479,7 @@ assert.equal(bridgedName("mcp__other__x"), "mcp__other__x");
   );
   const written = rows(readFileSync(join(dir, "s1.jsonl"), "utf8"));
   assert.equal(written.length, 11);
-  assert.equal(written[0].version, "2.1.325", "the number alone, as the CLI stamps it");
+  assert.equal(written[0]?.version, "2.1.325", "the number alone, as the CLI stamps it");
   assert.ok((await loadStarted()).has("s1"));
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "s2.jsonl"), "{}\n");
@@ -500,17 +544,14 @@ assert.equal(bridgedName("mcp__other__x"), "mcp__other__x");
     ),
   ).flatMap((r) => r.message.content);
 
-  const uses = seeded
-    .filter((b: { type: string }) => b.type === "tool_use")
-    .map((b: { id: string }) => b.id);
+  const uses = seeded.filter((b) => b.type === "tool_use").map((b) => b.id);
 
-  const answers = seeded
-    .filter((b: { type: string }) => b.type === "tool_result")
-    .map((b: { tool_use_id: string }) => b.tool_use_id);
+  const answers = seeded.filter((b) => b.type === "tool_result").map((b) => b.tool_use_id);
 
   assert.equal(uses.length, 3);
 
   for (const id of uses) {
+    assert.ok(id !== undefined, "every call carries an id");
     assert.match(id, /^[a-zA-Z0-9_-]{1,64}$/, `${id.slice(0, 40)} fits the API`);
   }
 

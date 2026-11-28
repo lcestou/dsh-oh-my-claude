@@ -41,8 +41,17 @@ type AxeResult = {
   violations: Array<{ id: string; impact: string | null; nodes: Array<{ target: Array<string> }> }>;
 };
 
+/** What to scan: each entry is a selector path, one selector per frame level. */
+type AxeContext = { include: Array<Array<string>> };
+
+/** The run options the scan passes: rules by tag, violations only. */
+type AxeOptions = {
+  runOnly: { type: "tag"; values: Array<string> };
+  resultTypes: Array<"violations">;
+};
+
 /** The slice of `window.axe` the scan calls. */
-type AxeApi = { run(context: object, options: object): Promise<AxeResult> };
+type AxeApi = { run(context: AxeContext, options: AxeOptions): Promise<AxeResult> };
 
 declare global {
   interface Window {

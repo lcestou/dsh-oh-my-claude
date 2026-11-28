@@ -16,6 +16,7 @@
  * Layout under the far `$HOME/.local/state/dsh-oh-my-claude/hold/<name>/`: `in` (FIFO), `out.log`,
  * `err.log`, `pid` (the session leader; its pgid, for the kill), `exit` (the CLI's exit code).
  */
+import { isRec } from "./decode.js";
 import { createHash } from "node:crypto";
 import { PassThrough, Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
@@ -28,6 +29,7 @@ import {
   nodeSpawner,
   shq,
   sshArgs,
+  isStoredProcessSpec,
 } from "./process.js";
 import type { ClaudeProcessSpec, FarEnv, SubprocessHandle } from "./process.js";
 
@@ -290,7 +292,10 @@ export function holdHandle(
       settle(parsed.code, null);
     };
 
-    void ssh.done.then((outcome) => {
+    // Fire and forget: the attach returns at once, and the ssh's end decides what comes next.
+    void (async () => {
+      const outcome = await ssh.done;
+
       if (ended || current !== ssh) {
         return;
       }
@@ -307,7 +312,7 @@ export function holdHandle(
       // No exit line: the ssh went, not the CLI. Come back from where we were.
       const delay = reattachDelay(attempt++);
       setTimeout(attach, delay).unref();
-    });
+    })();
   };
 
   const stdin = new Writable({
@@ -348,12 +353,12 @@ export function holdHandle(
 
 /** A holds.json value with every field a reattach needs, or nothing. */
 export function asHoldRecord(raw: unknown): HoldRecord | undefined {
-  if (typeof raw !== "object" || raw === null) {
+  if (!isRec(raw)) {
     return undefined;
   }
 
-  // SAFETY: a non-null object from this plugin's own file; each field is checked before use
-  const r = raw as Record<string, unknown>;
+  // A non-null object from this plugin's own file; each field is checked before use
+  const r = raw;
 
   if (
     typeof r.sessionId !== "string" ||
@@ -362,8 +367,7 @@ export function asHoldRecord(raw: unknown): HoldRecord | undefined {
     typeof r.command !== "string" ||
     !Array.isArray(r.args) ||
     typeof r.cwd !== "string" ||
-    typeof r.procSpec !== "object" ||
-    r.procSpec === null ||
+    !isStoredProcessSpec(r.procSpec) ||
     typeof r.offset !== "number" ||
     typeof r.startedAt !== "number"
   ) {
@@ -377,8 +381,8 @@ export function asHoldRecord(raw: unknown): HoldRecord | undefined {
     command: r.command,
     args: r.args.filter((a): a is string => typeof a === "string"),
     cwd: r.cwd,
-    // SAFETY: written by holdOn from a ClaudeProcessSpec; a stale shape only mis-keys a respawn
-    procSpec: r.procSpec as ClaudeProcessSpec,
+    // Written by holdOn from a ClaudeProcessSpec; a stale shape only mis-keys a respawn.
+    procSpec: r.procSpec,
     offset: r.offset,
     startedAt: r.startedAt,
     owner: typeof r.owner === "string" ? r.owner : undefined,

@@ -1,5 +1,6 @@
 // Reply shapes, event shapes and the shared types behind the server's control surface.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
+import { stringOf } from "../decode.js";
 import { LlmError } from "@deepseek-ai/dsh-llm";
 import type { GenerateOptions, Message } from "@deepseek-ai/dsh-llm";
 import type { Agent, JsonValue, SessionId } from "../dsh.js";
@@ -201,7 +202,7 @@ export function skillDoctorReply(
     return { ok: false, error: failure };
   }
 
-  const report = String(result.result ?? "");
+  const report = stringOf(result.result) ?? "";
 
   if (result.is_error) {
     return { ok: false, declined: true, error: report };
@@ -321,3 +322,7 @@ export interface PermissionModeState extends PermissionModeInfo {
 export function registryKey(providerId: string, sessionId: string): string {
   return `${providerId}:${sessionId}`;
 }
+
+/** The part of a Claude process the control channel touches (`control`, `retarget`): its spec and
+ *  key, the control_response listener, and stdin. A check can hand in a bridge with just these. */
+export type ControlledProcess = Pick<ClaudeProcess, "spec" | "key" | "controlListener" | "write">;

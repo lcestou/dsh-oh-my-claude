@@ -5,6 +5,8 @@
 import { strict as assert } from "node:assert";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { SubprocessRuntime } from "../dsh.js";
+import { fakePluginContext, fakeSubprocessHandle } from "../test-context.js";
 
 // CLAUDE_HOME is read once at import: the cases below are about a dsh started without the variable.
 delete process.env.CLAUDE_CONFIG_DIR;
@@ -15,10 +17,8 @@ const { childEnv, seamSpawner, SECURE_STORAGE_ENV } = await import("../process.j
 const { cliEnvFor } = await import("../sessions.js");
 const { secureStorageDir } = await import("../state.js");
 
-type Ctx = ConstructorParameters<typeof ClaudeCodeAdapter>[0];
-
-// SAFETY: partial fake; the constructor and localEnvOverride read the event hook and nothing else
-const ctx = { on() {} } as unknown as Ctx;
+// The constructor and localEnvOverride read the event hook and nothing else.
+const ctx = fakePluginContext({ on() {} });
 
 /** The env a local spawn of a mount built from `config` adds, or {} when it adds nothing. */
 const envOf = (config: Record<string, unknown>) =>
@@ -79,12 +79,16 @@ assert.equal(child.DROP, undefined, "an empty override still removes a name");
 
 assert.equal(child[SECURE_STORAGE_ENV], "", "but the secure-storage dir keeps its empty value");
 
-let seamEnv: Record<string, string> = {};
+let seamEnv: NodeJS.ProcessEnv = {};
 
-// SAFETY: the seam double records the spawn request and returns nothing the spawner reads
-const seam = {
-  spawn: (req: { env: Record<string, string> }) => ((seamEnv = req.env), {}),
-} as never;
+// The seam double records the spawn request; the handle it answers is never read here.
+const seam: Pick<SubprocessRuntime, "spawn"> = {
+  spawn: (req) => {
+    seamEnv = req.env ?? {};
+
+    return fakeSubprocessHandle();
+  },
+};
 
 seamSpawner(seam, { DROP: "x" })("claude", [], "/w", { DROP: "", [SECURE_STORAGE_ENV]: "" });
 

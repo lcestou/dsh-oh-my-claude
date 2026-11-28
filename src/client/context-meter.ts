@@ -14,6 +14,7 @@ import {
   isRingRoot,
   RING_ARC,
   maskEmail,
+  errorText,
 } from "./shared.js";
 import type { ClientCtx } from "./shared.js";
 import { limitFor, loginEndSoon } from "./limits.js";
@@ -25,6 +26,7 @@ import { absentSeries, historyStrip, seriesLabel } from "./history-strip.js";
 import { sparkNode } from "./spark.js";
 import { HINTS_EVENT, loadHints } from "./hints.js";
 import { onBodyMutation, changedElements } from "./dom.js";
+import { isElement, isHTMLElement } from "./dom-guards.js";
 
 /** The model a session has picked in dsh's selector, or undefined when dsh has not bound the
  *  session yet (its model directory throws until then). */
@@ -244,10 +246,11 @@ export const loadContext = (sessionId: string): Promise<ContextReply> => {
 
   const reply = (async (): Promise<ContextReply> => {
     try {
-      const r = await fetch(`${ROUTE}/context?session=${encodeURIComponent(sessionId)}`);
-
-      // SAFETY: the body is our own JSON route; both shapes carry `ok`
-      return (await r.json()) as ContextReply;
+      // The route answers 200 with `ok: false` when there is no live process; a refusal it sends
+      // with an error status arrives here as the thrown error text.
+      return await readJson<ContextReply>(
+        await fetch(`${ROUTE}/context?session=${encodeURIComponent(sessionId)}`),
+      );
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -650,7 +653,7 @@ function hideNativeContext(host: HTMLElement, ours: HTMLElement) {
       continue;
     }
 
-    if (node instanceof HTMLElement) {
+    if (isHTMLElement(node)) {
       node.hidden = true;
       node.style.setProperty("display", "none", "important");
     } else {
@@ -722,7 +725,9 @@ export function watchContextMeter(ctx: ClientCtx) {
     const provider = activeClaudeProvider(ctx);
 
     if (sid) {
-      loadContext(sid).then((reply) => {
+      void (async () => {
+        const reply = await loadContext(sid);
+
         renderContext(breakdown, reply);
 
         // dsh's own readout of the same window sits below this block and measures a different
@@ -742,28 +747,36 @@ export function watchContextMeter(ctx: ClientCtx) {
         block.style.borderBottom = "none";
         block.style.paddingBottom = "0";
         block.style.marginBottom = "0";
-      });
+      })();
     }
 
     // Read once per open: the popover is rebuilt each time it opens, and while it is on screen
     // nothing else changes these figures or the history (a new reading lands on the next open).
-    loadUsage(provider).then(
-      (reply) => {
-        const who = whose(reply);
+    // Never rejects: a failed read is the rows' error line.
+    void (async () => {
+      let reply: Awaited<ReturnType<typeof loadUsage>>;
 
-        if (who) {
-          caption.textContent = who;
-          caption.title = who;
-        } else {
-          caption.remove();
-        }
+      try {
+        reply = await loadUsage(provider);
+      } catch (error) {
+        renderUsage(rows, { ok: false, error: errorText(error) });
 
-        loginEnds.textContent = loginEndNote(reply);
-        loginEnds.hidden = loginEnds.textContent === "";
-        renderUsage(rows, reply);
-      },
-      (error: Error) => renderUsage(rows, { ok: false, error: error.message }),
-    );
+        return;
+      }
+
+      const who = whose(reply);
+
+      if (who) {
+        caption.textContent = who;
+        caption.title = who;
+      } else {
+        caption.remove();
+      }
+
+      loginEnds.textContent = loginEndNote(reply);
+      loginEnds.hidden = loginEnds.textContent === "";
+      renderUsage(rows, reply);
+    })();
   };
 
   // The hover tooltip can sit between the button and the dialog at insertion time, so the
@@ -803,35 +816,44 @@ export function watchContextMeter(ctx: ClientCtx) {
     ctxLine.style.cssText = `color:${T.faint};margin-left:18px`;
     block.append(line, ctxLine);
     tip.prepend(block);
-    loadUsage(activeClaudeProvider(ctx)).then(
-      (reply) => {
-        const who = reply.host ? ` (${reply.host})` : "";
+    // Never rejects: a failed read is the bubble's error line.
+    void (async () => {
+      let reply: Awaited<ReturnType<typeof loadUsage>>;
 
-        if (!reply.ok) {
-          text.textContent = t("main.usage.usageErr", { error: reply.error });
+      try {
+        reply = await loadUsage(activeClaudeProvider(ctx));
+      } catch (error) {
+        text.textContent = t("main.usage.usageErr", { error: errorText(error) });
 
-          return;
-        }
+        return;
+      }
 
-        const windows = reply.windows
-          .map((w) => `${windowLabel(w).toLowerCase()} ${Math.round(w.usedPercent)}%`)
-          .join(" · ");
+      const who = reply.host ? ` (${reply.host})` : "";
 
-        const summary = windows
-          ? t("main.usage.bubbleWindows", { windows, who })
-          : t("main.usage.bubbleNoLimits", { who });
+      if (!reply.ok) {
+        text.textContent = t("main.usage.usageErr", { error: reply.error });
 
-        const stale = staleNote(reply);
-        text.textContent = stale ? `${summary} · ${stale}` : summary;
-      },
-      (error: Error) => {
-        text.textContent = t("main.usage.usageErr", { error: error.message });
-      },
-    );
+        return;
+      }
+
+      const windows = reply.windows
+        .map((w) => `${windowLabel(w).toLowerCase()} ${Math.round(w.usedPercent)}%`)
+        .join(" · ");
+
+      const summary = windows
+        ? t("main.usage.bubbleWindows", { windows, who })
+        : t("main.usage.bubbleNoLimits", { who });
+
+      const stale = staleNote(reply);
+      text.textContent = stale ? `${summary} · ${stale}` : summary;
+    })();
+
     const sid = activeClaudeSession(ctx);
 
     if (sid) {
-      loadContext(sid).then((reply) => {
+      void (async () => {
+        const reply = await loadContext(sid);
+
         if (!reply.ok) {
           ctxLine.remove();
 
@@ -845,7 +867,7 @@ export function watchContextMeter(ctx: ClientCtx) {
         });
         block.setAttribute(HID, "1");
         hideNativeContext(tip, block);
-      });
+      })();
     }
   };
 
@@ -920,13 +942,16 @@ export function watchContextMeter(ctx: ClientCtx) {
 
     if (Date.now() - ringLimitAsked > 60_000) {
       ringLimitAsked = Date.now();
-      void Promise.all([loadHints(), loadUsage(activeClaudeProvider(ctx))]).then(
-        ([hints, usage]) => {
-          const off = hints.limitWarningsOff === true || hints.limitRingOff === true;
-          ringLevel = off ? undefined : limitFor(usage, sessionModelOf(ctx, sid))?.level;
-          paintRing();
-        },
-      );
+      void (async () => {
+        const [hints, usage] = await Promise.all([
+          loadHints(),
+          loadUsage(activeClaudeProvider(ctx)),
+        ]);
+
+        const off = hints.limitWarningsOff === true || hints.limitRingOff === true;
+        ringLevel = off ? undefined : limitFor(usage, sessionModelOf(ctx, sid))?.level;
+        paintRing();
+      })();
     }
 
     const stroke = ringLevel === "critical" ? T.err : ringLevel === "warning" ? T.warn : "";
@@ -941,14 +966,16 @@ export function watchContextMeter(ctx: ClientCtx) {
     // ten-second cache the popover reads.
     if (Date.now() - ringAsked > 5000) {
       ringAsked = Date.now();
-      void loadContext(sid).then((reply) => {
+      void (async () => {
+        const reply = await loadContext(sid);
+
         if (!reply.ok) {
           return;
         }
 
         ringPercent = Math.min(100, Math.max(0, reply.percentage));
         paintRing();
-      });
+      })();
     }
 
     if (ringPercent === undefined) {
@@ -1092,7 +1119,7 @@ export function watchContextMeter(ctx: ClientCtx) {
     }
 
     // A re-render adds nodes inside the dialog, not the dialog itself, so climb to it as well.
-    if (root instanceof Element) {
+    if (isElement(root)) {
       const dialog = root.closest<HTMLElement>('[role="dialog"]');
 
       if (dialog && isRingRoot(dialog.parentElement)) {

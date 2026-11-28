@@ -1,4 +1,4 @@
-import { type FsBox } from "./remote-fs.js";
+import type { FsBox } from "./remote-fs.js";
 /** How much of the transcript's end is read: a summary runs to some 20k characters, and the
  *  turn's own rows after it are small, so this leaves room for both and for one earlier pair. */
 export declare const TAIL_BYTES: number;

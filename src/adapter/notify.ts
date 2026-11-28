@@ -283,28 +283,31 @@ export class Notifier {
    *  hints are read again at send time, so turning the switch off also stops a pending one. */
   schedule(req: NotifyRequest): void {
     const mine = this.bump(req.sessionId);
-    void this.deps
-      .hints()
-      .then((h) => {
-        if (h.notifyOn !== true || this.gen.get(req.sessionId) !== mine) {
-          return;
-        }
 
-        // A send that throws (a key file that cannot be written, say) is logged, not left to
-        // reject with nothing listening.
-        const timer = setTimeout(
-          () =>
-            void this.fire(req, mine).catch((error: Error) =>
-              req.log("warn", `phone notice: send failed: ${errorText(error)}`),
-            ),
-          notifyDelayIn(h.notifyDelayMs),
-        );
+    // Fire and forget: arming is synchronous for the caller; an unreadable hints file is logged.
+    void (async () => {
+      const h = await this.deps.hints();
 
-        // A pending notice must not keep a test process or a shutting-down dsh alive.
-        timer.unref?.();
-        this.timers.set(req.sessionId, timer);
-      })
-      .catch((error: Error) => req.log("warn", `phone notice: hints unreadable: ${error.message}`));
+      if (h.notifyOn !== true || this.gen.get(req.sessionId) !== mine) {
+        return;
+      }
+
+      // A send that throws (a key file that cannot be written, say) is logged, not left to
+      // reject with nothing listening.
+      const timer = setTimeout(
+        () =>
+          void this.fire(req, mine).catch((cause: unknown) =>
+            req.log("warn", `phone notice: send failed: ${errorText(cause)}`),
+          ),
+        notifyDelayIn(h.notifyDelayMs),
+      );
+
+      // A pending notice must not keep a test process or a shutting-down dsh alive.
+      timer.unref?.();
+      this.timers.set(req.sessionId, timer);
+    })().catch((cause: unknown) =>
+      req.log("warn", `phone notice: hints unreadable: ${errorText(cause)}`),
+    );
   }
 
   /** Send `req`'s notice if nothing superseded it: same generation, still true, switch still on,

@@ -5,7 +5,8 @@
 // and the block says so; on a routed box, or one whose route cannot be told, it is listed. Point PLAYWRIGHT_ROOT at any project
 // with Playwright installed and DSH_ORIGIN at the dsh to drive; arg 1 is the dsh launch token,
 // arg 2 (optional) a folder for screenshots, arg 3 `keep` to leave the model in place.
-import { dshUrl, launch } from "./pw.js";
+import z from "@deepseek-ai/schemastery";
+import { dshUrl, fetchJson, launch } from "./pw.js";
 
 const [token, out = "/tmp/pw", keep] = process.argv.slice(2);
 
@@ -158,13 +159,20 @@ interface BoxRead {
   models: Array<{ id: string; off?: boolean; window?: number }>;
 }
 
-/** Every box's rows as the Settings card reads them. */
-const readBoxes = () =>
-  p.evaluate(async (): Promise<Array<BoxRead>> => {
-    const r = await fetch("/dsh-oh-my-claude/models?all=1");
+/** The part of `GET /models?all=1` this check reads. */
+const BoxesRead = z.object({
+  models: z.array(
+    z.object({
+      provider: z.string(),
+      route: z.object({ state: z.string() }),
+      models: z.array(z.object({ id: z.string(), off: z.boolean(), window: z.number() })),
+    }),
+  ),
+});
 
-    return (await r.json()).models;
-  });
+/** Every box's rows as the Settings card reads them; rejects on a body of another shape. */
+const readBoxes = async (): Promise<Array<BoxRead>> =>
+  (await fetchJson(p, "/dsh-oh-my-claude/models?all=1", BoxesRead)).models;
 
 const boxes = await readBoxes();
 const provider = (await editor.getAttribute("data-omc-custom-models")) ?? "";

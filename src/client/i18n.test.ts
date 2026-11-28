@@ -1,17 +1,24 @@
 import assert from "node:assert/strict";
 import { EN, ZH, fill, t } from "./i18n.js";
-import * as dshCommon from "./i18n/dsh-common.js";
+import { en as dshCommonEn } from "./i18n/dsh-common.js";
 
 // Every key has a Chinese string, none empty, and both languages use the same placeholders, so a
 // switch never shows a raw key or drops a value.
 {
-  const placeholders = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).toSorted();
-  const borrowed = new Set(Object.keys(dshCommon.en));
+  const placeholders = (s: string) =>
+    [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1] ?? "").toSorted((a, b) => a.localeCompare(b));
 
-  for (const key of Object.keys(ZH) as Array<keyof typeof ZH>) {
-    assert.ok(ZH[key]?.trim(), `zh missing ${key}`);
-    assert.ok(EN[key].trim(), `en empty ${key}`);
-    assert.deepEqual(placeholders(ZH[key]), placeholders(EN[key]), `placeholders differ: ${key}`);
+  const borrowed = new Set(Object.keys(dshCommonEn));
+
+  // Read by any key: every ZH key is checked against its English, which may be missing.
+  const english: Record<string, string> = EN;
+
+  for (const [key, zh] of Object.entries(ZH)) {
+    const en = english[key];
+
+    assert.ok(zh.trim(), `zh missing ${key}`);
+    assert.ok(en?.trim(), `en empty ${key}`);
+    assert.deepEqual(placeholders(zh), placeholders(en ?? ""), `placeholders differ: ${key}`);
   }
 
   assert.deepEqual(

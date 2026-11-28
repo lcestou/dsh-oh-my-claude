@@ -7,6 +7,8 @@ import { fileURLToPath } from "node:url";
 import { SOCKET_PATH_MAX, keeperSocketPath, privateSocketDir } from "./keeper-socket.js";
 import { attachKeeper, pidAlive, spawnKeeper } from "./process.js";
 import { tempDir } from "./test-tmp.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fieldsOf, parseJson } from "./test-context.js";
 
 const root = tempDir("omc-ksock-");
 const short = join(root, "s");
@@ -98,13 +100,15 @@ const h = await spawnKeeper(
   (argv) => spawn(argv[0]!, argv.slice(1), { detached: true, stdio: "ignore" }).unref(),
 );
 
-const spec = JSON.parse(readFileSync(join(deep, "spec.json"), "utf8")) as { sock?: string };
+const spec = fieldsOf(parseJson(readFileSync(join(deep, "spec.json"), "utf8")), {
+  sock: "string?",
+});
 
 assert.ok(spec.sock && spec.sock.length <= SOCKET_PATH_MAX, `recorded ${spec.sock}`);
 
-const first = new Promise<string>((r) =>
-  createInterface({ input: h.stdout }).once("line", (l) => r(l)),
-);
+const first = new Promise<string>((r) => {
+  createInterface({ input: h.stdout }).once("line", (l) => r(l));
+});
 
 h.stdin.write("hello\n");
 
@@ -113,9 +117,13 @@ assert.equal(await first, "hello", "Claude's stand-in answers through the moved 
 const again = await attachKeeper(deep, 3000);
 
 // The first handle never acknowledged "hello", so the keeper replays it ahead of the new line.
-const second = new Promise<void>((r) =>
-  createInterface({ input: again.stdout }).on("line", (l) => l === "again" && r()),
-);
+const second = new Promise<void>((r) => {
+  createInterface({ input: again.stdout }).on("line", (l) => {
+    if (l === "again") {
+      r();
+    }
+  });
+});
 
 again.stdin.write("again\n");
 
@@ -149,14 +157,14 @@ const ran = spawnSync(process.execPath, [keeperJs, unbound], { timeout: 15_000 }
 
 assert.equal(ran.status, 78, "a keeper that cannot listen exits 78");
 
-const { claudePid } = JSON.parse(readFileSync(join(unbound, "keeper.json"), "utf8")) as {
-  claudePid: number;
-};
+const { claudePid } = fieldsOf(parseJson(readFileSync(join(unbound, "keeper.json"), "utf8")), {
+  claudePid: "number",
+});
 
 // Polled, not a fixed wait: under a loaded suite the SIGTERM'd stand-in and its reaping by init
 // can take longer than 200 ms, which failed the run now and then (reported on #332).
 for (let i = 0; i < 100 && pidAlive(claudePid); i++) {
-  await new Promise((r) => setTimeout(r, 50));
+  await sleep(50);
 }
 
 assert.equal(pidAlive(claudePid), false, "and takes its Claude with it");

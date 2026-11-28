@@ -1,7 +1,6 @@
 // The test gate routes over a real socket: a suggestion from the workspace's files, a save that
 // keeps other workspaces, a clear, and a run's close written back to its file.
 import { strict as assert } from "node:assert";
-import { createServer } from "node:http";
 import type { IncomingMessage } from "node:http";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +8,7 @@ import { join } from "node:path";
 import type { JsonValue } from "../dsh.js";
 import { testGateRoutes } from "./test-gate.js";
 import { setRemoteWorkspaces } from "../adapter/config.js";
+import { fieldsOf, objectOf, parseJson, serveRoutes } from "../test-context.js";
 
 const root = mkdtempSync(join(tmpdir(), "omc-gate-routes-"));
 const stateDir = join(root, "state");
@@ -28,8 +28,8 @@ const readBody = async (req: IncomingMessage) => {
     s += String(c);
   }
 
-  // SAFETY: the test sends only JSON objects
-  return (s ? JSON.parse(s) : {}) as { [key: string]: JsonValue };
+  // The test sends only JSON objects.
+  return s ? objectOf(parseJson(s)) : {};
 };
 
 const route = testGateRoutes({
@@ -41,24 +41,22 @@ const route = testGateRoutes({
   readBody,
 });
 
-const server = createServer((req, res) => {
-  void route(req, res, new URL(req.url ?? "/", "http://x")).then((r) => {
-    if (typeof r === "symbol") {
-      res.writeHead(404).end();
-    }
-  });
-}).listen(0);
+// The group answers what it handles; anything else is a 404, as the web server would send.
+const { send } = await serveRoutes(() => async (req, res) => {
+  const r = await route(req, res, new URL(req.url ?? "/", "http://x"));
 
-await new Promise((r) => server.once("listening", r));
-
-const port = (server.address() as { port: number }).port;
+  if (typeof r === "symbol") {
+    res.writeHead(404).end();
+  }
+});
 
 /** One request, answered as JSON. */
-const call = async (method: string, path: string, body?: object) =>
-  (await fetch(`http://127.0.0.1:${port}${path}`, {
-    method,
-    body: body ? JSON.stringify(body) : undefined,
-  }).then((r) => r.json())) as Record<string, unknown>;
+const call = async (method: string, path: string, body?: JsonValue) =>
+  objectOf(
+    parseJson(
+      (await send(method, path, body === undefined ? undefined : JSON.stringify(body))).text,
+    ),
+  );
 
 const q = `/p/test-gate?cwd=${encodeURIComponent(ws)}`;
 
@@ -83,7 +81,7 @@ assert.deepEqual((await call("GET", q)).config, {
 
 await call("PUT", "/p/test-gate", { cwd: ws, config: null });
 
-const file = JSON.parse(readFileSync(join(stateDir, "test-gate.json"), "utf8")) as object;
+const file = objectOf(parseJson(readFileSync(join(stateDir, "test-gate.json"), "utf8")));
 
 assert.deepEqual(Object.keys(file), ["/other"], "a clear drops only its own workspace");
 
@@ -123,7 +121,8 @@ await call("POST", "/p/test-gate/run", { session: "s1" });
 assert.equal((await call("GET", "/p/test-gate/run?session=s1")).run && true, true);
 
 assert.equal(
-  ((await call("GET", "/p/test-gate/run?session=s1")).run as { dismissed?: boolean }).dismissed,
+  fieldsOf((await call("GET", "/p/test-gate/run?session=s1")).run, { dismissed: "boolean?" })
+    .dismissed,
   true,
 );
 
@@ -132,7 +131,5 @@ assert.equal(
   true,
   "no path out of the run dir",
 );
-
-server.close();
 
 console.log("test-gate routes ok");

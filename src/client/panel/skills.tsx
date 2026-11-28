@@ -23,6 +23,7 @@ import {
   loadBreakdown,
   parseSkillCosts,
   sortSkillCosts,
+  errorText,
 } from "../shared.js";
 import type { ClientCtx, SkillState, UsageBreakdownReply } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
@@ -78,7 +79,8 @@ function MarketplaceAddForm({ act, busy }: { act: Act; busy: string }) {
         type="button"
         style={btn}
         disabled={busy !== "" || source.trim() === ""}
-        onClick={submit}
+        // act reports its own failure on the row, so nothing awaits it.
+        onClick={() => void submit()}
       >
         {busy === "mkt-add" ? "…" : t("panel.add")}
       </button>
@@ -217,7 +219,11 @@ export function PluginManagerBlock({
               style={{ ...small, width: 34, color: p.enabled ? undefined : T.faint }}
               disabled={busy !== ""}
               onClick={() =>
-                act("/plugins/toggle", { key: p.key, scope: p.scope, enable: !p.enabled }, p.key)
+                void act(
+                  "/plugins/toggle",
+                  { key: p.key, scope: p.scope, enable: !p.enabled },
+                  p.key,
+                )
               }
               title={p.enabled ? t("panel.plugins.disable") : t("panel.plugins.enable")}
             >
@@ -420,7 +426,9 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
         setCost(skillStateFromReply(reply));
       }
     })()
-      .catch((error: Error) => mounted.current && setCost({ kind: "error", text: error.message }))
+      .catch(
+        (cause: unknown) => mounted.current && setCost({ kind: "error", text: errorText(cause) }),
+      )
       .finally(() => clearTimeout(timer));
   }, [sessionId]);
 
@@ -428,7 +436,7 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
     setDriversBusy(true);
     void loadBreakdown(undefined, force)
       .then(setDrivers)
-      .catch((error: Error) => setDrivers({ ok: false, error: error.message }))
+      .catch((cause: unknown) => setDrivers({ ok: false, error: errorText(cause) }))
       .finally(() => setDriversBusy(false));
   };
 
@@ -622,7 +630,8 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
           aria-label={t("panel.skills.editLabel", { name: s.name })}
           style={small}
           disabled={busy !== ""}
-          onClick={() => openEdit(s.path, s.name)}
+          // Each skill action reports its own failure in the tab, so nothing awaits it.
+          onClick={() => void openEdit(s.path, s.name)}
         >
           {t("panel.edit")}
         </button>
@@ -655,7 +664,7 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
           <button
             type="button"
             style={dirty ? btnPrimary : btn}
-            onClick={save}
+            onClick={() => void save()}
             disabled={busy !== "" || !dirty}
           >
             {t("save")}
@@ -671,7 +680,7 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-              save();
+              void save();
             }
           }}
           style={{ ...code, minHeight: 300, resize: "vertical", whiteSpace: "pre-wrap" }}
@@ -712,7 +721,7 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
           data-omc-skill-reload=""
           style={btn}
           disabled={busy !== ""}
-          onClick={reload}
+          onClick={() => void reload()}
         >
           {busy === "reload" ? "…" : t("panel.skills.reload")}
         </button>
@@ -764,7 +773,7 @@ export function SkillsBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
               data-omc-skill-create=""
               style={btnPrimary}
               disabled={busy !== "" || !nameOk}
-              onClick={create}
+              onClick={() => void create()}
             >
               {busy === "create" ? "…" : t("panel.skills.create")}
             </button>

@@ -160,11 +160,7 @@ export function watchSessionNotices(ctx: ClientCtx) {
         const fresh = order.ask();
         void fetch(`${ROUTE}/awaiting`)
           .then((r) => readJson<{ sessions?: Record<string, AwaitingRow> }>(r))
-          .then((body) => {
-            if (fresh()) {
-              onSnapshot(body.sessions ?? {});
-            }
-          })
+          .then((body) => fresh() && onSnapshot(body.sessions ?? {}))
           .catch(() => {
             // A failed poll says nothing. The next tick asks again; a prompt is not urgent enough
             // to report a network error over.

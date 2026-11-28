@@ -24,8 +24,19 @@ import { sshInvocation } from "../lib/server/process.js";
 import { readRemoteWorkspaces } from "../lib/server/sessions.js";
 import { readSshToken } from "../lib/server/ssh-login.js";
 import { STATE_DIR } from "../lib/server/state.js";
+import z from "@deepseek-ai/schemastery";
+import { fits } from "../src/schema-fits.js";
 
 /** The four counters the turn pill is built from. */
+const UsageSchema = z.object({
+  input_tokens: z.number(),
+  output_tokens: z.number(),
+  cache_read_input_tokens: z.number(),
+  cache_creation_input_tokens: z.number(),
+});
+
+/** What UsageSchema hands back: schemastery leaves an absent field out, which its own types do not
+ *  say, so the fields are spelt optional here. */
 type Usage = {
   input_tokens?: number;
   output_tokens?: number;
@@ -41,6 +52,17 @@ const COUNTERS = [
 ] as const;
 
 /** The CLI's own closing frame, the only one this check reads. */
+const ResultFrameSchema = z.object({
+  type: z.const("result").required(),
+  is_error: z.boolean(),
+  num_turns: z.number(),
+  duration_ms: z.number(),
+  session_id: z.string(),
+  // Absent stays absent: a bare object schema would answer `{}` and read as zero counters.
+  usage: z.union([z.const(undefined), UsageSchema]),
+});
+
+/** What ResultFrameSchema hands back, every field but `type` optional the way the CLI may omit it. */
 type ResultFrame = {
   type: "result";
   is_error?: boolean;
@@ -49,6 +71,12 @@ type ResultFrame = {
   session_id?: string;
   usage?: Usage;
 };
+
+/** The two fields of a transcript line this check reads: an assistant message's id and usage. */
+const TranscriptEntrySchema = z.object({
+  type: z.string(),
+  message: z.object({ id: z.string(), usage: UsageSchema }),
+});
 
 type TurnOutcome =
   | { result: ResultFrame; error?: undefined }
@@ -92,18 +120,21 @@ function runTurn(
     child.on("close", (code) => {
       clearTimeout(timer);
 
+      // The first line that is a result frame; every other frame fails the schema and is dropped.
       const result = out
         .split("\n")
         .flatMap<ResultFrame>((l) => {
+          let raw: unknown;
+
           try {
-            // SAFETY: the caller keeps only frames whose `type` it recognises, so a line that
-            // parses to something else is dropped one step later rather than trusted here.
-            return [JSON.parse(l) as ResultFrame];
+            raw = JSON.parse(l);
           } catch {
             return [];
           }
+
+          return fits(ResultFrameSchema, raw) ? [ResultFrameSchema(raw)] : [];
         })
-        .find((f) => f.type === "result");
+        .at(0);
 
       if (!result) {
         resolve({ error: `exit ${code}: ${err.trim().split("\n").pop() ?? "no output"}` });
@@ -151,24 +182,29 @@ async function transcriptUsage(sessionId: string): Promise<Usage | undefined> {
     const byId = new Map<string, Usage>();
 
     for (const line of text.split("\n")) {
+      let raw: unknown;
+
       try {
-        // SAFETY: only the two shapes below are read off it, each through a typeof-checked sum.
-        const entry = JSON.parse(line) as {
-          type?: string;
-          message?: { id?: string; usage?: Usage };
-        };
-
-        if (entry.type !== "assistant") {
-          continue;
-        }
-
-        const { id, usage } = entry.message ?? {};
-
-        if (id !== undefined && usage !== undefined) {
-          byId.set(id, usage);
-        }
+        raw = JSON.parse(line);
       } catch {
         continue;
+      }
+
+      if (!fits(TranscriptEntrySchema, raw)) {
+        continue;
+      }
+
+      const entry: { type?: string; message?: { id?: string; usage?: Usage } } =
+        TranscriptEntrySchema(raw);
+
+      if (entry.type !== "assistant") {
+        continue;
+      }
+
+      const { id, usage } = entry.message ?? {};
+
+      if (id !== undefined && usage !== undefined) {
+        byId.set(id, usage);
       }
     }
 

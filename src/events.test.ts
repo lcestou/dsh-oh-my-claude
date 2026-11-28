@@ -1,8 +1,10 @@
 // Offline self-check: DSH_OMC_STATE_DIR=$(mktemp -d /tmp/omc-test.XXXXXX) bun src/events.test.ts.
 import assert from "node:assert/strict";
-import type { ServerResponse } from "node:http";
+import { IncomingMessage, ServerResponse } from "node:http";
+import { Socket } from "node:net";
 import { EventHub, HEARTBEAT_MS, frame, hub } from "./events.js";
 import type { OmcEvent } from "./events.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 interface FakeRes {
   res: ServerResponse;
@@ -17,8 +19,7 @@ interface FakeRes {
 /** A ServerResponse double that records what the hub writes and lets a test flip the drain flag
  *  and fire the close callback. */
 const fakeRes = (): FakeRes => {
-  const f: FakeRes = {
-    res: undefined as unknown as ServerResponse,
+  const f: Omit<FakeRes, "res"> = {
     status: 0,
     headers: {},
     chunks: [],
@@ -27,30 +28,46 @@ const fakeRes = (): FakeRes => {
     needDrain: false,
   };
 
-  f.res = {
-    writeHead: (s: number, h: Record<string, string>) => {
-      f.status = s;
-      f.headers = h;
-    },
-    write: (chunk: string) => {
-      f.chunks.push(chunk);
+  // A real response on no socket, its writes and close hook recorded on the instance.
+  const res: ServerResponse = Object.defineProperties(
+    new ServerResponse(new IncomingMessage(new Socket())),
+    {
+      writeHead: {
+        value: (status: number, headers: Record<string, string>) => {
+          f.status = status;
+          f.headers = headers;
 
-      return true;
-    },
-    end: () => {
-      f.ended = true;
-    },
-    on: (ev: string, cb: () => void) => {
-      if (ev === "close") {
-        f.onClose = cb;
-      }
-    },
-    get writableNeedDrain() {
-      return f.needDrain;
-    },
-  } as unknown as ServerResponse;
+          return res;
+        },
+      },
+      write: {
+        value: (chunk: string) => {
+          f.chunks.push(chunk);
 
-  return f;
+          return true;
+        },
+      },
+      end: {
+        value: () => {
+          f.ended = true;
+
+          return res;
+        },
+      },
+      on: {
+        value: (ev: string, cb: () => void) => {
+          if (ev === "close") {
+            f.onClose = cb;
+          }
+
+          return res;
+        },
+      },
+      writableNeedDrain: { get: () => f.needDrain },
+    },
+  );
+
+  return Object.assign(f, { res });
 };
 
 // A. frame
@@ -144,7 +161,7 @@ h.coalesce("s1", () => ({ kind: "live-turn", session: "s1", data: { tokens: 3 } 
 
 assert.equal(a.chunks.length, 1, "nothing goes out before the window ends");
 
-await new Promise((r) => setTimeout(r, 300));
+await sleep(300);
 
 assert.equal(a.chunks.length, 2, "one frame after the window");
 
@@ -166,7 +183,7 @@ assert.equal(
   "flush frame text",
 );
 
-await new Promise((r) => setTimeout(r, 300));
+await sleep(300);
 
 assert.equal(a.chunks.length, 3, "flush cancelled the pending coalesced frame");
 
@@ -187,7 +204,7 @@ h.close();
 
 // H. the shared hub and the heartbeat constant
 {
-  assert.ok(hub instanceof EventHub, "the module exports one shared hub");
+  assert.equal(Object.getPrototypeOf(hub), EventHub.prototype, "the module exports one shared hub");
   assert.equal(HEARTBEAT_MS, 25_000, "heartbeat period under nginx's 60 s read timeout");
 }
 

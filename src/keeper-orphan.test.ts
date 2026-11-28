@@ -8,9 +8,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pidAlive, readKeeperInfo, spawnKeeper } from "./process.js";
 import { tempDir } from "./test-tmp.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import { objectOf, parseJson } from "./test-context.js";
 
 const fake = `process.stdin.resume(); process.stdin.on("end", () => process.exit(0));`;
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const wait = (ms: number) => sleep(ms);
 
 const launch = (argv: Array<string>) => {
   const c = spawn(argv[0] ?? "", argv.slice(1), { detached: true, stdio: "ignore" });
@@ -28,7 +30,7 @@ const specFor = (dir: string, orphanMs: number) => ({
 
 const info = (dir: string) => {
   try {
-    return JSON.parse(readFileSync(join(dir, "keeper.json"), "utf8"));
+    return objectOf(parseJson(readFileSync(join(dir, "keeper.json"), "utf8")));
   } catch {
     return undefined;
   }

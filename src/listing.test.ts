@@ -23,7 +23,7 @@ const tracked = new Set(
 );
 
 for (const shot of shots) {
-  assert.equal(typeof shot, "string");
+  assert.ok(typeof shot === "string", "every entry is a path");
   assert.ok(
     !shot.startsWith("/") && !shot.split("/").includes(".."),
     `${shot}: the catalog refuses paths outside the repo`,

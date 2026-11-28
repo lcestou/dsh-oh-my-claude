@@ -6,13 +6,25 @@
 import { strict as assert } from "node:assert";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ADAPTER_CURRENT } from "../dsh.js";
-import type { Agent, PluginContext } from "../dsh.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import { ADAPTER_CURRENT, asSessionId } from "../dsh.js";
+import type { PluginContext, SessionEvent } from "../dsh.js";
 import { EventHub } from "../events.js";
-import type { ClaudeProcess } from "../process.js";
+import type { ClaudeEvent, ClaudeProcess } from "../process.js";
+import {
+  fakeAgent,
+  fakeClaudeProcess,
+  fakePluginContext,
+  fakeSession,
+  fakeSpec,
+  notFaked,
+  recordingResponse,
+  userTurn,
+} from "../test-context.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
 import { contextActive } from "./reload.js";
@@ -26,34 +38,35 @@ const g = globalThis as typeof globalThis & {
 
 const mounts = (g[ADAPTER_CURRENT] ??= new Map());
 
-const session = {
-  header: { version: 0 },
-  snapshotEvents: () => [
-    { type: "turn/start", data: { turn: 1 } },
-    { type: "step/start", data: { step: 1 } },
+const session = fakeSession({
+  snapshotEvents: (): Array<SessionEvent> => [
+    { type: "turn/start", seq: 0, time: 0, data: { turn: 1 } },
+    { type: "step/start", seq: 1, time: 0, data: { step: 1 } },
   ],
-  append: () => ({ seq: 1 }),
-};
+  append: (type) => ({ type, seq: 1, time: 0, data: {} }),
+});
 
 /** A fake plugin context with a cordis-like fiber, and a `sessions` that throws once the fiber is
- *  disposed, the way cordis answers an injected service on an inactive context. */
-const scoped = (uid: number) => {
-  const fiber = { uid: uid as number | null };
+ *  disposed, the way cordis answers an injected service on an inactive context. The step reads the
+ *  session's log through `sessions` and nothing else. */
+const scoped = (uid: number): { ctx: PluginContext; fiber: { uid: number | null } } => {
+  const fiber: { uid: number | null } = { uid };
+  const store = fakePluginContext({ sessions: { get: () => session } }).sessions;
 
-  const ctx = {
-    on() {},
-    fiber,
-    get sessions() {
+  // No agent is registered for the fakes' sessions, so the step mounts no `/compact` override.
+  const base = fakePluginContext({ on() {}, fiber, agents: { get: () => undefined } });
+
+  const ctx = Object.defineProperty(base, "sessions", {
+    get: () => {
       if (fiber.uid === null) {
         throw new Error('cannot get required service "sessions" in inactive context');
       }
 
-      return { get: () => session };
+      return store;
     },
-  };
+  });
 
-  // SAFETY: partial fake; the step reads the session's log through `sessions` and nothing else
-  return { ctx: ctx as unknown as PluginContext, fiber };
+  return { ctx, fiber };
 };
 
 {
@@ -75,15 +88,9 @@ const scoped = (uid: number) => {
   const b = new ClaudeCodeAdapter(two.ctx, Config({}));
   mounts.set(b.providerId, b);
   assert.equal(a.ctx, two.ctx, "disposed with a successor: the successor's");
-  assert.doesNotThrow(() => a.ctx.sessions.get(asId("s")), "so its services answer again");
+  assert.doesNotThrow(() => a.ctx.sessions.get(asSessionId("s")), "so its services answer again");
   assert.equal(b.ctx, two.ctx);
   mounts.delete(b.providerId);
-}
-
-/** dsh's session id brand, for the fakes' `get`. */
-function asId(id: string): Parameters<PluginContext["sessions"]["get"]>[0] {
-  // SAFETY: the fakes' `get` ignores its argument
-  return id as unknown as Parameters<PluginContext["sessions"]["get"]>[0];
 }
 
 // A profile config edit re-applies the plugin in the same fiber: the context is shared and its
@@ -111,21 +118,8 @@ function asId(id: string): Parameters<PluginContext["sessions"]["get"]>[0] {
 
   process.on("uncaughtException", onUncaught);
   const hub = new EventHub();
-  const written: Array<string> = [];
-
-  // SAFETY: partial ServerResponse; attach writes headers and text, publish reads writableNeedDrain,
-  // close ends it
-  const res = {
-    writeHead() {},
-    write(t: string) {
-      written.push(t);
-
-      return true;
-    },
-    on() {},
-    end() {},
-    writableNeedDrain: false,
-  } as unknown as Parameters<EventHub["attach"]>[0];
+  // Attach writes headers and text, publish reads writableNeedDrain, close ends it.
+  const { res, written } = recordingResponse();
 
   hub.attach(res, "s", []);
   hub.coalesce(
@@ -136,7 +130,7 @@ function asId(id: string): Parameters<PluginContext["sessions"]["get"]>[0] {
     1,
   );
   hub.coalesce("live-turn:s", () => ({ kind: "live-turn", session: "s", data: { n: 1 } }), 5);
-  await new Promise((r) => setTimeout(r, 30));
+  await sleep(30);
   assert.ok(
     written.some((t) => t.startsWith("event: live-turn")),
     "the throw stayed in its timer and the next event went out",
@@ -150,14 +144,14 @@ function asId(id: string): Parameters<PluginContext["sessions"]["get"]>[0] {
 /** A sleeping child standing in for a keeper's Claude, with a promise that settles on its exit. */
 const fakeClaude = () => {
   const child: ChildProcess = spawn("sleep", ["60"], { stdio: "ignore" });
-  const exited = new Promise<boolean>((r) => child.once("exit", () => r(true)));
+  const exited = once(child, "exit").then(() => true);
 
   return { child, exited };
 };
 
 /** Settles true when `exited` does within `ms`, else false. */
 const exitsWithin = (exited: Promise<boolean>, ms: number) =>
-  Promise.race([exited, new Promise<boolean>((r) => setTimeout(() => r(false), ms))]);
+  Promise.race([exited, sleep(ms).then(() => false)]);
 
 // Adoption after a hot reload leaves the keeper of a registered process alone, and still retires
 // a genuinely older keeper behind one it adopts itself.
@@ -192,9 +186,9 @@ const exitsWithin = (exited: Promise<boolean>, ms: number) =>
   const fresh = fakeClaude();
   const stale = fakeClaude();
   // The previous instance's process for s-live, mid-turn, in the registry it shares with this one.
-  const running = { alive: true, busy: true, relays: new Map(), lastUsed: Date.now(), kill() {} };
-  // SAFETY: partial fake; adoption only asks the registry whether the key is there
-  adapter.processes.set(registryKey("claude-code", "s-live"), running as unknown as ClaudeProcess);
+  // Adoption only asks the registry whether the key is there.
+  const running = fakeClaudeProcess({ busy: true, lastUsed: Date.now(), kill() {} });
+  adapter.processes.set(registryKey("claude-code", "s-live"), running);
   const liveDir = keeper("1111111111111111-a", "s-live", live.child.pid ?? -1, Date.now() - 5000);
   keeper("2222222222222222-b", "s-dup", fresh.child.pid ?? -1, Date.now());
   const staleDir = keeper("2222222222222222-a", "s-dup", stale.child.pid ?? -1, Date.now() - 9000);
@@ -207,7 +201,7 @@ const exitsWithin = (exited: Promise<boolean>, ms: number) =>
   assert.ok(existsSync(liveDir), "and its directory");
   assert.equal(
     adapter.processes.get(registryKey("claude-code", "s-live")),
-    running as unknown,
+    running,
     "and the registered process stays the one in use",
   );
   assert.equal(await exitsWithin(stale.exited, 2000), true, "an older duplicate is still retired");
@@ -235,7 +229,12 @@ const exitsWithin = (exited: Promise<boolean>, ms: number) =>
   const adapter = new ClaudeCodeAdapter(four.ctx, Config({}));
   adapter.stateDir = mkdtempSync(join(tmpdir(), "omc-second-dsh-"));
 
-  const keeper = (name: string, sessionId: string, claudePid: number, holder?: object) => {
+  const keeper = (
+    name: string,
+    sessionId: string,
+    claudePid: number,
+    holder?: { pid: number; cmdline?: string },
+  ) => {
     const dir = join(adapter.stateDir, "keepers", name);
     mkdirSync(dir, { recursive: true });
     writeFileSync(
@@ -264,12 +263,14 @@ const exitsWithin = (exited: Promise<boolean>, ms: number) =>
   // The server that holds the keeper: another live process, with the command line /proc shows.
   const server = fakeClaude();
   const serverPid = server.child.pid ?? -1;
-  await new Promise((r) => setTimeout(r, 50));
+  await sleep(50);
   let serverCmd = "";
 
   try {
     serverCmd = readFileSync(`/proc/${serverPid}/cmdline`, "utf8");
-  } catch {}
+  } catch {
+    // No /proc (not Linux): the reused-pid case below needs the command line and is skipped.
+  }
 
   const held = fakeClaude();
   const gone = fakeClaude();
@@ -343,14 +344,17 @@ const exitsWithin = (exited: Promise<boolean>, ms: number) =>
   rmSync(adapter.stateDir, { recursive: true, force: true });
 }
 
-/** A fake process that streams one text delta and then, on `die()`, reads as exited. */
+/** A fake process that streams one text delta and then, on `die()`, reads as exited. `killed()`
+ *  counts the kills it took. */
 const dyingProcess = () => {
   let finish: (v: null) => void = () => {};
+  let alive = true;
+  let killed = 0;
 
-  const frames: Array<unknown> = [
+  const frames: Array<ClaudeEvent> = [
     {
       type: "stream_event",
-      event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+      event: { type: "content_block_start", index: 0, content_block: { type: "text" } },
     },
     {
       type: "stream_event",
@@ -358,74 +362,63 @@ const dyingProcess = () => {
     },
   ];
 
-  const proc = {
-    alive: true,
+  const proc = fakeClaudeProcess({
+    get alive() {
+      return alive;
+    },
     busy: false,
     parked: undefined,
     steerPending: false,
     forwarded: 0,
     interruptOwed: false,
     spec: { child: "node" },
-    relays: new Map(),
-    sent: new Set(),
-    steers: new Map(),
-    queue: { lines: [] },
-    queuedIndexes: [],
-    idleKilled: false,
     exitCode: -1,
-    stderr: "",
-    stray: "",
     staleResults: 0,
-    killed: 0,
     countStaleResults: () => 0,
     write: () => true,
     nextEvent: async () => {
-      if (frames.length > 0) {
-        return frames.shift();
+      const frame = frames.shift();
+
+      if (frame) {
+        return frame;
       }
 
-      if (!proc.alive) {
+      if (!alive) {
         return null;
       }
 
-      return new Promise<null>((r) => (finish = r));
+      return new Promise<null>((r) => {
+        finish = r;
+      });
     },
     kill() {
-      proc.killed++;
+      killed++;
     },
-  };
+  });
 
   const die = () => {
-    proc.alive = false;
+    alive = false;
     finish(null);
   };
 
-  return { proc, die };
+  return { proc, die, killed: () => killed };
 };
 
 /** Run one step on `a` with the fake process, let `between` happen once it is streaming, then end
  *  the process and drain the step. Returns the last chunk dsh would see. */
 const runStep = async (a: ClaudeCodeAdapter, sessionId: string, between: () => void) => {
-  const { proc, die } = dyingProcess();
-  const prep = { input: "go", spec: { model: "m" }, cwd: "/tmp", session: undefined, args: [] };
-  // SAFETY: the fakes below stand in for a spawned process and its side channels
-  const loose = a as unknown as Record<string, unknown>;
-  loose.acquire = async () => ({ prep, proc });
-  loose.reconnectIfStale = async () => {};
+  const dying = dyingProcess();
+  const { proc, die } = dying;
+  const prep = { input: "go", spec: fakeSpec({ model: "m" }), cwd: "/tmp", args: [] };
+  // The fakes below stand in for a spawned process and its side channels.
+  a.acquire = async () => ({ prep, proc });
+  a.reconnectIfStale = async () => {};
 
-  loose.watchTranscript = async () => {};
+  a.watchTranscript = async () => {};
 
-  loose.pumpMirror = async () => {};
+  a.pumpMirror = async () => {};
 
-  const options = {
-    sessionId,
-    model: "m",
-    messages: [{ role: "user", content: [{ type: "text", text: "go" }] }],
-    signal: new AbortController().signal,
-  };
-
-  // SAFETY: the options above are the fields a step reads
-  const gen = a.stream(options as unknown as Parameters<typeof a.stream>[0]);
+  const gen = a.stream(userTurn(sessionId));
   await gen.next();
   between();
   die();
@@ -435,13 +428,15 @@ const runStep = async (a: ClaudeCodeAdapter, sessionId: string, between: () => v
     last = chunk;
   }
 
-  return { last, proc };
+  return { last, killed: dying.killed };
 };
 
 /** The session ids busy.json under `dir` lists; empty when the file is missing or unreadable. */
 const busyIn = (dir: string): Array<string> => {
   try {
-    return JSON.parse(readFileSync(join(dir, "busy.json"), "utf8"));
+    const listed = JSON.parse(readFileSync(join(dir, "busy.json"), "utf8"));
+
+    return Array.isArray(listed) ? listed.filter((id): id is string => typeof id === "string") : [];
   } catch {
     return [];
   }
@@ -456,9 +451,8 @@ const busyIn = (dir: string): Array<string> => {
   mounts.set(a.providerId, a);
   const handed: Array<string> = [];
   let b: ClaudeCodeAdapter | undefined;
-  // SAFETY: the resume's own timing, shortened for the suite
-  (a as unknown as Record<string, unknown>).resumeAfterReload = (id: string) =>
-    ClaudeCodeAdapter.prototype.resumeAfterReload.call(a, id, 10, 100);
+  // The resume's own timing, shortened for the suite.
+  a.resumeAfterReload = (id) => ClaudeCodeAdapter.prototype.resumeAfterReload.call(a, id, 10, 100);
 
   const { last } = await runStep(a, "s-orphan", () => {
     one.fiber.uid = null; // the reload disposes the old scope...
@@ -474,14 +468,14 @@ const busyIn = (dir: string): Array<string> => {
   assert.match(JSON.stringify(last), /"kind":"error"/, "the step itself still fails");
 
   for (let i = 0; i < 50 && handed.length === 0; i++) {
-    await new Promise((r) => setTimeout(r, 20));
+    await sleep(20);
   }
 
   assert.deepEqual(handed, ["s-orphan"], "the new instance takes the session over");
 
   // The mark is a queued file write too; wait for it rather than read it the same tick.
   for (let i = 0; i < 100 && busyIn(a.stateDir).length === 0; i++) {
-    await new Promise((r) => setTimeout(r, 20));
+    await sleep(20);
   }
 
   assert.deepEqual(busyIn(a.stateDir), ["s-orphan"], "the mark stays for it, or for the next boot");
@@ -502,18 +496,18 @@ const busyIn = (dir: string): Array<string> => {
     resumed++;
   };
 
-  const { proc } = await runStep(c, "s-plain", () => {});
-  await new Promise((r) => setTimeout(r, 50));
+  const { killed } = await runStep(c, "s-plain", () => {});
+  await sleep(50);
   assert.equal(resumed, 0, "no reload, no resume");
 
   // The clear is a file write queued behind the others; under the parallel suite it can land past
   // a fixed wait, so wait for it, up to two seconds.
   for (let i = 0; i < 100 && busyIn(c.stateDir).length > 0; i++) {
-    await new Promise((r) => setTimeout(r, 20));
+    await sleep(20);
   }
 
   assert.deepEqual(busyIn(c.stateDir), [], "the busy mark is cleared");
-  assert.equal(proc.killed, 1, "and the dead process is cleaned up as before");
+  assert.equal(killed(), 1, "and the dead process is cleaned up as before");
   rmSync(c.stateDir, { recursive: true, force: true });
   mounts.delete(c.providerId);
 }
@@ -530,12 +524,11 @@ const busyIn = (dir: string): Array<string> => {
     return true;
   };
 
-  const put = (id: string, p: object) =>
-    // SAFETY: partial fake; the takeover reads alive, busy and hasTurnOutput
-    b.processes.set(registryKey("claude-code", id), p as unknown as ClaudeProcess);
+  // The takeover reads alive, busy and hasTurnOutput.
+  const put = (id: string, p: ClaudeProcess) => b.processes.set(registryKey("claude-code", id), p);
 
-  put("t-busy", { alive: true, busy: true, hasTurnOutput: () => true });
-  put("t-live", { alive: true, busy: false, hasTurnOutput: () => true });
+  put("t-busy", fakeClaudeProcess({ busy: true, hasTurnOutput: () => true }));
+  put("t-live", fakeClaudeProcess({ busy: false, hasTurnOutput: () => true }));
   await b.takeOverReloadedTurn("t-busy");
   await b.takeOverReloadedTurn("t-gone");
   await b.takeOverReloadedTurn("t-live");
@@ -553,16 +546,20 @@ const busyIn = (dir: string): Array<string> => {
 // a scope: 'command "compact" is already registered'), and the registration that stays must mark
 // the typed `/compact` on the live instance, where the next turn's compaction check reads it.
 {
+  type Command = Parameters<NonNullable<PluginContext["commands"]>["register"]>[0];
+
   const taken = new Set<string>();
-  const handlers: Array<(input: object) => Promise<{ kind: string }>> = [];
+  const handlers: Array<Command["handler"]> = [];
   // Every try counts: the override catches dsh's "already registered" throw and only logs it, so a
   // second attempt would leave one handler behind and pass a count of handlers alone.
   let attempts = 0;
 
-  const child = {
-    effect: (fn: () => void) => fn(),
+  const child = fakePluginContext({
+    effect: (fn) => {
+      fn();
+    },
     commands: {
-      register: (d: { name: string; handler: (input: object) => Promise<{ kind: string }> }) => {
+      register: (d) => {
         attempts++;
 
         if (taken.has(d.name)) {
@@ -574,24 +571,30 @@ const busyIn = (dir: string): Array<string> => {
 
         return () => {};
       },
+      find: notFaked("commands.find"),
     },
-  };
+  });
 
-  const agent = {
-    id: "reloaded",
-    followup: () => 0,
-    ctx: { plugin: (def: { apply: (c: typeof child) => void }) => def.apply(child) },
-  };
+  // The fake carries only what the override reads: ctx.plugin and followup.
+  const agent = fakeAgent({
+    id: asSessionId("reloaded"),
+    followup: () => {},
+    ctx: fakePluginContext({
+      plugin: (def) => {
+        def.apply(child);
+
+        return {};
+      },
+    }),
+  });
 
   const old = new ClaudeCodeAdapter(scoped(20).ctx, Config({}));
   mounts.set(old.providerId, old);
-  // SAFETY: the fake carries only what the override reads: ctx.plugin and followup
-  old.mountCompactOverride(agent as unknown as Agent);
+  old.mountCompactOverride(agent);
   const next = new ClaudeCodeAdapter(scoped(21).ctx, Config({}));
   mounts.set(next.providerId, next);
   assert.doesNotThrow(
-    // SAFETY: as above
-    () => next.mountCompactOverride(agent as unknown as Agent),
+    () => next.mountCompactOverride(agent),
     "the new instance finds the agent already carrying it",
   );
   assert.equal(handlers.length, 1, "one registration, not two");

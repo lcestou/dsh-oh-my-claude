@@ -1,5 +1,6 @@
 // The caps, shapes and helpers behind the /btw aside ring, the selection popover's Ask and revive.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
+import { fits } from "../schema-fits.js";
 import z from "@deepseek-ai/schemastery";
 import type { JsonValue } from "../dsh.js";
 
@@ -57,17 +58,12 @@ export function asideAnswerText(response: JsonValue | undefined): string | undef
   // answer (`{ response: null }`) or a missing field into the empty string, which reports as none.
   let text: string;
 
-  try {
-    // SAFETY: schemastery validates at runtime and throws on a wrong concrete type; the cast only
-    //   widens the static input type so an arbitrary control-response value reaches the validator.
-    text = AsideWrapped(response as Parameters<typeof AsideWrapped>[0]).response ?? "";
-  } catch {
-    try {
-      // SAFETY: same as above, for the bare-string shape.
-      text = AsideBare(response as Parameters<typeof AsideBare>[0]) ?? "";
-    } catch {
-      return undefined;
-    }
+  if (fits(AsideWrapped, response)) {
+    text = AsideWrapped(response).response ?? "";
+  } else if (fits(AsideBare, response)) {
+    text = AsideBare(response) ?? "";
+  } else {
+    return undefined;
   }
 
   const trimmed = text.trim();

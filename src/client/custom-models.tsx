@@ -5,7 +5,7 @@
 import { useRef, useState } from "react";
 import { t, useLocale } from "./i18n.js";
 import { OTHER, WINDOWS, windowLabel } from "./model-size.js";
-import { ACCENT, btnPrimary, inputStyle, readJson, ROUTE, select, T } from "./shared.js";
+import { ACCENT, btnPrimary, inputStyle, readJson, ROUTE, select, T, errorText } from "./shared.js";
 
 /** One model added in Settings, as the server stores it and `GET /models?all=1` returns it. */
 export interface CustomModelEntry {
@@ -92,8 +92,8 @@ export function CustomModelsEditor({
 
         return true;
       })
-      .catch((error_: Error) => {
-        setError(error_.message);
+      .catch((cause: unknown) => {
+        setError(errorText(cause));
         // A refused save changed nothing, so the rows need not wait for a re-read.
         onSaving(false);
 
@@ -104,7 +104,9 @@ export function CustomModelsEditor({
 
   const add = () => {
     const entry = draftEntry(id, name, size === OTHER ? tokens : size);
-    void save([...saved, entry]).then((ok) => {
+    void (async () => {
+      const ok = await save([...saved, entry]);
+
       if (!ok) {
         return;
       }
@@ -115,7 +117,7 @@ export function CustomModelsEditor({
       setSize("");
       setTokens("");
       idField.current?.focus();
-    });
+    })();
   };
 
   const field = { display: "grid", gap: 4, fontSize: 12, color: T.muted } as const;

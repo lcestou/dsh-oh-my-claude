@@ -81,10 +81,6 @@ function anchorNameOf(el: Element | null): string {
  */
 export function useStickyAnchorFix(open: boolean, trigger: RefObject<HTMLElement | null>): void {
   useEffect(() => {
-    if (!open) {
-      return;
-    }
-
     const onScroll = () => {
       const menus = document.querySelectorAll<HTMLElement>("body > [role='menu']");
       const menu = menuFor(anchorNameOf(trigger.current), menus);
@@ -94,7 +90,10 @@ export function useStickyAnchorFix(open: boolean, trigger: RefObject<HTMLElement
       }
     };
 
-    window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    // Only while the menu is open; removing what was never added is a no-op.
+    if (open) {
+      window.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    }
 
     return () => window.removeEventListener("scroll", onScroll, { capture: true });
   }, [open, trigger]);

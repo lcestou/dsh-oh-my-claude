@@ -24,6 +24,7 @@
 // with the same placeholder result the adapter now writes, right before that step's `step/end`.
 //
 // `tools/dsh-session-repair.ts` is the command-line front over this module for a checkout.
+import { isRec } from "./decode.js";
 import { copyFileSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 
@@ -65,25 +66,23 @@ export type Row = {
 
 export type Header = { version?: number; [key: string]: unknown };
 
-/** As much of dsh's session-format catalog as the repair calls. The header and row parameters
- *  are `object` so the probe's own catalog type (`src/rows-probe.ts`, typed on its fixture's
- *  shapes) is assignable here without a cast; the repair passes its own Header and Row. */
+/** A header or row line as dsh's catalog takes it: any JSON object, which it validates itself. */
+export type LogLine = { readonly [key: string]: unknown };
+
+/** As much of dsh's session-format catalog as the repair calls. Its lines are `LogLine` so the
+ *  probe's own catalog type (`src/rows-probe.ts`, typed on its fixture's shapes) is assignable
+ *  here without a cast; the repair passes its own Header and Row. */
 export type Catalog = {
   currentVersion?: number;
   createRestore(
-    header: object,
+    header: LogLine,
     options: { recovery: string; validation: string },
   ): {
-    decodeRow(row: object): void;
+    decodeRow(row: LogLine): void;
     finish(): void;
   };
 };
 /** The slice of dsh's session-format catalog this uses: its migration chain, run in strict mode. */
-
-/** Narrow `T | undefined` to `T` so a defined value can be passed where the type requires it,
- *  without an `as` assertion.
- */
-const defined = <T>(x: T | undefined): x is T => x !== undefined;
 
 /** The call id a `tool/result` row answers: v4 puts it at `message.toolCallId`, older formats only
  *  at `message.source.callId`. Undefined for any other row. */
@@ -363,21 +362,27 @@ export function repair(
   };
 
   const one = (x: number) => map.get(x);
-  const list = (arr: Array<number>) => arr.map(one).filter(defined);
+
+  const list = (arr: Array<number>) =>
+    arr.flatMap((x) => {
+      const v = one(x);
+
+      return v === undefined ? [] : [v];
+    });
 
   const refs = (arr: Array<Ref>): Array<Ref> =>
-    arr
-      .map((x): Ref | undefined => {
-        if (!Array.isArray(x)) {
-          return one(x);
-        }
+    arr.flatMap((x): Array<Ref> => {
+      if (!Array.isArray(x)) {
+        const v = one(x);
 
-        const s = lo(x[0]),
-          e = hi(x[1]);
+        return v === undefined ? [] : [v];
+      }
 
-        return s !== undefined && e !== undefined && s <= e ? [s, e] : undefined;
-      })
-      .filter(defined);
+      const s = lo(x[0]),
+        e = hi(x[1]);
+
+      return s !== undefined && e !== undefined && s <= e ? [[s, e]] : [];
+    });
 
   const range = (r: Range): Range => {
     const s = lo(r.start),
@@ -460,12 +465,20 @@ export function readLog(file: string): { header: Header; rows: Array<Row> } {
     off = next;
   }
 
-  // SAFETY: every line of a dsh session log is one JSON object with a `type`; a row that is not one
-  // fails the migration chain this is fed to, which is the failure the caller records as unknown.
+  // Every line of a dsh session log is one JSON object with a `type`; a line that is not one throws
+  // here, as a line that is not JSON does, which is the failure the caller records as unknown.
   const rows = text
     .split("\n")
     .filter(Boolean)
-    .map((l) => JSON.parse(l) as Row);
+    .map((l): Row => {
+      const row: unknown = JSON.parse(l);
+
+      if (!isRow(row)) {
+        throw new TypeError(`${file}: a line is not a log row`);
+      }
+
+      return row;
+    });
 
   // SAFETY: dsh writes the header as the first line of the log; `undefined` covers an empty file,
   // which the next line rejects.
@@ -477,6 +490,10 @@ export function readLog(file: string): { header: Header; rows: Array<Row> } {
 
   return { header, rows: rows.slice(1) };
 }
+
+/** True for a log line as the repair reads it: an object. dsh writes each with a `type`; one
+ *  without is still read, as before, and fails the migration if it matters. */
+const isRow = (v: unknown): v is Row => isRec(v);
 
 /** One zstd frame. dsh reads the header as its own frame ("first frame is not exactly one header
  *  line" otherwise), then the rows; two frames back to back are one valid stream. */

@@ -15,8 +15,8 @@ export declare function recordText(line: string): {
     at?: number;
 } | undefined;
 /** The query split into lowercased words. Empty input gives an empty list, which matches nothing. */
-export declare function queryWords(q: string): string[];
+export declare function queryWords(q: string): Array<string>;
 /** Search one transcript's whole text, line by line. Every word must appear in the same record,
  *  case-insensitive. Returns one hit for the session, not one per record: `count` is how many
  *  records matched, and the snippet comes from the first. */
-export declare function searchTranscript(text: string, words: string[], snippetRadius?: number): TranscriptHit | undefined;
+export declare function searchTranscript(text: string, words: Array<string>, snippetRadius?: number): TranscriptHit | undefined;

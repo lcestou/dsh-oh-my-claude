@@ -7,6 +7,8 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { JsonValue } from "./dsh.js";
+import { fieldsOf, parseJson } from "./test-context.js";
 
 const dir = mkdtempSync(join(tmpdir(), "omc-gate-hook-"));
 const gatePath = join(dir, "gate.json");
@@ -15,7 +17,7 @@ const hook = fileURLToPath(new URL("./test-gate-hook.ts", import.meta.url));
 
 /** Run the hook once with `command` saved for `dir` and the given hook input; answer its stdout,
  *  the run file's state and how long it took. */
-const stop = (command: string, input: object) => {
+const stop = (command: string, input: JsonValue) => {
   writeFileSync(
     gatePath,
     JSON.stringify({ [dir]: { enabled: true, command, tries: 2, timeoutSec: 20 } }),
@@ -28,8 +30,8 @@ const stop = (command: string, input: object) => {
     timeout: 15_000,
   });
 
-  // SAFETY: the hook writes the run file as JSON with a string `state`
-  const run = JSON.parse(readFileSync(runPath, "utf8")) as { state: string };
+  // The hook writes the run file as JSON with a string `state`.
+  const run = fieldsOf(parseJson(readFileSync(runPath, "utf8")), { state: "string" });
 
   return { stdout: out.stdout, state: run.state, ms: Date.now() - t0 };
 };

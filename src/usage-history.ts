@@ -101,16 +101,15 @@ export function recordWindows(
     );
 
     const pct = Math.round(w.usedPercent);
+    const r = i === -1 ? undefined : list[i];
 
-    if (i === -1) {
+    if (r === undefined) {
       next = [
         ...list,
         { series, resetsAt: w.resetsAt, peak: pct, firstAt: fetchedAt, lastAt: fetchedAt },
       ];
       continue;
     }
-
-    const r = list[i]!;
 
     if (fetchedAt <= r.lastAt) {
       continue;
@@ -209,6 +208,13 @@ export function typicalPercent(list: ReadonlyArray<HistoryEnded>): number | unde
 
   const p = list.map((e) => e.percent).toSorted((a, b) => a - b);
   const mid = p.length >> 1;
+  const below = p[mid - 1];
+  const at = p[mid];
 
-  return Math.round(p.length % 2 ? p[mid]! : (p[mid - 1]! + p[mid]!) / 2);
+  // Never undefined with three or more values; the check only types them.
+  if (below === undefined || at === undefined) {
+    return undefined;
+  }
+
+  return Math.round(p.length % 2 ? at : (below + at) / 2);
 }

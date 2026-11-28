@@ -2,15 +2,16 @@
 import assert from "node:assert/strict";
 import { loadUsage, resetText, staleNote, usageCache } from "./context-meter.js";
 import { installLocale } from "./i18n.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const urls: Array<string> = [];
 
-globalThis.fetch = (async (url: string) => {
-  urls.push(url);
-  await new Promise((r) => setTimeout(r, 10));
+globalThis.fetch = async (input) => {
+  urls.push(typeof input === "string" ? input : new Request(input).url);
+  await sleep(10);
 
   return new Response(JSON.stringify({ ok: true, fetchedAt: 1, windows: [] }));
-}) as typeof fetch;
+};
 
 const [a, b, c] = await Promise.all([loadUsage("p1"), loadUsage("p1"), loadUsage("p1")]);
 

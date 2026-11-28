@@ -47,38 +47,36 @@ export function TestGateRow({ ctx }: { ctx: ClientCtx }) {
   const [timeoutSec, setTimeoutSec] = useState(TIMEOUT_DEFAULT_SEC);
   const [note, setNote] = useState("");
   useEffect(() => {
-    if (!cwd) {
-      return;
-    }
-
     let live = true;
 
-    const read = () =>
-      fetch(`${ROUTE}/test-gate?cwd=${encodeURIComponent(cwd)}`)
+    /** Puts the workspace's gate in the form. */
+    const show = (r: GateReply) => {
+      setReply(r);
+      setCommand(r.config?.command || r.suggested || "");
+      setTries(r.config?.tries ?? TRIES_DEFAULT);
+      setTimeoutSec(r.config?.timeoutSec ?? TIMEOUT_DEFAULT_SEC);
+    };
+
+    /** Reads the gate for `dir`; a failed read leaves the form as it is. */
+    const read = (dir: string) => {
+      fetch(`${ROUTE}/test-gate?cwd=${encodeURIComponent(dir)}`)
         .then((r) => readJson<GateReply>(r))
-        .then((r) => {
-          if (!live) {
-            return;
-          }
-
-          setReply(r);
-          setCommand(r.config?.command || r.suggested || "");
-          setTries(r.config?.tries ?? TRIES_DEFAULT);
-          setTimeoutSec(r.config?.timeoutSec ?? TIMEOUT_DEFAULT_SEC);
-        })
+        .then((r) => live && show(r))
         .catch(() => {});
+    };
 
-    void read();
+    // A session with no workspace has no gate to read or follow.
+    if (cwd) {
+      read(cwd);
+    }
 
-    const off = subscribe("test-gate-config", (_s, d) => {
-      if (d.cwd === cwd) {
-        void read();
-      }
-    });
+    const off = cwd
+      ? subscribe("test-gate-config", (_s, d) => d.cwd === cwd && read(cwd))
+      : undefined;
 
     return () => {
       live = false;
-      off();
+      off?.();
     };
   }, [cwd]);
   const saved = reply?.config ?? null;

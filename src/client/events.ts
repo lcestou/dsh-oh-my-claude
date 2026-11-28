@@ -228,7 +228,32 @@ export const KINDS = [
 
 type Listener<K extends keyof EventData> = (session: string | null, data: EventData[K]) => void;
 
-const subscribers = new Map<keyof EventData, Set<Listener<keyof EventData>>>();
+/** One listener set per kind, each holding only listeners for that kind's data. */
+type Registry = { [K in keyof EventData]: Set<Listener<K>> };
+
+/** Each kind's listeners. */
+const subscribers = {
+  "live-turn": new Set(),
+  awaiting: new Set(),
+  asides: new Set(),
+  idle: new Set(),
+  turns: new Set(),
+  hints: new Set(),
+  "new-session-default": new Set(),
+  "permission-mode": new Set(),
+  "test-gate": new Set(),
+  "test-gate-config": new Set(),
+  "second-opinion": new Set(),
+  "second-opinion-setting": new Set(),
+  boxes: new Set(),
+  notify: new Set(),
+  ping: new Set(),
+} satisfies Registry;
+
+/** Kind `kind`'s listener set, typed by its kind; the registry type is what relates the two. */
+const listenersOf = <K extends keyof EventData>(registry: Registry, kind: K): Set<Listener<K>> =>
+  registry[kind];
+
 let source: EventSource | undefined;
 let openSession: string | null = null;
 let lastMessageAt = 0;
@@ -281,31 +306,18 @@ export function dispatch<K extends keyof EventData>(
   session: string | null,
   data: EventData[K],
 ): void {
-  const set = subscribers.get(kind);
-
-  if (!set) {
-    return;
-  }
-
-  for (const fn of set) {
+  for (const fn of listenersOf(subscribers, kind)) {
     fn(session, data);
   }
 }
 
 /** Listen for one kind; returns the unsubscribe. */
 export function subscribe<K extends keyof EventData>(kind: K, fn: Listener<K>): () => void {
-  let set = subscribers.get(kind);
-
-  if (!set) {
-    subscribers.set(kind, (set = new Set()));
-  }
-
-  // SAFETY: the set is keyed by K, so every listener in it takes EventData[K]
-  const wide = fn as Listener<keyof EventData>;
-  set.add(wide);
+  const set = listenersOf(subscribers, kind);
+  set.add(fn);
 
   return () => {
-    set.delete(wide);
+    set.delete(fn);
   };
 }
 
@@ -358,6 +370,7 @@ export function openStream(session: string | null): void {
     try {
       // SAFETY: our own server wrote this frame (src/events.ts `frame`): `{ session, data }` with
       // `data` the matching route's body for `kind`
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- frames come from this plugin's own event route (src/events.ts frame), built from the same EventData types.
       const body = JSON.parse(String(ev.data)) as {
         session: string | null;
         data: EventData[typeof kind];

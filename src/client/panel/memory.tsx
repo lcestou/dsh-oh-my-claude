@@ -1,6 +1,6 @@
 // The memory tab: Claude's auto-memory files for the current workspace, as the route lists them, with the
 // rows that show each file's front matter.
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   btn,
   btnPrimary,
@@ -15,6 +15,7 @@ import {
   ago,
   claudeProviderOf,
   code,
+  errorText,
 } from "../shared.js";
 import type { ClientCtx } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
@@ -61,27 +62,33 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
     .filter((p) => p !== "")
     .join("&");
 
-  const refresh = (signal?: AbortSignal) => {
-    if (!cwd) {
-      return;
-    }
+  const refresh = useCallback(
+    (signal?: AbortSignal) => {
+      if (!cwd) {
+        return;
+      }
 
-    fetch(`${ROUTE}/memory?${q}`, { signal })
-      .then((r) => readJson<{ dir?: string; files?: Array<MemoryFile> }>(r))
-      .then((b) => {
+      /** Puts the list on screen and clears an earlier error. */
+      const show = (b: { dir?: string; files?: Array<MemoryFile> }) => {
         setFiles(b.files ?? []);
         setDir(b.dir ?? "");
         setListError("");
-      })
-      // An in-flight list outlives the tab being closed, and its reply landed on a component that
-      // is gone: React drops the state write and the error branch painted an error nobody asked
-      // for. The abort is the teardown, and its own rejection is not a failure to report.
-      .catch((error_: Error) => {
-        if (signal?.aborted !== true) {
-          setListError(error_.message);
-        }
-      });
-  };
+      };
+
+      fetch(`${ROUTE}/memory?${q}`, { signal })
+        .then((r) => readJson<{ dir?: string; files?: Array<MemoryFile> }>(r))
+        .then(show)
+        // An in-flight list outlives the tab being closed, and its reply landed on a component that
+        // is gone: React drops the state write and the error branch painted an error nobody asked
+        // for. The abort is the teardown, and its own rejection is not a failure to report.
+        .catch((cause: unknown) => {
+          if (signal?.aborted !== true) {
+            setListError(errorText(cause));
+          }
+        });
+    },
+    [cwd, q],
+  );
 
   // Re-list every half minute: Claude writes memories mid-turn.
   useEffect(() => {
@@ -93,7 +100,7 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
       clearInterval(timer);
       stop.abort();
     };
-  }, [q]);
+  }, [refresh]);
 
   const openFile = async (n: string) => {
     setError("");
@@ -198,7 +205,8 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
             style={{
               ...rowBtn,
             }}
-            onClick={() => openFile(f.name)}
+            // Each file action reports its own failure in the panel, so nothing awaits it.
+            onClick={() => void openFile(f.name)}
           >
             <span
               // Shrinks before the summary does (auto basis against the summary's zero), so a
@@ -238,13 +246,13 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
               ‹ {t("panel.back")}
             </button>
             <span style={{ flex: 1, fontFamily: T.mono, fontSize: 12 }}>{file}</span>
-            <button type="button" style={btn} onClick={remove} disabled={busy}>
+            <button type="button" style={btn} onClick={() => void remove()} disabled={busy}>
               {t("panel.delete")}
             </button>
             <button
               type="button"
               style={dirty ? btnPrimary : btn}
-              onClick={save}
+              onClick={() => void save()}
               disabled={busy || !dirty}
             >
               {t("save")}
@@ -260,7 +268,7 @@ export function MemoryBody({ sessionId, ctx }: { sessionId: string; ctx: ClientC
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                save();
+                void save();
               }
             }}
             style={{ ...code, minHeight: 300, resize: "vertical", whiteSpace: "pre-wrap" }}

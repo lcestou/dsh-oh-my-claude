@@ -7,6 +7,7 @@
  * ssh setup, and a box that answers but has no `claude` needs an install. Before this, all four
  * read as one ssh error string in the row.
  */
+import { stringOf, isRec } from "./decode.js";
 import type { SshBox } from "./sessions.js";
 
 export type ReachStage =
@@ -145,12 +146,12 @@ export function tailscalePeers(text: string): Array<TailscalePeer> {
   const peers: Array<TailscalePeer> = [];
 
   for (const raw of Object.values(doc.Peer)) {
-    if (typeof raw !== "object" || raw === null) {
+    if (!isRec(raw)) {
       continue;
     }
 
-    // SAFETY: one peer record; each field is checked for its type before it is read
-    const p = raw as Record<string, unknown>;
+    // One peer record; each field is checked for its type before it is read.
+    const p = raw;
     const name = typeof p.HostName === "string" ? p.HostName : "";
     const dns = typeof p.DNSName === "string" ? p.DNSName.replace(/\.$/, "") : "";
 
@@ -309,8 +310,8 @@ export function validateTailnetJoin(raw: {
   loginServer?: unknown;
   authKey?: unknown;
 }): ValidatedTailnetJoin {
-  const loginServer = String(raw.loginServer ?? "").trim();
-  const authKey = String(raw.authKey ?? "").trim();
+  const loginServer = (stringOf(raw.loginServer) ?? "").trim();
+  const authKey = (stringOf(raw.authKey) ?? "").trim();
 
   if (loginServer && !/^https?:\/\/[A-Za-z0-9.:_-]+(\/[A-Za-z0-9._/-]*)?$/.test(loginServer)) {
     return { error: "login server must be an http(s) URL" };

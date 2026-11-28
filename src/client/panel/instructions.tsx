@@ -14,6 +14,7 @@ import {
   ago,
   claudeProviderOf,
   code,
+  errorText,
 } from "../shared.js";
 import type { ClientCtx } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
@@ -66,7 +67,7 @@ export function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: C
   const mounted = useRef(true);
   useEffect(() => () => void (mounted.current = false), []);
 
-  const refresh = () => {
+  const refresh = useCallback(() => {
     if (!cwd) {
       return;
     }
@@ -74,17 +75,27 @@ export function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: C
     fetch(`${ROUTE}/instructions?${q}`)
       .then((r) => readJson<{ files?: Array<InstructionFile> }>(r))
       .then((b) => mounted.current && setFiles(b.files ?? []))
-      .catch((error_: Error) => mounted.current && setError(error_.message));
-  };
+      .catch((cause: unknown) => mounted.current && setError(errorText(cause)));
+  }, [cwd, q]);
 
-  useEffect(() => {
-    refresh();
-  }, [cwd]);
+  useEffect(refresh, [refresh]);
 
   const refreshRoster = useCallback(() => {
     if (!cwd) {
       return;
     }
+
+    /** Puts the roster and its load errors and warnings on screen. */
+    const showRoster = (
+      b: PluginRoster & {
+        pluginErrors?: Array<PluginLoadError>;
+        pluginWarnings?: Array<PluginLoadError>;
+      },
+    ) => {
+      setRoster(b);
+      setPluginErrors(b.pluginErrors ?? []);
+      setPluginWarnings(b.pluginWarnings ?? []);
+    };
 
     fetch(`${ROUTE}/plugins?${q}`)
       .then((r) =>
@@ -96,15 +107,7 @@ export function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: C
         >(r),
       )
       // A roster that will not load is not an instructions error: the file list is still good.
-      .then((b) => {
-        if (!mounted.current) {
-          return;
-        }
-
-        setRoster(b);
-        setPluginErrors(b.pluginErrors ?? []);
-        setPluginWarnings(b.pluginWarnings ?? []);
-      })
+      .then((b) => mounted.current && showRoster(b))
       .catch(() => {});
   }, [cwd, q]);
 
@@ -179,7 +182,8 @@ export function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: C
             style={{
               ...rowBtn,
             }}
-            onClick={() => openFile(f)}
+            // Each file action reports its own failure in the panel, so nothing awaits it.
+            onClick={() => void openFile(f)}
           >
             <span style={{ ...meta, flex: "none", minWidth: 52 }}>
               {t(`panel.instructions.kind.${f.kind}`)}
@@ -224,7 +228,7 @@ export function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: C
               <button
                 type="button"
                 style={dirty ? btnPrimary : btn}
-                onClick={save}
+                onClick={() => void save()}
                 disabled={busy || !dirty}
               >
                 {t("save")}
@@ -242,7 +246,7 @@ export function InstructionsBody({ sessionId, ctx }: { sessionId: string; ctx: C
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                save();
+                void save();
               }
             }}
             style={{ ...code, minHeight: 300, resize: "vertical", whiteSpace: "pre-wrap" }}

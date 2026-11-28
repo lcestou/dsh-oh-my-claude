@@ -4,24 +4,32 @@ import { strict as assert } from "node:assert";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { PluginContext } from "../dsh.js";
+import type { ClaudeEvent, ClaudeStreamPartial } from "../process.js";
+import {
+  fakeClaudeProcess,
+  fakePluginContext,
+  fakePrep,
+  stepSession,
+  userTurn,
+} from "../test-context.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
 import { INTERRUPT_GRACE_MS } from "./turn.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
-const delta = {
+const delta: ClaudeStreamPartial = {
   type: "content_block_delta",
   index: 0,
   delta: { type: "text_delta", text: "hi" },
 };
 
-const queue: Array<unknown> = [
+const queue: Array<ClaudeEvent> = [
   {
     type: "stream_event",
     event: {
       type: "content_block_start",
       index: 0,
-      content_block: { type: "text", text: "" },
+      content_block: { type: "text" },
     },
   },
   { type: "stream_event", event: delta },
@@ -29,82 +37,52 @@ const queue: Array<unknown> = [
 
 let killed = 0;
 
-const proc = {
-  alive: true,
+const proc = fakeClaudeProcess({
   busy: false,
   parked: undefined,
   steerPending: false,
   forwarded: 0,
   interruptOwed: false,
   spec: { child: "node" }, // no keeper: the one spawn mode with a kill after the grace
-  relays: new Map(),
-  sent: new Set(),
-  steers: new Map(),
-  queue: { lines: [] },
-  queuedIndexes: [],
   idleKilled: false,
+  // The old fakes carried both: alive, with an exit code already set.
+  alive: true,
   exitCode: 0,
-  stderr: "",
-  stray: "",
   staleResults: 0,
   countStaleResults: () => 0,
   write: () => true,
   // Two frames, then silence: the turn is still running when Stop arrives.
-  nextEvent: async () => (queue.length > 0 ? queue.shift() : new Promise(() => {})),
+  nextEvent: async () => queue.shift() ?? new Promise<never>(() => {}),
   kill: () => {
     killed += 1;
   },
-};
+});
 
-const session = {
-  header: { version: 0 },
-  snapshotEvents: () => [
-    { type: "turn/start", data: { turn: 1 } },
-    { type: "step/start", data: { step: 1 } },
-  ],
-  append: () => ({ seq: 1 }),
-};
-
-// SAFETY: partial fakes; the step reads the session's log and nothing else of the context
-const ctx = {
+// The step reads the session's log and nothing else of the context.
+const ctx = fakePluginContext({
   on() {},
-  sessions: { get: () => session },
-} as unknown as PluginContext;
+  sessions: { get: () => stepSession() },
+  agents: { get: () => undefined },
+});
 
 const a = new ClaudeCodeAdapter(ctx, Config({ resume: true, toolsInline: false }));
 
 a.stateDir = mkdtempSync(join(tmpdir(), "omc-stop-grace-"));
 
-const prep = {
-  input: "go",
-  spec: { model: "m" },
-  cwd: "/tmp",
-  session: undefined,
-  args: [],
-};
+const prep = fakePrep();
 
-// SAFETY: the fakes below stand in for a spawned process and its side channels
-const loose = a as unknown as Record<string, unknown>;
+// The fakes below stand in for a spawned process and its side channels.
+a.acquire = async () => ({ prep, proc });
 
-loose.acquire = async () => ({ prep, proc });
+a.reconnectIfStale = async () => {};
 
-loose.reconnectIfStale = async () => {};
+a.watchTranscript = async () => {};
 
-loose.watchTranscript = async () => {};
-
-loose.pumpMirror = async () => {};
+a.pumpMirror = async () => {};
 
 const stop = new AbortController();
 
-const options = {
-  sessionId: "s",
-  model: "m",
-  messages: [{ role: "user", content: [{ type: "text", text: "go" }] }],
-  signal: stop.signal,
-};
-
-// SAFETY: the options above are the fields a step reads
-const gen = a.stream(options as unknown as Parameters<typeof a.stream>[0]);
+const gen = a.stream(userTurn("s", "go", { signal: stop.signal }));
 
 await gen.next();
 
@@ -117,7 +95,7 @@ assert.equal(proc.interruptOwed, true, "the interrupt went out and its answer is
 // The CLI's answer lands with no turn reading; `noteIdleResult` settles the debt.
 proc.interruptOwed = false;
 
-await new Promise((r) => setTimeout(r, INTERRUPT_GRACE_MS + 300));
+await sleep(INTERRUPT_GRACE_MS + 300);
 
 assert.equal(killed, 0, "a process that answered the interrupt is kept");
 

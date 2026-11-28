@@ -149,7 +149,7 @@ import { recordText, queryWords, searchTranscript } from "./search.js";
   const hit = searchTranscript(transcript, queryWords("done"));
   assert(hit);
   assert(!/\n/.test(hit.snippet), "no newline in the snippet");
-  assert(!/  /.test(hit.snippet), "no double space in the snippet");
+  assert(!/ {2}/.test(hit.snippet), "no double space in the snippet");
 }
 
 console.log("ok search");

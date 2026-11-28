@@ -122,6 +122,12 @@ export interface ContractResult {
   skipped: boolean;
 }
 
+/** What `checkContract` asks of the page: how many nodes match each probe's selector. A real
+ *  `Document` is one; a test passes a plain object. */
+export type ContractDocument = {
+  querySelectorAll(selectors: string): { readonly length: number };
+};
+
 /**
  * Run every probe against a document.
  *
@@ -138,7 +144,7 @@ export interface ContractResult {
  * than as a false alarm, and is the safe way to be wrong.
  */
 export function checkContract(
-  doc: Pick<Document, "querySelectorAll">,
+  doc: ContractDocument,
   probes: ReadonlyArray<ContractProbe> = DSH_CONTRACT,
 ): Array<ContractResult> {
   const counted = probes.map((probe) => ({

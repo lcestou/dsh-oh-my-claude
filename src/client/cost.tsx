@@ -27,6 +27,7 @@ import { useHintValue, useHintFlag } from "./hints.js";
 import { onBodyMutation } from "./dom.js";
 import { attachTip, hideTipFor, refreshTip } from "./tooltip.js";
 import { BOXES_EVENT } from "./picker.js";
+import { reportDebug } from "./console-report.js";
 
 /** Cached tokens for the readout: `999`, `12.3K`, `2.1M`, and nothing at all for none. */
 export const formatCacheRead = (tokens: number): string => {
@@ -195,11 +196,7 @@ export function newestOnly<T>(apply: (value: T) => void): (read: Promise<T>) => 
 
   return (read) => {
     const mine = ++latest;
-    void read.then((v) => {
-      if (mine === latest) {
-        apply(v);
-      }
-    });
+    void read.then((v) => mine === latest && apply(v));
   };
 }
 
@@ -249,13 +246,20 @@ const STATS_PILL_SPAN =
  *  them answered as the row because the context meter in it has the anchor-and-button shape. */
 const STATS_ANCHOR = ":scope > span[data-composer-stat]";
 
+/** What `isStatsRow` reads off a candidate row: whether it is on the page, its child count, its
+ *  class and text, and one match's text. A real `HTMLElement` is one; a test passes a plain object. */
+export type StatsRowCandidate = Pick<Element, "isConnected" | "className" | "textContent"> & {
+  readonly children: { readonly length: number };
+  querySelector(selectors: string): Pick<Element, "textContent"> | null;
+};
+
 /**
  * dsh's own stats row, the div the cost line is appended to. dsh builds it in `StatsLine` as a
  * `_root` div of `<span>` groups joined by `_sep` bars, which is the handle used here: the groups
  * themselves come from the `stats.counts` message and read differently in another locale. The
  * English text stays as a last resort for a row that has one group and therefore no bar yet.
  */
-export const isStatsRow = (el: HTMLElement): boolean => {
+export const isStatsRow = (el: StatsRowCandidate): boolean => {
   if (!el.isConnected || el.children.length < 1) {
     return false;
   }
@@ -293,8 +297,11 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   const [turns, setTurns] = useState<Array<TurnRecord>>([]);
   // What the poll compares against without listing `turns` as a dependency of its effect.
   const turnsRef = useRef<Array<TurnRecord>>([]);
-  turnsRef.current = turns;
   const visibleRef = useRef(true);
+
+  useEffect(() => {
+    turnsRef.current = turns;
+  }, [turns]);
 
   useEffect(() => {
     // No `activeClaudeSession` gate here. It reads the session's provider binding, which is briefly
@@ -305,16 +312,12 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
     // costs one request per ten seconds and removes the dead window.
     let alive = true;
 
+    /** Never rejects: a refused or failed read keeps the turns on screen. */
     const fetchTurns = async () => {
       try {
-        const r = await fetch(`${ROUTE}/turns?session=${encodeURIComponent(sessionId)}`);
-
-        if (!r.ok) {
-          return;
-        }
-
-        // SAFETY: the body is our own JSON route; the union type names both shapes the caller checks
-        const body = (await r.json()) as TurnsReply | { error: string };
+        const body = await readJson<TurnsReply | { error: string }>(
+          await fetch(`${ROUTE}/turns?session=${encodeURIComponent(sessionId)}`),
+        );
 
         if ("error" in body) {
           return;
@@ -333,7 +336,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       }
     };
 
-    fetchTurns();
+    void fetchTurns();
 
     // A new record arrives on the event stream when a turn ends; the read is the fallback: every
     // 30 s while the stream is up, every 10 s when it is not. The same rule as the read: only
@@ -354,7 +357,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
 
     const tick = () => {
       if (visibleRef.current) {
-        fetchTurns();
+        void fetchTurns();
       }
 
       timer = setTimeout(tick, pollEvery(false, 10_000, 10_000));
@@ -366,7 +369,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       visibleRef.current = document.visibilityState === "visible";
 
       if (visibleRef.current) {
-        fetchTurns();
+        void fetchTurns();
       }
     };
 
@@ -382,7 +385,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
 
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [ctx, sessionId]);
+  }, [sessionId]);
 
   const [boxLine] = useHintValue("spendWarnUsd");
 
@@ -399,10 +402,10 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   // dsh's current session blinks: a child session takes the slot for a moment, and a model
   // directory mid-rebind answers no provider at all. A blank answer used to read as "not mine" and
   // took the cost off the row under the pointer, so only another session's id gives it up.
-  // Derived during render, committed after it: React throws renders away, and one that never
-  // reached the screen used to latch this ref anyway. So a render for another session could leave
-  // the cost of this one on the row.
-  const mineRef = useRef(false);
+  // Latched in state during render: React throws renders away, and a ref latched by one that never
+  // reached the screen left the cost of this session on the row of another. A render-time update
+  // is thrown away with its render.
+  const [mineSeen, setMineSeen] = useState(false);
   const current = openSessionId(ctx);
 
   const mine =
@@ -410,11 +413,12 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       ? true
       : current && current !== sessionId
         ? false
-        : mineRef.current;
+        : mineSeen;
 
-  useLayoutEffect(() => {
-    mineRef.current = mine;
-  });
+  if (mine !== mineSeen) {
+    setMineSeen(mine);
+  }
+
   // Money is Claude's turns only: a turn a router answered is not priced (`TurnRecord.via`).
   const total = turns.reduce((s, r) => s + priced(r), 0);
   const last = turns.at(-1);
@@ -462,10 +466,15 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       window.removeEventListener(BOXES_EVENT, load);
     };
   }, []);
-  const [guardDraft, setGuardDraft] = useState("");
-  useEffect(() => {
-    setGuardDraft(numberOr(sessionLine) === undefined ? "" : String(sessionLine));
-  }, [sessionLine]);
+  const lineText = numberOr(sessionLine) === undefined ? "" : String(sessionLine);
+  const [guardDraft, setGuardDraft] = useState(lineText);
+  // A line saved here, in another tab or on another device replaces the draft as it arrives.
+  const [guardDraftOf, setGuardDraftOf] = useState(lineText);
+
+  if (guardDraftOf !== lineText) {
+    setGuardDraftOf(lineText);
+    setGuardDraft(lineText);
+  }
 
   const saveGuard = () => {
     const v = guardDraft.trim();
@@ -481,7 +490,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
     if (Number.isFinite(n) && n >= 0) {
       setSessionLine(n);
     } else {
-      setGuardDraft(numberOr(sessionLine) === undefined ? "" : String(sessionLine));
+      setGuardDraft(lineText);
     }
   };
 
@@ -498,10 +507,6 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   const anchorName = `--omc-cost-${useId().replaceAll(/[^\w-]/g, "")}`;
   useDismissOnOutsidePointer(pillRef, open, setOpen, panelRef);
   useEffect(() => {
-    if (!open) {
-      return;
-    }
-
     // Escape hands focus back to the pill; the move into the dialog is the effect below.
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") {
@@ -512,7 +517,10 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       pillRef.current?.querySelector("button")?.focus({ preventScroll: true });
     };
 
-    document.addEventListener("keydown", onKeyDown);
+    // Only while the dialog is open; removing what was never added is a no-op.
+    if (open) {
+      document.addEventListener("keydown", onKeyDown);
+    }
 
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
@@ -523,12 +531,12 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
       panelRef.current?.focus({ preventScroll: true });
     }
   }, [open]);
+
   // A cost that left the row takes its dialog with it.
-  useEffect(() => {
-    if (!text) {
-      setOpen(false);
-    }
-  }, [text]);
+  if (!text && open) {
+    setOpen(false);
+  }
+
   // dsh's stats row is one div of groups; a slot entry can only be its sibling and lands on its
   // own line. Append into that div instead, the way the context meter hooks its popover.
   // ponytail: the row is found by its shape, not by a slot dsh offers; swap for a slot the day
@@ -545,14 +553,18 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
   const textRef = useRef(text);
   const titleRef = useRef(title);
   const overRef = useRef(false);
-  overRef.current = over;
+  const syncRef = useRef<() => void>(() => {});
+
+  // A changed figure, tooltip, open state or warn colour repaints the injected nodes on the next
+  // frame (`syncRef` queues one).
   useLayoutEffect(() => {
     textRef.current = text;
     titleRef.current = title;
     openRef.current = open;
-  });
-  const syncRef = useRef<() => void>(() => {});
-  useEffect(() => syncRef.current(), [text, title, open]);
+    overRef.current = over;
+    syncRef.current();
+    // The refs keep one identity for the component's life, so listing them reruns nothing.
+  }, [text, title, open, over, textRef, titleRef, openRef, overRef]);
   useEffect(() => {
     let inline: HTMLSpanElement | undefined;
     let body: HTMLSpanElement | undefined;
@@ -568,10 +580,10 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
     // good. The row has to be hooked again each time it loses ours.
     // `localStorage.setItem("omc-debug", "1")` prints every hook, drop and repaint to the console;
     // the row lives in someone else's DOM, so this is the only way to watch what removed it.
-    const debug = (...args: Array<unknown>) => {
+    const debug = (message: string, detail?: Readonly<Record<string, string | undefined>>) => {
       try {
         if (COST_DEBUG) {
-          console.debug("[oh-my-claude cost]", ...args);
+          reportDebug("[oh-my-claude cost]", message, detail);
         }
       } catch {
         // a browser that refuses localStorage simply has no debug output
@@ -835,7 +847,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
 
       drop();
     };
-  }, []);
+  }, [anchorName, textRef, titleRef, openRef, overRef]);
 
   if (!text) {
     return <span ref={anchorRef} hidden />;

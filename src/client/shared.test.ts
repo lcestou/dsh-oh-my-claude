@@ -17,6 +17,45 @@ import {
   sortSkillCosts,
   whenContextGone,
 } from "./shared.js";
+import { fakeClientCtx, notFaked } from "../test-context.js";
+
+/** One row of dsh's session list as the client reads it. */
+type ListRow = ReturnType<ClientCtx["sessions"]["list"]["getSnapshot"]>["byId"][string];
+
+/** A row's model-selection projection, as dsh flattens it onto the list row. */
+type ModelSelection = NonNullable<ListRow["projectionValues"]>["modelSelection"];
+
+/** A model directory whose store answers `current`, and nothing to subscribe to. */
+const directory = (
+  current: { provider: string; model: string } | null,
+): ReturnType<ClientCtx["modelDirectories"]["directoryFor"]> => ({
+  store: { subscribe: notFaked("store.subscribe"), getSnapshot: () => ({ current }) },
+});
+
+/** dsh's `uiWorkspace` with `openSession` as given; the folder browser is not reached here. */
+const workspaceFace = (openSessionFn: (id: string) => void) => ({
+  listDirectory: notFaked("uiWorkspace.listDirectory"),
+  createDirectory: notFaked("uiWorkspace.createDirectory"),
+  openSession: openSessionFn,
+});
+
+/** A workspace list with nothing in it and nothing archived. */
+const emptyWorkspaces: Partial<ClientCtx["workspaces"]> = {
+  list: {
+    getSnapshot: () => ({ items: [], archivedSessionIds: [] }),
+    subscribe: notFaked("workspaces.list.subscribe"),
+  },
+};
+
+/** A context whose session list is `byId` and whose directory lookup is `directoryFor`. */
+const listed = (
+  byId: Record<string, ListRow>,
+  directoryFor: ClientCtx["modelDirectories"]["directoryFor"] = notFaked("directoryFor"),
+): ClientCtx =>
+  fakeClientCtx({
+    sessions: { list: { getSnapshot: () => ({ byId }) } },
+    modelDirectories: { directoryFor },
+  });
 
 assert.equal(maskEmail("someone@example.com"), "s******@example.com");
 
@@ -34,19 +73,10 @@ assert.equal(maskEmail(""), "");
 // so the provider has to come off the cold list row. dsh's `projectList` flattens the summary's
 // projection block onto the row as `projectionValues`, and reading any other shape leaves a Claude
 // session looking like a dsh one (the sidebar dot stays blue until the row is clicked).
-const coldCtx = (modelSelection: unknown): ClientCtx =>
-  ({
-    modelDirectories: {
-      directoryFor: () => {
-        throw new Error('ui-model-selection: session "s1" resolved no scope');
-      },
-    },
-    sessions: {
-      list: {
-        getSnapshot: () => ({ byId: { s1: { id: "s1", projectionValues: { modelSelection } } } }),
-      },
-    },
-  }) as unknown as ClientCtx;
+const coldCtx = (modelSelection: ModelSelection): ClientCtx =>
+  listed({ s1: { id: "s1", projectionValues: { modelSelection } } }, () => {
+    throw new Error('ui-model-selection: session "s1" resolved no scope');
+  });
 
 // `next` is the pending pick; it answers first.
 assert.equal(
@@ -80,17 +110,10 @@ assert.equal(
 
 // An opened session has a live model directory, and its current provider is the answer whether or
 // not it is Claude: a non-Claude read must not fall through to a stale Claude `lastUsed`.
-const liveCtx = (provider: string, modelSelection: unknown): ClientCtx =>
-  ({
-    modelDirectories: {
-      directoryFor: () => ({ store: { getSnapshot: () => ({ current: { provider } }) } }),
-    },
-    sessions: {
-      list: {
-        getSnapshot: () => ({ byId: { s1: { id: "s1", projectionValues: { modelSelection } } } }),
-      },
-    },
-  }) as unknown as ClientCtx;
+const liveCtx = (provider: string, modelSelection: ModelSelection): ClientCtx =>
+  listed({ s1: { id: "s1", projectionValues: { modelSelection } } }, () =>
+    directory({ provider, model: "m" }),
+  );
 
 assert.equal(
   claudeProviderOf(
@@ -107,25 +130,13 @@ assert.equal(
 
 /** A tab with session `id` open on `provider` and nothing on its list row. */
 const liveCtxFor = (id: string, provider: string): ClientCtx =>
-  ({
-    modelDirectories: {
-      directoryFor: () => ({ store: { getSnapshot: () => ({ current: { provider } }) } }),
-    },
-    sessions: { list: { getSnapshot: () => ({ byId: { [id]: { id } } }) } },
-  }) as unknown as ClientCtx;
+  listed({ [id]: { id } }, () => directory({ provider, model: "m" }));
 
 // After a reconnect dsh resyncs: the directory's `current` is null while the catalog loads and the
 // list row arrives before its projections. Unknown keeps the last answer instead of reading as
 // "not Claude", which flickered the open session to dsh's blue on a slow link.
-const resyncing = (row: object | undefined): ClientCtx =>
-  ({
-    modelDirectories: {
-      directoryFor: () => ({
-        store: { getSnapshot: () => ({ current: null, status: "loading" }) },
-      }),
-    },
-    sessions: { list: { getSnapshot: () => ({ byId: row ? { r1: row } : {} }) } },
-  }) as unknown as ClientCtx;
+const resyncing = (row: ListRow | undefined): ClientCtx =>
+  listed(row ? { r1: row } : {}, () => directory(null));
 
 assert.equal(claudeProviderOf(resyncing(undefined), "r1"), undefined, "never seen: no answer");
 
@@ -186,25 +197,30 @@ assert.equal(resumeCommand("abc", "/w/it's"), String.raw`cd '/w/it'\''s' && clau
 assert.equal(resumeCommand("abc", "/w/a", "nova"), "ssh nova \"cd '/w/a' && claude --resume abc\"");
 
 // Which session is on screen: the row the main view retains.
-const listCtx = (snapshot: unknown): ClientCtx =>
-  ({ sessions: { list: { getSnapshot: () => snapshot } } }) as unknown as ClientCtx;
+const listCtx = (snapshot: ReturnType<ClientCtx["sessions"]["list"]["getSnapshot"]>): ClientCtx =>
+  fakeClientCtx({ sessions: { list: { getSnapshot: () => snapshot } } });
 
 assert.equal(
   openSessionId(
-    listCtx({ byId: { s1: { retainedBy: { sidebar: 1 } }, s2: { retainedBy: { mainView: 1 } } } }),
+    listCtx({
+      byId: {
+        s1: { id: "s1", retainedBy: { sidebar: 1 } },
+        s2: { id: "s2", retainedBy: { mainView: 1 } },
+      },
+    }),
   ),
   "s2",
 );
 
 // A retention the main view has let go of is not a selection.
-assert.equal(openSessionId(listCtx({ byId: { s1: { retainedBy: {} } } })), undefined);
+assert.equal(openSessionId(listCtx({ byId: { s1: { id: "s1", retainedBy: {} } } })), undefined);
 
-assert.equal(openSessionId(listCtx(undefined)), undefined);
+assert.equal(openSessionId(listCtx({ byId: {} })), undefined);
 
 // The same snapshot object is scanned once; a new one (the list changed) is scanned again.
 {
   let reads = 0;
-  const rows = { a: { retainedBy: { mainView: 1 } } };
+  const rows = { a: { id: "a", retainedBy: { mainView: 1 } } };
 
   const snap = {
     get byId() {
@@ -218,14 +234,17 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
   assert.equal(openSessionId(ctx), "a");
   assert.equal(openSessionId(ctx), "a");
   assert.equal(reads, 1, "one scan per snapshot");
-  assert.equal(openSessionId(listCtx({ byId: { b: { retainedBy: { mainView: 1 } } } })), "b");
+  assert.equal(
+    openSessionId(listCtx({ byId: { b: { id: "b", retainedBy: { mainView: 1 } } } })),
+    "b",
+  );
 }
 
 // A throw that is not a disposed context answers undefined and leaves the bundle live: the next
 // read still works. It used to retire everything until a refresh (owner, 2026-09-22: new sessions
 // lost the Claude look after switching languages back and forth).
 {
-  const flaky = {
+  const flaky = fakeClientCtx({
     sessions: {
       list: {
         getSnapshot: () => {
@@ -233,11 +252,11 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
         },
       },
     },
-  } as unknown as ClientCtx;
+  });
 
   assert.equal(openSessionId(flaky), undefined);
   assert.equal(
-    openSessionId(listCtx({ byId: { s1: { retainedBy: { mainView: 1 } } } })),
+    openSessionId(listCtx({ byId: { s1: { id: "s1", retainedBy: { mainView: 1 } } } })),
     "s1",
     "still live after it",
   );
@@ -245,7 +264,7 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
 
 // A disposed context retires; `revive` (what apply runs first) brings the module back.
 {
-  const dead = {
+  const dead = fakeClientCtx({
     sessions: {
       list: {
         getSnapshot: () => {
@@ -253,17 +272,17 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
         },
       },
     },
-  } as unknown as ClientCtx;
+  });
 
   assert.equal(openSessionId(dead), undefined);
   assert.equal(
-    openSessionId(listCtx({ byId: { s1: { retainedBy: { mainView: 1 } } } })),
+    openSessionId(listCtx({ byId: { s1: { id: "s1", retainedBy: { mainView: 1 } } } })),
     undefined,
     "retired",
   );
   revive();
   assert.equal(
-    openSessionId(listCtx({ byId: { s1: { retainedBy: { mainView: 1 } } } })),
+    openSessionId(listCtx({ byId: { s1: { id: "s1", retainedBy: { mainView: 1 } } } })),
     "s1",
     "live again",
   );
@@ -273,13 +292,13 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
 {
   const opened: Array<string> = [];
 
-  const ctx = {
-    sessions: {},
-    get: (name: string) =>
-      name === "uiWorkspace"
-        ? { openSession: (id: string) => opened.push(`uiWorkspace:${id}`) }
-        : undefined,
-  } as unknown as ClientCtx;
+  const ctx = fakeClientCtx({
+    services: {
+      uiWorkspace: workspaceFace((id) => {
+        opened.push(`uiWorkspace:${id}`);
+      }),
+    },
+  });
 
   openSession(ctx, "s1");
   assert.deepEqual(opened, ["uiWorkspace:s1"]);
@@ -291,20 +310,26 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
   const events: Array<string> = [];
   let archivedIds = ["s1"];
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async () => new Response("{}")) as unknown as typeof fetch;
+  globalThis.fetch = async () => new Response("{}");
   setTimeout(() => {
     archivedIds = [];
     events.push("unarchived");
   }, 120);
 
-  const ctx = {
-    sessions: { list: { getSnapshot: () => ({ byId: { s1: {} } }) } },
+  const ctx = fakeClientCtx({
+    sessions: { list: { getSnapshot: () => ({ byId: { s1: { id: "s1" } } }) } },
     workspaces: {
-      list: { getSnapshot: () => ({ items: [], archivedSessionIds: archivedIds }) },
+      list: {
+        getSnapshot: () => ({ items: [], archivedSessionIds: archivedIds }),
+        subscribe: notFaked("workspaces.list.subscribe"),
+      },
     },
-    get: (name: string) =>
-      name === "uiWorkspace" ? { openSession: () => events.push("opened") } : undefined,
-  } as unknown as ClientCtx;
+    services: {
+      uiWorkspace: workspaceFace(() => {
+        events.push("opened");
+      }),
+    },
+  });
 
   await openHere(ctx, { id: "t1", dsh: { id: "s1", archived: true } }, "/w");
   globalThis.fetch = realFetch;
@@ -315,27 +340,28 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
 // dsh 0.2.1's create mints a new session for a named one whose log has turns.
 {
   const events: Array<string> = [];
-  let byId: Record<string, object> = {};
+  let byId: Record<string, ListRow> = {};
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async () => new Response("{}")) as unknown as typeof fetch;
+  globalThis.fetch = async () => new Response("{}");
 
-  const ctx = {
+  const ctx = fakeClientCtx({
     sessions: {
       list: { getSnapshot: () => ({ byId }) },
       create: async () => {
         events.push("create");
       },
       refresh: async () => {
-        byId = { t2: {} };
+        byId = { t2: { id: "t2" } };
         events.push("refresh");
       },
     },
-    workspaces: { list: { getSnapshot: () => ({ items: [], archivedSessionIds: [] }) } },
-    get: (name: string) =>
-      name === "uiWorkspace"
-        ? { openSession: (id: string) => events.push(`opened:${id}`) }
-        : undefined,
-  } as unknown as ClientCtx;
+    workspaces: emptyWorkspaces,
+    services: {
+      uiWorkspace: workspaceFace((id) => {
+        events.push(`opened:${id}`);
+      }),
+    },
+  });
 
   await openHere(ctx, { id: "t2" }, "/w");
   globalThis.fetch = realFetch;
@@ -347,14 +373,17 @@ assert.equal(openSessionId(listCtx(undefined)), undefined);
 {
   const opened: Array<string> = [];
   const realFetch = globalThis.fetch;
-  globalThis.fetch = (async () => new Response("{}")) as unknown as typeof fetch;
+  globalThis.fetch = async () => new Response("{}");
 
-  const ctx = {
+  const ctx = fakeClientCtx({
     sessions: { list: { getSnapshot: () => ({ byId: {} }) }, refresh: async () => {} },
-    workspaces: { list: { getSnapshot: () => ({ items: [], archivedSessionIds: [] }) } },
-    get: (name: string) =>
-      name === "uiWorkspace" ? { openSession: (id: string) => opened.push(id) } : undefined,
-  } as unknown as ClientCtx;
+    workspaces: emptyWorkspaces,
+    services: {
+      uiWorkspace: workspaceFace((id) => {
+        opened.push(id);
+      }),
+    },
+  });
 
   await assert.rejects(openHere(ctx, { id: "t3" }, "/w"), /did not list it/);
   globalThis.fetch = realFetch;

@@ -1,5 +1,6 @@
 // The second-opinion routes: the card's state, its Run and Close, and the Settings row's model list
 // and save. sessions.ts calls this group before the boxes routes.
+import { setTimeout as sleep } from "node:timers/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { UNHANDLED } from "./context.js";
 import type { RouteHandler } from "./context.js";
@@ -42,7 +43,7 @@ export function secondOpinionRoutes(
         .map(async (p) => {
           const models = await Promise.race([
             ctx.llm.listModels(p.id).catch(() => []),
-            new Promise<[]>((resolve) => setTimeout(() => resolve([]), LIST_MS)),
+            sleep(LIST_MS, []),
           ]);
 
           return models.length === 0

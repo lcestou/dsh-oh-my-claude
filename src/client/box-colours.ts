@@ -107,10 +107,10 @@ export function boxColourSheet(
   const accent = themeOf(hints).accent;
 
   return [...colours]
-    .filter(([p, c]) => SAFE_ID.test(p) && !(p === THIS_BOX_PROVIDER && c === accent))
-    .map(
-      ([p, c]) =>
-        `${gated("models", `[data-provider-id="${p}"][data-model-id]`, false)}{color:${c}}`,
+    .flatMap(([p, c]) =>
+      SAFE_ID.test(p) && !(p === THIS_BOX_PROVIDER && c === accent)
+        ? [`${gated("models", `[data-provider-id="${p}"][data-model-id]`, false)}{color:${c}}`]
+        : [],
     )
     .join("");
 }

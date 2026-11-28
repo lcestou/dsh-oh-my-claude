@@ -3,7 +3,9 @@
 // does not take the host down (#251).
 import { strict as assert } from "node:assert";
 import { PassThrough } from "node:stream";
+import type { JsonValue } from "./dsh.js";
 import { ClaudeProcess } from "./process.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const stdout = new PassThrough();
 const acked: Array<number> = [];
@@ -34,9 +36,9 @@ const proc = new ClaudeProcess({
 
 proc.controlListener = () => false; // the adapter's resolveControl after the waiter timed out
 
-const feed = async (frame: object) => {
+const feed = async (frame: JsonValue) => {
   stdout.write(`${JSON.stringify(frame)}\n`);
-  await new Promise((r) => setTimeout(r, 10));
+  await sleep(10);
 };
 
 await feed({
@@ -50,13 +52,15 @@ assert.deepEqual(acked, [0], "and is acked, so a keeper does not replay it");
 
 assert.equal(proc.hasTurnOutput(), false);
 
-for (const frame of [
+const unasked: Array<JsonValue> = [
   { type: "system", subtype: "init" },
   { type: "keep_alive" },
   { type: "rate_limit_event" },
   { type: "auth_status" },
   { type: "something_new" },
-]) {
+];
+
+for (const frame of unasked) {
   await feed(frame);
 }
 
@@ -119,7 +123,9 @@ assert.ok(ran, "the exit callback still runs");
 
 assert.equal(proc.alive, false, "and the process reads as ended");
 
-const warned = await new Promise<string>((r) => process.once("warning", (w) => r(w.message)));
+const warned = await new Promise<string>((r) => {
+  process.once("warning", (w) => r(w.message));
+});
 
 assert.match(
   warned,

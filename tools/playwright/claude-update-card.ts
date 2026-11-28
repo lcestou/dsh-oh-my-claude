@@ -62,21 +62,23 @@ for (const box of [
     // The first GET after the click still sees the run; the next one sees it finished.
     const done = posted > 0 && Date.now() - startedAt > 2000;
 
+    const to = box.mode === "declined" ? "2.1.273" : "2.1.274";
+
     const entry: JsonDoc =
       box.mode === "declined"
         ? {
             at: Date.now(),
             from: "2.1.273",
-            to: "2.1.273",
+            to,
             by: "button",
             ok: false,
             note: "Claude is up to date!",
           }
-        : { at: Date.now(), from: "2.1.273", to: "2.1.274", by: "button", ok: true };
+        : { at: Date.now(), from: "2.1.273", to, by: "button", ok: true };
 
     await route.fulfill({
       json: done
-        ? { ...state, installed: String(entry.to), busy: false, log: [entry] }
+        ? { ...state, installed: to, busy: false, log: [entry] }
         : { ...state, busy: posted > 0 },
     });
   });

@@ -3,6 +3,9 @@
 // config dir; the routes save `accounts.json` and hand the list to the adapter, which mounts or
 // withdraws the instance live (src/adapter/accounts.ts). Hand-written mounts with a dir of their
 // own are listed too, read-only, so a login set up in cordis.patch.yml is visible and can log in.
+import { parsedWith } from "../schema-fits.js";
+import type { JsonReply } from "../sessions.js";
+import { stringOf } from "../decode.js";
 import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import z from "@deepseek-ai/schemastery";
@@ -57,7 +60,7 @@ export interface AccountRouteCtx {
   defaultHome: string;
   /** This box's `claude`, as the default mount resolved it. */
   command: string;
-  json: (res: ServerResponse, status: number, value: object) => void;
+  json: JsonReply;
   readBody: (req: IncomingMessage) => Promise<{ [key: string]: JsonValue }>;
   run: (
     cmd: string,
@@ -107,8 +110,14 @@ export async function loadAccounts(
     return error instanceof Error && "code" in error && error.code === "ENOENT" ? [] : undefined;
   }
 
+  const list = parsedWith(AccountList, text);
+
+  if (list === undefined) {
+    return undefined;
+  }
+
   try {
-    const v = validateAccounts(AccountList(JSON.parse(text)), {
+    const v = validateAccounts(list, {
       home,
       defaultHome,
       takenIds: new Map(),
@@ -229,7 +238,7 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
 
         const mine = new Set(saved.map((a) => boxProviderId(a.name)));
         const others = c.localMounts().filter((m) => !mine.has(m.provider));
-        const wanted = boxProviderId(String(body.name ?? "").trim());
+        const wanted = boxProviderId((stringOf(body.name) ?? "").trim());
         const profile = others.find((m) => m.provider === wanted);
 
         if (profile) {
@@ -240,7 +249,10 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
           (await c.sshIds()).map((id): [string, string] => [id, id]),
         );
 
-        const draft = { name: String(body.name ?? ""), configDir: String(body.configDir ?? "") };
+        const draft = {
+          name: stringOf(body.name) ?? "",
+          configDir: stringOf(body.configDir) ?? "",
+        };
 
         const v = validateAccounts([...saved, draft], {
           home: c.home,
@@ -258,7 +270,7 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
     }
 
     if (url.pathname === `${base}/remove` && req.method === "POST") {
-      const provider = String((await c.readBody(req)).provider ?? "");
+      const provider = stringOf((await c.readBody(req)).provider) ?? "";
 
       return serial(async () => {
         const saved = await loadAccounts(c.path, c.home, c.defaultHome);
@@ -310,7 +322,7 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
     }
 
     const body = await c.readBody(req);
-    const provider = String(body.provider ?? "");
+    const provider = stringOf(body.provider) ?? "";
     const m = target(provider);
 
     if (!m) {
@@ -349,7 +361,7 @@ export function accountsRoutes(c: AccountRouteCtx): RouteHandler {
       return c.json(
         res,
         200,
-        finish(await submitSshLoginCode(key, String(body.code ?? ""), verify(m))),
+        finish(await submitSshLoginCode(key, stringOf(body.code) ?? "", verify(m))),
       );
     }
 

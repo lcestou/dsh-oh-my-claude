@@ -12,7 +12,13 @@ const DRAIN_MS = 300;
 
 import { GATE_MODES, TAIL_CHARS, decide, gateReason, testEnv } from "./test-gate.js";
 import type { RunExit, TestGateRun } from "./test-gate.js";
-import { hookInputOf, readGateFile, readRunFile, writeJsonAtomic } from "./test-gate-files.js";
+import {
+  failureText,
+  hookInputOf,
+  readGateFile,
+  readRunFile,
+  writeJsonAtomic,
+} from "./test-gate-files.js";
 
 /** Reads all of stdin; the CLI writes the hook input there and closes it. */
 async function stdinText(): Promise<string> {
@@ -168,15 +174,15 @@ const [gatePath, runPath, cwd, cap] = process.argv.slice(2);
 // Exits once the answer is written: a SIGTERM handler replaces node's own exit, and a stray
 // handle must never keep the hook alive past the CLI's cancel.
 if (gatePath && runPath && cwd) {
-  main(gatePath, runPath, cwd, Number(cap))
-    .then((out) => {
-      if (out) {
-        process.stdout.write(out, () => process.exit(0));
-      } else {
-        process.exit(0);
-      }
-    })
-    .catch((error: Error) => {
-      process.stderr.write(`test gate: ${error.message}\n`, () => process.exit(0));
-    });
+  try {
+    const out = await main(gatePath, runPath, cwd, Number(cap));
+
+    if (out) {
+      process.stdout.write(out, () => process.exit(0));
+    } else {
+      process.exit(0);
+    }
+  } catch (error) {
+    process.stderr.write(`test gate: ${failureText(error)}\n`, () => process.exit(0));
+  }
 }

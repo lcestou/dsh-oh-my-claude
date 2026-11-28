@@ -4,7 +4,7 @@
 import { strict as assert } from "node:assert";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { PluginContext } from "../dsh.js";
+import type { Session, SessionStore } from "../dsh.js";
 import { STATE_DIR } from "../state.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
@@ -17,6 +17,7 @@ import {
   presetOfSession,
 } from "./engine-mode.js";
 import { engineDigest } from "./isolate.js";
+import { fakePluginContext, fakeSession, notFaked } from "../test-context.js";
 
 const base = new Config({});
 const on = { engineOn: true, "enginePreset:engine": true } as const;
@@ -116,18 +117,26 @@ assert.equal(
   "the mode's own skip",
 );
 
+/** A context whose preset service answers `presetForSession`, and whose store answers `get`.
+ *  presetOfSession reads sessions.get and the preset service only. */
+const withPresets = (
+  presetForSession: (session: Session) => string | null,
+  get: SessionStore["get"] = () => fakeSession(),
+) =>
+  fakePluginContext({
+    on() {},
+    sessions: { get },
+    services: {
+      agentPresets: { presetForSession, list: notFaked("agentPresets.list") },
+    },
+  });
+
 // A preset service that throws, or none, reads as no preset.
-// SAFETY: partial fakes; presetOfSession reads sessions.get and the preset service only
 assert.equal(
   presetOfSession(
-    {
-      sessions: { get: () => ({}) },
-      get: () => ({
-        presetForSession: () => {
-          throw new Error("gone");
-        },
-      }),
-    } as unknown as PluginContext,
+    withPresets(() => {
+      throw new Error("gone");
+    }),
     "s1",
   ),
   null,
@@ -137,10 +146,10 @@ assert.equal(presetOfSession(undefined, "s1"), null);
 
 assert.equal(
   presetOfSession(
-    {
-      sessions: { get: (id: string) => (id === "s1" ? { id } : undefined) },
-      get: () => ({ presetForSession: () => "engine" }),
-    } as unknown as PluginContext,
+    withPresets(
+      () => "engine",
+      (id) => (id === "s1" ? fakeSession({ header: { id } }) : undefined),
+    ),
     "s1",
   ),
   "engine",
@@ -149,10 +158,10 @@ assert.equal(
 
 assert.equal(
   presetOfSession(
-    {
-      sessions: { get: () => undefined },
-      get: () => ({ presetForSession: () => "engine" }),
-    } as unknown as PluginContext,
+    withPresets(
+      () => "engine",
+      () => undefined,
+    ),
     "s1",
   ),
   null,
@@ -174,15 +183,11 @@ assert.deepEqual(enginePresets({ "enginePreset:a": true, "enginePreset:b": true,
   );
   const presets: Record<string, string> = { s1: "engine", s2: "standard" };
 
-  // SAFETY: partial fake; sessionConfigOf reads sessions.get and the preset service only
-  const ctx = {
-    on() {},
-    sessions: { get: (id: string) => ({ id }) },
-    get: (name: string) =>
-      name === "agentPresets"
-        ? { presetForSession: (s: { id: string }) => presets[s.id] ?? null }
-        : undefined,
-  } as unknown as PluginContext;
+  // sessionConfigOf reads sessions.get and the preset service only.
+  const ctx = withPresets(
+    (s) => presets[s.id] ?? null,
+    (id) => fakeSession({ header: { id } }),
+  );
 
   const a = new ClaudeCodeAdapter(ctx, Config({}));
   const s1 = await a.sessionConfigOf("s1");
@@ -198,9 +203,8 @@ assert.deepEqual(enginePresets({ "enginePreset:a": true, "enginePreset:b": true,
   assert.equal(a.configFor("s1"), a.config);
 
   // A dsh with no preset service is engine mode off.
-  // SAFETY: partial fake, as above
   const bare = new ClaudeCodeAdapter(
-    { on() {}, sessions: { get: () => ({}) }, get: () => undefined } as unknown as PluginContext,
+    fakePluginContext({ on() {}, sessions: { get: () => fakeSession() } }),
     Config({}),
   );
 
@@ -214,8 +218,7 @@ assert.deepEqual(enginePresets({ "enginePreset:a": true, "enginePreset:b": true,
 // The environment follows the process, not the plugin's config: isolate's env goes only to a
 // process whose spec says isolate, so a normal session started beside an engine one gets none.
 {
-  // SAFETY: partial fake; localEnvOverride reads the config only
-  const a = new ClaudeCodeAdapter({ on() {} } as unknown as PluginContext, Config({}));
+  const a = new ClaudeCodeAdapter(fakePluginContext({ on() {} }), Config({}));
   assert.equal(a.localEnvOverride(false, undefined, false, true)?.MCP_TOOL_TIMEOUT, "2000000000");
   assert.equal(a.localEnvOverride(false, undefined, false, false)?.MCP_TOOL_TIMEOUT, undefined);
   assert.equal(a.localEnvOverride(false)?.MCP_TOOL_TIMEOUT, undefined, "default: the config's off");

@@ -41,6 +41,7 @@ import {
   takeInterrupted,
 } from "./state.js";
 import { tempDir } from "./test-tmp.js";
+import { objectOf, parseJson } from "./test-context.js";
 
 const dir = tempDir("omc-state-");
 
@@ -184,9 +185,12 @@ assert.deepEqual(loadedTurns.get("ts2"), [
 ]);
 
 // Malformed entry: write a bad record into ts1's array and assert the loader drops it but keeps ts2.
-const raw = JSON.parse(await readFile(TURNS_FILE(turnsDir), "utf8"));
+const raw = objectOf(parseJson(await readFile(TURNS_FILE(turnsDir), "utf8")));
+const ts1 = raw.ts1;
 
-raw.ts1.push({
+assert.ok(Array.isArray(ts1), "ts1's turns are a list");
+
+ts1.push({
   at: "not-a-number",
   costUsd: 0.01,
   durationMs: 500,

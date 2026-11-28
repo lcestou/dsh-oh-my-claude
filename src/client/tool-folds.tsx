@@ -16,6 +16,7 @@ import {
 } from "./icons.js";
 import { ensurePanelStyle, whenContextGone } from "./shared.js";
 import { onBodyMutation, recordElement } from "./dom.js";
+import { isElement, isHTMLElement, isStyleElement } from "./dom-guards.js";
 
 /** Fold a native-tool code block into a one-line disclosure. dsh renders a tool step as a `<p>` whose
  *  text is an icon plus the tool's name (`❯ Bash`, `▤ Read`), set by the translator, followed by
@@ -86,7 +87,7 @@ const ensureFoldStyle = () => {
   // build's markup styled by them, which looks like the feature half-shipped until the tab is
   // reloaded by hand.
   const existing = document.getElementById("dsh-oh-my-claude-fold");
-  const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
+  const el = isStyleElement(existing) ? existing : document.createElement("style");
   el.id = "dsh-oh-my-claude-fold";
   // The header reads as dsh's muted tool text, taking its secondary content size and label colour.
   // It sits flush-left like any prose line. The leading span is a fixed 16px box of both glyphs
@@ -185,6 +186,25 @@ const leadFor = (glyph: string): HTMLElement | null => {
 
 let foldClicksBound = false;
 
+/** Folds or unfolds the tool header an event landed in; false when it landed outside one, or on a
+ *  header that does not fold. */
+const toggleFoldAt = (target: EventTarget | null): boolean => {
+  if (!isElement(target)) {
+    return false;
+  }
+
+  const head = target.closest<HTMLElement>(`p[${HEAD_MARK}]`);
+  const state = head?.getAttribute(HEAD_MARK);
+
+  if (head === null || state === "flat" || state === null) {
+    return false;
+  }
+
+  setFoldState(head, state === "1" ? "open" : "1");
+
+  return true;
+};
+
 /** One delegated listener pair toggles a header. Bound once per bundle and dropped when this bundle
  *  retires: a flag on documentElement outlives the reload the listeners do not, which left a tab
  *  answering clicks from whichever bundle loaded first and every later one silently unbound. */
@@ -200,27 +220,10 @@ const bindFoldClicks = () => {
     stop.abort();
   });
 
-  const toggle = (target: EventTarget | null): boolean => {
-    if (!(target instanceof Element)) {
-      return false;
-    }
-
-    const head = target.closest<HTMLElement>(`p[${HEAD_MARK}]`);
-    const state = head?.getAttribute(HEAD_MARK);
-
-    if (head === null || state === "flat" || state === null) {
-      return false;
-    }
-
-    setFoldState(head, state === "1" ? "open" : "1");
-
-    return true;
-  };
-
   document.addEventListener(
     "click",
     (e) => {
-      toggle(e.target);
+      toggleFoldAt(e.target);
     },
     { signal: stop.signal },
   );
@@ -233,7 +236,7 @@ const bindFoldClicks = () => {
         return;
       }
 
-      if (toggle(e.target)) {
+      if (toggleFoldAt(e.target)) {
         e.preventDefault();
       }
     },
@@ -260,11 +263,18 @@ const setFoldState = (head: HTMLElement, state: "1" | "open" | "flat") => {
   head.setAttribute("aria-expanded", state === "open" ? "true" : "false");
 };
 
+/** What `glyphOf` reads off a header paragraph: its first child's text, its marks, and the lead
+ *  span's mark. A real `HTMLElement` is one; a test passes a plain object. */
+export type HeaderParagraph = Pick<Element, "hasAttribute" | "getAttribute"> & {
+  readonly firstChild: Pick<ChildNode, "nodeType" | "nodeValue"> | null;
+  querySelector(selectors: string): Pick<Element, "getAttribute"> | null;
+};
+
 /** The glyph a header leads with, wherever it currently lives: still in the text, already lifted into
  *  a leading span, or in the `data-omc-icon` attribute an older build left behind. A glyph with the
  *  mark behind it is a header and says so for the rest of the page; a bare one is a header only
  *  while no marked header has been seen, or when this paragraph is one already folding. */
-export const glyphOf = (head: HTMLElement): string => {
+export const glyphOf = (head: HeaderParagraph): string => {
   const node = head.firstChild;
 
   if (node?.nodeType === Node.TEXT_NODE) {
@@ -312,7 +322,7 @@ const dotHeader = (head: HTMLElement): void => {
     // header has the dot span there instead of the chip, so the pass does nothing twice.
     const next = node.nextSibling;
 
-    if (next instanceof HTMLElement && next.tagName === "CODE" && text.trim() !== "") {
+    if (isHTMLElement(next) && next.tagName === "CODE" && text.trim() !== "") {
       node.nodeValue = text.trimEnd();
       const sep = document.createElement("span");
       sep.setAttribute("data-omc-part", "sep");
@@ -443,7 +453,7 @@ export function watchToolFolds() {
     const heads = new Set<HTMLElement>();
 
     const take = (node: Node) => {
-      if (!(node instanceof HTMLElement)) {
+      if (!isHTMLElement(node)) {
         return;
       }
 

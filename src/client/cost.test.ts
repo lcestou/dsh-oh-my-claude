@@ -1,6 +1,7 @@
 // The cost pill's plan check: one /status read shared by every pill, asked again after a login
 // change (BOXES_EVENT), so a switch between a plan and an API key shows without a refresh.
 import { strict as assert } from "node:assert";
+import { setTimeout as sleep } from "node:timers/promises";
 
 // cost.tsx registers its listener at import, so the window it sees has to exist first.
 const win = new EventTarget();
@@ -45,7 +46,10 @@ assert.equal(calls, 2);
   /** A promise and the function that settles it, so the test picks the order replies land in. */
   const deferred = () => {
     let settle!: (v: string) => void;
-    const promise = new Promise<string>((r) => (settle = r));
+
+    const promise = new Promise<string>((r) => {
+      settle = r;
+    });
 
     return { promise, settle };
   };
@@ -56,7 +60,7 @@ assert.equal(calls, 2);
   show(second.promise);
   second.settle("api-key");
   first.settle("claude.ai");
-  await new Promise((r) => setTimeout(r, 0));
+  await sleep(0);
   assert.deepEqual(seen, ["api-key"], "the stale reply is dropped");
 }
 

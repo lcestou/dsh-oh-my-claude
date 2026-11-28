@@ -1,7 +1,7 @@
-import { type ContentBlock } from "@deepseek-ai/dsh-llm";
-import { type ContextSizes, type ContextSource } from "../context-sources.js";
-import { type ImageAttachmentRef } from "../dsh.js";
-import { type SteerAttachment } from "../process.js";
+import type { ContentBlock } from "@deepseek-ai/dsh-llm";
+import type { ContextSizes, ContextSource } from "../context-sources.js";
+import type { ImageAttachmentRef } from "../dsh.js";
+import type { SteerAttachment } from "../process.js";
 /** One source's state in a dsh 0.2.3 system-prompt message. An active source's instructions are
  *  the text block at `contentIndex`; a retired source has none. Blocks no section points at are
  *  dsh's notices ("The following replaces the earlier instructions from ...") for a model that
@@ -34,14 +34,16 @@ export type LooseMessage = {
         /** dsh's shape for the block: `snapshot` for context injected before a step, `notice` for a
          *  notice a producer sends. */
         form?: string;
+        /** dsh's one-line summary of a `notice` context block. */
+        summary?: string;
         /** dsh 0.2.3, on a system-prompt message: which sources it sets or retires. Absent on a
          *  message that holds a whole prompt, which is every one dsh wrote up to 0.2.2. */
-        sections?: readonly SystemSection[];
+        sections?: ReadonlyArray<SystemSection>;
         /** dsh 0.2.3, beside `sections`: this message replaces every source admitted before it.
          *  Without it the message changes only the sources it names. */
         reset?: boolean;
     };
-    content?: string | ContentBlock[];
+    content?: string | Array<ContentBlock>;
     /** dsh 0.1.7 answers a tool result as its own `role: "tool"` message and carries the call id on
      *  the message; up to 0.1.6 it was a user message holding a `tool-result` block. */
     toolCallId?: string;
@@ -49,13 +51,13 @@ export type LooseMessage = {
 };
 /** The browser's IANA zone as dsh stamped it on the latest user prompt; undefined when no
  *  prompt carried one (an API caller, an old log), so clocks fall back to the box's zone. */
-export declare function clientTimeZone(messages: readonly LooseMessage[]): string | undefined;
+export declare function clientTimeZone(messages: ReadonlyArray<LooseMessage>): string | undefined;
 /** Join a message's text blocks on newlines, or return a string content as-is; non-text blocks (images, tool calls) are dropped and undefined content becomes empty. */
 export declare const textOf: (content: LooseMessage["content"]) => string;
 /** The file and image blocks of a message as the steer card names them, in block order. A block
  *  without its attachment reference (wire data from an older dsh) is skipped, as dsh's own queue
  *  dock does. Empty for a string content or a text-only message. */
-export declare const attachmentsOf: (content: LooseMessage["content"]) => SteerAttachment[];
+export declare const attachmentsOf: (content: LooseMessage["content"]) => Array<SteerAttachment>;
 /** The key a message dsh delivered mid-step is marked under once it went over stdin: the prompt's
  *  rpcId for a typed steer, the message id for anything dsh sends on its own behalf (a child's
  *  send_message, a settlement notice, a job's finish line). Undefined for what never goes over
@@ -68,7 +70,7 @@ export declare const steerKey: (m: LooseMessage) => string | undefined;
  * command grammar counts, so a bridged command on a fresh process is not sent as plain text. A
  * path such as `/home/x` has a slash in its name and never matches.
  */
-export declare function isCliCommandLine(text: string, known: readonly string[] | undefined): boolean;
+export declare function isCliCommandLine(text: string, known: ReadonlyArray<string> | undefined): boolean;
 /**
  * dsh's system prompt for a loop-built request, after a one-shot caller's `system`. Undefined
  * when neither has text.
@@ -78,7 +80,7 @@ export declare function isCliCommandLine(text: string, known: readonly string[] 
  * each holds a whole prompt. Reading a 0.2.3 change as a whole prompt gave Claude one changed
  * paragraph for its entire system prompt, from the first model switch on.
  */
-export declare function dshSystemPrompt(messages: readonly LooseMessage[] | undefined, system?: string): string | undefined;
+export declare function dshSystemPrompt(messages: ReadonlyArray<LooseMessage> | undefined, system?: string): string | undefined;
 /**
  * Pick the messages that go into this call. Fresh: the whole transcript, since `claude -p` is
  * stateless. Resuming: what came after Claude's own last reply (`own` names this route's
@@ -88,7 +90,7 @@ export declare function dshSystemPrompt(messages: readonly LooseMessage[] | unde
  * transcript Claude never saw, while Claude's own results already sit in its session.
  * `developer` keeps dsh's developer messages with text (see `isTurn`).
  */
-export declare function selectTurns(messages: LooseMessage[] | undefined, resuming: boolean, own?: string, developer?: boolean): LooseMessage[];
+export declare function selectTurns(messages: Array<LooseMessage> | undefined, resuming: boolean, own?: string, developer?: boolean): Array<LooseMessage>;
 /** The most of one tool's input or output another model's transcript carries into the prompt. */
 export declare const TOOL_TEXT_CAP = 2000;
 /** dsh's instruction bundle repeats files Claude Code already loads on its own (`CLAUDE.md` in the
@@ -114,7 +116,7 @@ export declare const contextSourceOf: (m: LooseMessage) => ContextSource | undef
  *  `instructions` counts what survives the CLAUDE.md filter and `claudemd` counts what the filter
  *  took, so the two together are the bundle dsh handed over. A key is absent when this turn carried
  *  nothing of that kind, which is not the same as zero and must not be flattened into one. */
-export declare function contextSizes(turns: LooseMessage[], copies?: NativeCopies): ContextSizes;
+export declare function contextSizes(turns: Array<LooseMessage>, copies?: NativeCopies): ContextSizes;
 /** Prompt text of one dsh message: a withheld block answers empty, a skill-invocation the CLI also
  *  lists is dsh's duplicate of a body Claude Code injects itself (so it answers empty), and the
  *  instruction bundle keeps losing its CLAUDE.md sections whatever the switches say, since Claude
@@ -126,7 +128,7 @@ export declare const promptTextOf: (m: LooseMessage, drops?: ReadonlySet<Context
  * carries only an image has no text to send, so it becomes `(see attached)` and the image rides
  * along in `imageRefs`.
  */
-export declare function buildPrompt(turns: LooseMessage[], drops?: ReadonlySet<ContextSource>, 
+export declare function buildPrompt(turns: Array<LooseMessage>, drops?: ReadonlySet<ContextSource>, 
 /** Characters of one tool input or output kept (`replayToolTextLimit`); 0 keeps them whole. */
 cap?: number, copies?: NativeCopies): string;
 /** An image loaded from dsh's attachment store, ready for the stdin line, plus the path of the
@@ -163,7 +165,7 @@ export declare const IMAGE_EXT: Map<string, string>;
  * the note points at the copy `keepImageCopy` wrote. Files need nothing here: dsh replaces a file
  * block with a line naming its stored path before any provider sees the turn.
  */
-export declare function attachmentNotes(turns: LooseMessage[], images: readonly LoadedImage[]): string;
+export declare function attachmentNotes(turns: Array<LooseMessage>, images: ReadonlyArray<LoadedImage>): string;
 /** How long one attachment may take to reach a box: before a prompt, and at a step boundary,
  *  where the CLI sits parked waiting for the line this holds up. */
 export declare const COPY_CAP_MS = 300000;
@@ -177,4 +179,4 @@ export declare const STEER_COPY_CAP_MS = 30000;
  */
 export declare function relayFileHandles(text: string, copy: (localPath: string, farName: string) => Promise<string>, log?: (level: string, message: string) => void): Promise<string>;
 /** The images of a turn, newest MAX_IMAGES kept, for the stdin line that carries them. */
-export declare function imageRefs(turns: LooseMessage[]): ImageAttachmentRef[];
+export declare function imageRefs(turns: Array<LooseMessage>): Array<ImageAttachmentRef>;

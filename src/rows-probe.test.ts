@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { probeRawToolRows, rawRowsLog } from "./rows-probe.js";
 import { tempDir } from "./test-tmp.js";
+import { fieldsOf, objectOf } from "./test-context.js";
 
 {
   const { header, rows } = rawRowsLog();
@@ -30,7 +31,8 @@ import { tempDir } from "./test-tmp.js";
 
   const settled = rows.findIndex(
     (r) =>
-      r.type === "assistant/message" && (r.data as { message: { id: string } }).message.id === "m",
+      r.type === "assistant/message" &&
+      fieldsOf(objectOf(r.data).message, { id: "string?" }).id === "m",
   );
 
   assert(announce < call, "the announcement sits ahead of the call, which is what dsh 0.1.7 loads");

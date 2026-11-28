@@ -52,6 +52,7 @@
   "dependencies": {},
   "devDependencies": {
     "@cloudflare/oxlint-config": "0.2.0",
+    "@deepseek-ai/dsh-brand": "0.1.6-alpha.1",
     "@deepseek-ai/dsh-client-ui-primitives": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-llm": "0.1.6-alpha.1",
     "@oxlint/plugins": "^1.95.0",
@@ -65,6 +66,7 @@
     "typescript": "^7.0.2"
   },
   "peerDependencies": {
+    "@deepseek-ai/dsh-brand": ">=0.2.2-alpha.2 <0.3.0",
     "@deepseek-ai/dsh-llm": ">=0.2.2-alpha.2 <0.3.0",
     "@deepseek-ai/cordis": "^4.0.2",
     "@deepseek-ai/schemastery": "^3.18.0",
@@ -78,6 +80,8 @@
   "files": [
     "src",
     "!src/**/*.test.ts",
+    "!src/test-context.ts",
+    "!src/test-dsh.ts",
     "lib",
     "locale",
     "icon.svg",
@@ -98,6 +102,9 @@
     }
   },
   "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-brand": {
+      "optional": true
+    },
     "@deepseek-ai/dsh-llm": {
       "optional": true
     },

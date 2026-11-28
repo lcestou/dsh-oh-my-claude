@@ -41,14 +41,12 @@ export function useHintValue(
   useEffect(() => {
     let live = true;
 
-    const load = () =>
-      loadHints().then((h) => {
-        if (live) {
-          setValue(h[key]);
-        }
-      });
+    // loadHints never rejects: a failed read answers `{}`.
+    const load = () => {
+      void loadHints().then((h) => live && setValue(h[key]));
+    };
 
-    void load();
+    load();
     window.addEventListener(HINTS_EVENT, load);
 
     return () => {

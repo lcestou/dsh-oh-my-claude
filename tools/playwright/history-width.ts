@@ -66,11 +66,7 @@ for (const [name, viewport] of [
   await p
     .locator('textarea, [contenteditable="true"]')
     .first()
-    .evaluate((el) => {
-      if (el instanceof HTMLElement) {
-        el.focus();
-      }
-    });
+    .evaluate((el) => el.focus());
   await p.keyboard.press("Control+r");
   const field = p.locator("[data-omc-history-query]");
 

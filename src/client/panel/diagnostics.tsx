@@ -21,6 +21,7 @@ import {
   maskEmail,
   resumeCommand,
   saveBlob,
+  errorText,
 } from "../shared.js";
 import type { ClientCtx } from "../shared.js";
 import { checkContract, contractMisses, contractSummary } from "../contract.js";
@@ -31,6 +32,7 @@ import { noticesOn, setNoticesOn } from "../notices.js";
 import type { PermissionRules, HooksListing } from "../../process.js";
 import type { PermissionsReply } from "./access.js";
 import { shortPath, useFold } from "./shared.js";
+import { subscribe } from "../events.js";
 import type { McpReply } from "./mcp.js";
 import { NOT_RUNNING, mcpStatusLabel } from "./mcp.js";
 import { SessionRepairsNotice, useFeatureSwitches } from "./restore.js";
@@ -98,10 +100,11 @@ function SessionNotices() {
     }
 
     if (Notification.permission === "default") {
-      void Notification.requestPermission().then((p) => {
+      void (async () => {
+        const p = await Notification.requestPermission();
         setPermission(p);
         write(p === "granted");
-      });
+      })();
     } else {
       write(true);
     }
@@ -383,8 +386,17 @@ export function DiagnosticsBody({
   // session nobody has prompted yet has none, so the tab says so instead of asking and waiting on a
   // refusal.
   const started = running && hasRunTurn(ctx, sessionId);
-  const [data, setData] = useState<DiagnosticsReply | DiagnosticsError | null>(null);
-  const [mcp, setMcp] = useState<McpReply | null>(null);
+  const [reply, setReply] = useState<DiagnosticsReply | DiagnosticsError | null>(null);
+
+  // A session dsh reports no directory for has nothing to read settings from; say that rather
+  // than leaving the tab on "Loading…" for a fetch that will never be made.
+  const data: DiagnosticsReply | DiagnosticsError | null = cwd
+    ? reply
+    : { ok: false, error: t("panel.diag.noWorkdir") };
+
+  const [mcpReply, setMcp] = useState<McpReply | null>(null);
+  // A session nobody has prompted yet has no process to ask about its servers.
+  const mcp = running && !hasRunTurn(ctx, sessionId) ? NOT_RUNNING : mcpReply;
   const [reconnecting, setReconnecting] = useState<string | null>(null);
   const [audit, setAudit] = useState<Array<DeniedTurn> | null>(null);
   const [auditError, setAuditError] = useState("");
@@ -396,81 +408,95 @@ export function DiagnosticsBody({
   const [doctorBusy, setDoctorBusy] = useState(false);
   const switches = useFeatureSwitches(cwd);
 
+  /** Reads the session's MCP servers from its process. Never rejects: a failure is the reply. */
   const loadMcp = useCallback(
     () =>
-      !hasRunTurn(ctx, sessionId)
-        ? Promise.resolve(setMcp(NOT_RUNNING))
-        : fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
-            .then((r) => readJson<McpReply>(r))
-            .then(setMcp)
-            .catch((error: Error) => setMcp({ ok: false, error: error.message })),
+      fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
+        .then((r) => readJson<McpReply>(r))
+        .then(setMcp)
+        .catch((cause: unknown) => setMcp({ ok: false, error: errorText(cause) })),
     [sessionId],
   );
 
   useEffect(() => {
     // The route asks the running process; with none there is nothing to be not-connected about.
-    if (!running) {
-      return;
+    if (started) {
+      void loadMcp();
     }
-
-    void loadMcp();
-  }, [running, loadMcp]);
+  }, [started, loadMcp]);
 
   useEffect(() => {
     let live = true;
     fetch(`${ROUTE}/turns?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<{ turns?: Array<DeniedTurn> }>(r))
-      .then((b) => {
-        // Newest first, and only the turns that had a call refused.
-        if (live) {
-          setAudit((b.turns ?? []).filter((turn) => turn.denials?.length).toReversed());
-        }
-      })
+      // Newest first, and only the turns that had a call refused.
+      .then(
+        (b) =>
+          live && setAudit((b.turns ?? []).filter((turn) => turn.denials?.length).toReversed()),
+      )
       // An error is not an empty audit: say which one it was.
-      .catch((error: Error) => live && setAuditError(error.message));
+      .catch((cause: unknown) => live && setAuditError(errorText(cause)));
 
     return () => {
       live = false;
     };
   }, [sessionId]);
 
-  useEffect(() => {
-    if (!started) {
-      return;
-    }
+  // Clear both first: the error is read before the reply, so a failure left over from the previous
+  // process would outlive the read that replaced it. Done during render, the moment a read is due.
+  const permissionsKey = started ? sessionId : null;
+  const [permissionsFor, setPermissionsFor] = useState<string | null>(null);
 
+  if (permissionsFor !== permissionsKey) {
+    setPermissionsFor(permissionsKey);
+
+    if (permissionsKey !== null) {
+      setPermissions(null);
+      setPermissionsError("");
+    }
+  }
+
+  useEffect(() => {
     let live = true;
-    // Clear both first: the error is read before the reply, so a failure left over from the previous
-    // process would outlive the read that replaced it.
-    setPermissions(null);
-    setPermissionsError("");
-    fetch(`${ROUTE}/permissions?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => readJson<PermissionsReply>(r))
-      .then((b) => live && setPermissions(b))
-      .catch((error: Error) => live && setPermissionsError(error.message));
+
+    if (started) {
+      fetch(`${ROUTE}/permissions?session=${encodeURIComponent(sessionId)}`)
+        .then((r) => readJson<PermissionsReply>(r))
+        .then((b) => live && setPermissions(b))
+        .catch((cause: unknown) => live && setPermissionsError(errorText(cause)));
+    }
 
     return () => {
       live = false;
     };
-  }, [running, sessionId]);
+  }, [started, sessionId]);
 
   // The hook log is the adapter's memory, not the CLI's answer, so a session that has only spawned
   // (its SessionStart hooks ran) already has rows; read it with the tab and again as turns end.
   useEffect(() => {
-    if (!running) {
-      return;
+    let live = true;
+
+    const read = () => {
+      fetch(`${ROUTE}/hook-runs?session=${encodeURIComponent(sessionId)}`)
+        .then((r) => readJson<{ ok: true; runs: Array<HookRun> }>(r))
+        .then((b) => live && setHookRuns(b.runs))
+        .catch(() => {});
+    };
+
+    if (running) {
+      read();
     }
 
-    let live = true;
-    fetch(`${ROUTE}/hook-runs?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => readJson<{ ok: true; runs: Array<HookRun> }>(r))
-      .then((b) => live && setHookRuns(b.runs))
-      .catch(() => {});
+    // A turn's record lands on the event stream as it ends.
+    const off = running
+      ? subscribe("turns", (session) => session === sessionId && read())
+      : undefined;
 
     return () => {
       live = false;
+      off?.();
     };
-  }, [running, started, sessionId]);
+  }, [running, sessionId]);
 
   const reconnect = async (serverName: string) => {
     setReconnecting(serverName);
@@ -488,24 +514,20 @@ export function DiagnosticsBody({
   };
 
   useEffect(() => {
-    // A session dsh reports no directory for has nothing to read settings from; say that rather
-    // than leaving the tab on "Loading…" for a fetch that will never be made.
-    if (!cwd) {
-      setData({ ok: false, error: t("panel.diag.noWorkdir") });
-
-      return;
-    }
-
     let live = true;
     // The session's own mount, so a session on a box is diagnosed on that box, not on this one.
     const provider = claudeProviderOf(ctx, sessionId);
     const on = provider ? `&provider=${encodeURIComponent(provider)}` : "";
-    fetch(
-      `${ROUTE}/diagnostics?cwd=${encodeURIComponent(cwd)}${on}&session=${encodeURIComponent(sessionId)}`,
-    )
-      .then((r) => readJson<DiagnosticsReply | DiagnosticsError>(r))
-      .then((b) => live && setData(b))
-      .catch((error: Error) => live && setData({ ok: false, error: error.message }));
+
+    // No directory: `data` above says so instead of a read.
+    if (cwd) {
+      fetch(
+        `${ROUTE}/diagnostics?cwd=${encodeURIComponent(cwd)}${on}&session=${encodeURIComponent(sessionId)}`,
+      )
+        .then((r) => readJson<DiagnosticsReply | DiagnosticsError>(r))
+        .then((b) => live && setReply(b))
+        .catch((cause: unknown) => live && setReply({ ok: false, error: errorText(cause) }));
+    }
 
     return () => {
       live = false;
@@ -515,6 +537,7 @@ export function DiagnosticsBody({
   const doctorProvider = claudeProviderOf(ctx, sessionId);
   const doctorQuery = doctorProvider ? `?provider=${encodeURIComponent(doctorProvider)}` : "";
 
+  /** Runs `claude doctor` on the session's box. Never rejects: a failure is the doctor's error. */
   const runDoctor = async () => {
     setDoctorBusy(true);
     setDoctorError("");
@@ -933,7 +956,7 @@ export function DiagnosticsBody({
             <button
               type="button"
               style={doctorOutput ? btn : btnPrimary}
-              onClick={runDoctor}
+              onClick={() => void runDoctor()}
               disabled={doctorBusy}
             >
               {doctorBusy ? t("panel.diag.running") : t("panel.diag.runDoctor")}

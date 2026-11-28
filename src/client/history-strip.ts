@@ -118,7 +118,13 @@ export function historyStrip(label: string, list: ReadonlyArray<HistoryEnded>): 
     els.forEach((el, n) => {
       el.style.boxShadow = i !== null && n === picked ? `0 0 0 1px ${T.text}` : "";
     });
-    const entry = list[picked]!;
+    const entry = list[picked];
+
+    // An empty strip has no bar to describe.
+    if (entry === undefined) {
+      return;
+    }
+
     bars.setAttribute("aria-valuenow", String(picked + 1));
     bars.setAttribute("aria-valuetext", barText(entry));
     caption.textContent = i === null ? resting : barText(entry);
@@ -127,7 +133,8 @@ export function historyStrip(label: string, list: ReadonlyArray<HistoryEnded>): 
   /** The bar under a pointer, by its share of the strip's width. */
   const at = (x: number): number => {
     const box = bars.getBoundingClientRect();
-    const used = els.length ? els.at(-1)!.getBoundingClientRect().right - box.left : 0;
+    const last = els.at(-1);
+    const used = last ? last.getBoundingClientRect().right - box.left : 0;
 
     return Math.floor(((x - box.left) / Math.max(1, used)) * list.length);
   };

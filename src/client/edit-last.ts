@@ -20,8 +20,8 @@ export interface OpenPanelDetail {
   rewindLatest?: boolean;
 }
 
-/** The `OPEN_PANEL_EVENT` itself, typed: a listener checks `instanceof` and reads `detail`
- *  without parsing, since only this module's callers construct one. */
+/** The `OPEN_PANEL_EVENT` itself, typed: a listener checks it with `isOpenPanelEvent` and reads
+ *  `detail` without parsing, since only this module's callers construct one. */
 export class OpenPanelEvent extends Event {
   /** Non-bubbling, not cancelable: fired on `window`, which is where the panel listens. */
   constructor(readonly detail: OpenPanelDetail) {
@@ -41,6 +41,15 @@ export class RewoundEvent extends Event {
     super(REWOUND_EVENT);
   }
 }
+
+/** True for an `OpenPanelEvent`: the event's name and the `detail` only that class carries. */
+export const isOpenPanelEvent = (e: Event): e is OpenPanelEvent =>
+  e.type === OPEN_PANEL_EVENT && "detail" in e;
+
+/** True for a `RewoundEvent`, as against the plain `Event` of the same name that carries no
+ *  session or text. */
+export const isRewoundEvent = (e: Event): e is RewoundEvent =>
+  e.type === REWOUND_EVENT && "sessionId" in e && "text" in e;
 
 /** How close two Escapes must land to count as one gesture when dsh does not say: the same
  *  half second dsh's own stop sequence defaults to. */
@@ -81,20 +90,20 @@ export function useEditLastPrompt({
 }): void {
   const [off] = useHintFlag("editLastOff");
   const lastAt = useRef<number | null>(null);
+  // The newest of each, for the listeners below, which stay mounted across renders.
   const draftRef = useRef(draft);
-  draftRef.current = draft;
   const runningRef = useRef(running);
-  runningRef.current = running;
   const setRef = useRef(setDraft);
-  setRef.current = setDraft;
-  useEffect(() => {
-    if (off) {
-      return;
-    }
 
+  useEffect(() => {
+    draftRef.current = draft;
+    runningRef.current = running;
+    setRef.current = setDraft;
+  }, [draft, running, setDraft]);
+
+  useEffect(() => {
     // Read per press, so a changed dsh interval holds without a remount.
-    const gap = () =>
-      ctx.get?.<{ stopSequenceMs?: number }>("shortcuts")?.stopSequenceMs ?? ESC_GAP_MS;
+    const gap = () => ctx.get?.("shortcuts")?.stopSequenceMs ?? ESC_GAP_MS;
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") {
@@ -133,7 +142,7 @@ export function useEditLastPrompt({
     };
 
     const onRewound = (e: Event) => {
-      if (!(e instanceof RewoundEvent) || e.sessionId !== sessionId || e.text === undefined) {
+      if (!isRewoundEvent(e) || e.sessionId !== sessionId || e.text === undefined) {
         return;
       }
 
@@ -142,8 +151,11 @@ export function useEditLastPrompt({
       }
     };
 
-    document.addEventListener("keydown", onKey, true);
-    window.addEventListener(REWOUND_EVENT, onRewound);
+    // Off with the hint: nothing listens, and removing what was never added is a no-op.
+    if (!off) {
+      document.addEventListener("keydown", onKey, true);
+      window.addEventListener(REWOUND_EVENT, onRewound);
+    }
 
     return () => {
       document.removeEventListener("keydown", onKey, true);

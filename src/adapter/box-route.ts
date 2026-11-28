@@ -1,6 +1,7 @@
 // Where an ssh box's own Claude Code sends its traffic. The box's settings files, its shell and its
 // loopback are not this one's, so both halves of the question are asked there over ssh: which
 // routing variables are in force, and whether the address they name reaches Anthropic.
+import { fits } from "../schema-fits.js";
 import { execFile } from "node:child_process";
 import { messagesUrl, PROBE_TTL_MS, ProbeBody, readsAsAnthropic } from "../first-party.js";
 import type { FirstPartyProbe } from "../first-party.js";
@@ -31,7 +32,7 @@ const sshRun: BoxRunner = (host, script) =>
   new Promise((resolve) => {
     try {
       execFile("ssh", sshArgs(host, script), { timeout: 12_000, windowsHide: true }, (e, out) =>
-        resolve(e ? undefined : String(out)),
+        resolve(e ? undefined : out),
       );
     } catch {
       // `sshArgs` refuses a host ssh would read as an option
@@ -126,7 +127,9 @@ export function parseBoxProbe(out: string | undefined): FirstPartyProbe {
  *  the header still counts then. */
 function probeBody(text: string): ProbeBody {
   try {
-    return ProbeBody(JSON.parse(text));
+    const raw: unknown = JSON.parse(text);
+
+    return fits(ProbeBody, raw) ? ProbeBody(raw) : ProbeBody({});
   } catch {
     return ProbeBody({});
   }
@@ -227,11 +230,14 @@ export function boxRouteKnown(
     return hit.box;
   }
 
-  void refreshBoxRoute(host, run).then((box) => {
+  // Fire and forget: the caller reads the kept answer now, and `changed` reports a new one.
+  void (async () => {
+    const box = await refreshBoxRoute(host, run);
+
     if (signatureOf(box) !== signatureOf(hit?.box)) {
       changed();
     }
-  });
+  })();
 
   return hit?.box;
 }

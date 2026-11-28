@@ -7,13 +7,12 @@ import {
   DSH_CONTRACT,
   TURN_STATUS_SELECTOR,
 } from "./contract.js";
-import type { ContractProbe } from "./contract.js";
+import type { ContractDocument, ContractProbe } from "./contract.js";
 import { RING_ARC } from "./shared.js";
 
 /** A stand-in document: every selector answers the count this map gives it. */
-const docOf = (counts: Record<string, number>) => ({
-  querySelectorAll: (sel: string) =>
-    ({ length: counts[sel] ?? 0 }) as unknown as NodeListOf<Element>,
+const docOf = (counts: Record<string, number>): ContractDocument => ({
+  querySelectorAll: (sel: string) => ({ length: counts[sel] ?? 0 }),
 });
 
 const probes: Array<ContractProbe> = [

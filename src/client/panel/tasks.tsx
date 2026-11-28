@@ -15,6 +15,7 @@ import {
   ROUTE,
   ago,
   boxParam,
+  errorText,
 } from "../shared.js";
 import type { ClientCtx } from "../shared.js";
 import { t, useLocale, activeLocale } from "../i18n.js";
@@ -253,41 +254,44 @@ function LiveTasksSection({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId]);
 
-  const act = (task: LiveTask, kind: "stop" | "output") =>
-    fetch(`${ROUTE}/live-tasks/${kind}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ session: sessionId, taskId: task.id }),
-    })
-      .then((r) => readJson<{ ok: boolean; output?: string; error?: string }>(r))
-      .then((b) => {
-        if (!mounted.current) {
-          return;
-        }
+  /** Stops a task or reads its output. Never rejects: a refusal or a failure is the row's note. */
+  const act = async (task: LiveTask, kind: "stop" | "output") => {
+    try {
+      const b = await readJson<{ ok: boolean; output?: string; error?: string }>(
+        await fetch(`${ROUTE}/live-tasks/${kind}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId, taskId: task.id }),
+        }),
+      );
 
-        if (kind === "output" && b.ok) {
-          setOutput((cur) => ({ ...cur, [task.id]: b.output ?? "" }));
-        } else if (kind === "stop" && b.ok)
-        // The server marked the row stopped on the CLI's ok and keeps it, so its output can
-        // still be read; the next poll would show the same, up to 3 s later.
-        {
-          setTasks((cur) =>
-            cur.map((row) =>
-              row.id === task.id ? { ...row, status: "stopped", endedAt: Date.now() } : row,
-            ),
-          );
-        } else {
-          setNote((cur) => ({
-            ...cur,
-            [task.id]: b.error ?? t("panel.tasks.refused"),
-          }));
-        }
-      })
-      .catch((error: Error) => {
-        if (mounted.current) {
-          setNote((cur) => ({ ...cur, [task.id]: error.message }));
-        }
-      });
+      if (!mounted.current) {
+        return;
+      }
+
+      if (kind === "output" && b.ok) {
+        setOutput((cur) => ({ ...cur, [task.id]: b.output ?? "" }));
+      } else if (kind === "stop" && b.ok)
+      // The server marked the row stopped on the CLI's ok and keeps it, so its output can
+      // still be read; the next poll would show the same, up to 3 s later.
+      {
+        setTasks((cur) =>
+          cur.map((row) =>
+            row.id === task.id ? { ...row, status: "stopped", endedAt: Date.now() } : row,
+          ),
+        );
+      } else {
+        setNote((cur) => ({
+          ...cur,
+          [task.id]: b.error ?? t("panel.tasks.refused"),
+        }));
+      }
+    } catch (error_) {
+      if (mounted.current) {
+        setNote((cur) => ({ ...cur, [task.id]: errorText(error_) }));
+      }
+    }
+  };
 
   // An ended subagent has nothing left to offer here (no Stop, no Output); the Earlier subagents
   // section lists it with Open. Ended shell tasks stay for their Output.
@@ -427,7 +431,7 @@ function EarlierSubagentsSection({ sessionId, ctx }: { sessionId: string; ctx: C
     )
       .then((r) => readJson<{ ok: true; markdown: string } | { ok: false; error: string }>(r))
       .then((b) => setOpen((cur) => ({ ...cur, [run.agentId]: b.ok ? b.markdown : b.error })))
-      .catch((error: Error) => setOpen((cur) => ({ ...cur, [run.agentId]: error.message })));
+      .catch((cause: unknown) => setOpen((cur) => ({ ...cur, [run.agentId]: errorText(cause) })));
   };
 
   if (runs.length === 0) {
@@ -500,12 +504,12 @@ export function TasksBody({ sessionId, ctx }: { sessionId: string; ctx: ClientCt
     )
       .then((r) => readJson<ScheduledTasksReply | ScheduledTasksError>(r))
       .then((b) => live && setData(b))
-      .catch((error: Error) => live && setData({ ok: false, error: error.message }));
+      .catch((cause: unknown) => live && setData({ ok: false, error: errorText(cause) }));
 
     return () => {
       live = false;
     };
-  }, [sessionId]);
+  }, [sessionId, ctx]);
 
   const dshGoals = data?.ok ? data.dshGoals : [];
 

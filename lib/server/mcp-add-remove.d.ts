@@ -9,17 +9,17 @@ export type McpScope = (typeof MCP_SCOPES)[number];
 /** A scope other than `user` writes into a directory, so the route needs the session's cwd. */
 export declare const scopeNeedsCwd: (scope: McpScope) => boolean;
 /** True only for one of the MCP scopes the CLI accepts, `user`, `local` and `project`. */
-export declare function isMcpScope(value: unknown): value is McpScope;
+export declare function isMcpScope(value: JsonValue | undefined): value is McpScope;
 /**
  * The CLI's own name rule: `mcp remove` and `mcp add-json` take the name as one argv word, so a
  * name starting with a dash would be read as a flag and anything with a space would be two words.
  */
-export declare const isMcpName: (name: unknown) => name is string;
+export declare const isMcpName: (name: JsonValue | undefined) => name is string;
 /** One server as the CLI stores it. `env` and `headers` are left out when they are empty. */
 export type McpServerJson = {
     type: "stdio";
     command: string;
-    args: string[];
+    args: Array<string>;
     env?: Record<string, string>;
 } | {
     type: "sse" | "http";

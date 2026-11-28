@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import z from "@deepseek-ai/schemastery";
 import { contextSourceOf } from "../lib/server/adapter.js";
+import { fits } from "../src/schema-fits.js";
 
 /** dsh names a session directory after the workspace: every `/` becomes `-`, wrapped in dashes.
  *  Checked against ~/.dsh/sessions on 2026-09-14; the leading slash supplies one of the dashes. */
@@ -112,15 +113,12 @@ async function main(): Promise<void> {
       continue;
     }
 
-    let event: ReturnType<typeof EventSchema>;
-
-    try {
-      // SAFETY: the schema's input type is narrower than `unknown`; a line that does not fit it
-      // throws on the next line and is skipped, which is the only handling this check wants.
-      event = EventSchema(ev as Parameters<typeof EventSchema>[0]);
-    } catch {
+    // A line that does not fit the schema is skipped, which is the only handling this check wants.
+    if (!fits(EventSchema, ev)) {
       continue;
     }
+
+    const event = EventSchema(ev);
 
     if (!event.data?.source) {
       continue;
@@ -131,7 +129,7 @@ async function main(): Promise<void> {
     const form = event.data.source.form ?? "-";
 
     const content = event.data.content;
-    let textContent = "";
+    let textContent: string;
 
     if (Array.isArray(content)) {
       let parts: Array<{ text?: string }>;
@@ -238,7 +236,9 @@ async function main(): Promise<void> {
   console.log("PASS: all classifications match");
 }
 
-main().catch((error) => {
+try {
+  await main();
+} catch (error) {
   console.error(error);
   process.exit(1);
-});
+}

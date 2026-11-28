@@ -23,8 +23,10 @@ import {
   guard,
   retire,
   revive,
+  errorText,
+  isDirectoryFlowOwnerProps,
 } from "./shared.js";
-import type { ClientCtx, DirectoryFlowOwnerProps } from "./shared.js";
+import type { ClientCtx } from "./shared.js";
 import { ensureSendButtonStyle } from "./send-button.js";
 import { ensurePhoneStyle } from "./phone-style.js";
 import { themeSplitPatch, hasTheme } from "./theme.js";
@@ -91,6 +93,8 @@ import { TestGateCard } from "./test-gate-card.js";
 import { TestGateRow } from "./test-gate-settings.js";
 import { mountSelectionActions } from "./selection-actions.js";
 import { startBoxColours } from "./box-colour-swatch.js";
+import { reportError, reportWarning } from "./console-report.js";
+import { onBodyMutation } from "./dom.js";
 
 export { type SessionData, isOwnedActive, fmtCost, fmtDuration, cacheShare };
 
@@ -130,7 +134,9 @@ function followDeepLink(ctx: ClientCtx) {
     const ready = ctx.sessions.list.getSnapshot()?.phase === "ready";
 
     if (!ready && Date.now() - started < 15_000) {
-      return void setTimeout(tick, 250);
+      setTimeout(() => void tick(), 250);
+
+      return;
     }
 
     try {
@@ -142,9 +148,7 @@ function followDeepLink(ctx: ClientCtx) {
       const s = sessions.find((x) => x.id === id) ?? { id, cwd };
       await openHere(ctx, s, s.cwd ?? cwd);
     } catch (error) {
-      console.warn(
-        `[dsh-oh-my-claude] deep link failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      reportWarning(`[dsh-oh-my-claude] deep link failed: ${errorText(error)}`);
     }
   };
 
@@ -234,15 +238,24 @@ function watchSessionSpinners(ctx: ClientCtx) {
 /** Read the hints and paint the Claude look from them; once per box, also carry an old
  *  "Links, rules and quotes" off over to the groups split from it. The write fires HINTS_EVENT,
  *  which lands back here with the marker set and stops. A failed read is logged, not thrown. */
-const reapplyTheme = () =>
-  void loadHints().then((hints) => {
-    applyTheme(hints);
-    const patch = themeSplitPatch(hints);
+const reapplyTheme = () => {
+  void (async () => {
+    try {
+      const hints = await loadHints();
+      applyTheme(hints);
+      const patch = themeSplitPatch(hints);
 
-    if (patch) {
-      writeHints(patch);
+      if (patch) {
+        writeHints(patch);
+      }
+    } catch (error) {
+      reportError(error);
     }
-  }, console.error);
+  })();
+};
+
+/** The account rows the Boxes card draws under This box, re-read whenever `tick` moves. */
+const accountRows = (tick: number) => <Accounts tick={tick} />;
 
 /** Wire the plugin into a mounted dsh context: follow deep links and start every watcher, so a
  *  fresh session gets turn status, notices, folds and hints. */
@@ -290,24 +303,33 @@ export function apply(ctx: ClientCtx) {
    * keeping the gear's class so the row lays out as before. Idempotent: a swapped row is marked.
    */
   function SectionNavIcon() {
+    // Swapped at mount and again whenever dsh redraws the dialog, which can bring its gear back.
     useEffect(() => {
-      const cell = Array.from(
-        document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"] nav button'),
-      ).find((b) => b.textContent?.trim() === SECTION_LABEL);
+      swapNavGear();
 
-      const gear = cell?.querySelector("svg");
-
-      if (!gear || gear.hasAttribute("data-omc-spark")) {
-        return;
-      }
-
-      const spark = sparkNode(16, "currentColor");
-      spark.setAttribute("class", gear.getAttribute("class") ?? "");
-      spark.setAttribute("data-omc-spark", "1");
-      gear.replaceWith(spark);
-    });
+      return onBodyMutation(swapNavGear);
+    }, []);
 
     return null;
+  }
+
+  /** Puts the spark where dsh drew its gear on the section's nav row; a row already swapped, or
+   *  no dialog open, is left alone. */
+  function swapNavGear() {
+    const cell = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"] nav button'),
+    ).find((b) => b.textContent?.trim() === SECTION_LABEL);
+
+    const gear = cell?.querySelector("svg");
+
+    if (!gear || gear.hasAttribute("data-omc-spark")) {
+      return;
+    }
+
+    const spark = sparkNode(16, "currentColor");
+    spark.setAttribute("class", gear.getAttribute("class") ?? "");
+    spark.setAttribute("data-omc-spark", "1");
+    gear.replaceWith(spark);
   }
 
   function Section(props: { close?: () => void }) {
@@ -385,7 +407,7 @@ export function apply(ctx: ClientCtx) {
             loaded={loaded}
             open={openBoxes}
             onToggle={() => setOpenBoxes((v) => !v)}
-            accounts={(tick) => <Accounts tick={tick} />}
+            accounts={accountRows}
           />
         )}
         <Card
@@ -554,10 +576,10 @@ export function apply(ctx: ClientCtx) {
           cell.name,
           ctx.slots.register(
             { name: cell.name, id: cell.id, order: 300, priority: -1 },
-            // SAFETY: `DshSlots.register` types the owner props as the generic session shape, but
-            // dsh's directory-flow slots hand the DirectoryFlowOwnerProps contract; the cast names
-            // the truth.
-            (props) => <AddWorkflow {...(props as DirectoryFlowOwnerProps)} ctx={ctx} />,
+            // `DshSlots.register` types the owner props as the generic session shape, but dsh's
+            // directory-flow slots hand the DirectoryFlowOwnerProps contract; checked, not assumed.
+            (props) =>
+              isDirectoryFlowOwnerProps(props) ? <AddWorkflow {...props} ctx={ctx} /> : null,
           ),
         );
       } catch {
@@ -584,10 +606,11 @@ export function apply(ctx: ClientCtx) {
       seats.clear();
     };
 
-    const refresh = () =>
-      fetch(`${ROUTE}/ssh-boxes`)
-        .then((r) => readJson<{ boxes?: Array<unknown> }>(r))
-        .then((b) => {
+    /** Re-reads the ssh boxes and seats or vacates the directory-flow cells to match. */
+    const refresh = () => {
+      void (async () => {
+        try {
+          const b = await readJson<{ boxes?: Array<unknown> }>(await fetch(`${ROUTE}/ssh-boxes`));
           boxed = (b.boxes?.length ?? 0) > 0;
 
           if (boxed) {
@@ -597,10 +620,11 @@ export function apply(ctx: ClientCtx) {
           } else {
             vacate();
           }
-        })
-        .catch(() => {
+        } catch {
           // The route is down; the seats stay as they were until the next reread.
-        });
+        }
+      })();
+    };
 
     for (const cell of [
       { name: "sidebar.workspaces.directoryFlow", id: "oh-my-claude-workflow" },
@@ -616,13 +640,13 @@ export function apply(ctx: ClientCtx) {
 
     const onVisible = () => {
       if (document.visibilityState === "visible") {
-        void refresh();
+        refresh();
       }
     };
 
     window.addEventListener(BOXES_EVENT, refresh);
     document.addEventListener("visibilitychange", onVisible);
-    void refresh();
+    refresh();
     ctx.effect?.(
       () => () => {
         window.removeEventListener(BOXES_EVENT, refresh);

@@ -177,14 +177,19 @@ export function serviceOf(endpoint: string): string | null {
   return PUSH_SERVICES.find(([suffix]) => `.${host}`.endsWith(suffix))?.[1] ?? null;
 }
 
+/** The host of an `http:` or `https:` URL, or "?" for anything else. */
+const hostOf = (v: string): string => {
+  const u = httpUrl(v);
+
+  return u === null || u === "bad" ? "?" : u.host;
+};
+
 /** The list rows, oldest first. */
 export const deviceRows = (devices: Array<PushDevice>): Array<DeviceRow> =>
   devices.map((d) => ({
     id: deviceId(d.endpoint),
     // A hand-edited row with an unknown host still lists, by its host, so it can be deleted.
-    service:
-      serviceOf(d.endpoint) ??
-      (httpUrl(d.endpoint) instanceof URL ? new URL(d.endpoint).host : "?"),
+    service: serviceOf(d.endpoint) ?? hostOf(d.endpoint),
     added: d.added,
   }));
 

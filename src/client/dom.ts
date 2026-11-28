@@ -1,6 +1,7 @@
 // The page's shared mutation scheduler: features register a scan here instead of each running its
 // own observer. Kept out of the entry so its module-level `let`s live where they are written.
 import { whenContextGone, guard } from "./shared.js";
+import { isHTMLElement } from "./dom-guards.js";
 
 /**
  * One shared `document.body` observer for every feature that reacts to nodes dsh adds. dsh appends
@@ -61,9 +62,9 @@ const observeBody = (observer: MutationObserver) => {
 
 /** The element a record is about: its target, or for a text edit the element holding the text. */
 export const recordElement = (rec: MutationRecord): HTMLElement | null =>
-  rec.target instanceof HTMLElement
+  isHTMLElement(rec.target)
     ? rec.target
-    : rec.target.parentElement instanceof HTMLElement
+    : isHTMLElement(rec.target.parentElement)
       ? rec.target.parentElement
       : null;
 
@@ -83,7 +84,7 @@ export const changedElements = (records: Array<MutationRecord>): Set<HTMLElement
     }
 
     for (const node of rec.addedNodes) {
-      if (node instanceof HTMLElement) {
+      if (isHTMLElement(node)) {
         nodes.add(node);
       }
     }

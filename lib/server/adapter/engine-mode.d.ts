@@ -1,4 +1,4 @@
-import { type PluginContext } from "../dsh.js";
+import type { PluginContext } from "../dsh.js";
 import type { Config } from "./config.js";
 /** Hints-store key of the card's master switch. Off (absent), no session runs in engine mode, and
  *  the presets ticked under it are kept for when it is turned back on. */
@@ -25,7 +25,7 @@ export declare function engineSendsDshPrompt(hints: Readonly<Record<string, bool
  *  loaded, this dsh mounts no preset service, or the lookup throws. */
 export declare function presetOfSession(ctx: PluginContext | undefined, sessionId: string): string | null;
 /** The preset ids engine mode is on for, read off the hints store's `enginePreset:` keys. */
-export declare function enginePresets(hints: Readonly<Record<string, boolean | number>>): string[];
+export declare function enginePresets(hints: Readonly<Record<string, boolean | number>>): Array<string>;
 /**
  * The config a session under `preset` runs on: the plugin's own `config` when the master switch
  * is off, when engine mode is off for that preset, or when the session has none (or the preset

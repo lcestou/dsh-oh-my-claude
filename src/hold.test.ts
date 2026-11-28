@@ -19,6 +19,7 @@ import {
 import type { RunOnBox } from "./hold.js";
 import type { SubprocessHandle } from "./process.js";
 import { tempDir } from "./test-tmp.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 // One dir per spawn: same session, different stamp, different name; the hash part is stable.
 assert.notEqual(holdName("claude-code-box", "s1", 1), holdName("claude-code-box", "s1", 2));
@@ -104,7 +105,7 @@ assert.deepEqual(parseHoldLine(`${ERR}boom`, true), { kind: "err", line: "boom" 
 
 assert.deepEqual(parseHoldLine(`${EXIT}3`, true), { kind: "exit", code: 3 });
 
-assert.deepEqual(parseHoldLine(`${EXIT}`, true), { kind: "exit", code: 255 });
+assert.deepEqual(parseHoldLine(EXIT, true), { kind: "exit", code: 255 });
 
 assert.deepEqual([0, 1, 2, 3, 9].map(reattachDelay), [2000, 4000, 8000, 15_000, 15_000]);
 
@@ -160,7 +161,7 @@ const fakeRunner = (): { run: RunOnBox; sshes: Array<FakeSsh> } => {
 
 // Polls stop at the first answer; the budget (1000 ticks, 5 s) is for a box under load, where the
 // fake cli took more than half a second to answer and the suite failed for no fault of the code.
-const tick = () => new Promise((r) => setTimeout(r, 5));
+const tick = () => sleep(5);
 
 // The handle: a prompt written before READY waits and lands after it; output moves the offset by
 // the file's bytes; an ssh that ends without an exit line reattaches from that offset (the test
@@ -198,7 +199,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
   assert.deepEqual(offsets, [18, 29]);
   // The ssh drops with no exit line: the CLI is still there, come back from byte 29.
   sshes[0]!.end(255);
-  await new Promise((r) => setTimeout(r, 2100));
+  await sleep(2100);
   assert.equal(sshes.length, 2, "reattached once");
   assert.match(sshes[1]!.script, /tail -c \+30 /, "from the offset the last attach reached");
   assert.equal(exited, 0, "a dropped ssh is not an exit");
@@ -230,7 +231,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
   assert.deepEqual(lines, ['{"a":1}\n'], "the fragment is not a line");
   assert.deepEqual(offsets, [8]);
   sshes[0]!.end(255);
-  await new Promise((r) => setTimeout(r, 2100));
+  await sleep(2100);
   assert.match(sshes[1]!.script, /tail -c \+9 /, "reattached from the last full line");
   sshes[1]!.out.write(`${READY}\n{"part":2}\n${EXIT}0\n`);
   await tick();
@@ -268,7 +269,7 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
   const outcome = await h.done;
   assert.equal(outcome.signal, "hold-gone");
   assert.match(errs.join(""), /far session directory is gone/);
-  await new Promise((r) => setTimeout(r, 2100));
+  await sleep(2100);
   assert.equal(sshes.length, 1, "no reattach for a dir that is gone");
 }
 
@@ -420,6 +421,6 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
 // A real SubprocessHandle shape is what the runner must answer; the fake above is one.
 const sample: SubprocessHandle = fakeRunner().run("true");
 
-assert.ok(sample.done instanceof Promise);
+assert.equal(Object.prototype.toString.call(sample.done), "[object Promise]");
 
 console.log("hold ok");

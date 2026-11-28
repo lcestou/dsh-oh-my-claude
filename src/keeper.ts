@@ -13,6 +13,7 @@
  * exits) but no turn uses it, and without this the reply it read was gone after the restart
  * (automagik#62). A client without acks gets the old behavior: a line it was sent is gone.
  */
+import { isRec } from "./decode.js";
 import { spawn } from "node:child_process";
 import {
   appendFileSync,
@@ -44,12 +45,29 @@ interface KeeperSpec {
   sock?: string;
 }
 
+/** A line the keeper sends its client besides Claude's own output: stderr text, or Claude's exit. */
+type KeeperMessage =
+  | { t: "err"; line: string }
+  | { t: "exit"; code: number | null; signal: string | null };
+
+/** True when spec.json holds what a spawn cannot do without: the command and its args. The rest is
+ *  taken as spawnKeeper wrote it, as the file was read before. */
+const isKeeperSpec = (v: unknown): v is KeeperSpec =>
+  isRec(v) && typeof v.command === "string" && Array.isArray(v.args);
+
 /** The keeper process body, run in the directory `spawnKeeper` prepared. Exits with code 78
  *  before spawning Claude when the socket path would not fit in `sun_path`, and with 78 after
  *  ending Claude when the socket will not bind for any other reason. */
 function main(dir: string) {
-  // SAFETY: spec.json is written by this plugin's spawnKeeper from a typed object moments earlier
-  const spec = JSON.parse(readFileSync(join(dir, "spec.json"), "utf8")) as KeeperSpec;
+  // spec.json is written by this plugin's spawnKeeper from a typed object moments earlier; one
+  // that is not throws here, before anything is spawned, as a JSON error did.
+  const parsed: unknown = JSON.parse(readFileSync(join(dir, "spec.json"), "utf8"));
+
+  if (!isKeeperSpec(parsed)) {
+    throw new TypeError("spec.json is not a keeper spec");
+  }
+
+  const spec = parsed;
   const sockPath = spec.sock ?? join(dir, "keeper.sock");
   const infoPath = join(dir, "keeper.json");
   mkdirSync(dir, { recursive: true });
@@ -66,7 +84,9 @@ function main(dir: string) {
   const log = (line: string) => {
     try {
       appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`);
-    } catch {}
+    } catch {
+      // The log is diagnostics only; a failed append must not end the keeper.
+    }
   };
 
   // A socket path past sun_path (SOCKET_PATH_MAX: 107 on Linux, 103 on macOS) does not fail as
@@ -191,7 +211,7 @@ function main(dir: string) {
 
   armOrphan();
 
-  const send = (msg: object) => {
+  const send = (msg: KeeperMessage) => {
     const line = `${JSON.stringify(msg)}\n`;
 
     if (attached()) {
@@ -294,14 +314,20 @@ function main(dir: string) {
       }
     });
     createInterface({ input: sock, crlfDelay: Infinity }).on("line", (raw) => {
-      let msg: { t?: string; line?: string; acks?: boolean; n?: number };
+      // The only client is this plugin's attachKeeper; fields are checked before use.
+      let got: unknown;
 
       try {
-        // SAFETY: the only client is this plugin's attachKeeper; fields are checked before use
-        msg = JSON.parse(raw) as { t?: string; line?: string; acks?: boolean; n?: number };
+        got = JSON.parse(raw);
       } catch {
         return;
       }
+
+      if (!isRec(got)) {
+        return;
+      }
+
+      const msg = got;
 
       if (msg.t === "hello") {
         clientAcks = msg.acks === true;
@@ -382,7 +408,9 @@ function main(dir: string) {
 
     try {
       unlinkSync(sockPath);
-    } catch {}
+    } catch {
+      // Already gone: nothing to remove.
+    }
   });
 }
 

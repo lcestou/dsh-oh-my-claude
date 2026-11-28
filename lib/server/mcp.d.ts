@@ -13,7 +13,7 @@ export declare const HIDDEN: Set<string>;
  * all of `HIDDEN` for `default`, and otherwise only the file tools whose Claude Code stand-in is on.
  * `run_code` stays out either way: it is dsh's executor transport, offered alone in code mode.
  */
-export declare function hiddenFor(builtins: readonly string[]): ReadonlySet<string>;
+export declare function hiddenFor(builtins: ReadonlyArray<string>): ReadonlySet<string>;
 /** dsh's code-mode tool: under a PTC preset it is the only tool the model may call directly. */
 export declare const RUN_CODE = "run_code";
 /** `run_code` when dsh offers the agent only that tool (a code-mode preset), else undefined. dsh's
@@ -31,7 +31,7 @@ interface OpenSessionArgs {
 /** True when the bridge key header equals the key, compared in constant time so the answer's
  *  timing says nothing about how much of a guess was right. A missing header, a repeated one (Node
  *  hands those over as an array) or one of another length is false without comparing. */
-export declare function keyMatches(header: string | string[] | undefined, key: string): boolean;
+export declare function keyMatches(header: string | Array<string> | undefined, key: string): boolean;
 /** The host services openSession needs; all are injected before the bridge mounts. */
 type OpenHost = Required<Pick<PluginContext, "sessions" | "workspaceRegistry" | "sessionController">>;
 /** The host services promptSession needs: the controller, and dsh's model list to check a switch. */
@@ -64,6 +64,16 @@ export declare function promptSession(ctx: PromptHost, agent: Agent, args: Recor
  * answered the last message. A timeout outside 1..WAIT_MAX_S seconds is clamped rather than refused.
  */
 export declare function waitSession(ctx: Pick<OpenHost, "sessionController">, agent: Agent, args: Record<string, JsonValue>, signal: AbortSignal): Promise<string>;
+/** One tool as tools/list offers it. */
+interface ListedTool {
+    name: string;
+    description: string;
+    inputSchema: Record<string, JsonValue>;
+    annotations: {
+        readOnlyHint: boolean;
+    };
+    _meta?: Record<string, JsonValue>;
+}
 /** One JSON-RPC request as the CLI sends it; only `id`, `method` and `params` are read. */
 export interface JsonRpcRequest {
     jsonrpc?: string;
@@ -71,11 +81,37 @@ export interface JsonRpcRequest {
     method?: string;
     params?: Record<string, JsonValue>;
 }
+/** A tools/call result: text content, any images after it, flagged when the tool failed. */
+interface CallResult {
+    content: Array<{
+        type: "text";
+        text: string;
+    } | {
+        type: "image";
+        data: string;
+        mimeType: string;
+    }>;
+    isError?: boolean;
+}
 /** A JSON-RPC reply: a result, or an error object. */
+/** What the bridge answers a JSON-RPC request with: the handshake, an empty pong, the tool list,
+ *  or a call's result. */
+export type JsonRpcResult = {
+    protocolVersion: string;
+    capabilities: {
+        tools: Record<string, never>;
+    };
+    serverInfo: {
+        name: string;
+        version: string;
+    };
+} | Record<string, never> | {
+    tools: Array<ListedTool>;
+} | CallResult;
 export interface JsonRpcReply {
     jsonrpc: "2.0";
     id: JsonValue | undefined;
-    result?: object;
+    result?: JsonRpcResult;
     error?: {
         code: number;
         message: string;
@@ -113,7 +149,7 @@ export interface BridgeOptions {
     mode?: (sessionId: string) => string | undefined;
     /** The Claude Code built-ins a session's CLI is started with (`builtinTools`), which decide the
      *  dsh file tools the bridge leaves out (`hiddenFor`). Every one of them when not given. */
-    builtins?: (sessionId: string) => readonly string[];
+    builtins?: (sessionId: string) => ReadonlyArray<string>;
     /** Whether a session's tools follow dsh's own deferral (`toolLoading: dsh`). */
     dshLoading?: (sessionId: string) => boolean;
     /** Path of a file holding the bridge key; created once, reused across restarts. */
@@ -141,7 +177,7 @@ export interface McpBridge {
     /** The tools `tools/list` will answer that session with, the bridge's own included, so the system
      *  prompt can name the ones that are really there. Undefined when the session has no live agent
      *  or dsh refuses the listing; the bridge has nothing for that session either. */
-    toolsFor: (sessionId: string) => ToolSchema[] | undefined;
+    toolsFor: (sessionId: string) => Array<ToolSchema> | undefined;
     /** How many requests from that session the bridge is answering or holding right now. A
      *  `mcp_reconnect` closes the connection they ride on and fails each of them. */
     openCalls: (sessionId: string) => number;

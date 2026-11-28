@@ -14,6 +14,9 @@
 //
 // When dsh 0.1.5 and 0.1.6 support ends: delete this file and import the same names straight from
 // `@deepseek-ai/dsh-client-ui-primitives` in the four modules that import them from here.
+// The lookup by name is the point: a glyph the installed dsh does not export draws nothing
+// instead of throwing React error #130.
+// oxlint-disable-next-line import/no-namespace
 import * as primitives from "@deepseek-ai/dsh-client-ui-primitives";
 import type { CSSProperties, JSX } from "react";
 

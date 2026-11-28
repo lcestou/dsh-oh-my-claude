@@ -58,8 +58,11 @@ export function gateLine(run: TestGateRun): string | null {
     case "broken":
       return t("testGate.broken", { code: String(run.exitCode ?? "?") });
     case "stopped":
-      return null;
+      break;
   }
+
+  // Stopped: the owner or the turn ended it, which the card does not report.
+  return null;
 }
 
 /** What the card shows for `run` while the session's turn is or is not running: `gateLine`, or
@@ -96,11 +99,18 @@ export function TestGateCard({ sessionId, ctx }: { sessionId: string; ctx: Clien
   const [run, setRun] = useState<TestGateRun | null>(null);
   const [open, setOpen] = useState(false);
   const [late, setLate] = useState(false);
+  // A session switch drops the last session's run, during the render that switches.
+  const [runFor, setRunFor] = useState(sessionId);
+
+  if (runFor !== sessionId) {
+    setRunFor(sessionId);
+    setRun(null);
+  }
+
   useEffect(() => {
     let live = true;
     // Once an event lands it is newer than the first read, which then must not write over it.
     let heard = false;
-    setRun(null);
     // The first read covers a tab opened mid-run; the event carries every write after it.
     fetch(`${ROUTE}/test-gate/run?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<{ run: TestGateRun | null }>(r))
@@ -122,17 +132,21 @@ export function TestGateCard({ sessionId, ctx }: { sessionId: string; ctx: Clien
     };
   }, [sessionId]);
   const running = run?.state === "running";
-  useEffect(() => {
+  // The run being timed: each new run, or the end of one, starts the delay over. Reset during
+  // render, the timer below lets it go.
+  const timedRun = running ? String(run.startedAt) : null;
+  const [lateFor, setLateFor] = useState(timedRun);
+
+  if (lateFor !== timedRun) {
+    setLateFor(timedRun);
     setLate(false);
+  }
 
-    if (!running) {
-      return;
-    }
-
-    const timer = setTimeout(() => setLate(true), RUNNING_DELAY_MS);
+  useEffect(() => {
+    const timer = timedRun === null ? undefined : setTimeout(() => setLate(true), RUNNING_DELAY_MS);
 
     return () => clearTimeout(timer);
-  }, [running, run?.startedAt]);
+  }, [timedRun]);
   const line = run ? cardLine(run, turnRunning) : null;
 
   if (!run || line === null || (running && !late)) {

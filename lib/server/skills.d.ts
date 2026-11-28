@@ -1,4 +1,4 @@
-import { type FsBox } from "./remote-fs.js";
+import type { FsBox } from "./remote-fs.js";
 export interface SkillEntry {
     /** The name the frontmatter gives, else the directory's. */
     name: string;
@@ -26,7 +26,7 @@ export declare function parseSkillHead(text: string): SkillHead;
  * repository's skills too. A name two levels both have is listed once, from the nearer level,
  * which is the one the CLI runs.
  */
-export declare function listSkills(cwd: string, claudeHome: string, box?: FsBox): Promise<SkillEntry[]>;
+export declare function listSkills(cwd: string, claudeHome: string, box?: FsBox): Promise<Array<SkillEntry>>;
 /** A skill directory name the routes accept: lowercase letters, digits and hyphens, starting on a
  *  letter or digit, 1 to 64 characters. Refuses "", uppercase, a leading hyphen, "..", and a slash,
  *  so a create can never write outside its skills root. */

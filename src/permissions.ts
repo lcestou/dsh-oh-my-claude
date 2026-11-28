@@ -1,6 +1,7 @@
 // Permission rules as settings.json holds them, and the rule a tool call suggests. Pure: the
 // adapter calls suggestRule on a request it is about to ask about, the Tune tab calls the rest on
 // the file's text. Tested in permissions.test.ts.
+import { stringOf, isJsonValue, isRec } from "./decode.js";
 import type { JsonValue } from "./dsh.js";
 
 /** The three lists under `permissions` in settings.json. */
@@ -27,9 +28,7 @@ type Settings = { [key: string]: JsonValue };
  */
 export function suggestRule(toolName: string, input: Record<string, JsonValue>): string {
   if (toolName === "Bash" || toolName === "PowerShell") {
-    const words = String(input.command ?? "")
-      .trim()
-      .split(/\s+/);
+    const words = (stringOf(input.command) ?? "").trim().split(/\s+/);
 
     const head =
       words[1] !== undefined && !words[1].startsWith("-") ? words.slice(0, 2) : [words[0]];
@@ -64,12 +63,8 @@ const settingsObject = (text: string): Settings | undefined => {
     return undefined;
   }
 
-  if (!(parsed instanceof Object) || Array.isArray(parsed)) {
-    return undefined;
-  }
-
-  // SAFETY: the value parsed as a plain object, which is the shape the settings route enforces too.
-  return parsed as Settings;
+  // A plain object, which is the shape the settings route enforces too.
+  return isJsonValue(parsed) && isRec(parsed) ? parsed : undefined;
 };
 
 /** The string rules under `kind`, or an empty list when `permissions` is missing, not an object,
@@ -77,11 +72,11 @@ const settingsObject = (text: string): Settings | undefined => {
 const ruleList = (settings: Settings | undefined, kind: PermissionKind): Array<string> => {
   const permissions = settings?.permissions;
 
-  if (!(permissions instanceof Object) || Array.isArray(permissions)) {
+  if (!isRec(permissions)) {
     return [];
   }
 
-  // SAFETY: a plain object; the value under each kind is checked before it is used.
+  // The value under each kind is checked before it is used.
   const list = permissions[kind];
 
   return Array.isArray(list) ? list.filter((rule) => typeof rule === "string") : [];
@@ -124,11 +119,10 @@ export function setPermissionRule(
   const next =
     action === "add" ? [...new Set([...current, rule.trim()])] : current.filter((r) => r !== rule);
 
-  const permissions: Settings =
-    settings.permissions instanceof Object && !Array.isArray(settings.permissions)
-      ? // SAFETY: a plain object, the shape the CLI reads `permissions` as.
-        { ...settings.permissions }
-      : {};
+  const permissions: Settings = isRec(settings.permissions)
+    ? // A plain object, the shape the CLI reads `permissions` as.
+      { ...settings.permissions }
+    : {};
 
   if (next.length === 0) {
     delete permissions[kind];

@@ -158,10 +158,10 @@ interface Watched {
 
 /** The process-wide registry, made on first use. */
 const watches = (): Map<string, Watched> => {
-  // SAFETY: this plugin's own key on globalThis, typed here once
-  const g = globalThis as typeof globalThis & { [WATCHES]?: Map<string, Watched> };
+  // This plugin's own key on globalThis, typed here once; the slot is optional, so no cast.
+  const g: typeof globalThis & { [WATCHES]?: Map<string, Watched> } = globalThis;
 
-  return (g[WATCHES] ??= new Map());
+  return (g[WATCHES] ??= new Map<string, Watched>());
 };
 
 /**

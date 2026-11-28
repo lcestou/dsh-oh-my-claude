@@ -1,7 +1,7 @@
-import type { StreamChunk, LlmFailure } from "@deepseek-ai/dsh-llm";
-import { type ClaudeEvent, type ClaudeStreamPartial, type ClaudeContentBlock, type DshCall, type SettingsKey } from "./process.js";
-import { TurnRecord } from "./adapter/turn.js";
-import { type PluginLoadError } from "./plugins.js";
+import type { StreamChunk, ContentBlockType, LlmFailure } from "@deepseek-ai/dsh-llm";
+import type { ClaudeEvent, ClaudeStreamPartial, ClaudeContentBlock, DshCall, SettingsKey } from "./process.js";
+import type { TurnRecord } from "./adapter/turn.js";
+import type { PluginLoadError } from "./plugins.js";
 /** Clamp a fenced body to its first `max` lines, with a count of what was elided. A tool-heavy turn
  *  floods the transcript with full read/bash/diff dumps; the head plus a tail count keeps each row
  *  scannable without hiding that more exists. */
@@ -23,7 +23,8 @@ export declare function formatToolResult(name: string, filePath: string, body: s
 /** One open lane of a turn: which kind it is, what has been written into it, and when it started. */
 export interface TranslatorBlock {
     index: number;
-    blockType: string;
+    /** A dsh block kind, or `hidden` for a native tool's raw block, which never reaches `delta`. */
+    blockType: ContentBlockType | "hidden";
     text: string;
     started: boolean;
     tool?: boolean;
@@ -137,6 +138,14 @@ export interface FallbackRecord {
 }
 /** The failure code a refused reply ends the turn with under `refusalAsFailure`. */
 export declare const REFUSAL_CODE = "REFUSAL";
+/** What a native tool result carries beside its text: an Edit's diff, for dsh's diff view. */
+export type ToolResultMeta = {
+    diffs: Array<{
+        path: string;
+        oldText: string;
+        newText: string;
+    }>;
+};
 /** Turns one CLI process's stream-json events into dsh stream chunks, and keeps the per-turn state
  *  that needs: open blocks, streamed ids, tool rows, usage and the result summary. */
 export declare class Translator {
@@ -187,7 +196,7 @@ export declare class Translator {
     streamedId: string | undefined;
     finished: boolean;
     denied: number;
-    autoDenied: string[];
+    autoDenied: Array<string>;
     toolPending: boolean;
     private calls;
     private streaming;
@@ -224,13 +233,13 @@ export declare class Translator {
     /** Injected: append tool/call to the dsh session for a native Claude Code tool. */
     onToolCall?: (callId: string, name: string, args: string) => number | undefined;
     /** Injected: append tool/result to the dsh session for a native Claude Code tool. */
-    onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
+    onToolResult?: (callId: string, text: string, isError: boolean, meta?: ToolResultMeta) => void;
     /** Injected: fire per-turn accounting summary from the result frame. */
     onResult?: (summary: TurnRecord) => void;
     /** Injected: mask secret values in tool results before they are shown or appended. */
     redact?: (s: string) => string;
     /** Injected: the CLI's slash-command catalog and tool names from its init frame. */
-    onInit?: (commands: string[], tools: string[], pluginErrors?: PluginLoadError[], pluginWarnings?: PluginLoadError[]) => void;
+    onInit?: (commands: Array<string>, tools: Array<string>, pluginErrors?: Array<PluginLoadError>, pluginWarnings?: Array<PluginLoadError>) => void;
     /** Running figures for the turn's status row: the thinking estimate as it climbs, and output tokens
      *  once a usage frame names them. Fired on the frames that carry them, nothing is polled. */
     onProgress?: (progress: TurnProgress) => void;
@@ -293,10 +302,10 @@ export declare class Translator {
         relayed?: Set<string>;
         log?: (level: string, msg: string) => void;
         onToolCall?: (callId: string, name: string, args: string) => number | undefined;
-        onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
+        onToolResult?: (callId: string, text: string, isError: boolean, meta?: ToolResultMeta) => void;
         onResult?: (summary: TurnRecord) => void;
         redact?: (s: string) => string;
-        onInit?: (commands: string[], tools: string[], pluginErrors?: PluginLoadError[], pluginWarnings?: PluginLoadError[]) => void;
+        onInit?: (commands: Array<string>, tools: Array<string>, pluginErrors?: Array<PluginLoadError>, pluginWarnings?: Array<PluginLoadError>) => void;
         onProgress?: (progress: TurnProgress) => void;
         onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
         noteApiKey?: () => boolean;
@@ -322,14 +331,14 @@ export declare class Translator {
     noteUnknown(where: string, type: string | null | undefined): void;
     /** A block is announced on its first text. Claude emits thinking blocks that carry only a
      *  signature and never any text; announcing those eagerly draws an empty bubble. */
-    startBlock(blockType: string, prefix?: string): {
+    startBlock(blockType: ContentBlockType, prefix?: string): {
         block: TranslatorBlock;
         events: StreamChunk[];
     };
     /** Text for a block, with its block-start ahead of the first non-empty piece. Empty in, empty out. */
-    delta(block: TranslatorBlock, text: string): StreamChunk[];
+    delta(block: TranslatorBlock, text: string): Array<StreamChunk>;
     /** Close a block; one that never got text was never announced and closes silently. */
-    endBlock(block: TranslatorBlock): StreamChunk[];
+    endBlock(block: TranslatorBlock): Array<StreamChunk>;
     /**
      * Record the turn's refusal, the first one that arrives: the system frame carries the category and
      * the CLI's sentence, and the error frame and the result that follow say only `refusal`. The code
@@ -338,18 +347,18 @@ export declare class Translator {
     noteRefusal(category: string, said: string): void;
     /** Emit a whole block at once, block-start then delta then block-end, for text that arrives in one
      *  piece rather than streamed in fragments. */
-    wholeBlock(blockType: string, text: string): StreamChunk[];
+    wholeBlock(blockType: ContentBlockType, text: string): Array<StreamChunk>;
     /** Map one Claude Code stream-json event into the StreamChunks the client renders, or [] when the
      *  event carries nothing to show. Handshake and benign events return [], and the many system
      *  subtypes ride the reasoning lane so they read as model activity rather than as chat text. */
-    translate(event: ClaudeEvent): StreamChunk[];
+    translate(event: ClaudeEvent): Array<StreamChunk>;
     /** One summed usage chunk for the step that is ending, or nothing when none can be proven.
      *
      *  Called once per `stream()` call, right before its `finish`. The result frame is only a
      *  fallback: it carries the whole turn's usage, so on a turn of several steps charging it to
      *  whichever step happened to see it is what left every other step with no sample at all, and
      *  `deriveTurnTokenUsage` drops the turn's pill unless every step has one. */
-    takeStepUsage(): StreamChunk[];
+    takeStepUsage(): Array<StreamChunk>;
     /** Fold one streaming partial frame into translator state and return the chunks it renders, or [].
      *  Only content_block frames open or append a block; message_delta feeds the running usage count
      *  the status row reads rather than drawing, and skips a nested agent so its tokens are not added. */
@@ -369,14 +378,14 @@ export declare class Translator {
     }): StreamChunk[];
     /** A whole assistant message as chunks. A subagent's message folds into one reasoning row, and
      *  the echo of a message that already streamed as deltas is dropped. */
-    assistant(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined, id?: string): StreamChunk[];
+    assistant(content: Array<ClaudeContentBlock>, parentToolUseId: string | null | undefined, id?: string): StreamChunk[];
     /** Outstanding dsh tool_use ids a relay can still come from, oldest first. The bridge's own tools
      *  (open_session, wait_session…) are answered inside the bridge and never relay: counted here, a
      *  wait_session held open for minutes made the batch wait for a relay that never came and then
      *  took the mark meant for the call beside it. A call already relayed and waiting for its echo
      *  is not a candidate either. An id whose name was never seen counts as relayable, the safe
      *  side: at worst the batch waits out its window. */
-    relayableIds(): string[];
+    relayableIds(): Array<string>;
     /** Mark the tool_use blocks a batch of relayed calls answers, so their results are left to dsh.
      *  A call carrying its tool_use id marks exactly that block; one without (a CLI that does not
      *  stamp the id) takes the oldest candidate left, which is wrong when an older call of the same
@@ -388,19 +397,19 @@ export declare class Translator {
      *  headed by the tool's name. */
     toolLead(cb: {
         name?: string;
-    }): [string, string];
+    }): [ContentBlockType, string];
     /** The CLI's per-call progress frame. Two variants reach a headless run: a 30-second heartbeat
      *  carrying the live elapsed time, and a subagent retrying an API failure. A call that finishes
      *  inside 30 seconds never sends one, so a block here means "this one is genuinely slow".
      *  Without it a ten-minute Bash call is indistinguishable from a hung process. */
     toolProgress(event: Extract<ClaudeEvent, {
         type: "tool_progress";
-    }>): StreamChunk[];
+    }>): Array<StreamChunk>;
     /** A running estimate for the thinking block the model is in the middle of. Only the silent kind
      *  draws: when the thinking text streams, the reasoning block itself is the progress, and a
      *  counter beside it would say the same thing twice. Fable-class models return thinking blocks
      *  that carry a signature and no text, and this is the only sign they are working. */
-    thinkingTokens(total: number): StreamChunk[];
+    thinkingTokens(total: number): Array<StreamChunk>;
     /** A tool call in flight, or not: the status row reads it to hold its thinking and stall ramps
      *  the way the CLI's line does while a tool runs. Reported only on change. A flip to true is the
      *  line's `tool-use` (the CLI sets it at message_stop; the plugin's nearest frame is the tool
@@ -411,7 +420,7 @@ export declare class Translator {
     /** The thinking block is over, or the turn is: tell the status row, once per open block. */
     private closeThinking;
     /** Close the counter: the thinking block it stood in for is over, or the turn is. */
-    endThinking(): StreamChunk[];
+    endThinking(): Array<StreamChunk>;
     /** Whether a top-level call of the current message has not echoed its result yet, or the
      *  message is still streaming and may open another call. Unlike `toolPending`, which follows
      *  the last block that closed, this holds from the message's start to its last call's result:
@@ -420,11 +429,11 @@ export declare class Translator {
      *  in an earlier step of the same message is not counted. */
     callsOutstanding(): boolean;
     /** Close the elapsed-time block a slow call opened, whichever way its result is drawn. */
-    endHeartbeat(toolUseId: string): StreamChunk[];
+    endHeartbeat(toolUseId: string): Array<StreamChunk>;
     /** Render the tool_result blocks of a user event into StreamChunks, or [] when tool activity is
      *  off. Each result routes to a dsh session row, an inline markdown block, or a compact reasoning
      *  row, and auto-denied and denied counts are tallied for the result-frame summary. `handback` is
      *  a subagent's report from the frame's `tool_use_result`, drawn in place of the result text,
      *  which then only says the report was delivered as a message. */
-    toolResults(content: ClaudeContentBlock[], parentToolUseId: string | null | undefined, handback?: string): StreamChunk[];
+    toolResults(content: Array<ClaudeContentBlock>, parentToolUseId: string | null | undefined, handback?: string): StreamChunk[];
 }

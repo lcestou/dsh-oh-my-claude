@@ -15,9 +15,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ClaudeCodeAdapter, Config } from "../src/adapter.js";
-import type { PluginContext } from "../src/dsh.js";
-import { appliedEffort, toJsonValue } from "../src/process.js";
-import type { ClaudeEvent, ClaudeProcess, ClaudeProcessSpec } from "../src/process.js";
+import { appliedEffort, isClaudeEvent, toJsonValue } from "../src/process.js";
+import type { ClaudeEvent, ClaudeProcessSpec } from "../src/process.js";
+import type { ControlledProcess } from "../src/adapter/types.js";
+import { fakePluginContext } from "../src/test-context.js";
 
 const model = process.argv[2] ?? "claude-opus-5-5";
 const cwd = mkdtempSync(join(tmpdir(), "omc-effort-check-"));
@@ -51,14 +52,11 @@ const spec: ClaudeProcessSpec = {
 
 /** What the adapter needs of a process to retarget it: its spec and key, a way to write a line, and
  *  the listener it installs for control responses. Everything else a real one has is unused here. */
-const bridge = {
-  alive: true,
-  busy: false,
+const proc: ControlledProcess = {
   spec,
-  key: "",
-  steers: new Map(),
-  // SAFETY: unset until the adapter installs its listener on the first control request
-  controlListener: undefined as ((event: ClaudeEvent) => void) | undefined,
+  key: JSON.stringify(spec),
+  // Unset until the adapter installs its listener on the first control request.
+  controlListener: undefined,
   write: (line: string) => child.stdin.write(line),
 };
 
@@ -72,26 +70,28 @@ child.stdout.on("data", (chunk: Buffer) => {
   for (let at = buffered.indexOf("\n"); at >= 0; at = buffered.indexOf("\n")) {
     const line = buffered.slice(0, at);
     buffered = buffered.slice(at + 1);
-    let event: ClaudeEvent;
+    let raw: unknown;
 
     try {
-      // SAFETY: a line of the CLI's stream-json output; only `type` and `response` are read, and
-      // the adapter's own listener checks what it takes from it
-      event = JSON.parse(line) as ClaudeEvent;
+      raw = JSON.parse(line);
     } catch {
       continue;
     }
 
-    if (event.type !== "control_response") {
+    // A line of the CLI's stream-json output; only `type` and `response` are read here, and the
+    // adapter's own listener checks what it takes from it.
+    if (!isClaudeEvent(raw) || raw.type !== "control_response") {
       continue;
     }
+
+    const event = raw;
 
     const waiter = mine.get(event.response?.request_id ?? "");
 
     if (waiter) {
       waiter(event);
     } else {
-      bridge.controlListener?.(event);
+      proc.controlListener?.(event);
     }
   }
 });
@@ -116,15 +116,10 @@ const effortNow = (): Promise<string | undefined> =>
     );
   });
 
-// SAFETY: the adapter reads none of dsh's services on this path; `retarget` and `control` use only
-// the process handed to them and the logger
-const ctx = { on() {}, logger: { info() {}, warn() {} } } as unknown as PluginContext;
+// The adapter reads none of dsh's services on this path; `retarget` and `control` use only the
+// process handed to them and the logger. Any other service throws `not faked` if reached.
+const ctx = fakePluginContext({ on() {}, logger: { info() {}, warn() {} } });
 const adapter = new ClaudeCodeAdapter(ctx, Config({}));
-
-// SAFETY: the bridge carries every member `retarget` and `control` touch
-const proc = bridge as unknown as ClaudeProcess;
-
-proc.key = JSON.stringify(spec);
 
 let failed = 0;
 

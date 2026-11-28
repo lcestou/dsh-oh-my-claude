@@ -8,10 +8,10 @@ export interface LocaleSettingsReader {
      *  with every plugin's secret fields in the clear. */
     describe?(options?: {
         redactSecrets?: boolean;
-    }): readonly {
+    }): ReadonlyArray<{
         ns?: unknown;
         value?: unknown;
-    }[];
+    }>;
 }
 declare const EN: {
     readonly notLoggedIn: "not logged in";

@@ -1,5 +1,6 @@
 import { ACCENT, SHIMMER } from "./shared.js";
 import { gated } from "./theme.js";
+import { isStyleElement } from "./dom-guards.js";
 
 const STYLE_ID = "dsh-oh-my-claude-send";
 
@@ -22,7 +23,7 @@ const OLD_MARK = "data-omc-send";
  */
 export function ensureSendButtonStyle(): void {
   const existing = document.getElementById(STYLE_ID);
-  const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
+  const el = isStyleElement(existing) ? existing : document.createElement("style");
   el.id = STYLE_ID;
   el.textContent = `${gated("send", '[class*="_card"]:has([contenteditable]) button[class*="_primary"]')} { --dsw-alias-button-info-fill: ${ACCENT}; --dsw-alias-button-info-hover: ${SHIMMER}; }`;
 

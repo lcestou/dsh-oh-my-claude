@@ -13,7 +13,7 @@ export function subagentLinkOf(
   }
 
   return {
-    parentId: String(header.parentSession),
+    parentId: header.parentSession,
     noticePending: hasPendingNotice(events(), "dsh-oh-my-claude", [
       RESTART_TEXT,
       RECONNECT_TEXT,

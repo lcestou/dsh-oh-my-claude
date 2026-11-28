@@ -1,5 +1,7 @@
 // The CLI probe, the flag guard, the argument and input builders, and the tool-name maps for the bridge.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
+import { fits } from "../schema-fits.js";
+import { stringOf } from "../decode.js";
 import z from "@deepseek-ai/schemastery";
 import { execFile } from "node:child_process";
 import type { GenerateOptions } from "@deepseek-ai/dsh-llm";
@@ -20,12 +22,13 @@ const MODE_FOR_ACCESS = {
   "danger-full-access": "bypassPermissions",
 } as const satisfies Record<string, string>;
 
+/** Whether the table has a row for `accessMode`, its own key and not an inherited one. */
+const isMappedAccess = (accessMode: string): accessMode is keyof typeof MODE_FOR_ACCESS =>
+  Object.hasOwn(MODE_FOR_ACCESS, accessMode);
+
 /** Claude permission mode for a dsh access mode, or undefined for one this table does not know. */
 export const modeForAccess = (accessMode: string): string | undefined =>
-  // SAFETY: the key is checked against the table before it is used as its index
-  Object.hasOwn(MODE_FOR_ACCESS, accessMode)
-    ? MODE_FOR_ACCESS[accessMode as keyof typeof MODE_FOR_ACCESS]
-    : undefined;
+  isMappedAccess(accessMode) ? MODE_FOR_ACCESS[accessMode] : undefined;
 
 /** dsh's access-mode switch arrives as text in the runtime-context injection; the last snapshot wins. */
 export function accessModeOf(messages: Array<LooseMessage> | undefined): string | undefined {
@@ -197,17 +200,18 @@ export function probeCli(exec: ExecLike = execFile, command = "claude", host?: s
   const key = `${host ?? ""}::${command}`;
   let probe = cliProbes.get(key);
 
+  /** Run the CLI here or over ssh with `args`; its stdout, or "" when it failed. */
+  const run = (args: Array<string>) =>
+    new Promise<string>((resolve) => {
+      const cmd = host ? "ssh" : command;
+      const cmdArgs = host ? sshArgs(host, [command, ...args].map(shq).join(" ")) : args;
+      exec(cmd, cmdArgs, { timeout: host ? 15_000 : 8000 }, (err, stdout) =>
+        resolve(err ? "" : String(stdout)),
+      );
+    });
+
   if (!probe) {
     probe = (async () => {
-      const run = (args: Array<string>) =>
-        new Promise<string>((resolve) => {
-          const cmd = host ? "ssh" : command;
-          const cmdArgs = host ? sshArgs(host, [command, ...args].map(shq).join(" ")) : args;
-          exec(cmd, cmdArgs, { timeout: host ? 15_000 : 8000 }, (err, stdout) =>
-            resolve(err ? "" : String(stdout)),
-          );
-        });
-
       const [help, version] = await Promise.all([run(["--help"]), run(["--version"])]);
       const flags = new Set(help.match(/--[a-zA-Z-]+/g) ?? []);
 
@@ -303,7 +307,7 @@ export function dshToolsGuidance(
   }
 
   const subagent = byName.get("subagent");
-  const presets = tools.map((t) => t.name).filter((n) => /^(subagent|researcher)_/.test(n));
+  const presets = tools.flatMap((t) => (/^(subagent|researcher)_/.test(t.name) ? [t.name] : []));
 
   if (subagent || presets.length > 0) {
     out.push(
@@ -652,8 +656,10 @@ export function commandNames(value: JsonValue | undefined): Array<string> {
   const out = new Set<string>();
 
   for (const v of value) {
-    if (String(v) === v && /^[a-z0-9][a-z0-9_-]*$/.test(v)) {
-      out.add(v);
+    const name = stringOf(v);
+
+    if (name !== undefined && /^[a-z0-9][a-z0-9_-]*$/.test(name)) {
+      out.add(name);
     }
   }
 
@@ -795,6 +801,14 @@ export const NATIVE_TOOL_MAP = {
   SlashCommand: "slash_command",
 } as const;
 
+/** Whether the map lists `name` as its own key (so `constructor` and the like never match). */
+const isMappedTool = (name: string): name is keyof typeof NATIVE_TOOL_MAP =>
+  Object.hasOwn(NATIVE_TOOL_MAP, name);
+
+/** dsh's name for one of Claude Code's native tools, or undefined for a name the map does not list. */
+export const nativeToolName = (name: string): string | undefined =>
+  isMappedTool(name) ? NATIVE_TOOL_MAP[name] : undefined;
+
 /** The JSON shape a title model sometimes answers in. */
 const TitleAnswer = z.object({ title: z.string() });
 
@@ -815,10 +829,14 @@ export function cleanTitle(text: string): string {
 
   if (t.startsWith("{")) {
     try {
-      // SAFETY: schemastery validates at runtime and throws on any other shape; the cast only
-      //   widens the static input so the parsed value reaches the validator.
-      t = (TitleAnswer(JSON.parse(t) as Parameters<typeof TitleAnswer>[0]).title ?? t).trim();
-    } catch {}
+      const raw: unknown = JSON.parse(t);
+
+      if (fits(TitleAnswer, raw)) {
+        t = (TitleAnswer(raw).title ?? t).trim();
+      }
+    } catch {
+      // Not JSON after all: the text stands as the title.
+    }
   }
 
   return t;

@@ -29,9 +29,10 @@ assert.ok(highlightCss(["omc-quote"]).includes("::highlight(omc-quote)"));
 
 // The registry the painter writes through, against a Map standing in for CSS.highlights.
 {
-  const target = new Map<string, Highlight>();
+  // The registry only carries the value into the target, so a symbol stands in for a Highlight.
+  const target = new Map<string, symbol>();
   const sheets: Array<string> = [];
-  const h = {} as Highlight;
+  const h = Symbol("highlight");
   const reg = createHighlightRegistry(target, (css) => sheets.push(css));
   const last = () => sheets.at(-1) ?? "";
   assert.equal(last(), "", "nothing registered: an empty sheet");

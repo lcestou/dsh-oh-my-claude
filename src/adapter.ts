@@ -5,7 +5,7 @@ import { accountIdentity, readSshBoxes, registerSessionRoutes } from "./sessions
 import { hub } from "./events.js";
 import { registerUsageRoute } from "./usage.js";
 import { registerMcpBridge } from "./mcp.js";
-import type { PluginContext, SessionController, SubprocessRuntime } from "./dsh.js";
+import type { PluginContext } from "./dsh.js";
 import { ADAPTER_CURRENT, COMMAND_CATALOG, RESUME_TIMER, WATCH_SWEEP } from "./dsh.js";
 import { CLAUDE_HOME, loadStarted, loadCommandCatalog, STATE_DIR, trace } from "./state.js";
 import type { ToolMode } from "./rows-probe.js";
@@ -16,7 +16,12 @@ export { markBusy, takeInterrupted } from "./state.js";
 
 export { forkTranscriptText } from "./transcript.js";
 
-export { Translator, type TranslatorBlock, type FallbackRecord } from "./translator.js";
+export {
+  Translator,
+  type TranslatorBlock,
+  type FallbackRecord,
+  type ToolResultMeta,
+} from "./translator.js";
 
 import type { Config } from "./adapter/config.js";
 import { DSH_VERSION, setRemoteWorkspaces } from "./adapter/config.js";
@@ -219,15 +224,15 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
 
   // One timer per dsh process, never tied to this cordis scope: dsh re-instantiates the plugin
   // when settings apply at boot, and a scope-bound timer was disposed before it fired.
-  // SAFETY: the two symbols are this plugin's own keys on globalThis, typed here once
-  const g = globalThis as typeof globalThis & {
+  // The two symbols are this plugin's own keys on globalThis, typed here once
+  const g: typeof globalThis & {
     [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
     [RESUME_TIMER]?: ReturnType<typeof setTimeout>;
     [WATCH_SWEEP]?: ReturnType<typeof setInterval>;
     [COMMAND_CATALOG]?: Array<string>;
-  };
+  } = globalThis;
 
-  (g[ADAPTER_CURRENT] ??= new Map()).set(adapter.providerId, adapter);
+  (g[ADAPTER_CURRENT] ??= new Map<string, ClaudeCodeAdapter>()).set(adapter.providerId, adapter);
 
   // Transcripts of loaded sessions go under watch now and on a timer, one per process like the
   // resume timer, reading the newest adapters at each tick.
@@ -235,7 +240,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     for (const a of g[ADAPTER_CURRENT]?.values() ?? []) {
       void a
         .watchLoadedSessions()
-        .catch((error) => a.log("warn", `watch sweep: ${errorText(error)}`));
+        .catch((cause: unknown) => a.log("warn", `watch sweep: ${errorText(cause)}`));
       // The idle reaper rides the same tick; before #241 it ran only when a session spawned.
       a.reapIdle();
     }
@@ -250,10 +255,10 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
 
   void adapter
     .adoptKeepers()
-    .catch((error) => adapter.log("warn", `keeper adoption: ${errorText(error)}`));
+    .catch((cause: unknown) => adapter.log("warn", `keeper adoption: ${errorText(cause)}`));
   void adapter
     .adoptHolds()
-    .catch((error) => adapter.log("warn", `hold adoption: ${errorText(error)}`));
+    .catch((cause: unknown) => adapter.log("warn", `hold adoption: ${errorText(cause)}`));
 
   // A hot reload disposes the previous instance's command registrations with its scope and
   // brings no new init frame; re-bridge from the catalog the last one saw.
@@ -265,13 +270,17 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
   // It waits on the commands service: at plugin load that service is not mounted yet, and
   // bridgeCommands answers nothing at all without it, which left the menu empty after a restart.
   else {
-    ctx.inject?.(["commands"], () => {
-      void loadCommandCatalog(adapter.stateDir).then((names) => {
-        if (names.length > 0) {
-          adapter.bridgeCommands(names, undefined);
-        }
-      });
-    });
+    /** Re-bridge the catalog saved on disk; the load answers `[]` on any failure, never rejects. */
+    const bridgeSaved = async () => {
+      const names = await loadCommandCatalog(adapter.stateDir);
+
+      if (names.length > 0) {
+        adapter.bridgeCommands(names, undefined);
+      }
+    };
+
+    // Fire and forget: the inject callback is synchronous and nothing waits on the menu.
+    ctx.inject?.(["commands"], () => void bridgeSaved());
   }
 
   if (!g[RESUME_TIMER]) {
@@ -280,7 +289,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       for (const inst of g[ADAPTER_CURRENT]?.values() ?? []) {
         inst
           .resumeInterrupted(join(inst.stateDir, "busy.json"))
-          .catch((error) => trace(`resume after restart failed: ${errorText(error)}`));
+          .catch((cause: unknown) => trace(`resume after restart failed: ${errorText(cause)}`));
       }
     }, RESUME_DELAY_MS);
     g[RESUME_TIMER].unref?.();
@@ -293,10 +302,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     adapter.subprocess = host.subprocess;
   });
   ctx.inject?.(["permissionPresets"], (host) => {
-    // SAFETY: cordis hands services untyped and the host type lacks this optional one;
-    // dsh-permission-presets exposes current(session) returning the preset name
-    const services = host as { permissionPresets?: { current: (session: object) => string } };
-    adapter.permissionPresets = services.permissionPresets;
+    adapter.permissionPresets = host.permissionPresets;
   });
 
   // Routes, MCP bridge, usage route and the client panel are registered once per process: only
@@ -307,7 +313,7 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
     // The SSH boxes the default instance mounts. `sshMounts` is scope-local (rebuilt each apply, since
     // a hot reload disposes the registrations); `sshAdapters` is the shared registry the resume walks.
     const sshMounts = new Map<string, SshBoxMount>();
-    const sshAdapters = (g[ADAPTER_CURRENT] ??= new Map());
+    const sshAdapters = (g[ADAPTER_CURRENT] ??= new Map<string, ClaudeCodeAdapter>());
     // The accounts beside this box's login, the same scope-local way; they share this mount's bridge.
     const accountMounts = new Map<string, AccountMount>();
     const accountsPath = join(STATE_DIR, "accounts.json");
@@ -357,8 +363,10 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
         for (const mount of accountMounts.values()) {
           mount.adapter.mcp = mcp;
         }
+
+        return mcp;
       },
-      (error) => adapter.log("warn", `mcp bridge unavailable: ${errorText(error)}`),
+      (cause: unknown) => adapter.log("warn", `mcp bridge unavailable: ${errorText(cause)}`),
     );
 
     // Build a provider→box lookup from the registry so the usage route reads the right login: a
@@ -615,9 +623,9 @@ export function apply(ctx: PluginContext, config: Schemastery.TypeT<typeof Confi
       .then((boxes) =>
         reconcileSshBoxes(ctx, config, boxes, sshMounts, sshAdapters, (l, m) => adapter.log(l, m)),
       )
-      .catch((error) => adapter.log("warn", `ssh boxes: ${errorText(error)}`));
+      .catch((cause: unknown) => adapter.log("warn", `ssh boxes: ${errorText(cause)}`));
     // And the saved accounts.
-    onAccounts().catch((error) => adapter.log("warn", `accounts: ${errorText(error)}`));
+    onAccounts().catch((cause: unknown) => adapter.log("warn", `accounts: ${errorText(cause)}`));
     // The remote-workspace redirects are fed by the routes above (`onRemoteWorkspaces`), seed read
     // included: one feed on one chain, so a row the reconcile dropped cannot be read back in here.
   }

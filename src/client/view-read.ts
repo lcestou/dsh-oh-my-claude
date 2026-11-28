@@ -9,20 +9,28 @@ import { newestWins } from "./events.js";
  * Runs `read` on mount, when `key` changes, and whenever the tab becomes visible again. `read` is
  * handed `fresh`, which it must check before applying its answer: false once the row unmounted, and
  * false once the row wrote the value itself after that read was sent, since the answer then holds
- * the value from before the write. Returns `wrote`, which the row calls as it applies its own
- * write. `read` is taken from the latest render, so it may close over props without being listed.
+ * the value from before the write; and the key it reads for. Returns `wrote`, which the row calls
+ * as it applies its own write. `read` is taken from the latest committed render, so it may close
+ * over props without being listed.
  */
-export function useViewRead(key: string, read: (fresh: () => boolean) => void): () => void {
+export function useViewRead(
+  key: string,
+  read: (fresh: () => boolean, key: string) => void,
+): () => void {
   const [order] = useState(newestWins);
   const latest = useRef(read);
-  latest.current = read;
+
+  useEffect(() => {
+    latest.current = read;
+  }, [read]);
+
   useEffect(() => {
     let live = true;
 
     /** One read, handed a check that goes false on unmount or once the row wrote after it. */
     const run = () => {
       const asked = order.ask();
-      latest.current(() => live && asked());
+      latest.current(() => live && asked(), key);
     };
 
     /** Reads again when the tab is shown, not when it is hidden. */

@@ -7,6 +7,7 @@ import { strict as assert } from "node:assert";
 // `spinner.test.ts` imports the same module statically with no DOM global set, and `stopTurnLine`
 // reads none.
 import { stopTurnLine } from "./index.js";
+import type { TurnLine } from "./turn-status.js";
 
 /** A group button and a line inside it, with only what `stopTurnLine` reads and writes. */
 function fixture() {
@@ -14,14 +15,16 @@ function fixture() {
   const group = { setAttribute: (name: string, value: string) => void (marks[name] = value) };
   let removed = 0;
 
-  const line = {
+  const line: TurnLine = {
     hasAttribute: (name: string) => name === "data-omc-turn-line",
     closest: () => group,
-    remove: () => void removed++,
+    remove: () => {
+      removed++;
+    },
   };
 
-  // SAFETY: the fake carries the four members the function touches.
-  return { line: line as unknown as HTMLElement, marks, removedCount: () => removed };
+  // The fake carries the four members the function touches.
+  return { line, marks, removedCount: () => removed };
 }
 
 // The turn ended: the group is marked before the line goes, so no scan wires it again.
@@ -48,12 +51,13 @@ function fixture() {
   const line = {
     hasAttribute: (name: string) => name === "data-omc-turn-line",
     closest: () => null,
-    remove: () => void removed++,
+    remove: () => {
+      removed++;
+    },
   };
 
-  // SAFETY: the fake carries the members the function touches.
-  stopTurnLine(line as unknown as HTMLElement, true);
-  stopTurnLine(line as unknown as HTMLElement, false);
+  stopTurnLine(line, true);
+  stopTurnLine(line, false);
   assert.equal(removed, 2);
 }
 
@@ -61,14 +65,19 @@ function fixture() {
 {
   let touched = 0;
 
-  const row = {
+  const row: TurnLine = {
     hasAttribute: () => false,
-    closest: () => void touched++,
-    remove: () => void touched++,
+    closest: () => {
+      touched++;
+
+      return null;
+    },
+    remove: () => {
+      touched++;
+    },
   };
 
-  // SAFETY: the fake carries the members the function touches.
-  stopTurnLine(row as unknown as HTMLElement, false);
+  stopTurnLine(row, false);
   assert.equal(touched, 0);
 }
 

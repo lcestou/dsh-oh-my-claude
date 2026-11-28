@@ -5,6 +5,7 @@
 // text, so a queued `/skill` rewritten into plain words stayed in the queue, and the only way to
 // steer it was to copy the text, delete the row and send it again (owner, 2026-11-11). The adapter
 // uses what is here to move such a row, and to queue a steer that was edited into a command.
+import { isRec } from "../decode.js";
 import { serverText } from "../locale.js";
 import type { LocaleSettingsReader } from "../locale.js";
 import { textOf } from "./prompt.js";
@@ -33,9 +34,13 @@ export class CommandRows {
     this.ids.delete(id);
     this.ids.add(id);
 
-    // SAFETY: the set is over the cap, so it has a first value
+    // Over the cap: drop the oldest, which a Set keeps first.
     if (this.ids.size > REMEMBERED) {
-      this.ids.delete(this.ids.values().next().value!);
+      const oldest = this.ids.values().next();
+
+      if (!oldest.done) {
+        this.ids.delete(oldest.value);
+      }
     }
   }
 
@@ -70,11 +75,11 @@ export function leavesQueue(m: LooseMessage, rows: CommandRows): boolean {
  *  caller's to catch. */
 export function busyEnterOf(read: LocaleSettingsReader | undefined): "queue" | "steer" {
   for (const entry of read?.describe?.({ redactSecrets: true }) ?? []) {
-    // SAFETY: the descriptor's value is the entry's live config; for dsh's conversation plugin
-    // that is `{ busyEnter }`, and any other entry reads as undefined through the optional chain.
-    const value = entry.value as { busyEnter?: unknown } | undefined;
+    // The descriptor's value is the entry's live config; for dsh's conversation plugin that is
+    // `{ busyEnter }`, and any other entry has no such member.
+    const value = entry.value;
 
-    if (value?.busyEnter !== undefined) {
+    if (isRec(value) && value.busyEnter !== undefined) {
       return value.busyEnter === "steer" ? "steer" : "queue";
     }
   }

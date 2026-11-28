@@ -2,21 +2,22 @@
 // limit, 2,000 characters as before by default, and keeps them whole at 0.
 import { strict as assert } from "node:assert";
 import { Config } from "./config.js";
+import { ToolCallId } from "@deepseek-ai/dsh-llm";
 import { buildPrompt } from "./prompt.js";
 import type { LooseMessage } from "./prompt.js";
 
 const long = "x".repeat(2500);
 
-const turns = [
+const turns: Array<LooseMessage> = [
   { role: "user", content: [{ type: "text", text: "go" }], source: { kind: "user" } },
   {
     role: "assistant",
-    content: [{ type: "tool-call", id: "c1", name: "bash", arguments: long }],
+    content: [{ type: "tool-call", id: ToolCallId("c1"), name: "bash", arguments: long }],
     source: { kind: "model", provider: "other" },
   },
   { role: "tool", toolCallId: "c1", content: [{ type: "text", text: long }] },
   { role: "user", content: [{ type: "text", text: "next" }], source: { kind: "user" } },
-] as unknown as Array<LooseMessage>;
+];
 
 const cut = buildPrompt(turns);
 

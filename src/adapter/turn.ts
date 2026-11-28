@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { hostname } from "node:os";
 import { boundContextSummary } from "@deepseek-ai/dsh-llm";
-import type { ContentBlockType, FinishReason, StreamChunk, ToolCallId } from "@deepseek-ai/dsh-llm";
+import type { ContentBlockType, FinishReason, StreamChunk } from "@deepseek-ai/dsh-llm";
 import { degradedNote, peekStatus } from "../anthropic-status.js";
 import type { ContextSource } from "../context-sources.js";
 import type {
@@ -14,8 +14,10 @@ import type {
   ResolvedAgent,
   ToolSchema,
 } from "../dsh.js";
+import { asToolCallId } from "../dsh.js";
 import { serverText } from "../locale.js";
 import { errorText } from "../process.js";
+import { isRec, stringOf, isImageRef } from "../decode.js";
 import type {
   ClaudeEvent,
   ClaudeProcessSpec,
@@ -69,6 +71,18 @@ export type SpliceEvent = {
   type?: string;
   data?: { target?: string; inserted?: Array<LooseMessage>; removedCount?: number };
 };
+
+/**
+ * True for dsh's `agent/inbox/spliced` session event with an object `data` whose `inserted`, when
+ * present, is a list of objects. dsh builds it from its own message lists, so that is taken as the
+ * shape; every message field is optional on `LooseMessage` and checked where it is read.
+ */
+export const isSpliceEvent = (v: unknown): v is SpliceEvent =>
+  isRec(v) &&
+  v.type === "agent/inbox/spliced" &&
+  isRec(v.data) &&
+  (v.data.inserted === undefined ||
+    (Array.isArray(v.data.inserted) && v.data.inserted.every(isRec)));
 
 /** `GET /turns` and the `turns` event. */
 export interface TurnsReply {
@@ -157,7 +171,10 @@ export interface ResultFrame {
 const resultMessage = (result: ResultFrame): string => {
   const errors = Array.isArray(result.errors) ? result.errors.join("; ") : "";
 
-  return String(result.result ?? errors ?? result.subtype ?? "claude error");
+  // `errors` is a string, so neither `subtype` nor the fallback is ever reached past it.
+  const said = result.result ?? errors;
+
+  return stringOf(said) ?? JSON.stringify(said);
 };
 
 /** A turn that failed because the box's Claude has no usable login: the CLI's own wording, or the
@@ -322,7 +339,7 @@ export function abortKind(signal: AbortSignal | undefined): string | undefined {
 
   const reason: unknown = signal.reason;
 
-  if (reason instanceof Object && "kind" in reason && !Array.isArray(reason)) {
+  if (isRec(reason)) {
     const kind = reason.kind;
 
     return kind === "disposed" || kind === "aborted" || kind === "cancelled" ? kind : undefined;
@@ -352,7 +369,9 @@ export function toolResultFor(
       const result: RelayResult = { text: textOf(m.content), isError: m.isError === true };
 
       const refs = Array.isArray(m.content)
-        ? m.content.flatMap((b) => (b.type === "image" && b.attachment ? [b.attachment] : []))
+        ? m.content.flatMap((b) =>
+            b.type === "image" && isImageRef(b.attachment) ? [b.attachment] : [],
+          )
         : [];
 
       if (refs.length > 0) {
@@ -736,8 +755,8 @@ export function* relayBlocks(tr: Translator, call: RelayEvent): IterableIterator
   yield {
     type: "tool-call-delta",
     index,
-    // SAFETY: relay ids are minted by this plugin (randomUUID); the brand marks provenance only
-    id: call.id as ToolCallId,
+    // Relay ids are minted by this plugin (randomUUID).
+    id: asToolCallId(call.id),
     name: call.name,
     argumentsDelta: args,
   };
@@ -746,8 +765,8 @@ export function* relayBlocks(tr: Translator, call: RelayEvent): IterableIterator
     index,
     block: {
       type: "tool-call",
-      // SAFETY: same minted id as the delta above
-      id: call.id as ToolCallId,
+      // Same minted id as the delta above.
+      id: asToolCallId(call.id),
       name: call.name,
       arguments: args,
     },
@@ -780,7 +799,7 @@ export function hasPendingTodo(todos: Array<JsonValue>): boolean {
   return todos.some((todo) => {
     // The list is off dsh's event log, so an item of another shape counts as unfinished rather
     // than being read as done and dropped.
-    if (todo === null || !(todo instanceof Object) || Array.isArray(todo)) {
+    if (!isRec(todo)) {
       return true;
     }
 

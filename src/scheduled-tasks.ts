@@ -2,11 +2,11 @@
 // project's own `.claude/scheduled_tasks.json`; session-only ones are never written anywhere, so
 // the only trace of them is the CronCreate call in the transcript. This is an I/O boundary: the
 // file and the folded transcript are decoded here, and every field is defaulted.
+import { isRec } from "./decode.js";
 import { join } from "node:path";
 import { readTextAt } from "./remote-fs.js";
 import type { FsBox } from "./remote-fs.js";
 import type { FoldedTranscript } from "./transcript.js";
-import type { JsonValue } from "./dsh.js";
 
 /** One scheduled task, from either the durable file or the session transcript. */
 export interface ScheduledTask {
@@ -48,9 +48,6 @@ export interface ScheduledTasksError {
 }
 
 type Rec = Record<string, unknown>;
-
-/** True only for a plain object, so a JSON array or null is not treated as a task record. */
-const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** The first of these keys the record carries as a string, else undefined. */
 const str = (rec: Rec, ...keys: Array<string>): string | undefined => {
@@ -128,11 +125,11 @@ export async function readDurableTasks(box: FsBox, cwd: string): Promise<Array<S
     return [];
   }
 
-  let parsed: JsonValue;
+  // The value is used only through taskFrom, which checks every field it reads.
+  let parsed: unknown;
 
   try {
-    // SAFETY: the value is used only through taskFrom, which checks every field it reads.
-    parsed = JSON.parse(text) as JsonValue;
+    parsed = JSON.parse(text);
   } catch (error) {
     throw new Error(
       `${durableTasksPath(cwd)}: ${error instanceof Error ? error.message : String(error)}`,
@@ -141,7 +138,7 @@ export async function readDurableTasks(box: FsBox, cwd: string): Promise<Array<S
   }
 
   // The file has been seen as a bare list and as an object holding one; accept either.
-  const list: Array<unknown> = Array.isArray(parsed)
+  const list: ReadonlyArray<unknown> = Array.isArray(parsed)
     ? parsed
     : isRec(parsed) && Array.isArray(parsed.tasks)
       ? parsed.tasks

@@ -1,4 +1,5 @@
 // Dev-only check. Point PLAYWRIGHT_ROOT at any project that has Playwright installed.
+import { errorText } from "../../src/process.js";
 import { dshUrl, launch } from "./pw.js";
 
 const [token, out = "/tmp/pw/turn-status.png"] = process.argv.slice(2);
@@ -51,7 +52,7 @@ if (await cand.count()) {
     .getByText(want)
     .first()
     .click({ force: true, timeout: 8000 })
-    .catch((error: Error) => console.log("click failed:", error.message.split("\n")[0]));
+    .catch((cause: unknown) => console.log("click failed:", errorText(cause).split("\n")[0]));
 }
 
 await p.waitForTimeout(3500);

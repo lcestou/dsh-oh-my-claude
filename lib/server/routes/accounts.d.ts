@@ -1,7 +1,8 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { JsonReply } from "../sessions.js";
+import type { IncomingMessage } from "node:http";
 import type { JsonValue } from "../dsh.js";
-import { type Account } from "../accounts.js";
-import { type RouteHandler } from "./context.js";
+import type { Account } from "../accounts.js";
+import type { RouteHandler } from "./context.js";
 /** A local mount other than the default with a login of its own: plugin-added or hand-written. */
 export interface LocalMount {
     provider: string;
@@ -35,11 +36,11 @@ export interface AccountRouteCtx {
     defaultHome: string;
     /** This box's `claude`, as the default mount resolved it. */
     command: string;
-    json: (res: ServerResponse, status: number, value: object) => void;
+    json: JsonReply;
     readBody: (req: IncomingMessage) => Promise<{
         [key: string]: JsonValue;
     }>;
-    run: (cmd: string, args: string[], env?: NodeJS.ProcessEnv) => Promise<{
+    run: (cmd: string, args: Array<string>, env?: NodeJS.ProcessEnv) => Promise<{
         out: string;
         error?: string;
     }>;
@@ -53,11 +54,11 @@ export interface AccountRouteCtx {
     }>;
     forgetIdentity: () => void;
     /** Provider ids the saved SSH boxes mount under, so an account cannot take one. */
-    sshIds: () => Promise<string[]>;
-    localMounts: () => LocalMount[];
+    sshIds: () => Promise<Array<string>>;
+    localMounts: () => Array<LocalMount>;
     /** Ids this plugin mounted from accounts.json. */
     mounted: () => Set<string>;
-    onChange: (accounts: Account[]) => Promise<void> | void;
+    onChange: (accounts: Array<Account>) => Promise<void> | void;
     liveCount: (loginKey: string) => number;
     loginDone: (loginKey: string) => void;
     logoutDone: (loginKey: string) => void;
@@ -70,7 +71,7 @@ export interface AccountRouteCtx {
  *  parse or validate. The write routes refuse on undefined, so an unreadable file is never replaced
  *  by a list holding only the new row. Checked for shape only: which ids are free depends on what
  *  else is mounted, which only the add route knows. */
-export declare function loadAccounts(path: string, home: string, defaultHome: string): Promise<Account[] | undefined>;
+export declare function loadAccounts(path: string, home: string, defaultHome: string): Promise<Array<Account> | undefined>;
 /** The saved accounts for a read: an unreadable file reads as none, so it never stops the plugin
  *  from loading or the list from answering. */
 export declare function readAccounts(path: string, home: string, defaultHome: string): Promise<Account[]>;

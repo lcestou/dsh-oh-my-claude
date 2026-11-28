@@ -2,6 +2,9 @@
 // one into a cold dsh session whose id is the Claude session id, so the adapter resumes it as-is.
 // Served under /dsh-oh-my-claude/*, guarded by dsh's own request policy (trusted host + login cookie).
 // This is an I/O boundary: HTTP bodies, probe output and JSON files are decoded here.
+import type { SteerEditReply, TurnRecord } from "./adapter.js";
+import type { SpawnModeInfo } from "./adapter/spawn-mode.js";
+import { stringOf, isRec } from "./decode.js";
 import { livingModelId } from "./model-ids.js";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -59,7 +62,7 @@ import type { TranscriptListItem } from "./transcript.js";
 import { isMemoryName } from "./memory.js";
 import { localSettingsRoot, repoRoot } from "./repo.js";
 import { managedDir } from "./instructions.js";
-import { asSessionId, CLAUDE_UPDATERS, CLAUDE_UPDATE_TICK } from "./dsh.js";
+import { asSessionId, asWorkspaceId, CLAUDE_UPDATERS, CLAUDE_UPDATE_TICK } from "./dsh.js";
 import {
   deleteSshToken,
   readSshToken,
@@ -86,6 +89,7 @@ import { healLog, probeLoad, rawLogPath, sweepRefusedLogs } from "./session-heal
 import type { HealHost, RepairsSummary } from "./session-heal.js";
 import type { ToolMode, ToolModeInfo } from "./rows-probe.js";
 import { isPluginScope, pluginScopeNeedsCwd } from "./plugins.js";
+import type { PluginScope } from "./plugins.js";
 import type { PluginLoadError } from "./plugins.js";
 import {
   CLAUDE_HOME,
@@ -212,6 +216,9 @@ const json = (res: ServerResponse, status: number, value: unknown) => {
   res.end(JSON.stringify(value));
 };
 
+/** The JSON replier the route groups are handed; any value JSON.stringify takes goes out. */
+export type JsonReply = typeof json;
+
 /** Any JSON object, as a request body or a stored file decodes to. */
 type JsonObject = Record<string, JsonValue>;
 
@@ -229,7 +236,9 @@ export const readBody = (req: IncomingMessage, limit = BODY_LIMIT): Promise<Json
       size += c.length;
 
       if (size <= limit) {
-        return chunks.push(c);
+        chunks.push(c);
+
+        return;
       }
 
       reject(new Error("body too large"));
@@ -304,20 +313,11 @@ const run = (
   cwd?: string,
   timeout = 8000,
 ): Promise<{ out: string; error?: string }> =>
-  new Promise((resolve) =>
+  new Promise((resolve) => {
     execFile(cmd, args, { timeout, windowsHide: true, env, cwd }, (e, out, err) =>
-      resolve(
-        e
-          ? {
-              out: String(out ?? ""),
-              error: String(err || e.message)
-                .trim()
-                .slice(0, 300),
-            }
-          : { out: String(out) },
-      ),
-    ),
-  );
+      resolve(e ? { out, error: (err || e.message).trim().slice(0, 300) } : { out }),
+    );
+  });
 
 /** A file at the plugin's root. Source runs from src/, the tsc build from lib/server/, so the
  *  root is one or two levels up: try the nearer first and fall back to the farther. */
@@ -373,7 +373,7 @@ export async function readHints(hintsPath: string): Promise<Record<string, boole
     mtime < 0
       ? null
       : await readFile(hintsPath, "utf8")
-          .then((t) => JSON.parse(t))
+          .then((t): unknown => JSON.parse(t))
           .catch(() => null);
 
   const out: Record<string, boolean | number> = {};
@@ -516,13 +516,11 @@ export function validateBoxes(input: unknown): ValidatedBoxes {
 
   for (const raw of input) {
     const b = isJsonObject(raw) ? raw : {};
-    const name = String(b.name ?? "").trim();
+    const name = (stringOf(b.name) ?? "").trim();
 
-    const url = String(b.url ?? "")
-      .trim()
-      .replace(/\/+$/, "");
+    const url = (stringOf(b.url) ?? "").trim().replace(/\/+$/, "");
 
-    const token = b.token === undefined || b.token === null ? "" : String(b.token).trim();
+    const token = (stringOf(b.token) ?? "").trim();
 
     if (!name || name.length > 40) {
       return { error: "each box needs a name (1-40 chars)" };
@@ -611,8 +609,8 @@ export function validateSshBoxes(input: unknown): ValidatedSshBoxes {
 
   for (const raw of input) {
     const b = isJsonObject(raw) ? raw : {};
-    const name = String(b.name ?? "").trim();
-    const host = String(b.host ?? "").trim();
+    const name = (stringOf(b.name) ?? "").trim();
+    const host = (stringOf(b.host) ?? "").trim();
 
     if (!name || name.length > 40) {
       return { error: "each SSH box needs a name (1-40 chars)" };
@@ -710,9 +708,9 @@ export type ValidatedRemoteWorkspace =
  *  so a bad name or relative path cannot seed a placeholder directory. */
 export function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWorkspace {
   const b = isJsonObject(input) ? input : {};
-  const name = String(b.name ?? "").trim();
-  const host = String(b.host ?? "").trim();
-  const remoteCwd = String(b.remoteCwd ?? "").trim();
+  const name = (stringOf(b.name) ?? "").trim();
+  const host = (stringOf(b.host) ?? "").trim();
+  const remoteCwd = (stringOf(b.remoteCwd) ?? "").trim();
 
   if (!name || name.length > 40) {
     return { error: "name is required (1-40 chars)" };
@@ -743,21 +741,22 @@ export function validateRemoteWorkspaceInput(input: unknown): ValidatedRemoteWor
  *  not an array, so a reconcile never throws on a gone or malformed file. */
 export async function readRemoteWorkspaces(path: string): Promise<Array<RemoteWorkspace>> {
   try {
-    const raw = JSON.parse(await readFile(path, "utf8"));
+    const raw: unknown = JSON.parse(await readFile(path, "utf8"));
 
     if (!Array.isArray(raw)) {
       return [];
     }
 
+    const rows: ReadonlyArray<unknown> = raw;
     const out: Array<RemoteWorkspace> = [];
 
-    for (const r of raw) {
+    for (const r of rows) {
       const b = isJsonObject(r) ? r : {};
-      const name = String(b.name ?? "");
-      const host = String(b.host ?? "");
-      const remoteCwd = String(b.remoteCwd ?? "");
-      const p = String(b.path ?? "");
-      const workspaceId = String(b.workspaceId ?? "");
+      const name = stringOf(b.name) ?? "";
+      const host = stringOf(b.host) ?? "";
+      const remoteCwd = stringOf(b.remoteCwd) ?? "";
+      const p = stringOf(b.path) ?? "";
+      const workspaceId = stringOf(b.workspaceId) ?? "";
 
       if (name && host && remoteCwd && p && workspaceId) {
         out.push({ name, host, remoteCwd, path: p, workspaceId });
@@ -787,7 +786,7 @@ export async function syncRemoteWorkspaces(
 
   // SAFETY: workspaceId came from registry.create and is stored verbatim; get() answers undefined
   // for an id it does not know, which is the whole test.
-  const dropped = rows.filter((w) => reg.get(w.workspaceId as WorkspaceId) === undefined);
+  const dropped = rows.filter((w) => reg.get(asWorkspaceId(w.workspaceId)) === undefined);
 
   if (dropped.length === 0) {
     return { workspaces: rows, dropped };
@@ -846,24 +845,18 @@ export interface RuntimeStatus {
  * text: 255 is ssh's own failure, anything else is the far shell's.
  */
 const probeReach = (host: string, command: string, timeout = 12_000): Promise<Reach> =>
-  new Promise((resolve) =>
+  new Promise((resolve) => {
     execFile(
       "ssh",
       sshArgs(host, reachScript(command)),
       { timeout, windowsHide: true },
       (e, out, err) => {
-        // SAFETY: execFile's error carries the child's exit code as `code` when it exited
-        const code = e ? ((e as { code?: unknown }).code ?? null) : 0;
-        resolve(classifyReach(typeof code === "number" ? code : null, String(err), String(out)));
+        // execFile's error carries the child's exit code as `code` when it exited.
+        const code = e ? e.code : 0;
+        resolve(classifyReach(typeof code === "number" ? code : null, err, out));
       },
-    ),
-  );
-
-/** A box's `/sessions?all=1` answer. */
-interface BoxSessions {
-  host: string;
-  sessions: Array<TranscriptListItem>;
-}
+    );
+  });
 
 /** One probe's outcome: the decoded body, or why the box could not be reached. */
 export type Probe<T> = { ok: true; status: T } | { ok: false; error: string };
@@ -949,12 +942,12 @@ const cookieOf = (r: { headers: { get(name: string): string | null } }) =>
  * Log into a box like a browser would (dsh's `/?token=` sets the auth cookie; an NPM-style proxy
  * redirects to that URL by itself) and read its plugin status. Never throws: the panel shows why.
  */
-export async function probeBox<T = RuntimeStatus>(
+export async function probeBox(
   box: Box,
   fetchImpl: FetchLike = fetch,
   path = "status",
   init?: { method?: string; body?: string },
-): Promise<Probe<T>> {
+): Promise<Probe<JsonObject>> {
   const { url, token } = box;
   const signal = AbortSignal.timeout(path === "status" ? 6000 : 12_000);
 
@@ -1033,14 +1026,18 @@ export async function probeBox<T = RuntimeStatus>(
       return { ok: false, error: `HTTP ${r.status}` };
     }
 
-    // SAFETY: the body is another instance of this plugin answering the same route; the caller
-    // names which route it asked and only reads the fields that route publishes
-    return { ok: true, status: JSON.parse(await cappedText(r)) as T };
+    // The body is another instance of this plugin answering the same route with a JSON object;
+    // the caller reads only the fields that route publishes, each checked.
+    const answer: unknown = JSON.parse(await cappedText(r));
+
+    return isJsonObject(answer)
+      ? { ok: true, status: answer }
+      : { ok: false, error: "the box answered with something other than a JSON object" };
   } catch (error) {
     const cause =
       error instanceof Error && error.cause instanceof Error ? error.cause.message : undefined;
 
-    return { ok: false, error: String(cause ?? errorText(error)).slice(0, 200) };
+    return { ok: false, error: (cause ?? errorText(error)).slice(0, 200) };
   }
 }
 
@@ -1378,8 +1375,9 @@ async function sshTranscripts(
       return { ok: false, error: "unexpected remote output" };
     }
 
-    // SAFETY: our own lister prints TranscriptListItem[]; the client re-reads each field defensively.
-    return { ok: true, sessions: parsed as Array<TranscriptListItem> };
+    // Our own lister prints TranscriptListItem[]; a row without an id is dropped, and the client
+    // re-reads each other field defensively.
+    return { ok: true, sessions: parsed.filter(isListItem) };
   } catch {
     return { ok: false, error: "unparseable remote output" };
   }
@@ -1790,16 +1788,21 @@ export interface OwnedSession {
  *  entries were the headers. Either way in, a header out. */
 type StoredHeader = { id: string; cwd?: string; origin?: string };
 
+/** True for a row of a box's transcript listing that has its id; its other fields are read
+ *  defensively by the client. */
+const isListItem = (v: unknown): v is TranscriptListItem =>
+  isJsonObject(v) && typeof v.id === "string";
+
 /** Pull the bare session header out of a persistence entry, unwrapping dsh 0.1.5's wrapped shape so
  *  both the newest and the oldest entries answer the same header. */
-const headerOf = (entry: StoredHeader | { header: StoredHeader }): StoredHeader => {
-  if ("header" in entry && entry.header !== undefined) {
-    return entry.header;
-  }
+const headerOf = (entry: StoredHeader | { header: StoredHeader }): StoredHeader =>
+  isWrapped(entry) ? entry.header : entry;
 
-  // SAFETY: no `header` member means the entry is the bare header shape of the union
-  return entry as StoredHeader;
-};
+/** True for dsh 0.1.5's wrapped entry: one with a `header` member that is set. Anything else is
+ *  the bare header shape of the union. */
+const isWrapped = (
+  entry: StoredHeader | { header: StoredHeader },
+): entry is { header: StoredHeader } => "header" in entry && entry.header !== undefined;
 
 /** Builds a lookup that indexes each session under both its dsh id and its claude id, so a session
  *  is found by whichever id a caller has. */
@@ -1816,7 +1819,7 @@ export function dshSessionsFor(
       continue;
     }
 
-    const id = String(h.id);
+    const id = h.id;
     const entry: OwnedSession = { id, archived: archived.has(id) };
 
     if (h.origin === "subagent") {
@@ -1834,7 +1837,10 @@ export function dshSessionsFor(
  *  is refused rather than used as a directory. On a Windows host a drive path (`C:\…`, `C:/…`)
  *  counts too, since that is what dsh hands over there; a drive-relative `C:x`, a UNC share and a
  *  `\\?\` device path stay refused, so a request cannot point a read at another machine. */
-export const validCwd = (cwd: unknown, platform: string = process.platform): cwd is string =>
+export const validCwd = (
+  cwd: JsonValue | undefined | null,
+  platform: string = process.platform,
+): cwd is string =>
   typeof cwd === "string" &&
   !cwd.includes("\0") &&
   (cwd.startsWith("/") || (platform === "win32" && /^[A-Za-z]:[\\/]/.test(cwd)));
@@ -1938,10 +1944,11 @@ export interface RouteCtx {
   persistAsides: SessionRouteOptions["persistAsides"];
   pickFor: (cwd: string) => PickSettings;
   pluginErrors: SessionRouteOptions["pluginErrors"];
+  /** The checked scope and the cwd a `project` or `local` scope needs, or the reason it failed. */
   pluginScopeCwd: (
     scope: unknown,
     session: JsonValue | undefined,
-  ) => Promise<{ cwd: string | undefined } | { error: string }>;
+  ) => Promise<{ scope: PluginScope; cwd: string | undefined } | { error: string }>;
   pluginStars: typeof pluginStars;
   pluginUpdate: typeof pluginUpdate;
   pluginWarnings: SessionRouteOptions["pluginWarnings"];
@@ -1975,7 +1982,10 @@ export interface RouteCtx {
   starters: SessionRouteOptions["starters"];
   steersFor: SessionRouteOptions["steersFor"];
   stopTask: SessionRouteOptions["stopTask"];
-  targetOf: <T extends string | null>(url: URL, cwd: T) => CwdTarget<T>;
+  targetOf: {
+    (url: URL, cwd: string): CwdTarget<string>;
+    (url: URL, cwd: string | null): CwdTarget<string | null>;
+  };
   taskOutput: SessionRouteOptions["taskOutput"];
   spawnMode: SessionRouteOptions["spawnMode"];
   terminalSync: SessionRouteOptions["terminalSync"];
@@ -2446,8 +2456,8 @@ export async function openTranscriptOnce(
     // by hand), or a create racing another open. Reseeding would collide and the stored log IS the
     // session, so surface it instead of answering 500 "already exists": unarchive, attach to the
     // workspace, open it. Match the class by name so no persistence-internal import is needed.
-    // SAFETY: err is unknown from catch; only its optional `name` string is read, any other value narrows to undefined and rethrows
-    if ((error as { name?: string })?.name !== "SessionAlreadyExistsError") {
+    // Only the error's `name` is read; any other value rethrows.
+    if (!isRec(error) || error.name !== "SessionAlreadyExistsError") {
       throw error;
     }
 
@@ -2594,7 +2604,7 @@ export interface SessionRouteOptions {
    *  logged-out box in the picker. */
   onLoginStatus?: (provider: string | null, loggedIn: boolean) => void;
   /** Per-session turn accounting buffer from the adapter. */
-  turnRecords?: Map<string, Array<import("./adapter.js").TurnRecord>>;
+  turnRecords?: Map<string, Array<TurnRecord>>;
   /** dsh version read off the package this plugin loads beside; null when unavailable. */
   dshVersion?: string | null;
   /** The running turn's figures per session, for the status row; absent when no turn is running. */
@@ -2616,7 +2626,7 @@ export interface SessionRouteOptions {
     set(mode: ToolMode): Promise<ToolModeInfo>;
   };
   /** The keeper switch's facts: the config's `spawn` key and whether this platform runs a keeper. */
-  spawnMode?: { info(): import("./adapter/spawn-mode.js").SpawnModeInfo };
+  spawnMode?: { info(): SpawnModeInfo };
   /** Terminal sync: whether terminal `/resume` exchanges mirror into the dsh session. */
   terminalSync?: {
     info(): { enabled: boolean };
@@ -2702,10 +2712,7 @@ export interface SessionRouteOptions {
     | { ok: false; reason: "sent" | "gone" | "error" | "relayed"; error?: string }
   >;
   /** Cut the running turn short and send these waiting steers as the next turn. */
-  sendSteerNow?: (
-    sessionId: string,
-    ids: Array<string>,
-  ) => Promise<import("./adapter.js").SteerEditReply>;
+  sendSteerNow?: (sessionId: string, ids: Array<string>) => Promise<SteerEditReply>;
   /** End a hold: put it back as it was, drop it, or send one message with new text in its place. */
   releaseHold?: (
     sessionId: string,
@@ -2920,11 +2927,11 @@ export function registerSessionRoutes(
   // Claude Code updaters, one per box, on globalThis so a second registration in one process reuses
   // them rather than a stale closure (the WATCH_SWEEP pattern in adapter.ts). A headless claude never
   // updates itself; the tick below is the plugin standing in for the CLI's own terminal updater.
-  // SAFETY: the two symbol keys are this plugin's own, declared in dsh.ts; nothing else writes them.
-  const g = globalThis as typeof globalThis & {
+  // The two symbol keys are this plugin's own, declared in dsh.ts; nothing else writes them.
+  const g: typeof globalThis & {
     [CLAUDE_UPDATERS]?: Map<string, ClaudeUpdater>;
     [CLAUDE_UPDATE_TICK]?: { timer: ReturnType<typeof setInterval>; tick: () => Promise<void> };
-  };
+  } = globalThis;
 
   const updaters = (g[CLAUDE_UPDATERS] ??= new Map<string, ClaudeUpdater>());
 
@@ -3007,8 +3014,8 @@ export function registerSessionRoutes(
       if (state && state.auto && newer(state) && !state.busy) {
         void u
           .runUpdate("auto")
-          .catch((error) =>
-            log("warn", `claude update on ${u.state().label}: ${errorText(error)}`),
+          .catch((cause: unknown) =>
+            log("warn", `claude update on ${u.state().label}: ${errorText(cause)}`),
           );
       }
     }
@@ -3024,7 +3031,7 @@ export function registerSessionRoutes(
     const fire = () =>
       void g[CLAUDE_UPDATE_TICK]
         ?.tick()
-        .catch((error) => log("warn", `claude update tick: ${errorText(error)}`));
+        .catch((cause: unknown) => log("warn", `claude update tick: ${errorText(cause)}`));
 
     if (held) {
       held.tick = tick;
@@ -3168,8 +3175,11 @@ export function registerSessionRoutes(
   };
 
   /** Decide which box and path a cwd-scoped read runs against: a remote workspace's real remote
-   *  path, else the request's own mount. */
-  const targetOf = <T extends string | null>(url: URL, cwd: T): CwdTarget<T> => {
+   *  path, else the request's own mount. A string cwd answers a string one: a workspace is only
+   *  ever found for a non-null cwd, and its remote cwd is a string. */
+  function targetOf(url: URL, cwd: string): CwdTarget<string>;
+  function targetOf(url: URL, cwd: string | null): CwdTarget<string | null>;
+  function targetOf(url: URL, cwd: string | null): CwdTarget<string | null> {
     const ws = workspaceAt(cwd);
 
     if (ws === undefined) {
@@ -3178,9 +3188,8 @@ export function registerSessionRoutes(
 
     const box = instanceForHost?.(ws.host) ?? { configDir, command, sshHost: ws.host };
 
-    // SAFETY: a workspace is only ever found for a non-null cwd, so T is string on this branch.
-    return { box, cwd: ws.remoteCwd as T };
-  };
+    return { box, cwd: ws.remoteCwd };
+  }
 
   /**
    * Where a transcript for this workspace can be: Claude's own project dir, then the plugin's
@@ -3268,7 +3277,7 @@ export function registerSessionRoutes(
     try {
       // SAFETY: workspaceId was returned by registry.create as a WorkspaceId and stored verbatim;
       // delete ignores an unknown id, so a stale value is harmless.
-      await workspaceRegistry()?.delete(w.workspaceId as WorkspaceId);
+      await workspaceRegistry()?.delete(asWorkspaceId(w.workspaceId));
     } catch (error) {
       log("warn", `remote-workspace delete: ${errorText(error)}`);
 
@@ -3291,6 +3300,17 @@ export function registerSessionRoutes(
       );
     }
   });
+
+  // The CLI wrote the plugin change to settings; ask this session's live process to re-read it so
+  // it applies now. Returns whether a live process took it. False (next spawn) when none is up.
+  const applyReload = async (session: JsonValue | undefined): Promise<boolean> => {
+    if (!reloadPlugins || typeof session !== "string") {
+      return false;
+    }
+
+    return (await reloadPlugins(session)).live;
+  };
+
   ctx.inject?.(["webServer", "connection", "sessions", "sessionPersistence"], (host) => {
     const { webServer, connection, sessions, sessionPersistence } = host;
 
@@ -3313,14 +3333,14 @@ export function registerSessionRoutes(
     // One sweep per process, after the resume delay, so a boot is not slowed by it and a hot
     // reload does not start a second. Heals the logs dsh refuses for the reasons the plugin
     // knows; anything else is recorded and shown, never touched.
-    // SAFETY: the symbol is this plugin's own key on globalThis, typed here once
-    const sweepFlag = globalThis as typeof globalThis & { [HEAL_SWEEP]?: true };
+    // The symbol is this plugin's own key on globalThis, typed here once
+    const sweepFlag: typeof globalThis & { [HEAL_SWEEP]?: true } = globalThis;
 
     if (!sweepFlag[HEAL_SWEEP]) {
       sweepFlag[HEAL_SWEEP] = true;
       setTimeout(() => {
-        void sweepRefusedLogs(heal).catch((error) =>
-          log("warn", `heal sweep: ${errorText(error)}`),
+        void sweepRefusedLogs(heal).catch((cause: unknown) =>
+          log("warn", `heal sweep: ${errorText(cause)}`),
         );
       }, HEAL_SWEEP_DELAY_MS).unref?.();
     }
@@ -3330,7 +3350,7 @@ export function registerSessionRoutes(
     const pluginScopeCwd = async (
       scope: unknown,
       session: JsonValue | undefined,
-    ): Promise<{ cwd: string | undefined } | { error: string }> => {
+    ): Promise<{ scope: PluginScope; cwd: string | undefined } | { error: string }> => {
       if (!isPluginScope(scope)) {
         return { error: "scope is user, project or local" };
       }
@@ -3341,7 +3361,7 @@ export function registerSessionRoutes(
         return { error: `${scope} scope needs a session open in a directory` };
       }
 
-      return { cwd: cwd ?? undefined };
+      return { scope, cwd: cwd ?? undefined };
     };
 
     // Every `claude plugin` and `claude mcp` mutation below runs on this PC, with the binary and
@@ -3355,16 +3375,6 @@ export function registerSessionRoutes(
     // placeholder dir, and report success for a box that never changed.
     const notOnBox = (url: URL, what: string, cwd: string | null = null): string | undefined =>
       targetOf(url, cwd).box.sshHost ? `${what} do not reach an SSH box yet` : undefined;
-
-    // The CLI wrote the plugin change to settings; ask this session's live process to re-read it so
-    // it applies now. Returns whether a live process took it. False (next spawn) when none is up.
-    const applyReload = async (session: JsonValue | undefined): Promise<boolean> => {
-      if (!reloadPlugins || typeof session !== "string") {
-        return false;
-      }
-
-      return (await reloadPlugins(session)).live;
-    };
 
     // A reload the live process refused counts as not applied: the file is written, the next
     // spawn reads it, and the note says so rather than claiming it landed.
@@ -3790,7 +3800,7 @@ export function registerSessionRoutes(
             // is tried first, then the operator path; a refusal names the terminal command.
             if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/tailscale/login`) {
               const body = await readBody(req);
-              const boxHost = String(body.host ?? "").trim();
+              const boxHost = (stringOf(body.host) ?? "").trim();
               // A self-hosted tailnet (Headscale) is the same client pointed at another server;
               // a pre-auth key from that server joins with no browser at all. Both are optional
               // and both are checked before they reach a shell.
@@ -3964,8 +3974,8 @@ export function registerSessionRoutes(
 
               if (req.method === "POST") {
                 const body = await readBody(req);
-                const parent = String(body.path ?? "");
-                const name = String(body.name ?? "");
+                const parent = stringOf(body.path) ?? "";
+                const name = stringOf(body.name) ?? "";
 
                 if (!parent.startsWith("/")) {
                   return json(res, 400, { error: "path must be an absolute directory" });
@@ -3977,7 +3987,7 @@ export function registerSessionRoutes(
                   name !== "" &&
                   name !== "." &&
                   name !== ".." &&
-                  ![...name].some((ch) => ch === "/" || ch < " ");
+                  !name.split("").some((ch) => ch === "/" || ch < " ");
 
                 if (!segment) {
                   return json(res, 400, { error: `"${name}" is not a folder name` });
@@ -4059,7 +4069,7 @@ export function registerSessionRoutes(
               }
 
               if (req.method === "DELETE") {
-                const target = String((await readBody(req)).path ?? "");
+                const target = stringOf((await readBody(req)).path) ?? "";
                 const rwPath = remoteWorkspacesPath;
 
                 const out = await withRwFile(async () => {
@@ -4131,7 +4141,7 @@ export function registerSessionRoutes(
               req.method === "POST" &&
               url.pathname === `${ROUTE_PREFIX}/ssh-boxes/login/start`
             ) {
-              const loginHost = String((await readBody(req)).host ?? "");
+              const loginHost = stringOf((await readBody(req)).host) ?? "";
               const loginBoxes = await readSshBoxes(sshBoxesPath);
 
               if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost)) {
@@ -4158,7 +4168,7 @@ export function registerSessionRoutes(
               url.pathname === `${ROUTE_PREFIX}/ssh-boxes/login/code`
             ) {
               const body = await readBody(req);
-              const loginHost = String(body.host ?? "");
+              const loginHost = stringOf(body.host) ?? "";
               const loginBoxes = await readSshBoxes(sshBoxesPath);
 
               if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost)) {
@@ -4167,7 +4177,7 @@ export function registerSessionRoutes(
 
               const submit = await submitSshLoginCode(
                 loginHost,
-                String(body.code ?? ""),
+                stringOf(body.code) ?? "",
                 verifyLogin(loginHost),
               );
 
@@ -4181,7 +4191,7 @@ export function registerSessionRoutes(
               req.method === "POST" &&
               url.pathname === `${ROUTE_PREFIX}/ssh-boxes/login/poll`
             ) {
-              const loginHost = String((await readBody(req)).host ?? "");
+              const loginHost = stringOf((await readBody(req)).host) ?? "";
               const loginBoxes = await readSshBoxes(sshBoxesPath);
 
               if (loginHost !== THIS_BOX && !loginBoxes.some((b) => b.host === loginHost)) {
@@ -4204,7 +4214,7 @@ export function registerSessionRoutes(
               req.method === "POST" &&
               url.pathname === `${ROUTE_PREFIX}/ssh-boxes/login/logout`
             ) {
-              const logoutHost = String((await readBody(req)).host ?? "");
+              const logoutHost = stringOf((await readBody(req)).host) ?? "";
               const logoutBoxes = await readSshBoxes(sshBoxesPath);
 
               if (logoutHost !== THIS_BOX && !logoutBoxes.some((b) => b.host === logoutHost)) {
@@ -4288,7 +4298,7 @@ export function registerSessionRoutes(
               const boxes = await readBoxes(boxesPath);
 
               const probed = await Promise.all(
-                boxes.map((b) => probeBox<BoxSessions>(b, fetch, "sessions?all=1")),
+                boxes.map((b) => probeBox(b, fetch, "sessions?all=1")),
               );
 
               return json(res, 200, {
@@ -4304,8 +4314,8 @@ export function registerSessionRoutes(
                         name: b.name,
                         url: b.url,
                         ok: true,
-                        host: p.status.host,
-                        sessions: p.status.sessions ?? [],
+                        host: stringOf(p.status.host),
+                        sessions: Array.isArray(p.status.sessions) ? p.status.sessions : [],
                       }
                     : { name: b.name, url: b.url, ok: false, error: p.error };
                 }),
@@ -4336,19 +4346,17 @@ export function registerSessionRoutes(
 
             if (boxesPath && req.method === "POST" && loginProxy) {
               const body = await readBody(req);
-              const target = String(body.url ?? "");
+              const target = stringOf(body.url) ?? "";
               const box = (await readBoxes(boxesPath)).find((b) => b.url === target);
 
               if (!box) {
                 return json(res, 400, { error: "unknown box" });
               }
 
-              const p = await probeBox<Record<string, JsonValue>>(
-                box,
-                fetch,
-                `ssh-boxes/login/${loginProxy[1]}`,
-                { method: "POST", body: JSON.stringify({ host: "", code: body.code ?? "" }) },
-              );
+              const p = await probeBox(box, fetch, `ssh-boxes/login/${loginProxy[1]}`, {
+                method: "POST",
+                body: JSON.stringify({ host: "", code: body.code ?? "" }),
+              });
 
               return json(res, 200, p.ok ? p.status : { error: p.error });
             }
@@ -4455,8 +4463,7 @@ export interface SettingsScopeInfo extends SettingsFile {
 /** True only when the value is one of the four settings scopes the CLI merges; anything else is an
  *  unknown scope and is refused rather than written. */
 export function isSettingsScope(value: JsonValue | undefined): value is SettingsScope {
-  // SAFETY: the includes() call narrows nothing on its own; the signature is the narrowing.
-  return SETTINGS_SCOPES.includes(value as SettingsScope);
+  return SETTINGS_SCOPES.some((scope) => scope === value);
 }
 
 /**

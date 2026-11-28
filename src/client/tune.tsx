@@ -14,8 +14,13 @@ import {
   useNarrow,
   claudeProviderOf,
   codeInline,
+  errorText,
+  isJsonNumber,
+  isJsonObject,
+  isJsonString,
+  parseJson,
 } from "./shared.js";
-import type { ClientCtx } from "./shared.js";
+import type { ClientCtx, Json, JsonObject } from "./shared.js";
 import { PERMISSION_KINDS, readPermissionRules, setPermissionRule } from "../permissions.js";
 import type { PermissionKind } from "../permissions.js";
 import { SCOPE_LABELS } from "./settings.js";
@@ -23,13 +28,18 @@ import type { SettingsScopeInfo } from "./settings.js";
 import { t, useLocale } from "./i18n.js";
 import { SETTINGS_EVENT } from "./picker.js";
 
+/** True when `value` is one of the three rule kinds, such as a `<select>` option's value. */
+const isPermissionKind = (value: string): value is PermissionKind =>
+  PERMISSION_KINDS.some((kind) => kind === value);
+
 /** What the usage route answers about extra usage. */
 interface UsageReply {
   extraUsage?: boolean;
 }
 
 /** A Fable model, which is the family whose advisor bills to usage credits. */
-export const isFable = (value: SettingsValue) => String(value ?? "").startsWith("claude-fable");
+export const isFable = (value: SettingsValue) =>
+  isJsonString(value) && value.startsWith("claude-fable");
 
 /** The settings.json keys this tab owns. Everything else in the file is left untouched. The three
  *  attribution fields are nested under one object in the file and flat here, one row each. */
@@ -55,11 +65,15 @@ export interface Tunables {
 
 type TuneKey = keyof Tunables;
 
-/** A settings document as this tab handles it: every key open, since it edits a dozen and keeps
- *  the rest. `attribution` is the one nested object, so a value may be a settings object itself. */
-type SettingsValue = string | number | boolean | null | undefined | Settings;
+/** One value of a settings document as this tab handles it, or `undefined` for a key the file
+ *  does not set. The document keeps every key open, since this tab edits a dozen and keeps the
+ *  rest; `attribution` is the one nested object it reads into. */
+type SettingsValue = Json | undefined;
 
-type Settings = { [key: string]: SettingsValue };
+/** A scalar setting as text: a string as itself, a number as its digits; null, a boolean, an
+ *  object or an array is no text, so a field of the wrong type reads as unset. */
+const scalarText = (value: SettingsValue): string | undefined =>
+  isJsonString(value) ? value : isJsonNumber(value) ? String(value) : undefined;
 
 /** The CLI's own pair of cache TTLs; anything else is not a value its resolver understands. */
 const cacheTtl = (value: SettingsValue) => (value === "5m" || value === "1h" ? value : undefined);
@@ -74,7 +88,8 @@ const DEADLINES = ["60s", "5m", "10m", "never"] as const;
 
 /** True only when the value equals one of the four deadline strings, so a non-string or an
  *  unknown string fails the deadline check. */
-const isDeadline = (value: SettingsValue) => DEADLINES.some((d) => d === value);
+const isDeadline = (value: SettingsValue): value is (typeof DEADLINES)[number] =>
+  DEADLINES.some((d) => d === value);
 
 /** True only for the two deadline keys, so validation checks just those against the `60s`, `5m`,
  *  `10m`, `never` set and leaves the rest to its own check. */
@@ -119,20 +134,19 @@ export function updateSettings(
     return { error: t("tune.errOutput", { min: OUTPUT_MIN, max: OUTPUT_MAX }) };
   }
 
-  let parsed: unknown;
+  let parsed: Json;
 
   try {
-    parsed = JSON.parse(text);
+    parsed = parseJson(text);
   } catch (error) {
     return { error: error instanceof Error ? error.message : t("tune.errNotJson") };
   }
 
-  if (!(parsed instanceof Object) || Array.isArray(parsed)) {
+  if (!isJsonObject(parsed)) {
     return { error: t("tune.errNotObject") };
   }
 
-  // SAFETY: the value parsed as a plain object, which is the shape the route also enforces.
-  const obj = parsed as Settings;
+  const obj = parsed;
   const [outer, inner] = key.split(".");
 
   if (inner === undefined) {
@@ -145,7 +159,7 @@ export function updateSettings(
     // An empty string is what hides a trailer, so only an absent value removes the field, and the
     // `attribution` object goes with its last field rather than being left behind empty.
     const held = obj[outer ?? ""];
-    const nested: Settings = held instanceof Object && !Array.isArray(held) ? { ...held } : {};
+    const nested: JsonObject = isJsonObject(held) ? { ...held } : {};
 
     if (value === undefined) {
       delete nested[inner];
@@ -166,25 +180,25 @@ export function updateSettings(
 
 /** Read the seven keys out of the file; anything of the wrong type reads as unset. */
 export function readTunables(text: string): Tunables {
-  let parsed: unknown;
+  let parsed: Json;
 
   try {
-    parsed = JSON.parse(text);
+    parsed = parseJson(text);
   } catch {
     return {};
   }
 
-  if (!(parsed instanceof Object) || Array.isArray(parsed)) {
+  if (!isJsonObject(parsed)) {
     return {};
   }
 
-  // SAFETY: a plain object; each field is checked against its expected type before use.
-  const obj = parsed as Settings;
+  // Each field is checked against its expected type before use.
+  const obj = parsed;
   const out: Tunables = {};
-  const style = obj.outputStyle;
+  const style = scalarText(obj.outputStyle);
 
-  if (style !== null && style !== undefined && style !== "") {
-    out.outputStyle = String(style);
+  if (style !== undefined && style !== "") {
+    out.outputStyle = style;
   }
 
   if (obj.alwaysThinkingEnabled === true) {
@@ -212,36 +226,28 @@ export function readTunables(text: string): Tunables {
   }
 
   // A model id, so the same reading as outputStyle: an absent, empty or boolean value is no id.
-  const advisor = obj.advisorModel;
+  const advisor = scalarText(obj.advisorModel);
 
-  if (
-    advisor !== null &&
-    advisor !== undefined &&
-    advisor !== "" &&
-    advisor !== true &&
-    advisor !== false
-  ) {
-    out.advisorModel = String(advisor);
+  if (advisor !== undefined && advisor !== "") {
+    out.advisorModel = advisor;
   }
 
-  const fallback = obj.fallbackModel;
+  const fallback = scalarText(obj.fallbackModel);
 
-  if (
-    fallback !== null &&
-    fallback !== undefined &&
-    fallback !== "" &&
-    fallback !== true &&
-    fallback !== false
-  ) {
-    out.fallbackModel = String(fallback);
+  if (fallback !== undefined && fallback !== "") {
+    out.fallbackModel = fallback;
   }
 
-  if (isDeadline(obj.askUserQuestionTimeout)) {
-    out.askUserQuestionTimeout = String(obj.askUserQuestionTimeout);
+  const askTimeout = obj.askUserQuestionTimeout;
+
+  if (isDeadline(askTimeout)) {
+    out.askUserQuestionTimeout = askTimeout;
   }
 
-  if (isDeadline(obj.dialogExpiry)) {
-    out.dialogExpiry = String(obj.dialogExpiry);
+  const dialogExpiry = obj.dialogExpiry;
+
+  if (isDeadline(dialogExpiry)) {
+    out.dialogExpiry = dialogExpiry;
   }
 
   if (Number.isInteger(obj.bashOutputMaxChars)) {
@@ -255,15 +261,15 @@ export function readTunables(text: string): Tunables {
   // An empty string is a set value here: it is how the CLI is told to write no trailer at all.
   const attribution = obj.attribution;
 
-  if (attribution instanceof Object && !Array.isArray(attribution)) {
+  if (isJsonObject(attribution)) {
     const commit = attribution.commit;
     const pr = attribution.pr;
 
-    if (String(commit) === commit) {
+    if (isJsonString(commit)) {
       out["attribution.commit"] = commit;
     }
 
-    if (String(pr) === pr) {
+    if (isJsonString(pr)) {
       out["attribution.pr"] = pr;
     }
 
@@ -351,11 +357,8 @@ export function ConfirmButton({
   useLocale();
   const [armed, setArmed] = useState(false);
   useEffect(() => {
-    if (!armed) {
-      return;
-    }
-
-    const timer = setTimeout(() => setArmed(false), 5000);
+    // An armed button disarms itself after 5 s.
+    const timer = armed ? setTimeout(() => setArmed(false), 5000) : undefined;
 
     return () => clearTimeout(timer);
   }, [armed]);
@@ -449,16 +452,16 @@ export function TuneBody({
     let live = true;
     read(provider).then(
       (f) => live && setFile(f),
-      (error_: Error) => live && setError(error_.message),
+      (cause: unknown) => live && setError(errorText(cause)),
     );
     fetch(`${ROUTE}/models`)
       .then((r) => readJson<{ models?: Array<{ id: string; name: string }> }>(r))
       .then((b) => live && setModels(b.models ?? []))
-      .catch((error_: Error) => live && setModelsError(error_.message));
+      .catch((cause: unknown) => live && setModelsError(errorText(cause)));
     fetch(`${ROUTE}/usage`)
       .then((r) => readJson<UsageReply>(r))
       .then((b) => live && setExtraUsage(b.extraUsage === true))
-      .catch((error_: Error) => live && setCreditsError(error_.message));
+      .catch((cause: unknown) => live && setCreditsError(errorText(cause)));
     fetch(`${ROUTE}/thinking?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<{ tokens: number | null | undefined }>(r))
       .then((b) => live && setThinkBudget(b.tokens))
@@ -467,7 +470,7 @@ export function TuneBody({
     return () => {
       live = false;
     };
-  }, [sessionId]);
+  }, [sessionId, provider]);
 
   if (!file) {
     return error ? (
@@ -696,7 +699,7 @@ export function TuneBody({
         <span style={labelStyle}>{t("tune.thinkingBudget")}</span>
         <div style={controlStyle}>
           <select
-            value={thinkBudget == null ? "" : String(thinkBudget)}
+            value={String(thinkBudget ?? "")}
             disabled={thinkBusy}
             aria-label={t("tune.thinkingBudgetAria")}
             onChange={(e) =>
@@ -709,7 +712,7 @@ export function TuneBody({
             }}
           >
             {THINKING_PRESETS.map((p) => (
-              <option key={p.labelKey} value={p.tokens == null ? "" : String(p.tokens)}>
+              <option key={p.labelKey} value={String(p.tokens ?? "")}>
                 {t(p.labelKey)}
               </option>
             ))}
@@ -1146,11 +1149,7 @@ function PermissionsBlock({
     const q = query.toString();
     fetch(`${ROUTE}/settings/scopes${q ? `?${q}` : ""}`)
       .then((r) => readJson<{ scopes?: Array<SettingsScopeInfo> }>(r))
-      .then((body) => {
-        if (live) {
-          setOthers((body.scopes ?? []).filter((sc) => sc.path !== file.path));
-        }
-      })
+      .then((body) => live && setOthers((body.scopes ?? []).filter((sc) => sc.path !== file.path)))
       .catch(() => {});
 
     return () => {
@@ -1164,11 +1163,7 @@ function PermissionsBlock({
     let live = true;
     fetch(`${ROUTE}/permission-asks?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<{ asks?: Array<string> }>(r))
-      .then((body) => {
-        if (live) {
-          setAsks(body.asks ?? []);
-        }
-      })
+      .then((body) => live && setAsks(body.asks ?? []))
       .catch(() => {});
 
     return () => {
@@ -1298,8 +1293,11 @@ function PermissionsBlock({
           value={kind}
           aria-label={t("tune.ruleKind")}
           onChange={(e) => {
-            // SAFETY: the options are the three kinds, so the value is one of them.
-            setKind(e.target.value as PermissionKind);
+            const picked = e.target.value;
+
+            if (isPermissionKind(picked)) {
+              setKind(picked);
+            }
           }}
           disabled={busy}
           style={{ ...select, flex: "0 0 auto", minWidth: 90, textTransform: "capitalize" }}

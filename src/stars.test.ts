@@ -26,16 +26,15 @@ assert.equal(stargazerCount("not json"), undefined, "non-JSON is missing");
   forgetStars();
   let calls = 0;
 
-  const fetchFn = (async () => {
+  const fetchFn = async () => {
     calls++;
 
-    // SAFETY: the reader only calls `ok` and `text()`; a whole Response is more than the check needs
-    return { ok: true, text: async () => '{"stargazers_count":7}' } as Response;
-  }) as typeof fetch;
+    return new Response('{"stargazers_count":7}');
+  };
 
-  const boom = (async () => {
+  const boom = async () => {
     throw new Error("ENOTFOUND");
-  }) as typeof fetch;
+  };
 
   const t0 = 1_000_000;
   assert.equal(await stars(fetchFn, t0), 7);
@@ -48,11 +47,11 @@ assert.equal(stargazerCount("not json"), undefined, "non-JSON is missing");
   forgetStars();
   let calls = 0;
 
-  const fetchFn = (async () => {
+  const fetchFn = async () => {
     calls++;
 
-    return { ok: false, text: async () => '{"stargazers_count":99}' } as Response;
-  }) as typeof fetch;
+    return new Response('{"stargazers_count":99}', { status: 500 });
+  };
 
   assert.equal(await stars(fetchFn, 1_000_000), undefined, "a non-ok response is a miss");
   assert.equal(calls, 1);
@@ -62,9 +61,9 @@ assert.equal(stargazerCount("not json"), undefined, "non-JSON is missing");
 {
   forgetStars();
 
-  const boom = (async () => {
+  const boom = async () => {
     throw new Error("ENOTFOUND");
-  }) as typeof fetch;
+  };
 
   assert.equal(await stars(boom, 1_000_000), undefined);
 }
@@ -74,11 +73,11 @@ assert.equal(stargazerCount("not json"), undefined, "non-JSON is missing");
   forgetStars();
   let calls = 0;
 
-  const fetchFn = (async () => {
+  const fetchFn = async () => {
     calls++;
 
-    return { ok: false, text: async () => '{"message":"Not Found"}' } as Response;
-  }) as typeof fetch;
+    return new Response('{"message":"Not Found"}', { status: 500 });
+  };
 
   const t0 = 1_000_000;
   assert.equal(await stars(fetchFn, t0), undefined);
@@ -93,11 +92,11 @@ assert.equal(stargazerCount("not json"), undefined, "non-JSON is missing");
   forgetStars();
   let calls = 0;
 
-  const fetchFn = (async () => {
+  const fetchFn = async () => {
     calls++;
 
-    return { ok: true, text: async () => '{"stargazers_count":0}' } as Response;
-  }) as typeof fetch;
+    return new Response('{"stargazers_count":0}');
+  };
 
   const t0 = 1_000_000;
   assert.equal(await stars(fetchFn, t0), 0);

@@ -1,5 +1,5 @@
-import { type FirstPartyProbe } from "../first-party.js";
-import { type Route, type RouteEnv } from "./routing.js";
+import type { FirstPartyProbe } from "../first-party.js";
+import type { Route, RouteEnv } from "./routing.js";
 /** What one box answered. */
 export interface BoxRoute {
     /** The routing variables in force for a `claude` started there over ssh. */

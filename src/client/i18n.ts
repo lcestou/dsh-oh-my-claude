@@ -8,42 +8,42 @@
 // area so two files never collide. Text Claude or the CLI reads (prompts, commands, file names) is
 // never translated here; only what a person reads on screen.
 import { useSyncExternalStore } from "react";
-import * as dshCommon from "./i18n/dsh-common.js";
-import * as common from "./i18n/common.js";
-import * as misc from "./i18n/misc.js";
-import * as main from "./i18n/main.js";
-import * as panel from "./i18n/panel.js";
-import * as tune from "./i18n/tune.js";
-import * as browser from "./i18n/browser.js";
-import * as picker from "./i18n/picker.js";
-import * as updates from "./i18n/updates.js";
-import * as accounts from "./i18n/accounts.js";
-import * as boxColours from "./i18n/box-colours.js";
-import * as testGate from "./i18n/test-gate.js";
-import * as secondOpinion from "./i18n/second-opinion.js";
+import { en as dshCommonEn } from "./i18n/dsh-common.js";
+import { en as commonEn, zh as commonZh } from "./i18n/common.js";
+import { en as miscEn, zh as miscZh } from "./i18n/misc.js";
+import { en as mainEn, zh as mainZh } from "./i18n/main.js";
+import { en as panelEn, zh as panelZh } from "./i18n/panel.js";
+import { en as tuneEn, zh as tuneZh } from "./i18n/tune.js";
+import { en as browserEn, zh as browserZh } from "./i18n/browser.js";
+import { en as pickerEn, zh as pickerZh } from "./i18n/picker.js";
+import { en as updatesEn, zh as updatesZh } from "./i18n/updates.js";
+import { en as accountsEn, zh as accountsZh } from "./i18n/accounts.js";
+import { en as boxColoursEn, zh as boxColoursZh } from "./i18n/box-colours.js";
+import { en as testGateEn, zh as testGateZh } from "./i18n/test-gate.js";
+import { en as secondOpinionEn, zh as secondOpinionZh } from "./i18n/second-opinion.js";
 
 /** The namespace this plugin registers under dsh's locale service. */
 export const LOCALE_NS = "oh-my-claude";
 
 /** The plugin's own English strings, merged from the area files; what gets registered. */
 const OWN_EN = {
-  ...common.en,
-  ...misc.en,
-  ...main.en,
-  ...panel.en,
-  ...tune.en,
-  ...browser.en,
-  ...picker.en,
-  ...updates.en,
-  ...accounts.en,
-  ...boxColours.en,
-  ...testGate.en,
-  ...secondOpinion.en,
+  ...commonEn,
+  ...miscEn,
+  ...mainEn,
+  ...panelEn,
+  ...tuneEn,
+  ...browserEn,
+  ...pickerEn,
+  ...updatesEn,
+  ...accountsEn,
+  ...boxColoursEn,
+  ...testGateEn,
+  ...secondOpinionEn,
 } as const;
 
 /** Every English string `t()` can answer with: the plugin's own, plus the English fallback for the
  *  dsh `common` words it borrows (used only when dsh has no locale service). */
-export const EN = { ...dshCommon.en, ...OWN_EN } as const;
+export const EN = { ...dshCommonEn, ...OWN_EN } as const;
 
 /** Every key the client can ask for. */
 export type OmcKey = keyof typeof EN;
@@ -51,18 +51,18 @@ export type OmcKey = keyof typeof EN;
 /** The Chinese strings, one per key the plugin registers; the compiler refuses a missing or extra
  *  key. The borrowed dsh `common` words are dsh's to translate and are not here. */
 export const ZH = {
-  ...common.zh,
-  ...misc.zh,
-  ...main.zh,
-  ...panel.zh,
-  ...tune.zh,
-  ...browser.zh,
-  ...picker.zh,
-  ...updates.zh,
-  ...accounts.zh,
-  ...boxColours.zh,
-  ...testGate.zh,
-  ...secondOpinion.zh,
+  ...commonZh,
+  ...miscZh,
+  ...mainZh,
+  ...panelZh,
+  ...tuneZh,
+  ...browserZh,
+  ...pickerZh,
+  ...updatesZh,
+  ...accountsZh,
+  ...boxColoursZh,
+  ...testGateZh,
+  ...secondOpinionZh,
 } satisfies Record<keyof typeof OWN_EN, string>;
 
 /** Values for `{name}` placeholders. */
@@ -70,7 +70,7 @@ export type Params = Record<string, string | number>;
 
 /** The slice of dsh's `LocaleRuntime` this module uses, typed here so the plugin builds without
  *  the locale package's types and runs on a dsh that has no locale service at all. */
-interface LocaleLike {
+export interface LocaleLike {
   register(
     ns: string,
     dict: { zh: Record<string, string>; en: Record<string, string> },
@@ -133,8 +133,9 @@ const noSubscribe = () => () => {};
  *  when dsh has no locale service). Call it at the top of every component root that renders
  *  `t()` text; children re-render with it. */
 export function useLocale(): string {
+  const rt = runtime;
   useSyncExternalStore(
-    runtime ? (fn) => runtime!.subscribe(fn) : noSubscribe,
+    rt ? (fn) => rt.subscribe(fn) : noSubscribe,
     () => runtime?.getSnapshot().revision ?? 0,
   );
 

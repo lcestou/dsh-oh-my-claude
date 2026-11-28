@@ -13,7 +13,7 @@ import type { CSSProperties } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { Menu } from "@deepseek-ai/dsh-client-ui-primitives";
 import { IconChevronDownOutlineRegular } from "./icons.js";
-import { ROUTE, T, readJson } from "./shared.js";
+import { ROUTE, T, errorText, readJson } from "./shared.js";
 import type {
   ClientCtx,
   DirEntry,
@@ -24,13 +24,13 @@ import type {
 import { DirectoryBrowser } from "./browser.js";
 import type { Listing, Translate } from "./browser.js";
 import { t as omcT, useLocale } from "./i18n.js";
+import { isElement } from "./dom-guards.js";
 
 /** dsh's directory UI service, absent on a dsh that mounts no workspace UI. */
-const uiWorkspaceOf = (ctx: ClientCtx): UiWorkspaceFace | undefined =>
-  ctx.get?.<UiWorkspaceFace>("uiWorkspace");
+const uiWorkspaceOf = (ctx: ClientCtx): UiWorkspaceFace | undefined => ctx.get?.("uiWorkspace");
 
 /** dsh's locale registry, absent on a dsh that mounts no locale service. */
-const localeOf = (ctx: ClientCtx): LocaleFace | undefined => ctx.get?.<LocaleFace>("locale");
+const localeOf = (ctx: ClientCtx): LocaleFace | undefined => ctx.get?.("locale");
 
 /** Whether this dsh can browse directories at all, which is what the takeover needs to be worth it. */
 export const canBrowseDirs = (ctx: ClientCtx): boolean => uiWorkspaceOf(ctx) !== undefined;
@@ -122,6 +122,9 @@ const DIALOG_EN = {
   "browser.showHidden": "Show hidden files",
 } satisfies Record<string, string>;
 
+/** DIALOG_EN by key, for a lookup with whatever key the browser asks for. */
+const DIALOG_EN_BY_KEY = new Map<string, string>(Object.entries(DIALOG_EN));
+
 /**
  * Read the Add workspace dialog's copy from dsh's own dictionaries, so the takeover speaks the
  * language the dialog it replaces spoke. `directory-browser` is the namespace
@@ -132,8 +135,8 @@ const copyOf = (ctx: ClientCtx): Translate => {
   const t = localeOf(ctx)?.bind("directory-browser");
 
   return (key, params) => {
-    // SAFETY: every key this dialog reads is a DIALOG_EN key; an unknown one reads as itself.
-    const raw = (t ? t(key) : undefined) || DIALOG_EN[key as keyof typeof DIALOG_EN] || key;
+    // An unknown key reads as itself.
+    const raw = (t ? t(key) : undefined) || DIALOG_EN_BY_KEY.get(key) || key;
 
     return params ? raw.replaceAll(/\{(\w+)\}/g, (m, k: string) => params[k] ?? m) : raw;
   };
@@ -231,19 +234,21 @@ function WorkspaceDialog({
   // reload. It now rereads when the Boxes card saves, and when the tab comes back into view, which
   // covers a box added from another tab or device.
   useEffect(() => {
-    const load = () =>
+    /** Reads the saved ssh boxes; a failed read keeps the list as it was. */
+    const load = () => {
       fetch(`${ROUTE}/ssh-boxes`)
         .then((r) => readJson<{ boxes?: Array<BoxRow> }>(r))
         .then((b) => setSsh(b.boxes ?? []))
         .catch(() => {});
+    };
 
     const onVisible = () => {
       if (document.visibilityState === "visible") {
-        void load();
+        load();
       }
     };
 
-    void load();
+    load();
     window.addEventListener(BOXES_EVENT, load);
     document.addEventListener("visibilitychange", onVisible);
 
@@ -274,14 +279,9 @@ function WorkspaceDialog({
 
     setSubmitting(true);
 
-    const done = () => {
+    const failed = (cause: unknown) => {
       setSubmitting(false);
-      onPicked(target);
-    };
-
-    const failed = (message: string) => {
-      setSubmitting(false);
-      onError(message);
+      onError(errorText(cause));
     };
 
     if (host === "") {
@@ -294,25 +294,43 @@ function WorkspaceDialog({
         return;
       }
 
-      ctx.workspaces.create({ path: target }).then(done).catch(failed);
+      // Never rejects: a refusal goes to the owner's error line.
+      void (async () => {
+        try {
+          await ctx.workspaces.create({ path: target });
+        } catch (error) {
+          failed(error);
+
+          return;
+        }
+
+        setSubmitting(false);
+        onPicked(target);
+      })();
 
       return;
     }
 
     // A remote path is never handed to dsh's owner: it would adopt it as a directory on this PC.
-    // The route pins the workspace to the box, then the dialog just closes.
-    fetch(`${ROUTE}/remote-workspaces`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: baseName(target) || host, host, remoteCwd: target }),
-    })
-      .then((r) => readJson<{ workspace?: unknown }>(r))
-      .then(() => window.dispatchEvent(new Event(RW_EVENT)))
-      .then(() => {
+    // The route pins the workspace to the box, then the dialog just closes. Never rejects: a
+    // refusal goes to the owner's error line.
+    void (async () => {
+      try {
+        await readJson<{ workspace?: unknown }>(
+          await fetch(`${ROUTE}/remote-workspaces`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ name: baseName(target) || host, host, remoteCwd: target }),
+          }),
+        );
+
+        window.dispatchEvent(new Event(RW_EVENT));
         setSubmitting(false);
         onClosed();
-      })
-      .catch(failed);
+      } catch (error) {
+        failed(error);
+      }
+    })();
   };
 
   const boxes: Array<BoxRow> = [{ name: omcT("picker.thisBox"), host: "" }, ...ssh];
@@ -393,16 +411,17 @@ export function AddWorkflow({
   // The first to mount claims the event, the next claims it when that one unmounts.
   useEffect(() => {
     const start = () => setForcedOpen(true);
+    const claimed = settingsOpener === null;
 
-    if (settingsOpener !== null) {
-      return;
+    if (claimed) {
+      settingsOpener = start;
+      document.addEventListener(OPEN_EVENT, start);
     }
 
-    settingsOpener = start;
-    document.addEventListener(OPEN_EVENT, start);
-
     return () => {
-      document.removeEventListener(OPEN_EVENT, start);
+      if (claimed) {
+        document.removeEventListener(OPEN_EVENT, start);
+      }
 
       if (settingsOpener === start) {
         settingsOpener = null;
@@ -466,19 +485,21 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
   // reload. It now rereads when the Boxes card saves, and when the tab comes back into view, which
   // covers a box added from another tab or device.
   useEffect(() => {
-    const load = () =>
+    /** Reads the saved ssh boxes; a failed read keeps the list as it was. */
+    const load = () => {
       fetch(`${ROUTE}/ssh-boxes`)
         .then((r) => readJson<{ boxes?: Array<BoxRow> }>(r))
         .then((b) => setSsh(b.boxes ?? []))
         .catch(() => {});
+    };
 
     const onVisible = () => {
       if (document.visibilityState === "visible") {
-        void load();
+        load();
       }
     };
 
-    void load();
+    load();
     window.addEventListener(BOXES_EVENT, load);
     document.addEventListener("visibilitychange", onVisible);
 
@@ -493,15 +514,12 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
   // keeps working when dsh re-renders them through the same elements. The label is dsh's own
   // translation of `workspace.add`, so the selector follows the reader's language.
   useEffect(() => {
-    if (ssh.length === 0 || !uiWorkspaceOf(ctx)) {
-      return;
-    }
-
+    const engaged = ssh.length > 0 && uiWorkspaceOf(ctx) !== undefined;
     const label = localeOf(ctx)?.bind("workspace")("workspace.add") || "Add workspace";
     const start = () => setOpen(true);
 
     const onClick = (e: MouseEvent) => {
-      const target = e.target instanceof Element ? e.target : null;
+      const target = isElement(e.target) ? e.target : null;
 
       if (!target?.closest(`button[aria-label="${CSS.escape(label)}"]`)) {
         return;
@@ -512,10 +530,13 @@ export function AddWorkspaceFlow({ ctx }: { ctx: ClientCtx }) {
       start();
     };
 
-    document.addEventListener("click", onClick, true);
-    // The Settings card lists the remote workspaces but no longer takes a typed path; its button
-    // asks for this dialog by event, the two trees having no shared React parent.
-    document.addEventListener(OPEN_EVENT, start);
+    // Without a saved ssh box dsh's own local-only dialog is left alone.
+    if (engaged) {
+      document.addEventListener("click", onClick, true);
+      // The Settings card lists the remote workspaces but no longer takes a typed path; its button
+      // asks for this dialog by event, the two trees having no shared React parent.
+      document.addEventListener(OPEN_EVENT, start);
+    }
 
     return () => {
       document.removeEventListener("click", onClick, true);

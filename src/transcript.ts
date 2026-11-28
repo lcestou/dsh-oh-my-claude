@@ -1,12 +1,13 @@
 // Claude Code transcripts (~/.claude/projects/<cwd>/<uuid>.jsonl) → dsh session events, so a
 // session started in the terminal can be opened in dsh with its history and resumed from there.
 // This is an I/O boundary: transcript lines are decoded here and typed shapes leave.
+import { stringOf, isJsonValue } from "./decode.js";
 import { open, readdir, stat } from "node:fs/promises";
 import { readAt } from "./remote-fs.js";
 import type { FsBox } from "./remote-fs.js";
 import { join } from "node:path";
 import type { JsonValue } from "./dsh.js";
-import { NATIVE_TOOL_MAP } from "./adapter/cli.js";
+import { nativeToolName } from "./adapter/cli.js";
 import { formatToolCall, formatToolResult } from "./translator.js";
 import { serverText } from "./locale.js";
 
@@ -30,11 +31,10 @@ const isRec = (v: unknown): v is Rec => typeof v === "object" && v !== null && !
  * row on resume while the same tool rendered properly live.
  */
 const toolNameOf = (name: unknown): string => {
-  const raw = String(name ?? "tool");
+  const raw = stringOf(name) ?? "tool";
 
-  // SAFETY: NATIVE_TOOL_MAP is a closed literal type; keyof narrows the index to its known keys,
-  // and an unlisted name reads as undefined, which falls back to Claude's own spelling.
-  return NATIVE_TOOL_MAP[raw as keyof typeof NATIVE_TOOL_MAP] ?? raw;
+  // An unlisted name falls back to Claude's own spelling.
+  return nativeToolName(raw) ?? raw;
 };
 
 /** A leading byte-order mark, dropped: with it the first line is not JSON and the record is lost. */
@@ -145,7 +145,7 @@ export function truncateBytes(text: string, max: number): string {
   // one. At most three steps, whatever the budget.
   let end = max;
 
-  while (end > 0 && (buf[end]! & 0xc0) === 0x80) {
+  while (end > 0 && ((buf[end] ?? 0) & 0xc0) === 0x80) {
     end--;
   }
 
@@ -310,6 +310,83 @@ interface Scan {
   cwd?: string;
 }
 
+/** What a listing needs from the head of one transcript. */
+const scan = (lines: Array<string>, fallbackTime: number): Scan => {
+  const found: Scan = {
+    turns: 0,
+    createdAt: fallbackTime,
+    title: "",
+    command: "",
+    answered: false,
+    typed: false,
+  };
+
+  for (const line of lines) {
+    const rec = parseLine(line);
+
+    if (!rec) {
+      continue;
+    }
+
+    if (found.cwd === undefined && typeof rec.cwd === "string") {
+      found.cwd = rec.cwd;
+    }
+
+    if (rec.type === "summary" && typeof rec.summary === "string") {
+      found.summary = rec.summary;
+    }
+
+    if (rec.type === "assistant" && !rec.isSidechain) {
+      found.answered = true;
+    }
+
+    if (rec.type !== "user" || rec.isSidechain || rec.isMeta || isSystemPrompt(rec)) {
+      continue;
+    }
+
+    const text = promptText(isRec(rec.message) ? rec.message.content : undefined);
+
+    if (!text) {
+      continue;
+    }
+
+    if (found.turns === 0 && isAuxPrompt(text)) {
+      break;
+    }
+
+    found.turns += 1;
+
+    if (found.turns === 1) {
+      found.createdAt = timeOf(rec, found.createdAt);
+    }
+
+    const noise = isNoise(text);
+
+    if (!noise) {
+      found.typed = true;
+    }
+
+    if (found.title) {
+      continue;
+    }
+
+    // The first thing a person wrote names the session: a prompt, or a command with words after
+    // it. A bare `/skill` says less than the prompt that follows it, so it waits as a fallback,
+    // and the CLI's interrupt echo is nobody's words at all.
+    const cmd = commandTitle(text);
+
+    if (cmd.includes(" ")) {
+      found.title = cmd;
+    } else if (cmd) {
+      found.command ||= cmd;
+    } else if (!noise && !CLI_ECHO.test(text)) {
+      found.title = titleFrom(text);
+    }
+  }
+
+  return found;
+};
+
 /**
  * Transcripts in one project dir, newest first. `exclude` holds Claude session ids that already
  * belong to dsh sessions the plugin started itself (their dsh side is the source of truth).
@@ -332,82 +409,6 @@ export async function listTranscripts(
   // work per file is independent, so it runs in batches instead. BATCHED rather than one big
   // `Promise.all`: the caller already fans out across every project dir at once, and an
   // unbounded map would multiply that into hundreds of open descriptors for no extra speed.
-  /** What a listing needs from the head of one transcript. */
-  const scan = (lines: Array<string>, fallbackTime: number): Scan => {
-    const found: Scan = {
-      turns: 0,
-      createdAt: fallbackTime,
-      title: "",
-      command: "",
-      answered: false,
-      typed: false,
-    };
-
-    for (const line of lines) {
-      const rec = parseLine(line);
-
-      if (!rec) {
-        continue;
-      }
-
-      if (found.cwd === undefined && typeof rec.cwd === "string") {
-        found.cwd = rec.cwd;
-      }
-
-      if (rec.type === "summary" && typeof rec.summary === "string") {
-        found.summary = rec.summary;
-      }
-
-      if (rec.type === "assistant" && !rec.isSidechain) {
-        found.answered = true;
-      }
-
-      if (rec.type !== "user" || rec.isSidechain || rec.isMeta || isSystemPrompt(rec)) {
-        continue;
-      }
-
-      const text = promptText(isRec(rec.message) ? rec.message.content : undefined);
-
-      if (!text) {
-        continue;
-      }
-
-      if (found.turns === 0 && isAuxPrompt(text)) {
-        break;
-      }
-
-      found.turns += 1;
-
-      if (found.turns === 1) {
-        found.createdAt = timeOf(rec, found.createdAt);
-      }
-
-      const noise = isNoise(text);
-
-      if (!noise) {
-        found.typed = true;
-      }
-
-      if (found.title) {
-        continue;
-      }
-
-      // The first thing a person wrote names the session: a prompt, or a command with words after
-      // it. A bare `/skill` says less than the prompt that follows it, so it waits as a fallback,
-      // and the CLI's interrupt echo is nobody's words at all.
-      const cmd = commandTitle(text);
-
-      if (cmd.includes(" ")) {
-        found.title = cmd;
-      } else if (cmd) {
-        found.command ||= cmd;
-      } else if (!noise && !CLI_ECHO.test(text)) {
-        found.title = titleFrom(text);
-      }
-    }
-
-    return found;
-  };
 
   const read = async (name: string): Promise<TranscriptListItem | undefined> => {
     const m = UUID_FILE.exec(name);
@@ -901,8 +902,9 @@ export function foldTranscript(text: string): FoldedTranscript {
         } else if (b.type === "thinking" && typeof b.thinking === "string") {
           step.content.push({ type: "reasoning", text: b.thinking });
         } else if (b.type === "tool_use" && typeof b.id === "string") {
-          // SAFETY: a tool_use input is the JSON object Claude sent; any JSON object is a JsonValue map
-          const args = isRec(b.input) ? (b.input as Record<string, JsonValue>) : {};
+          // A tool_use input is the JSON object Claude sent; the check types it as a JsonValue map.
+          const input = b.input;
+          const args = isJsonValue(input) && isRec(input) ? input : {};
           const name = toolNameOf(b.name);
           // dsh keeps tool-call arguments as a JSON string (its token meter reads `.length`).
           step.content.push({

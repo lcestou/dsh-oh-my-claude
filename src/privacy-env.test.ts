@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { holdStartScript } from "./hold.js";
 import { childEnv, forwardedEnv, seamSpawner, sshInvocation } from "./process.js";
+import { fakeSubprocessHandle } from "./test-context.js";
 
 // The privacy switches a person might set for everything dsh spawns.
 const PRIVATE = {
@@ -52,10 +53,19 @@ assert.deepEqual(forwardedEnv(PRIVATE), [
     "a held process gets them",
   );
 
-  let env: Record<string, string> | undefined;
+  let env: NodeJS.ProcessEnv | undefined;
 
-  // SAFETY: the fake carries the one method the spawner calls
-  const spawn = seamSpawner({ spawn: (spec: any) => ((env = spec.env), {} as any) }, PRIVATE);
+  // The fake carries the one method the spawner calls.
+  const spawn = seamSpawner(
+    {
+      spawn: (spec) => {
+        env = spec.env;
+
+        return fakeSubprocessHandle();
+      },
+    },
+    PRIVATE,
+  );
 
   spawn("claude", ["-p"], "/w");
   assert.equal(

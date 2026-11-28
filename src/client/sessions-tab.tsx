@@ -5,7 +5,7 @@ import { sessionLabel } from "./panel.js";
 import { SearchField } from "./search-field.js";
 import { Menu } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { CSSProperties } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SessionData } from "./shared.js";
 import {
   ROUTE,
@@ -24,6 +24,7 @@ import {
   row,
   saveBlob,
   select,
+  errorText,
 } from "./shared.js";
 import type { ClientCtx } from "./shared.js";
 import type { BoxData } from "./boxes.js";
@@ -231,13 +232,15 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
   const [menuFor, setMenuFor] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const load = () => {
-    setLoading(true);
-    setError("");
+  const hasBoxes = boxes.length > 0;
+
+  /** Every list read. Sets state only as the answers land, so the box-set effect below can start
+   *  it; `load` and the render-time block mark the tab loading first. */
+  const readAll = useCallback(() => {
     fetch(`${ROUTE}/sessions?all=1`)
       .then((r) => readJson<{ host?: string; sessions?: Array<SessionData> } | null>(r))
       .then((body) => setLocal(body ?? null))
-      .catch((error_: Error) => setError(error_.message))
+      .catch((cause: unknown) => setError(errorText(cause)))
       .finally(() => setLoading(false));
     // SSH boxes list over ssh (own registry, no HTTP url); fetch regardless of the HTTP boxes above.
     fetch(`${ROUTE}/boxes/ssh-sessions`)
@@ -245,19 +248,36 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
       .then((body) => setSsh(body?.boxes ?? []))
       .catch(() => setSsh([]));
 
-    if (boxes.length === 0) {
-      return;
+    if (hasBoxes) {
+      fetch(`${ROUTE}/boxes/sessions`)
+        .then((r) => readJson<{ boxes?: Array<RemoteSessionData> } | null>(r))
+        .then((body) => setRemote(body?.boxes ?? []))
+        .catch((cause: unknown) => setError(errorText(cause)))
+        .finally(() => setRemoteLoading(false));
     }
+  }, [hasBoxes]);
 
-    setRemoteLoading(true);
-    fetch(`${ROUTE}/boxes/sessions`)
-      .then((r) => readJson<{ boxes?: Array<RemoteSessionData> } | null>(r))
-      .then((body) => setRemote(body?.boxes ?? []))
-      .catch((error_: Error) => setError(error_.message))
-      .finally(() => setRemoteLoading(false));
+  /** The Refresh button: loading, error cleared, every list read again. */
+  const load = () => {
+    setLoading(true);
+    setError("");
+    setRemoteLoading(hasBoxes);
+    readAll();
   };
 
-  useEffect(load, [boxes.map((b) => b.url).join("|")]);
+  // A box added, removed or swapped reads every list again: marked during render, as a Refresh
+  // click marks it, and read by the effect.
+  const boxUrls = boxes.map((b) => b.url).join("|");
+  const [readFor, setReadFor] = useState<string | null>(null);
+
+  if (readFor !== boxUrls) {
+    setReadFor(boxUrls);
+    setLoading(true);
+    setError("");
+    setRemoteLoading(hasBoxes);
+  }
+
+  useEffect(readAll, [readAll, boxUrls]);
 
   const groups = useMemo<Array<GroupInfo>>(() => {
     const out: Array<GroupInfo> = [];
@@ -340,11 +360,10 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
     return [...set].toSorted();
   }, [groups, box]);
 
-  useEffect(() => {
-    if (cwd !== "all" && !cwds.includes(cwd)) {
-      setCwd("all");
-    }
-  }, [cwds.join("|")]);
+  // A workspace that left the list (its box removed, its sessions gone) drops the filter back to all.
+  if (cwd !== "all" && !cwds.includes(cwd)) {
+    setCwd("all");
+  }
 
   const open = async (r: {
     g: { key: string; box?: BoxData; name: string; sshBox?: boolean; provider?: string };
@@ -916,7 +935,8 @@ export function Sessions({ ctx, boxes, close }: SessionsProps) {
                 type="button"
                 style={opened ? btn : btnPrimary}
                 disabled={busy}
-                onClick={() => open(r)}
+                // open reports its own failure on the row, so nothing awaits it.
+                onClick={() => void open(r)}
               >
                 {label}
               </button>

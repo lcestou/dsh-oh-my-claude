@@ -1,3 +1,4 @@
+import { isElement } from "./dom-guards.js";
 // What the selection popover's Ask sends, and the Markdown quote scan the composer's quote
 // highlight (ultrathink.ts) reads.
 
@@ -13,7 +14,7 @@ const EDITABLE =
 
 /** The element a selection end sits in: the node itself, or a text node's parent. */
 const elementOf = (n: Node | null): Element | null =>
-  n === null ? null : n instanceof Element ? n : n.parentElement;
+  n === null ? null : isElement(n) ? n : n.parentElement;
 
 /**
  * The selected conversation text under `root`, trimmed, or null when the selection is empty, shorter

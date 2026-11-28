@@ -39,7 +39,9 @@ export function startBoxColours(): () => void {
   /** Read hints and boxes and rewrite the sheet; a read that a newer one overtook is dropped. */
   const paint = () => {
     const mine = ++latest;
-    void Promise.all([loadHints(), loadBoxList()]).then(([hints, boxes]) => {
+    void (async () => {
+      const [hints, boxes] = await Promise.all([loadHints(), loadBoxList()]);
+
       if (!live || mine !== latest || !boxes) {
         return;
       }
@@ -56,7 +58,7 @@ export function startBoxColours(): () => void {
         hints,
         boxes.map((b) => b.provider),
       );
-    });
+    })();
   };
 
   paint();
@@ -89,7 +91,9 @@ export function useBoxColours(): { boxes: Array<BoxEntry>; colours: Map<string, 
     /** Read hints and boxes together; only the newest read lands. */
     const load = () => {
       const mine = ++latest;
-      void Promise.all([loadHints(), loadBoxList()]).then(([hints, boxes]) => {
+      void (async () => {
+        const [hints, boxes] = await Promise.all([loadHints(), loadBoxList()]);
+
         if (!live || mine !== latest || !boxes) {
           return;
         }
@@ -101,7 +105,7 @@ export function useBoxColours(): { boxes: Array<BoxEntry>; colours: Map<string, 
             boxes.map((b) => b.provider),
           ),
         });
-      });
+      })();
     };
 
     load();

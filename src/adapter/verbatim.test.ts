@@ -5,7 +5,7 @@ import { buildInput } from "./cli.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
 import { isCliCommandLine } from "./prompt.js";
-import type { PluginContext } from "../dsh.js";
+import { fakePluginContext } from "../test-context.js";
 
 const plain = JSON.parse(buildInput("hi @notes.md", []));
 
@@ -42,17 +42,16 @@ assert.equal(isCliCommandLine("/home/x/notes.md explain", undefined), false, "a 
 assert.equal(isCliCommandLine("please run /cost", ["cost"]), false, "not at the start");
 
 {
-  // SAFETY: partial fake; composedFor reads only the config and the command map
+  // composedFor reads only the config and the command map.
   const on = new ClaudeCodeAdapter(
-    { on() {} } as unknown as PluginContext,
+    fakePluginContext({ on() {} }),
     new Config({ verbatimPrompts: true }),
   );
 
   on.sessionCommands.set("s1", ["cost"]);
   assert.equal(on.composedFor("s1", "/cost"), false, "a CLI command dispatches");
   assert.equal(on.composedFor("s1", "hi @notes.md"), true, "a prompt goes as written");
-  // SAFETY: partial fake, as above
-  const off = new ClaudeCodeAdapter({ on() {} } as unknown as PluginContext, new Config({}));
+  const off = new ClaudeCodeAdapter(fakePluginContext({ on() {} }), new Config({}));
   assert.equal(off.composedFor("s1", "hi @notes.md"), false, "off: never marked");
 }
 

@@ -1,3 +1,4 @@
+import { isRec } from "./decode.js";
 // Does this repo have more stars today than the panel shows? One small read of GitHub's repo JSON,
 // cached in memory for a day, run beside the box's other status probes so it adds no wait of its
 // own. The count rides the /status route as a one-line nudge in Settings: a line that says how many
@@ -12,10 +13,9 @@ export const REPO_URL = "https://github.com/lcestou/dsh-oh-my-claude";
 /** `stargazers_count` from the repo JSON, or undefined when the field is missing or is not a
  *  finite count. A negative or fractional number is treated as missing rather than shown. */
 export function stargazerCount(text: string): number | undefined {
-  // `JSON.parse` is typed loosely enough to land in this shape without an assertion, and every
-  // other shape the endpoint could send (an error object, an array, a bare number) reads as an
-  // absent field below rather than throwing here.
-  let body: { stargazers_count?: unknown };
+  // Every other shape the endpoint could send (an error object, an array, a bare number) reads as
+  // an absent field below rather than throwing here.
+  let body: unknown;
 
   try {
     body = JSON.parse(text);
@@ -23,7 +23,7 @@ export function stargazerCount(text: string): number | undefined {
     return undefined; // not JSON at all: an error page, or a body cut short
   }
 
-  const raw = body?.stargazers_count;
+  const raw = isRec(body) ? body.stargazers_count : undefined;
 
   // Zero is a real answer, so this tests the type and the range and never truthiness.
   if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {

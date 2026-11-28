@@ -1,5 +1,6 @@
 // The whole ClaudeCodeAdapter class, unsplit: the live claude processes, the bridges into them, the routes and the transcript mirror.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
+import { setTimeout as sleep } from "node:timers/promises";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { access, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
@@ -92,6 +93,7 @@ import {
   spawnKeeper,
   decodeTaskOutput,
 } from "../process.js";
+import { idOf, stringOf, isFileRef, numberValue } from "../decode.js";
 import type { ClaudeEvent } from "../process.js";
 import type {
   Agent,
@@ -112,6 +114,7 @@ import {
   TEMPORARY_SESSIONS,
   TURN_RECORDS,
   asSessionId,
+  asToolCallId,
 } from "../dsh.js";
 import {
   auxCwd,
@@ -155,7 +158,6 @@ import {
   countsForWorkspaceMemory,
   writeJson,
 } from "../state.js";
-import type { PermissionMode } from "../state.js";
 import { suggestRule } from "../permissions.js";
 import { currentLogVersion } from "../rows-probe.js";
 import type { ToolMode, ToolModeInfo } from "../rows-probe.js";
@@ -208,6 +210,7 @@ import type {
   LiveTask,
   LiveTaskPatch,
   HookRun,
+  ToolResultMeta,
 } from "../translator.js";
 import type { FinishReason, Message } from "@deepseek-ai/dsh-llm";
 import type {
@@ -241,7 +244,7 @@ import {
   watchSettingsIn,
 } from "./routing.js";
 import type { Route, RouteFilter } from "./routing.js";
-import type { Continuation, ControlRequestEvent } from "./types.js";
+import type { Continuation, ControlledProcess, ControlRequestEvent } from "./types.js";
 import {
   HOLD_IDLE_MS,
   inRelay,
@@ -417,12 +420,12 @@ import {
   typedAfterMirror,
   wantedUltracode,
   WATCH_LOOKBACK_BYTES,
+  isSpliceEvent,
 } from "./turn.js";
 import type {
   IdleTarget,
   LiveTurn,
   ResultFrame,
-  SpliceEvent,
   TurnRecord,
   TurnsReply,
   UltracodeState,
@@ -441,6 +444,16 @@ const notifier = new Notifier({
   hints: () => readHints(join(STATE_DIR, "hints.json")),
 });
 
+/** Whether a request names its session; the persistent path needs one. */
+const hasSession = (options: GenerateOptions): options is SessionOptions =>
+  options.sessionId !== undefined && options.sessionId !== null && options.sessionId !== "";
+
+/** Start one store's restore in the background. A store that fails to load, or whose restore
+ *  throws, keeps the field's own default: persisted state is an optimization only. */
+const restoreQuietly = (work: () => Promise<void>): void => {
+  work().catch(() => {});
+};
+
 /** The LlmAdapter that drives the logged-in Claude Code CLI: it owns the live `claude` processes, bridges dsh's commands and routes into them, and mirrors their transcript back into dsh. */
 export class ClaudeCodeAdapter extends LlmAdapter {
   /** The context `apply` mounted this instance with. Read it through `ctx`. */
@@ -455,7 +468,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return this.mountedCtx;
     }
 
-    const next = mountedInstance<ClaudeCodeAdapter>(this.providerId);
+    const next = mountedInstance(this.providerId);
 
     return next && next !== this ? next.ctx : this.mountedCtx;
   }
@@ -472,7 +485,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    *  the boot nudge leaves them to that dsh. */
   foreignSessions = new Set<string>();
   /** dsh's permission preset service, when mounted: the shield's current preset per session. */
-  permissionPresets?: { current: (session: object) => string };
+  permissionPresets?: PluginContext["permissionPresets"];
   processes: Map<string, ClaudeProcess>;
   /** Per session, the timer that continues the task once its usage limit resets. */
   limitTimers: Map<string, ReturnType<typeof setTimeout>>;
@@ -576,11 +589,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.mountedCtx = ctx;
     // The probe answers `ok: false` with a reason rather than throwing, and the catch keeps the
     // inline fallback on any dsh where that stops being true.
-    void rowsSupported()
-      .then((r) => {
-        this.rowsByDefault = r.ok;
-      })
-      .catch(() => {});
+    restoreQuietly(async () => {
+      this.rowsByDefault = (await rowsSupported()).ok;
+    });
     // Before `localConfig` turns a bare name into this box's absolute path: a turn that runs
     // somewhere else needs the name as configured. See `commandFor`.
     this.configuredCommand = config.command;
@@ -629,118 +640,83 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     this.accessModes = new Map();
     this.approvalsOff = new Set();
     this.controlWaiters = new Map();
-    loadPermissionModes(this.stateDir)
-      .then((modes) => {
-        // Merge rather than replace: another mount may have filled the shared map already.
-        for (const [id, mode] of modes) {
-          if (!this.permissionModes.has(id)) {
-            this.permissionModes.set(id, mode);
-          }
+    restoreQuietly(async () => {
+      // Merge rather than replace: another mount may have filled the shared map already.
+      for (const [id, mode] of await loadPermissionModes(this.stateDir)) {
+        if (!this.permissionModes.has(id)) {
+          this.permissionModes.set(id, mode);
         }
-      })
-      .catch(() => {}); // state is an optimization only
-    loadToolMode(this.stateDir)
-      .then((mode) => {
-        this.toolMode = mode;
-      })
-      .catch(() => {}); // state is an optimization only
-    loadTerminalSync(this.stateDir)
-      .then((on) => {
-        if (on !== undefined) {
-          this.terminalSync = on;
-        }
-      })
-      .catch(() => {}); // unreadable state leaves the field's own default, which is off
-    this.turnsLoaded = loadTurnRecords(this.stateDir)
-      .then(async (saved) => {
-        for (const [id, list] of saved) {
-          if (!this.turnBuffer.has(id)) {
-            this.turnBuffer.set(id, list);
-          }
-        }
+      }
+    });
+    restoreQuietly(async () => {
+      this.toolMode = await loadToolMode(this.stateDir);
+    });
+    // Unreadable state leaves the field's own default, which is off.
+    restoreQuietly(async () => {
+      const on = await loadTerminalSync(this.stateDir);
 
-        // Once per state directory: records stored with a session's running total are put back to
-        // the turn's own share. Its marker makes every later start a single `access`.
-        const report = await repairStoredTurns({
-          stateDir: this.stateDir,
-          claudeHome: this.claudeHome,
-          buffer: this.turnBuffer,
-          ids: new Set(saved.keys()),
-          ring: TURN_RING,
-          claudeIdOf: claudeSessionId,
-          save: (id) => saveTurnRecords(this.stateDir, id, this.turnBuffer.get(id) ?? []),
-        });
-
-        if (report && report.repaired > 0) {
-          this.log(
-            "info",
-            `repaired ${report.repaired} stored turn costs in ${report.sessions} sessions; the figures as they were are in turns.json.before-repair`,
-          );
-        }
-      })
-      .catch(() => {}); // state is an optimization only
+      if (on !== undefined) {
+        this.terminalSync = on;
+      }
+    });
+    this.turnsLoaded = this.restoreTurns().catch(() => {}); // state is an optimization only
     // `/btw` asides are memory-only per instance, so a restart or a hot reload would lose them;
     // reload the persisted ring so an answer survives to be re-read.
-    loadAsides(this.stateDir)
-      .then((saved) => {
-        for (const [id, list] of saved) {
-          if (!this.sideQuestions.has(id)) {
-            this.sideQuestions.set(id, list);
-          }
+    restoreQuietly(async () => {
+      for (const [id, list] of await loadAsides(this.stateDir)) {
+        if (!this.sideQuestions.has(id)) {
+          this.sideQuestions.set(id, list);
         }
-      })
-      .catch(() => {}); // state is an optimization only
-    loadStarters(this.stateDir)
-      .then((saved) => {
-        for (const [id, text] of saved) {
-          if (!this.starters.has(id)) {
-            this.starters.set(id, text);
-          }
+      }
+    });
+    restoreQuietly(async () => {
+      for (const [id, text] of await loadStarters(this.stateDir)) {
+        if (!this.starters.has(id)) {
+          this.starters.set(id, text);
         }
-      })
-      .catch(() => {}); // state is an optimization only
+      }
+    });
     this.limitTimers = new Map();
     // Waits armed before a restart: re-arm them, no earlier than the boot resume nudge.
-    loadLimitWaits(this.stateDir)
-      .then((waits) => {
-        for (const [id, at] of waits) {
-          this.armLimitWait(id, at, RESUME_DELAY_MS + LIMIT_GRACE_MS);
-        }
-      })
-      .catch(() => {});
+    restoreQuietly(async () => {
+      for (const [id, at] of await loadLimitWaits(this.stateDir)) {
+        this.armLimitWait(id, at, RESUME_DELAY_MS + LIMIT_GRACE_MS);
+      }
+    });
     // What each session asked for before a restart: unconfirmed again until a process says.
-    readFile(join(this.stateDir, "ultracode.json"), "utf8")
-      .then((text) => {
-        for (const [id, wanted] of flagsOf(toJsonValue(JSON.parse(text)))) {
-          if (!this.ultracode.has(id)) {
-            this.ultracode.set(id, { wanted });
-          }
+    // No file: nobody has set it.
+    restoreQuietly(async () => {
+      const text = await readFile(join(this.stateDir, "ultracode.json"), "utf8");
+
+      for (const [id, wanted] of flagsOf(toJsonValue(JSON.parse(text)))) {
+        if (!this.ultracode.has(id)) {
+          this.ultracode.set(id, { wanted });
         }
-      })
-      .catch(() => {}); // no file: nobody has set it
+      }
+    });
     this.warnedNoSeam = false;
     this.loggedVersion = false;
 
     // Kept on globalThis so a hot reload of this plugin adopts the running Claude processes
     // instead of orphaning them: their pipes belong to this node process, not to the plugin scope.
-    // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
-    const registry = globalThis as typeof globalThis & {
+    // The registry symbol is this plugin's own key on globalThis, typed here once
+    const registry: typeof globalThis & {
       [PROCESS_REGISTRY]?: Map<string, ClaudeProcess>;
       [TURN_RECORDS]?: Map<string, Array<TurnRecord>>;
       [TEMPORARY_SESSIONS]?: Set<string>;
       [COMPACT_OWNED]?: WeakSet<Agent>;
       [PERMISSION_MODE_OVERRIDES]?: Map<string, string | null>;
-    };
+    } = globalThis;
 
-    this.processes = registry[PROCESS_REGISTRY] ??= new Map(); // providerId:sessionId → ClaudeProcess
+    this.processes = registry[PROCESS_REGISTRY] ??= new Map<string, ClaudeProcess>(); // providerId:sessionId → ClaudeProcess
     // Shared across mounts, like the processes above: the panel sets a session's permission mode
     // through the default instance's route, and the mount that spawns that session, an SSH box's,
     // for a session on that box's model, is the one that reads it back. A per-instance map left
     // the box spawning under the config default while the shield reported the chosen mode.
-    this.permissionModes = registry[PERMISSION_MODE_OVERRIDES] ??= new Map();
-    this.turnBuffer = registry[TURN_RECORDS] ??= new Map();
-    this.temporary = registry[TEMPORARY_SESSIONS] ??= new Set();
-    this.compactOwned = registry[COMPACT_OWNED] ??= new WeakSet();
+    this.permissionModes = registry[PERMISSION_MODE_OVERRIDES] ??= new Map<string, string | null>();
+    this.turnBuffer = registry[TURN_RECORDS] ??= new Map<string, Array<TurnRecord>>();
+    this.temporary = registry[TEMPORARY_SESSIONS] ??= new Set<string>();
+    this.compactOwned = registry[COMPACT_OWNED] ??= new WeakSet<Agent>();
 
     // Adopted processes still point their idle-reply callback at the previous (now dead) adapter.
     for (const [key, proc] of this.processes) {
@@ -761,25 +737,24 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // tool nothing is forwarded; a typed steer is recorded as relayed so the card can edit it in
     // dsh's inbox until the tool ends. A typed steer carrying a file or image is recorded too, as
     // `boundary` during a native tool, since it waits in dsh's inbox for the next tool result.
-    ctx.on?.("session/event", (sessionArg, eventArg) => {
-      // SAFETY: dsh's session/event carries (session, event); only the spliced-inbox fields are read
-      const session = sessionArg as { id?: string };
-      // SAFETY: same event object, narrowed to the agent/inbox/spliced shape this handler reads
-      const event = eventArg as SpliceEvent;
+    ctx.on?.("session/event", (sessionArg, event) => {
+      // dsh's session/event carries (session, event); only the session id and the spliced-inbox
+      // fields are read.
+      const sessionId = idOf(sessionArg) ?? "";
 
-      if (event?.type !== "agent/inbox/spliced") {
+      if (!isSpliceEvent(event)) {
         return;
       }
 
       if (event.data?.target === "next-turn") {
-        return this.editedInQueue(session?.id ?? "", event.data.inserted ?? []);
+        return this.editedInQueue(sessionId, event.data.inserted ?? []);
       }
 
       if (event.data?.target !== "next-step") {
         return;
       }
 
-      const proc = this.processes.get(registryKey(this.providerId, session?.id ?? ""));
+      const proc = this.processes.get(registryKey(this.providerId, sessionId));
 
       if (!proc?.alive) {
         return;
@@ -864,32 +839,39 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           proc.sent.add(key);
           const uuid = randomUUID();
           const at = Date.now();
-          const sessionId = session?.id ?? "";
-          void this.writeSteerMessage(live, key, proc, { sessionId }, uuid)
-            .catch(() => false)
-            .then((written) => {
-              // Not written, or the load threw: the park still comes, and openTurn writes it
-              // once it is out of `sent`.
-              if (!written) {
-                proc.sent.delete(key);
-              }
-              // A park since the splice has already taken the CLI's queue; a row now would linger.
-              else if (proc.steerPending) {
-                record({ uuid, key, text, at });
-              }
+          // Fire and forget: the splice handler is synchronous, and the row follows the write.
+          void (async () => {
+            const written = await this.writeSteerMessage(
+              live,
+              key,
+              proc,
+              { sessionId },
+              uuid,
+            ).catch(() => false);
 
-              this.publishAsides(sessionId);
-            });
+            // Not written, or the load threw: the park still comes, and openTurn writes it
+            // once it is out of `sent`.
+            if (!written) {
+              proc.sent.delete(key);
+            }
+            // A park since the splice has already taken the CLI's queue; a row now would linger.
+            else if (proc.steerPending) {
+              record({ uuid, key, text, at });
+            }
+
+            this.publishAsides(sessionId);
+          })();
+
           continue;
         }
 
         const uuid = randomUUID();
 
-        if (proc.write(buildInput(text, [], uuid, this.composedFor(session?.id, text)))) {
+        if (proc.write(buildInput(text, [], uuid, this.composedFor(sessionId, text)))) {
           proc.sent.add(key);
 
-          if (session?.id) {
-            notifier.cancel(session.id);
+          if (sessionId) {
+            notifier.cancel(sessionId);
           }
 
           proc.steerPending = true;
@@ -906,7 +888,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         let inbox: Agent["inbox"];
 
         try {
-          inbox = this.ctx?.agents?.get?.(asSessionId(session?.id ?? ""))?.inbox;
+          inbox = this.ctx?.agents?.get?.(asSessionId(sessionId))?.inbox;
         } catch {
           inbox = undefined; // scope reloading: the next splice or the exit clears them
         }
@@ -932,10 +914,42 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         }
       }
 
-      if (session?.id) {
-        this.publishAsides(session.id);
+      if (sessionId) {
+        this.publishAsides(sessionId);
       }
     });
+  }
+
+  /** Put the stored turn records back, merged under any a live turn already wrote, then repair
+   *  once per state directory the costs stored as a session's running total. Rejects when the
+   *  records cannot be read; the constructor's catch keeps the empty buffer. */
+  private async restoreTurns(): Promise<void> {
+    const saved = await loadTurnRecords(this.stateDir);
+
+    for (const [id, list] of saved) {
+      if (!this.turnBuffer.has(id)) {
+        this.turnBuffer.set(id, list);
+      }
+    }
+
+    // Once per state directory: records stored with a session's running total are put back to
+    // the turn's own share. Its marker makes every later start a single `access`.
+    const report = await repairStoredTurns({
+      stateDir: this.stateDir,
+      claudeHome: this.claudeHome,
+      buffer: this.turnBuffer,
+      ids: new Set(saved.keys()),
+      ring: TURN_RING,
+      claudeIdOf: claudeSessionId,
+      save: (id) => saveTurnRecords(this.stateDir, id, this.turnBuffer.get(id) ?? []),
+    });
+
+    if (report && report.repaired > 0) {
+      this.log(
+        "info",
+        `repaired ${report.repaired} stored turn costs in ${report.sessions} sessions; the figures as they were are in turns.json.before-repair`,
+      );
+    }
   }
 
   /** dsh's handle for this instance's route. `replace` re-reads `providerInfo`, which is how a
@@ -1615,10 +1629,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Every mounted instance, this one included: at boot or in a test it may not be in the shared
    *  registry yet. */
   private static mounts(self: ClaudeCodeAdapter): Set<ClaudeCodeAdapter> {
-    // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
-    const g = globalThis as typeof globalThis & {
+    // The registry symbol is this plugin's own key on globalThis, typed here once
+    const g: typeof globalThis & {
       [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
-    };
+    } = globalThis;
 
     return new Set<ClaudeCodeAdapter>([self, ...(g[ADAPTER_CURRENT]?.values() ?? [])]);
   }
@@ -1712,8 +1726,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       // SAFETY: permissionModeFor returns a known PermissionMode value from its mapping table.
       const allowed = isPermissionMode(ceiling) ? modesUpTo(ceiling) : PERMISSION_MODES;
 
-      // SAFETY: override came from the adapter's own permissionModes map which only stores valid modes.
-      if (allowed.includes(override as PermissionMode)) {
+      // The map holds only valid modes; the check keeps a stale entry from winning.
+      if (isPermissionMode(override) && allowed.includes(override)) {
         return override;
       }
     }
@@ -1988,7 +2002,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    */
   async dropRefused(proc: ClaudeProcess, cwd: string, id: string): Promise<void> {
     proc.kill();
-    await Promise.race([proc.child.done, new Promise((r) => setTimeout(r, 10_000).unref?.())]);
+    await Promise.race([proc.child.done, sleep(10_000, undefined, { ref: false })]);
     const dir = join(this.claudeHome, "projects", projectDirName(cwd));
     // Moved aside, never deleted: for a session opened from a Claude Code transcript the id is the
     // person's own, and `claude --resume` and the panel's reseed still need that file.
@@ -2593,7 +2607,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
                   // The registration outlives a hot reload of this plugin, so the instance that
                   // made it may be a dead one: the queued mark must go where the next turn's check
                   // reads it, on the instance mounted now.
-                  const owner = mountedInstance<ClaudeCodeAdapter>(this.providerId) ?? this;
+                  const owner = mountedInstance(this.providerId) ?? this;
 
                   if (owner.notClaude(target, "compact") === undefined) {
                     owner.compactQueued.add(target.id);
@@ -2661,8 +2675,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       return;
     }
 
-    // SAFETY: a plain slot on globalThis, written only here
-    (globalThis as { [COMMAND_CATALOG]?: Array<string> })[COMMAND_CATALOG] = names;
+    // A plain slot on globalThis, written only here; the slot is optional, so the view is safe.
+    const g: typeof globalThis & { [COMMAND_CATALOG]?: Array<string> } = globalThis;
+    g[COMMAND_CATALOG] = names;
     const failed: Array<string> = [];
 
     for (const cmd of names) {
@@ -2680,7 +2695,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const prefixed = `${BRIDGE_PREFIX}${cmd}`;
       const dshName = CLIENT_COMMANDS.has(cmd) || HOST_COMMANDS.has(cmd) ? prefixed : cmd;
 
-      if (agent && commands.find(agent, dshName) !== undefined) {
+      // dsh's registry lookup (not Array#find): a command another host already owns here.
+      const taken = agent ? commands.find(agent, dshName) : undefined;
+
+      if (taken !== undefined) {
         continue;
       }
 
@@ -2723,13 +2741,19 @@ export class ClaudeCodeAdapter extends LlmAdapter {
                   source: { kind: "user" },
                 }),
               );
-              const source = { kind: "skill-invocation", name: cmd, form: "instructions" };
-              // SAFETY: dsh-llm's MessageSource type predates the skill kinds; dsh's own skill
-              // injection (dsh-tool-skill) writes exactly this source, and the chat draws it folded.
+
+              // dsh's own skill injection (dsh-tool-skill) writes exactly this source, and the chat
+              // draws it folded.
+              const source: MessageSource = {
+                kind: "skill-invocation",
+                name: cmd,
+                form: "instructions",
+              };
+
               target.followup(
                 createUserMessage({
                   content: [{ type: "text", text: skillContent(cmd, own.path, own.body) }],
-                  source: source as MessageSource,
+                  source,
                 }),
               );
 
@@ -2984,7 +3008,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * ponytail: the keeper's spec.json keeps the old spec; a reattach after a dsh restart sees a key
    * mismatch and respawns with the new flags, which is correct, only one spawn later than ideal.
    */
-  async retarget(proc: ClaudeProcess, spec: ClaudeProcessSpec): Promise<boolean> {
+  async retarget(proc: ControlledProcess, spec: ClaudeProcessSpec): Promise<boolean> {
     if (specKey({ ...proc.spec, model: spec.model, effort: spec.effort }) !== specKey(spec)) {
       return false;
     }
@@ -3045,9 +3069,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
 
     const id = event.response?.request_id ?? event.request_id;
-    const waiter = this.controlWaiters.get(id);
+    const waiter = id === undefined ? undefined : this.controlWaiters.get(id);
 
-    if (!waiter) {
+    if (id === undefined || !waiter) {
       return false;
     }
 
@@ -3067,7 +3091,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * to `resolveControl` as they arrive, so this works between turns as well as inside one.
    */
   control(
-    proc: ClaudeProcess,
+    proc: ControlledProcess,
     request: Record<string, JsonValue>,
     timeoutMs = 15_000,
   ): Promise<ControlReply> {
@@ -3183,8 +3207,11 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
 
     const order = ids
-      .map((id) => ({ id, waiting: proc.steers.get(id) }))
-      .filter((e): e is { id: string; waiting: WaitingSteer } => e.waiting !== undefined)
+      .flatMap((id) => {
+        const waiting = proc.steers.get(id);
+
+        return waiting === undefined ? [] : [{ id, waiting }];
+      })
       .toSorted((a, b) => a.waiting.at - b.waiting.at);
 
     if (order.length === 0) {
@@ -3473,7 +3500,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // waits a little past that rather than for ever, then sends anyway.
     await Promise.race([
       agent.whenIdle(),
-      new Promise<void>((resolve) => setTimeout(resolve, INTERRUPT_GRACE_MS + 5000).unref?.()),
+      sleep(INTERRUPT_GRACE_MS + 5000, undefined, { ref: false }),
     ]);
 
     return this.releaseHold(sessionId, held.holdId, "restore");
@@ -3722,9 +3749,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Seed from the last answer, unless a process has already answered this boot. */
   async seedCliModels() {
     try {
-      const rows = decodeCliModels({
-        models: JSON.parse(await readFile(this.cliModelsPath(), "utf8")),
-      });
+      const saved: unknown = JSON.parse(await readFile(this.cliModelsPath(), "utf8"));
+      const rows = decodeCliModels(toJsonValue({ models: saved }));
 
       if (rows.length > 0 && this.cliModels.length === 0) {
         this.cliModels = rows;
@@ -4023,7 +4049,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
 
     const now = Date.now();
-    const open = live.thinkingOpen === true && live.thinkingAt !== undefined;
+    // When a thinking burst is open: when it started.
+    const thinkingAt = live.thinkingOpen === true ? live.thinkingAt : undefined;
 
     const r: LiveTurnReply = {
       tokens: (live.output ?? 0) + (live.thinking ?? 0),
@@ -4035,8 +4062,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       mode: live.mode ?? "requesting",
     };
 
-    if (open) {
-      r.thinkingMs = now - live.thinkingAt!;
+    if (thinkingAt !== undefined) {
+      r.thinkingMs = now - thinkingAt;
     }
 
     if (live.frameAt !== undefined) {
@@ -4452,7 +4479,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           `initialize ${proc.spec?.sessionId ?? "?"}: ${reply.ok ? "applied" : `refused (${reply.error})`}, suggestions ${request.promptSuggestions ? "on" : "off"}`,
         );
       })
-      .catch((error) => this.log("warn", `initialize: ${errorText(error)}`));
+      .catch((cause: unknown) => this.log("warn", `initialize: ${errorText(cause)}`));
   }
 
   /**
@@ -4533,7 +4560,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           `title ${sessionId}: sent ${title} to Claude: ${reply.ok ? "ok" : reply.error}`,
         );
       })
-      .catch((error) => this.log("warn", `rename_session: ${errorText(error)}`));
+      .catch((cause: unknown) => this.log("warn", `rename_session: ${errorText(cause)}`));
   }
 
   /**
@@ -4792,10 +4819,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    */
   /** The instance whose aside ring the route and the bubble read: the main mount, else this one. */
   asideOwner(): ClaudeCodeAdapter {
-    // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
-    const g = globalThis as typeof globalThis & {
+    // The registry symbol is this plugin's own key on globalThis, typed here once
+    const g: typeof globalThis & {
       [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
-    };
+    } = globalThis;
 
     return g[ADAPTER_CURRENT]?.get("claude-code") ?? this;
   }
@@ -4860,10 +4887,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * snapshot `ownerFor` falls back to for a session with nothing running.
    */
   ownerIfLive(sessionId: string): ClaudeCodeAdapter | undefined {
-    // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
-    const g = globalThis as typeof globalThis & {
+    // The registry symbol is this plugin's own key on globalThis, typed here once
+    const g: typeof globalThis & {
       [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
-    };
+    } = globalThis;
 
     const mounts = g[ADAPTER_CURRENT];
     const suffix = `:${sessionId}`;
@@ -4907,10 +4934,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
    * here first, or the panel reports "no live Claude process" for a session that has one.
    */
   ownerFor(sessionId: string): ClaudeCodeAdapter {
-    // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
-    const g = globalThis as typeof globalThis & {
+    // The registry symbol is this plugin's own key on globalThis, typed here once
+    const g: typeof globalThis & {
       [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
-    };
+    } = globalThis;
 
     const mounts = g[ADAPTER_CURRENT];
     const suffix = `:${sessionId}`;
@@ -4978,15 +5005,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // A live process is asked at once; an evicted one is respawned first, and the entry stays
     // pending while `--resume` loads.
     const live = owner.processFor(sessionId);
-    void (
-      live?.alive
-        ? send(live)
-        : owner
-            .revive(sessionId)
-            .then((proc) =>
-              proc?.alive ? send(proc) : { ok: false as const, error: NO_PROCESS_FOR_ASIDE },
-            )
-    ).then((reply) => {
+
+    // Fire and forget: the caller has its row already, and the answer lands on it.
+    void (async () => {
+      const proc = live?.alive ? live : await owner.revive(sessionId);
+
+      const reply = proc?.alive
+        ? await send(proc)
+        : { ok: false as const, error: NO_PROCESS_FOR_ASIDE };
+
       entry.pending = false;
 
       if (!reply.ok) {
@@ -5002,7 +5029,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
 
       this.persistAsides(sessionId);
-    });
+    })();
   }
 
   /** Save (or clear, when the text is blank) an opening prompt for a session or for `default`. */
@@ -5054,10 +5081,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
   /** Set the mode on every mount at once, so a session on a box's model follows the same switch. */
   async setToolMode(mode: ToolMode): Promise<ToolModeInfo> {
-    // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
-    const g = globalThis as typeof globalThis & {
+    // The registry symbol is this plugin's own key on globalThis, typed here once
+    const g: typeof globalThis & {
       [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
-    };
+    } = globalThis;
 
     for (const mount of g[ADAPTER_CURRENT]?.values() ?? [this]) {
       mount.toolMode = mode;
@@ -5083,10 +5110,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   /** Turn terminal sync on or off for every mount. Off stops each mount's watchers and drops any
    *  queued mirror; on lets the next sweep pick loaded sessions back up. */
   async setTerminalSync(enabled: boolean): Promise<{ enabled: boolean }> {
-    // SAFETY: the registry symbol is this plugin's own key on globalThis, typed here once
-    const g = globalThis as typeof globalThis & {
+    // The registry symbol is this plugin's own key on globalThis, typed here once
+    const g: typeof globalThis & {
       [ADAPTER_CURRENT]?: Map<string, ClaudeCodeAdapter>;
-    };
+    } = globalThis;
 
     // Always include this mount: at boot or in a test it may not be in the shared registry yet.
     const mounts = new Set<ClaudeCodeAdapter>([this, ...(g[ADAPTER_CURRENT]?.values() ?? [])]);
@@ -5233,7 +5260,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (since !== undefined && since < ClaudeCodeAdapter.BOOT_BACKOFF_MS) {
       await trace(log, `boot: backoff, previous boot ${since}ms ago; nudge skipped`);
 
-      return;
+      return [];
     }
 
     const ids = await takeInterrupted(path);
@@ -5482,16 +5509,21 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       s.stdin.end(farTokenLine(far));
       s.stdout.on("data", (d) => (out += String(d)));
       s.stderr.on("data", (d) => (err += String(d)));
-      void s.done.then((o) => {
+      // Fire and forget: the executor settles `started` from the far side's answer.
+      void (async () => {
+        const o = await s.done;
+
         if (o.exitCode !== 0 || !out.includes(READY_MARK)) {
-          return reject(
+          reject(
             new Error(`hold start on ${host} failed (${o.exitCode}): ${err.trim() || out.trim()}`),
           );
+
+          return;
         }
 
         void saveHold(this.stateDir, sessionId, record);
         resolve(this.attachHold(run, record));
-      });
+      })();
     });
 
     return lazyHandle(started);
@@ -5619,7 +5651,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // Claude, and adopting it lets its next turn respawn it as a child (the spec key differs) and the
     // idle reaper end it. Returning early here, as this did, left it running with nobody attached.
     const root = join(this.stateDir, "keepers");
-    let dirs: Array<string> = [];
+    let dirs: Array<string>;
 
     if (only) {
       dirs = [...only].filter((dir) => existsSync(dir));
@@ -5657,12 +5689,16 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         if (info && !pidAlive(info.pid) && pidAlive(info.claudePid)) {
           try {
             process.kill(info.claudePid, "SIGTERM");
-          } catch {}
+          } catch {
+            // Already gone.
+          }
 
           setTimeout(() => {
             try {
               process.kill(info.claudePid, "SIGKILL");
-            } catch {}
+            } catch {
+              // The SIGTERM was enough.
+            }
           }, 3000).unref();
           orphanKilled = true;
         }
@@ -5681,7 +5717,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
               await trace(join(this.stateDir, "resume.log"), `  keeper.log: ${l}`);
             }
           }
-        } catch {}
+        } catch {
+          // No keeper log to tail.
+        }
 
         // A socket moved out of the directory (keeper-socket.ts) outlives a keeper that was killed
         // before its exit handler ran; only a name that function makes is removed.
@@ -5766,7 +5804,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         // An older keeper for a session adopted a moment ago: nobody will attach to it again.
         try {
           process.kill(info.claudePid, "SIGKILL");
-        } catch {}
+        } catch {
+          // Already gone.
+        }
 
         await trace(
           join(this.stateDir, "resume.log"),
@@ -5828,7 +5868,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     let pending = left;
 
     for (let i = 0; i < tries && pending.size > 0; i++) {
-      await new Promise((r) => setTimeout(r, everyMs).unref());
+      await sleep(everyMs, undefined, { ref: false });
 
       if (!this.scopeActive()) {
         return;
@@ -5886,7 +5926,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     ready = () => proc.hasTurnOutput(),
   ): Promise<boolean> {
     for (let i = 0; i < tries && proc.alive; i++) {
-      await new Promise((r) => setTimeout(r, everyMs));
+      await sleep(everyMs);
 
       if (proc.busy) {
         return true;
@@ -5909,7 +5949,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   scopeActive(): boolean {
     // A profile config edit re-applies the plugin in the same fiber, so `uid` stays set and the
     // context alone reads active: ask the registry too, which names the instance mounted last.
-    const now = mountedInstance<ClaudeCodeAdapter>(this.providerId);
+    const now = mountedInstance(this.providerId);
 
     return contextActive(this.mountedCtx) && (now === undefined || now === this);
   }
@@ -5926,8 +5966,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     tries = RELOAD_RESUME_TRIES,
   ): Promise<void> {
     for (let i = 0; i < tries; i++) {
-      await new Promise((r) => setTimeout(r, everyMs));
-      const next = mountedInstance<ClaudeCodeAdapter>(this.providerId);
+      await sleep(everyMs);
+      const next = mountedInstance(this.providerId);
 
       if (!next || next === this || !next.scopeActive()) {
         continue;
@@ -6043,7 +6083,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
     for (let i = 0; i < attempts && proc.alive && proc.bridgeStale; i++) {
       if (i > 0) {
-        await new Promise((r) => setTimeout(r, retryMs));
+        await sleep(retryMs);
       }
 
       if (!proc.alive || !proc.bridgeStale) {
@@ -6265,15 +6305,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       }
     }
 
-    if (options.purpose || !options.sessionId || !this.config.resume) {
+    if (options.purpose || !hasSession(options) || !this.config.resume) {
       yield* this.oneShot(options);
 
       return;
     }
 
     this.mountCompactOverride(this.ctx?.agents?.get?.(options.sessionId));
-    // SAFETY: sessionId was checked just above; the persistent path always has one
-    yield* this.turn(options as SessionOptions, false);
+    // The persistent path always has a session id, checked just above.
+    yield* this.turn(options, false);
   }
 
   // ── persistent path ──────────────────────────────────────────────────────
@@ -6458,7 +6498,10 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     // turn again ($601.91, 2026-10-07, the day the totals were first kept). So the totals are
     // unknown until the records are in, and are settled then unless a result came first.
     proc.totalsUnknown = true;
-    void this.turnsLoaded.then(() => {
+    // Fire and forget: the handle is usable now, and the totals settle once the records are in.
+    void (async () => {
+      await this.turnsLoaded;
+
       if (!proc.totalsUnknown) {
         return;
       }
@@ -6477,7 +6520,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       proc.totalsUnknown = false;
       proc.costSoFar = last.costTotal;
       proc.apiMsSoFar = last.apiTotal;
-    });
+    })();
   }
 
   /**
@@ -7381,7 +7424,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     for (const b of m.content) {
       if (b.type !== "file") {
         content.push(b);
-      } else if (llm?.fileRequestText && b.attachment) {
+      } else if (llm?.fileRequestText && isFileRef(b.attachment)) {
         content.push({ type: "text", text: llm.fileRequestText(b.attachment) });
       } else {
         return undefined;
@@ -7794,16 +7837,15 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         const events = session.snapshotEvents();
 
         for (let i = events.length - 1; i >= 0 && (turn === undefined || step === undefined); i--) {
-          const e = events[i]!;
+          const e = events[i];
 
-          if (turn === undefined && e.type === "turn/start")
-          // SAFETY: turn/start events carry turn as a number in data at runtime
-          {
-            turn = e.data.turn as number | undefined;
-          } else if (step === undefined && e.type === "step/start")
-          // SAFETY: step/start events carry step as a number in data at runtime
-          {
-            step = e.data.step as number | undefined;
+          // turn/start and step/start events carry their number in data.
+          if (e === undefined) {
+            continue;
+          } else if (turn === undefined && e.type === "turn/start") {
+            turn = numberValue(e.data.turn);
+          } else if (step === undefined && e.type === "step/start") {
+            step = numberValue(e.data.step);
           }
         }
 
@@ -7836,7 +7878,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
      *  still running when the step must end). Deletes the call from `callSeqs` either way. */
     const appendNativeResult =
       turnStep && rowMode.rows
-        ? (callId: string, text: string, isError: boolean, meta?: object) => {
+        ? (callId: string, text: string, isError: boolean, meta?: ToolResultMeta) => {
             try {
               const session = this.ctx?.sessions?.get?.(asSessionId(options.sessionId));
 
@@ -7847,26 +7889,20 @@ export class ClaudeCodeAdapter extends LlmAdapter {
               const callSeq = callSeqs.get(callId);
               callSeqs.delete(callId);
 
-              // SAFETY: createToolResultMessage returns dsh's own tool-result message (a user
-              // message holding a tool-result block up to 0.1.6, a `role: "tool"` message from
-              // 0.1.7); session.append validates the shape at runtime either way
+              // createToolResultMessage returns dsh's own tool-result message (a user message
+              // holding a tool-result block up to 0.1.6, a `role: "tool"` message from 0.1.7);
+              // session.append validates the shape at runtime either way.
               const message = createToolResultMessage({
-                callId: callId as any,
+                callId: asToolCallId(callId),
                 content: [{ type: "text" as const, text }],
                 isError,
               });
 
-              // SAFETY: message is ToolResultMessage (a user-role Message); session.append validates JSON at runtime
-              const resultData = { turn: turnStep.turn, step: turnStep.step, message };
+              const resultEvent = { turn: turnStep.turn, step: turnStep.step, message };
 
-              if (meta) {
-                Object.assign(resultData, { meta });
-              }
-
-              // SAFETY: resultData has the shape expected by session.append for tool/result; fields validated at runtime
               session.append(
                 "tool/result",
-                resultData as any,
+                meta ? { ...resultEvent, meta } : resultEvent,
                 // SAFETY: sourceEventSeqs is optional when no call was recorded; invariant allows TOOL_NOT_STARTED as fallback
                 {
                   surfaceOp: "append",
@@ -7874,7 +7910,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
                 },
               );
             } catch (error) {
-              this.log("warn", `native tool result append failed: ${error}`);
+              this.log("warn", `native tool result append failed: ${errorText(error)}`);
             }
           }
         : undefined;
@@ -8039,7 +8075,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
                 return seq;
               } catch (error) {
-                this.log("warn", `native tool call append failed: ${error}`);
+                this.log("warn", `native tool call append failed: ${errorText(error)}`);
 
                 return undefined;
               }
@@ -8182,7 +8218,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       onToolResult: appendNativeResult,
     });
 
-    const pending = new Map(); // control request id → AbortController
+    const pending = new Map<string, AbortController>(); // control request id → AbortController
     // Set once this step starts gathering a relay batch; from then on it ends on that relay.
     let relaying = false;
     let outcome: Outcome = "ended"; // ended | finished | relayed | parked | retry
@@ -8250,8 +8286,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     proc.claimed = false;
     proc.lastUsed = Date.now();
     this.clearLimitWait(options.sessionId); // a prompt (or our own notice) supersedes the wait
-    markBusy(options.sessionId, true, join(this.stateDir, "busy.json")).catch((error) =>
-      this.log("warn", `busy.json: ${errorText(error)}`),
+    markBusy(options.sessionId, true, join(this.stateDir, "busy.json")).catch((cause: unknown) =>
+      this.log("warn", `busy.json: ${errorText(cause)}`),
     );
     const handleControl = this.handleControl.bind(this);
 
@@ -8724,8 +8760,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         );
         void this.resumeAfterReload(options.sessionId);
       } else {
-        markBusy(options.sessionId, false, join(this.stateDir, "busy.json")).catch((error) =>
-          this.log("warn", `busy.json: ${errorText(error)}`),
+        markBusy(options.sessionId, false, join(this.stateDir, "busy.json")).catch(
+          (cause: unknown) => this.log("warn", `busy.json: ${errorText(cause)}`),
         );
       }
 
@@ -8790,9 +8826,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       const events = session.snapshotEvents();
 
       for (let i = events.length - 1; i >= 0; i--) {
-        const e = events[i]!;
+        const e = events[i];
 
-        if (e.type === "todo/write") {
+        if (e?.type === "todo/write") {
           todos = e.data.todos;
           break;
         }
@@ -8829,8 +8865,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     const timer = setTimeout(() => {
       this.limitTimers.delete(sessionId);
       saveLimitWait(this.stateDir, sessionId, undefined).catch(() => {});
-      this.continueAfterLimit(sessionId).catch((error) =>
-        trace(log, `limit wait ${sessionId}: ${errorText(error)}`),
+      this.continueAfterLimit(sessionId).catch((cause: unknown) =>
+        trace(log, `limit wait ${sessionId}: ${errorText(cause)}`),
       );
     }, delay);
 
@@ -8969,7 +9005,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
     for (let attempt = 0; attempt < 2; attempt++) {
       if (attempt > 0) {
-        await new Promise((r) => setTimeout(r, 700));
+        await sleep(700);
       }
 
       try {
@@ -9358,12 +9394,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       let goalActive = false;
 
       try {
-        // SAFETY: `goals` is dsh's optional goal service; read defensively, absent in some profiles
-        const goals = (
-          this.ctx as { goals?: { get?: (a: Agent) => { phase?: string } | undefined } }
-        ).goals;
-
-        goalActive = goals?.get?.(agent)?.phase === "active";
+        // `goals` is dsh's optional goal service, absent in some profiles.
+        goalActive = this.ctx?.goals?.get(agent)?.phase === "active";
       } catch {
         // no goal service or inactive scope: plain notice
       }
@@ -9375,11 +9407,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
           { type: "text", text },
           ...(extra ? [{ type: "text" as const, text: extra }] : []),
         ],
-        // SAFETY: the plugin builds against dsh-llm 0.1.6 types, whose MessageSource still spells
-        // the v3 `{ kind: "plugin", plugin }` wrapper; dsh 0.1.7's v4 log refuses exactly that
-        // shape at runtime and takes the producer-owned kind instead. The runtime is the
-        // authority here, so the v4 shape goes through the stale type.
-        source: noticeSource(text, goalActive, logVersion) as MessageSource,
+        // dsh 0.1.7's v4 log refuses the v3 `{ kind: "plugin", plugin }` wrapper and takes the
+        // producer-owned kind instead, which src/dsh.ts declares on MessageSourceMap.
+        source: noticeSource(text, goalActive, logVersion),
       });
 
       agent.followup(notice);
@@ -9416,7 +9446,12 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         try {
           const v = a.status;
 
-          return v === undefined ? "unknown" : String(v).slice(0, 40);
+          if (v === undefined) {
+            return "unknown";
+          }
+
+          // A string phase as it is; anything else by its kind (`[object Function]` for a method).
+          return (stringOf(v) ?? Object.prototype.toString.call(v)).slice(0, 40);
         } catch (error) {
           return `error:${errorText(error)}`;
         }
@@ -9718,7 +9753,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
 
     this.decide({ toolName, input, request, toolUseId, agent, signal, accessMode: prep.accessMode })
       .then((result) => reply(controlResponseLine(requestId, result)))
-      .catch((error) => reply(controlErrorLine(requestId, errorText(error))))
+      .catch((cause: unknown) => reply(controlErrorLine(requestId, errorText(cause))))
       .finally(() => {
         pending.delete(requestId);
         const held = this.awaitingInput.get(options.sessionId);
@@ -9762,9 +9797,9 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     }
 
     const questions = elicitationQuestions(request, requestId);
-    const ask = this.ctx?.userQuestions?.ask;
+    const userQuestions = this.ctx?.userQuestions;
 
-    if (!questions || !ask) {
+    if (!questions || !userQuestions) {
       yield* tr.wholeBlock("reasoning", `❓ ${serverText("inputDeclined", { who })}`);
       reply(controlResponseLine(requestId, { action: "decline" }));
 
@@ -9790,7 +9825,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
       : controller.signal;
 
     const agent = this.ctx?.agents?.get?.(options.sessionId);
-    ask({ questions, agent, signal })
+    userQuestions
+      .ask({ questions, agent, signal })
       .then((response) =>
         reply(controlResponseLine(requestId, elicitationResult(request, response, requestId))),
       )
@@ -9812,9 +9848,8 @@ export class ClaudeCodeAdapter extends LlmAdapter {
   async decide({ toolName, input, request, toolUseId, agent, signal, accessMode }: Decision) {
     if (toolName === "AskUserQuestion") {
       const questions = parseQuestions(input, toolUseId);
-      const ask = this.ctx?.userQuestions?.ask;
 
-      if (!questions || !ask) {
+      if (!questions || !this.ctx?.userQuestions) {
         return denyResult(toolUseId, "dsh could not present this question");
       }
 
@@ -9838,7 +9873,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
     if (toolName === "ExitPlanMode") {
       // Claude's plan arrives as a permission request with input.plan (markdown). Present it the
       // way dsh presents its own exit_plan_mode, so the native Plan review panel renders it.
-      const plan = String(input.plan ?? "");
+      const plan = stringOf(input.plan) ?? "";
 
       if (plan !== "") {
         const id = `plan-review:${toolUseId}`;
@@ -10031,7 +10066,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
         return;
       }
 
-      const reason = options.signal?.aborted
+      const reason: FinishReason = options.signal?.aborted
         ? { kind: "aborted", failure: { message: "aborted", code: "ABORTED" } }
         : {
             kind: "error",
@@ -10043,8 +10078,7 @@ export class ClaudeCodeAdapter extends LlmAdapter {
             },
           };
 
-      // SAFETY: reason matches FinishReason shape for error/aborted cases
-      yield { type: "finish", reason: reason as FinishReason };
+      yield { type: "finish", reason };
     } finally {
       this.clearIdle(idleKey);
       options.signal?.removeEventListener("abort", onAbort);

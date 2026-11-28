@@ -5,11 +5,20 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ClaudeCodeAdapter, Config, registryKey } from "../adapter.js";
 import { asSessionId } from "../dsh.js";
-import type { PluginContext } from "../dsh.js";
-import type { ClaudeEvent, ClaudeProcess } from "../process.js";
+import type { ModelRoute, SessionEvent, SessionHeader } from "../dsh.js";
+import type { ClaudeEvent, ClaudeProcess, ClaudeProcessSpec, RelayEvent } from "../process.js";
+import {
+  fakeAgent,
+  fakeClaudeProcess,
+  fakePluginContext,
+  fakeSession,
+  notFaked,
+} from "../test-context.js";
+import type { PluginContextOverrides } from "../test-context.js";
 import { cliMidTurn, compactionRoute } from "./cli-compaction.js";
 import type { CompactionFacts } from "./cli-compaction.js";
 import { tempDir } from "../test-tmp.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const facts = (o: Partial<CompactionFacts> = {}): CompactionFacts => ({
   enabled: true,
@@ -99,12 +108,20 @@ assert.equal(cliMidTurn({ ...idleCli, parked: "steer" }), true);
 const stateDir = tempDir("omc-cli-compaction-");
 const resumeLog = () => readFile(join(stateDir, "resume.log"), "utf8").catch(() => "");
 
-// SAFETY: partial fakes for tests; each carries what the code under test reads
-const fakeCtx = (o: object): PluginContext => o as unknown as PluginContext;
-
-const adapterWith = (ctx: object = {}, config: object = {}) => {
+/** An adapter over a fake context carrying `ctx`, with `config`, writing its log under the suite's
+ *  state dir. */
+const adapterWith = (
+  ctx: PluginContextOverrides = {},
+  config: Parameters<typeof Config>[0] = {},
+) => {
   const a = new ClaudeCodeAdapter(
-    fakeCtx({ on() {}, logger: { info() {}, warn() {} }, ...ctx }),
+    // No agent is registered unless a block hands one in.
+    fakePluginContext({
+      on() {},
+      logger: { info() {}, warn() {} },
+      agents: { get: () => undefined },
+      ...ctx,
+    }),
     Config(config),
   );
 
@@ -115,36 +132,36 @@ const adapterWith = (ctx: object = {}, config: object = {}) => {
 
 /** A session store answering one session: its header and its log's events. */
 const sessionsWith = (
-  header: object,
-  events: Array<object> = [],
-  ran: object = { provider: "claude-code", model: "claude-opus-5-5" },
+  header: Partial<SessionHeader>,
+  events: Array<SessionEvent> = [],
+  ran: Partial<ModelRoute> = { provider: "claude-code", model: "claude-opus-5-5" },
 ) => ({
-  get: () => ({
-    header,
-    snapshotEvents: () => events,
-    requestHeader: () => ({ version: 1, config: ran }),
-  }),
+  get: () =>
+    fakeSession({
+      header,
+      snapshotEvents: () => events,
+      requestHeader: () => ({ version: 1, config: ran }),
+    }),
 });
 
-/** A live, idle CLI that answers `/compact` with `events`, then a result. */
-const cliAnswering = (events: Array<object>, o: object = {}) => {
+/** A live, idle CLI that answers `/compact` with `events`, then a result. `killed()` says whether
+ *  it was killed. */
+const cliAnswering = (
+  events: Array<ClaudeEvent>,
+  o: Partial<Omit<ClaudeProcess, "spec">> & { spec?: Partial<ClaudeProcessSpec> } = {},
+) => {
   const written: Array<string> = [];
-  let queue: Array<object> = [];
+  let queue: Array<ClaudeEvent> = [];
+  let killed = false;
 
-  const proc = {
-    alive: true,
+  const proc = fakeClaudeProcess({
     busy: false,
     resuming: true,
-    relays: new Map(),
     parked: undefined,
-    steers: new Map(),
-    queue: { lines: [] as Array<string> },
     hasTurnOutput: () => false,
-    spec: { cwd: "/work", sessionId: "claude-1" },
     lastUsed: 0,
-    killed: false,
     kill() {
-      this.killed = true;
+      killed = true;
     },
     write(line: string) {
       written.push(line);
@@ -156,17 +173,27 @@ const cliAnswering = (events: Array<object>, o: object = {}) => {
       return true;
     },
     async nextEvent(): Promise<ClaudeEvent | null> {
-      // SAFETY: the fixture's events are CLI frames written loosely
-      return (queue.shift() as ClaudeEvent | undefined) ?? null;
+      return queue.shift() ?? null;
     },
     ...o,
-  };
+    spec: { cwd: "/work", sessionId: "claude-1", ...o.spec },
+  });
 
-  // SAFETY: partial fake; compactOnCli reads only the fields above
-  return { proc: proc as unknown as ClaudeProcess & { killed: boolean }, written };
+  // compactOnCli reads only the fields above.
+  return { proc, written, killed: () => killed };
 };
 
-const boundary = {
+/** A relay waiting on dsh, which is all a mid-turn check counts. */
+const waitingRelay = (id: string): RelayEvent => ({
+  type: "dsh_relay",
+  id,
+  name: "bash",
+  args: {},
+  resolve: () => {},
+  reject: () => {},
+});
+
+const boundary: ClaudeEvent = {
   type: "system",
   subtype: "compact_boundary",
   compact_metadata: { pre_tokens: 1234 },
@@ -191,7 +218,7 @@ const boundary = {
 {
   const a = adapterWith();
 
-  const { proc, written } = cliAnswering([
+  const { proc, written, killed } = cliAnswering([
     { type: "system", subtype: "status", status: "compacting" },
     { type: "control_request", request_id: "r1", request: { subtype: "hook_callback" } },
     boundary,
@@ -210,7 +237,7 @@ const boundary = {
   assert.match(written[1]!, /not supported while compacting/, "a control request is refused");
   assert.deepEqual(asked, [["/work", "claude-1", 1234]]);
   assert.equal(proc.busy, false);
-  assert.equal(proc.killed, false, "the session's process stays for its next turn");
+  assert.equal(killed(), false, "the session's process stays for its next turn");
 
   // dsh still prices the prompt the last request reported, so it asks again in the same check:
   // refused until the next request reports the compacted one, and nothing is owed.
@@ -264,10 +291,12 @@ const boundary = {
 }
 
 // A compaction the CLI reports failed, or one that never reached a boundary, is no summary.
-for (const events of [
+const unfinished: Array<Array<ClaudeEvent>> = [
   [{ type: "system", subtype: "status", status: null, compact_result: "failed" }],
   [{ type: "assistant", message: { content: [] } }],
-]) {
+];
+
+for (const events of unfinished) {
   const a = adapterWith();
   const { proc } = cliAnswering(events);
   a.processes.set(registryKey(a.providerId, "s1"), proc);
@@ -277,7 +306,13 @@ for (const events of [
 }
 
 // A CLI mid-turn is left alone: the request is refused and owed until the session is idle.
-for (const state of [{ busy: true }, { relays: new Map([["t1", {}]]) }, { parked: "steer" }]) {
+const midTurn: Array<Partial<ClaudeProcess>> = [
+  { busy: true },
+  { relays: new Map([["t1", waitingRelay("t1")]]) },
+  { parked: "steer" },
+];
+
+for (const state of midTurn) {
   const a = adapterWith();
   const { proc, written } = cliAnswering([boundary], state);
   a.processes.set(registryKey(a.providerId, "s1"), proc);
@@ -307,16 +342,16 @@ assert.match(await resumeLog(), /compaction s1: refused, owed until idle: Claude
     }
   };
 
-  await assert.rejects(run(), /mid-turn/);
+  await assert.rejects(run, /mid-turn/);
   assert.deepEqual(chunks, []);
 }
 
 // A model picked mid-turn: dsh may be compacting ahead of the switch, which a refusal would fail,
 // so the one-shot summarizer answers. A pick that only changes the effort is no switch.
 {
-  const pick = (model: string) => [
-    { type: "request/header", data: {} },
-    { type: "model/selection", data: { provider: "claude-code", model } },
+  const pick = (model: string): Array<SessionEvent> => [
+    { type: "request/header", seq: 0, time: 0, data: {} },
+    { type: "model/selection", seq: 1, time: 0, data: { provider: "claude-code", model } },
   ];
 
   const a = adapterWith({ sessions: sessionsWith({}, pick("claude-sonnet-5-5")) });
@@ -346,7 +381,7 @@ assert.match(await resumeLog(), /compaction s1: refused, owed until idle: Claude
   const a = adapterWith();
   a.claudeHome = stateDir;
 
-  const { proc, written } = cliAnswering([boundary], {
+  const { proc, written, killed } = cliAnswering([boundary], {
     resuming: false,
     spec: { cwd: "/work", sessionId: "never-started" },
   });
@@ -354,7 +389,7 @@ assert.match(await resumeLog(), /compaction s1: refused, owed until idle: Claude
   a.processes.set(registryKey(a.providerId, "s1"), proc);
   assert.equal(await a.compactionFromCli("s1"), undefined);
   assert.deepEqual(written, []);
-  assert.equal(proc.killed, false, "a process that was already running is not this call's to end");
+  assert.equal(killed(), false, "a process that was already running is not this call's to end");
 }
 
 // stream(): a compaction request answered from the pending summary, as plain text.
@@ -398,8 +433,13 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
     sessionId: asSessionId("s1"),
   };
 
-  // SAFETY: the fields turn() reads before it stops on the stand-in process
-  a.continuationFor = () => ({ mode, proc, options, results: [] }) as never;
+  // The fields turn() reads before it stops on the stand-in process.
+  a.continuationFor = () =>
+    mode === "relay"
+      ? { mode, proc, options, results: [] }
+      : mode === "steer"
+        ? { mode, proc, options }
+        : { mode, options };
   a.acquire = async () => {
     throw new Error("stop here");
   };
@@ -420,7 +460,7 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
 
   const calls: Array<string> = [];
   let answer: () => Promise<Compacted> = async () => ({ shadowedSeqs: [1], shadowedTokenCount: 9 });
-  const agent = { whenIdle: async () => {} };
+  const agent = fakeAgent({ whenIdle: async () => {} });
 
   const compaction = {
     compactNow: async () => {
@@ -432,7 +472,7 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
 
   const a = adapterWith({
     agents: { get: () => agent },
-    get: (name: string) => (name === "compaction" ? compaction : undefined),
+    services: { compaction },
   });
 
   const busy = Object.assign(new Error("busy"), { code: "busy" });
@@ -444,7 +484,7 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
    *  the retry's own call instead). */
   const retried = async () => {
     for (let i = 0; i < 1000 && a.syncingCompactions.has("s1"); i++) {
-      await new Promise((r) => setTimeout(r, 5));
+      await sleep(5);
     }
 
     assert.equal(a.syncingCompactions.has("s1"), false, "the retry finished");
@@ -527,18 +567,17 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
   const calls: Array<string> = [];
 
   const a = adapterWith({
-    agents: { get: () => ({ whenIdle: async () => {} }) },
+    agents: { get: () => fakeAgent({ whenIdle: async () => {} }) },
     sessions: sessionsWith({ origin: "subagent" }),
-    get: (name: string) =>
-      name === "compaction"
-        ? {
-            compactNow: async () => {
-              calls.push("compactNow");
+    services: {
+      compaction: {
+        compactNow: async () => {
+          calls.push("compactNow");
 
-              return null;
-            },
-          }
-        : undefined,
+          return null;
+        },
+      },
+    },
   });
 
   a.pendingCompactions.set("s1", "S");
@@ -552,7 +591,7 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
 // seam: syncCompaction asks the preset first, and still logs why when there is neither.
 {
   const calls: Array<string> = [];
-  const agent = { whenIdle: async () => {} };
+  const agent = fakeAgent({ whenIdle: async () => {} });
 
   const compaction = {
     compactNow: async () => {
@@ -564,14 +603,20 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
 
   const a = adapterWith({
     agents: { get: () => agent },
-    get: (name: string) => (name === "agentPresets" ? { serviceFor: () => compaction } : undefined),
+    services: {
+      agentPresets: {
+        serviceFor: () => compaction,
+        list: notFaked("agentPresets.list"),
+        presetForSession: notFaked("agentPresets.presetForSession"),
+      },
+    },
   });
 
   a.owedCompactions.add("s1");
   await a.syncCompaction("s1");
   assert.deepEqual(calls, ["preset compactNow"], "the preset's compaction runs the owed one");
 
-  const none = adapterWith({ agents: { get: () => agent }, get: () => undefined });
+  const none = adapterWith({ agents: { get: () => agent } });
   none.owedCompactions.add("s2");
   await none.syncCompaction("s2");
   const log = await readFile(join(stateDir, "resume.log"), "utf8");
@@ -592,11 +637,9 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
   const a = adapterWith();
   let wrote = 0;
 
-  // SAFETY: compactOnCli reads alive, busy, the queue and spec before it writes
-  const proc = {
-    alive: true,
+  // compactOnCli reads alive, busy, the queue and spec before it writes.
+  const proc = fakeClaudeProcess({
     busy: false,
-    relays: new Map(),
     hasTurnOutput: () => true,
     spec: { cwd: "/tmp", sessionId: "c1" },
     write: () => {
@@ -604,7 +647,7 @@ for (const mode of ["relay", "steer", "prompt"] as const) {
 
       return true;
     },
-  } as unknown as ClaudeProcess;
+  });
 
   a.revive = async () => proc;
   assert.equal(await a.compactOnCli("s1"), undefined);

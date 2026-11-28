@@ -4,7 +4,7 @@ import { blankSessionTarget, loadSessionDefault } from "./new-session-default.js
 import type { RememberedModel } from "./new-session-default.js";
 import { t, useLocale } from "./i18n.js";
 import type { CSSProperties, ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ROUTE,
   T,
@@ -21,6 +21,7 @@ import {
   guard,
   nested,
   DOCK_CARD,
+  errorText,
 } from "./shared.js";
 import type { ClientCtx } from "./shared.js";
 import { themeOf } from "./theme.js";
@@ -48,6 +49,7 @@ import { contextDrops, maskedRows, MASTER_KEY, OFF_KEY } from "../context-source
 import type { ChatFlowNode } from "../context-sources.js";
 import { HINTS_EVENT, loadHints, useHintValue, writeHints, useHintFlag } from "./hints.js";
 import { BoxColoursList } from "./box-colour-swatch.js";
+import { isStyleElement } from "./dom-guards.js";
 
 /** What the starter route answers: this session's own saved opener and the shared fallback. */
 interface StarterReply {
@@ -75,90 +77,8 @@ const appliedModel = new Set<string>();
  */
 export function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
   useEffect(() => {
-    const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
-
-    if (!entry || entry.blank === false || !entry.cwd) {
-      return;
-    }
-
-    const current = claudeProviderOf(ctx, sessionId);
-    const picked = entry.projectionValues?.modelSelection?.next?.provider;
-
-    if (appliedModel.has(sessionId)) {
-      return;
-    }
-
-    appliedModel.add(sessionId);
     let live = true;
-
-    const runApply = async () => {
-      const hints = await loadHints();
-
-      if (!live) {
-        return;
-      }
-
-      // The workspace's own memory first, the box default after it; blankSessionTarget holds the
-      // order. Memory off reads as "nothing remembered", so the default then applies everywhere.
-      const q = `cwd=${encodeURIComponent(entry.cwd ?? "")}`;
-
-      const [saved, def] = await Promise.all([
-        hints.workspaceModelOff === true
-          ? Promise.resolve(undefined)
-          : fetch(`${ROUTE}/workspace-model?${q}`)
-              .then((r) => readJson<Partial<RememberedModel>>(r))
-              .then((r): RememberedModel | undefined =>
-                r.model ? { model: r.model, provider: r.provider, effort: r.effort } : undefined,
-              ),
-        loadSessionDefault(),
-      ]);
-
-      if (!live) {
-        return;
-      }
-
-      // Read again here, not only at mount: the reads above are async, and a click in the picker
-      // during them is a pick this must not overwrite.
-      const pickedNow =
-        ctx.sessions.list.getSnapshot()?.byId[sessionId]?.projectionValues?.modelSelection?.next
-          ?.provider ?? picked;
-
-      const target = blankSessionTarget({ current, picked: pickedNow, saved, def });
-
-      if (!target) {
-        return;
-      }
-
-      const dir = ctx.modelDirectories.directoryFor(sessionId);
-      const now = dir.store.getSnapshot().current;
-
-      // Strict on the effort too: a target with none means the model's default, so a blank that
-      // came up on the same model at another effort is still switched.
-      if (
-        now?.provider === target.provider &&
-        now.model === target.model &&
-        now.reasoningEffort === target.reasoningEffort
-      ) {
-        return;
-      }
-
-      if (!dir.select) {
-        return;
-      }
-
-      const done = await dir.select(target);
-
-      // dsh answers a failed selection rather than throwing. An effort the model does not take is
-      // the likely cause (a default set before a model lost a level), so the model alone is tried
-      // once more and the blank still opens on it.
-      if (done && !done.ok && target.reasoningEffort !== undefined) {
-        await dir.select({ provider: target.provider, model: target.model });
-      }
-    };
-
-    // A session dsh has not bound yet throws from directoryFor (see claudeProviderOf); a route
-    // that is not there answers an error. Neither is this component's problem to report.
-    void runApply().catch(() => {});
+    applyWorkspaceModel(ctx, sessionId, () => live);
 
     return () => {
       live = false;
@@ -166,6 +86,94 @@ export function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ct
   }, [ctx, sessionId]);
 
   return null;
+}
+
+/** WorkspaceModelMemory's work, started once per mount: `live` answers false once the component
+ *  has unmounted or moved to another session, and every await checks it before going on. */
+function applyWorkspaceModel(ctx: ClientCtx, sessionId: string, live: () => boolean): void {
+  const entry = ctx.sessions.list.getSnapshot()?.byId[sessionId];
+
+  if (!entry || entry.blank === false || !entry.cwd) {
+    return;
+  }
+
+  const current = claudeProviderOf(ctx, sessionId);
+  const picked = entry.projectionValues?.modelSelection?.next?.provider;
+
+  if (appliedModel.has(sessionId)) {
+    return;
+  }
+
+  appliedModel.add(sessionId);
+
+  const runApply = async () => {
+    const hints = await loadHints();
+
+    if (!live()) {
+      return;
+    }
+
+    // The workspace's own memory first, the box default after it; blankSessionTarget holds the
+    // order. Memory off reads as "nothing remembered", so the default then applies everywhere.
+    const q = `cwd=${encodeURIComponent(entry.cwd ?? "")}`;
+
+    const [saved, def] = await Promise.all([
+      hints.workspaceModelOff === true
+        ? Promise.resolve(undefined)
+        : fetch(`${ROUTE}/workspace-model?${q}`)
+            .then((r) => readJson<Partial<RememberedModel>>(r))
+            .then((r): RememberedModel | undefined =>
+              r.model ? { model: r.model, provider: r.provider, effort: r.effort } : undefined,
+            ),
+      loadSessionDefault(),
+    ]);
+
+    if (!live()) {
+      return;
+    }
+
+    // Read again here, not only at mount: the reads above are async, and a click in the picker
+    // during them is a pick this must not overwrite.
+    const pickedNow =
+      ctx.sessions.list.getSnapshot()?.byId[sessionId]?.projectionValues?.modelSelection?.next
+        ?.provider ?? picked;
+
+    const target = blankSessionTarget({ current, picked: pickedNow, saved, def });
+
+    if (!target) {
+      return;
+    }
+
+    const dir = ctx.modelDirectories.directoryFor(sessionId);
+    const now = dir.store.getSnapshot().current;
+
+    // Strict on the effort too: a target with none means the model's default, so a blank that
+    // came up on the same model at another effort is still switched.
+    if (
+      now?.provider === target.provider &&
+      now.model === target.model &&
+      now.reasoningEffort === target.reasoningEffort
+    ) {
+      return;
+    }
+
+    if (!dir.select) {
+      return;
+    }
+
+    const done = await dir.select(target);
+
+    // dsh answers a failed selection rather than throwing. An effort the model does not take is
+    // the likely cause (a default set before a model lost a level), so the model alone is tried
+    // once more and the blank still opens on it.
+    if (done && !done.ok && target.reasoningEffort !== undefined) {
+      await dir.select({ provider: target.provider, model: target.model });
+    }
+  };
+
+  // A session dsh has not bound yet throws from directoryFor (see claudeProviderOf); a route
+  // that is not there answers an error. Neither is this component's problem to report.
+  void runApply().catch(() => {});
 }
 
 /**
@@ -179,97 +187,106 @@ export function WorkspaceModelMemory({ sessionId, ctx }: { sessionId: string; ct
  * on a box whose Claude Code goes through a router, where a missing row means something else.
  */
 export function StaleModelRepair({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx }) {
-  useEffect(() => {
-    let dir: ReturnType<ClientCtx["modelDirectories"]["directoryFor"]>;
-
-    try {
-      dir = ctx.modelDirectories.directoryFor(sessionId);
-    } catch {
-      return; // unbound in this tab (see claudeProviderOf)
-    }
-
-    let settled = false;
-
-    const repair = guard(() => {
-      if (settled) {
-        return;
-      }
-
-      const snap = dir.store.getSnapshot();
-      const cur = snap.current;
-
-      if (!cur?.provider.startsWith("claude-code")) {
-        return;
-      }
-
-      const offered = snap.groups?.find((g) => g.id === cur.provider)?.models.map((m) => m.id);
-
-      if (!offered || offered.length === 0) {
-        return;
-      } // the catalog has not loaded yet
-
-      if (offered.includes(cur.model)) {
-        settled = true;
-
-        return;
-      }
-
-      if (ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) {
-        return;
-      }
-
-      settled = true;
-      const living = livingModelId(cur.model, offered);
-
-      if (!living || !dir.select) {
-        return;
-      }
-
-      const pick = dir.select;
-      // Only on a box that talks to Anthropic. Behind a router the list is the router's: a model
-      // missing from it is set aside, not renamed, and moving the session to its family's alias
-      // would put it on whatever the router sends that alias to, for good. Where the state
-      // cannot be told nothing is moved either. An older server sends no state and is repaired
-      // as before; a failed read repairs nothing, and the next open asks again.
-      void fetch(`${ROUTE}/models?all=1`)
-        .then((r) => readJson<{ models?: Array<PickerBox> }>(r))
-        .then((b) => {
-          const route = b.models?.find((box) => box.provider === cur.provider)?.route;
-
-          if (route !== undefined && route.state !== "direct") {
-            return;
-          }
-
-          // The read took a moment, and a turn may have started or the model been changed in
-          // it. Either way this repair is off: left unsettled, the next store change (the turn
-          // ending) runs it again from the top.
-          const now = dir.store.getSnapshot().current;
-          const moved = now?.provider !== cur.provider || now.model !== cur.model;
-
-          if (moved || ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) {
-            settled = false;
-
-            return;
-          }
-
-          return pick({ provider: cur.provider, model: living });
-        })
-        .catch(() => {});
-    });
-
-    repair();
-    // The directory store for the catalog arriving, the list store for the turn ending: a session
-    // found mid-turn is repaired the moment it stops running.
-    const offDir = dir.store.subscribe(repair);
-    const offList = ctx.sessions.list.subscribe?.(repair);
-
-    return () => {
-      offDir();
-      offList?.();
-    };
-  }, [ctx, sessionId]);
+  useEffect(() => watchStaleModel(ctx, sessionId), [ctx, sessionId]);
 
   return null;
+}
+
+/** StaleModelRepair's watch on one session. Returns the cleanup that drops its two subscriptions,
+ *  or `undefined` for a session this tab has not bound, which has nothing to watch. */
+function watchStaleModel(ctx: ClientCtx, sessionId: string): (() => void) | undefined {
+  let dir: ReturnType<ClientCtx["modelDirectories"]["directoryFor"]>;
+
+  try {
+    dir = ctx.modelDirectories.directoryFor(sessionId);
+  } catch {
+    return undefined; // unbound in this tab (see claudeProviderOf)
+  }
+
+  let settled = false;
+
+  const repair = guard(() => {
+    if (settled) {
+      return;
+    }
+
+    const snap = dir.store.getSnapshot();
+    const cur = snap.current;
+
+    if (!cur?.provider.startsWith("claude-code")) {
+      return;
+    }
+
+    const offered = snap.groups?.find((g) => g.id === cur.provider)?.models.map((m) => m.id);
+
+    if (!offered || offered.length === 0) {
+      return;
+    } // the catalog has not loaded yet
+
+    if (offered.includes(cur.model)) {
+      settled = true;
+
+      return;
+    }
+
+    if (ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) {
+      return;
+    }
+
+    settled = true;
+    const living = livingModelId(cur.model, offered);
+
+    if (!living || !dir.select) {
+      return;
+    }
+
+    const pick = dir.select;
+    // Only on a box that talks to Anthropic. Behind a router the list is the router's: a model
+    // missing from it is set aside, not renamed, and moving the session to its family's alias
+    // would put it on whatever the router sends that alias to, for good. Where the state
+    // cannot be told nothing is moved either. An older server sends no state and is repaired
+    // as before; a failed read repairs nothing, and the next open asks again.
+    void (async () => {
+      try {
+        const b = await readJson<{ models?: Array<PickerBox> }>(
+          await fetch(`${ROUTE}/models?all=1`),
+        );
+
+        const route = b.models?.find((box) => box.provider === cur.provider)?.route;
+
+        if (route !== undefined && route.state !== "direct") {
+          return;
+        }
+
+        // The read took a moment, and a turn may have started or the model been changed in
+        // it. Either way this repair is off: left unsettled, the next store change (the turn
+        // ending) runs it again from the top.
+        const now = dir.store.getSnapshot().current;
+        const moved = now?.provider !== cur.provider || now.model !== cur.model;
+
+        if (moved || ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running) {
+          settled = false;
+
+          return;
+        }
+
+        await pick({ provider: cur.provider, model: living });
+      } catch {
+        // a failed read repairs nothing; the next open asks again
+      }
+    })();
+  });
+
+  repair();
+  // The directory store for the catalog arriving, the list store for the turn ending: a session
+  // found mid-turn is repaired the moment it stops running.
+  const offDir = dir.store.subscribe(repair);
+  const offList = ctx.sessions.list.subscribe?.(repair);
+
+  return () => {
+    offDir();
+    offList?.();
+  };
 }
 
 /**
@@ -299,17 +316,16 @@ export function StarterCard({
   const wrote = useViewRead(sessionId, (fresh) => {
     fetch(`${ROUTE}/starter?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<StarterReply>(r))
-      .then((b) => {
-        if (fresh()) {
-          setStarter(b);
-        }
-      })
+      .then((b) => fresh() && setStarter(b))
       .catch(() => {}); // no store yet: the card simply does not appear
   });
 
   // The session on screen now, for a save that answers after the card moved to another one.
   const shownSession = useRef(sessionId);
-  shownSession.current = sessionId;
+
+  useEffect(() => {
+    shownSession.current = sessionId;
+  }, [sessionId]);
 
   // The card says what the store did, not what the click did: a save that never reached the route
   // has to say so, or the opener is quietly gone by the next tab.
@@ -317,12 +333,15 @@ export function StarterCard({
     wrote();
     setStarter({ session: text, fallback: text });
     setNote(t("main.settings.saving"));
-    void fetch(`${ROUTE}/starter`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ session: sessionId, text }),
-    })
-      .then((r) => {
+    // Never rejects: a save that failed to send says so in the note.
+    void (async () => {
+      try {
+        const r = await fetch(`${ROUTE}/starter`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ session: sessionId, text }),
+        });
+
         // A read sent while the save was out may have answered with the opener from before it.
         // Not after a switch to another session: this card then shows that session's opener.
         if (r.ok && shownSession.current === sessionId) {
@@ -331,11 +350,12 @@ export function StarterCard({
         }
 
         setNote(r.ok ? t("main.starter.saved") : t("main.starter.saveFailed"));
-      })
-      .catch(() => {
+      } catch {
         setNote(t("main.starter.saveFailed"));
-      })
-      .finally(() => setTimeout(() => setNote(""), 1600));
+      } finally {
+        setTimeout(() => setNote(""), 1600);
+      }
+    })();
   };
 
   // Only on an unused session: dsh's own `blank` bit, which is false as soon as the session has a
@@ -753,10 +773,6 @@ function useContextSizes(ctx: ClientCtx): Record<string, number> | null {
   const open = openSessionId(ctx);
   const cwd = (open ? snap?.byId[open]?.cwd : "") ?? "";
   useEffect(() => {
-    if (!cwd) {
-      return;
-    }
-
     let live = true;
 
     const run = async () => {
@@ -771,7 +787,9 @@ function useContextSizes(ctx: ClientCtx): Record<string, number> | null {
 
     // A box whose server predates this route answers an error; the card is still usable without
     // the numbers, so it stays quiet rather than showing the owner a failure they cannot act on.
-    void run().catch(() => {});
+    if (cwd) {
+      void run().catch(() => {});
+    }
 
     return () => {
       live = false;
@@ -796,10 +814,6 @@ function useClaudeMd(ctx: ClientCtx): ClaudeMdState | null {
   // `cwd` alone resolves a remote workspace but not which instance the session is bound to.
   const provider = id ? (claudeProviderOf(ctx, id) ?? "") : "";
   useEffect(() => {
-    if (!cwd) {
-      return;
-    }
-
     let live = true;
 
     const run = async () => {
@@ -814,11 +828,14 @@ function useClaudeMd(ctx: ClientCtx): ClaudeMdState | null {
       }
     };
 
-    void run().catch(() => {});
     // The settings editor and the Claude updates card on the same page write the files this answer
     // is worked out from (`CLAUDE_CODE_DISABLE_CLAUDE_MDS` in `env`), so read again after either.
     const again = () => void run().catch(() => {});
-    window.addEventListener(SETTINGS_EVENT, again);
+
+    if (cwd) {
+      again();
+      window.addEventListener(SETTINGS_EVENT, again);
+    }
 
     return () => {
       live = false;
@@ -1074,9 +1091,6 @@ type ChatFlow = {
   readonly nodes: { get: (key: string) => ChatFlowNode | undefined };
 };
 
-/** Stable empty order, so a mount without the chat hook does not hand `useMemo` a new array. */
-const NO_ROWS: ReadonlyArray<string> = [];
-
 const ROW_MASK_STYLE_ID = "dsh-oh-my-claude-context-rows";
 
 /** Per mount and session, whether its turns pass dsh's system prompt on: the mount's
@@ -1097,45 +1111,47 @@ function useSystemPromptSent(
   // The answer is kept with the key it is for, so a tab that moves to another session never shows
   // the last one's until its own read lands.
   const [sent, setSent] = useState<{ key: string; value: boolean } | undefined>();
-  const [reads, setReads] = useState(0);
   const key = `${provider}\n${sessionId}`;
   useEffect(() => {
-    const changed = () => {
-      promptModes.clear();
-      setReads((n) => n + 1);
+    let live = true;
+
+    /** Puts this key's answer on screen, asking the server only when no read is cached. */
+    const show = () => {
+      if (provider === undefined || sessionId === undefined || !started) {
+        return;
+      }
+
+      let read = promptModes.get(key);
+
+      if (read === undefined) {
+        const q = `provider=${encodeURIComponent(provider)}&session=${encodeURIComponent(sessionId)}`;
+        read = fetch(`${ROUTE}/system-prompt?${q}`)
+          .then((r) => readJson<{ mode?: string }>(r))
+          .then((r) => r.mode === "dsh")
+          .catch(() => {
+            promptModes.delete(key);
+
+            return false;
+          });
+        promptModes.set(key, read);
+      }
+
+      void read.then((value) => live && setSent({ key, value }));
     };
 
+    const changed = () => {
+      promptModes.clear();
+      show();
+    };
+
+    show();
     window.addEventListener(HINTS_EVENT, changed);
-
-    return () => window.removeEventListener(HINTS_EVENT, changed);
-  }, []);
-  useEffect(() => {
-    if (provider === undefined || sessionId === undefined || !started) {
-      return;
-    }
-
-    let live = true;
-    let read = promptModes.get(key);
-
-    if (read === undefined) {
-      const q = `provider=${encodeURIComponent(provider)}&session=${encodeURIComponent(sessionId)}`;
-      read = fetch(`${ROUTE}/system-prompt?${q}`)
-        .then((r) => readJson<{ mode?: string }>(r))
-        .then((r) => r.mode === "dsh")
-        .catch(() => {
-          promptModes.delete(key);
-
-          return false;
-        });
-      promptModes.set(key, read);
-    }
-
-    void read.then((value) => live && setSent({ key, value }));
 
     return () => {
       live = false;
+      window.removeEventListener(HINTS_EVENT, changed);
     };
-  }, [provider, sessionId, key, started, reads]);
+  }, [provider, sessionId, key, started]);
 
   return sent?.key === key && sent.value;
 }
@@ -1159,13 +1175,33 @@ export function ContextRowMask({
 }: {
   sessionId?: string;
   ctx: ClientCtx;
-  useChat?: <S>(select: (chat: ChatFlow) => S, eq?: (a: S, b: S) => boolean) => S;
+  useChat?: ChatHook;
+}) {
+  // Without dsh's chat hook there are no rows to read, so nothing to mask.
+  return useChat ? <ChatRowMask sessionId={sessionId} ctx={ctx} useChat={useChat} /> : null;
+}
+
+/** dsh's hook onto the conversation's rows, handed to the dock slot. */
+type ChatHook = <S>(pick: (chat: ChatFlow) => S, eq?: (a: S, b: S) => boolean) => S;
+
+/** ContextRowMask once dsh has handed it the chat hook: writes the sheet that hides the rows for
+ *  context this plugin kept from the CLI, and clears it on unmount. */
+function ChatRowMask({
+  sessionId,
+  ctx,
+  useChat,
+}: {
+  sessionId?: string;
+  ctx: ClientCtx;
+  useChat: ChatHook;
 }) {
   const [on] = useHintFlag(MASTER_KEY);
   const [instructionsOff] = useHintFlag(OFF_KEY.instructions);
   const [skillsOff] = useHintFlag(OFF_KEY.skills);
-  const order = useChat?.((chat) => chat.order) ?? NO_ROWS;
-  const nodes = useChat?.((chat) => chat.nodes);
+  // oxlint-disable-next-line react/hooks -- dsh hands its selector hooks in as slot props (SessionStandardProps), and one slot mount always gets the same hook.
+  const order = useChat((chat) => chat.order);
+  // oxlint-disable-next-line react/hooks -- dsh hands its selector hooks in as slot props (SessionStandardProps), and one slot mount always gets the same hook.
+  const nodes = useChat((chat) => chat.nodes);
   const mine = sessionId !== undefined && isClaudeSession(ctx, sessionId);
   const provider = sessionId === undefined ? undefined : claudeProviderOf(ctx, sessionId);
   const promptSent = useSystemPromptSent(provider, sessionId, order.length > 0);
@@ -1174,28 +1210,31 @@ export function ContextRowMask({
   // the transcript. What decides a row's masking is its source kind, fixed when the row is made,
   // so the walk re-runs when a row is added or removed (`order`) and not when one grows.
   const nodesRef = useRef(nodes);
-  nodesRef.current = nodes;
-  const haveNodes = nodes !== undefined;
 
-  const masked = useMemo(() => {
-    const current = nodesRef.current;
-
-    if (!mine || current === undefined) {
-      return [];
-    }
-
-    const drops = contextDrops({
-      [MASTER_KEY]: on,
-      [OFF_KEY.instructions]: instructionsOff,
-      [OFF_KEY.skills]: skillsOff,
-    });
-
-    return maskedRows(order, (key) => current.get(key), drops, promptSent);
-  }, [mine, order, haveNodes, on, instructionsOff, skillsOff, promptSent]);
+  // Every chunk swaps the map; keeping the newest in the ref costs nothing, and the walk below
+  // reads it from there.
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
 
   useEffect(() => {
+    const current = nodesRef.current;
+
+    const masked = !mine
+      ? []
+      : maskedRows(
+          order,
+          (key) => current.get(key),
+          contextDrops({
+            [MASTER_KEY]: on,
+            [OFF_KEY.instructions]: instructionsOff,
+            [OFF_KEY.skills]: skillsOff,
+          }),
+          promptSent,
+        );
+
     const existing = document.getElementById(ROW_MASK_STYLE_ID);
-    const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
+    const el = isStyleElement(existing) ? existing : document.createElement("style");
     el.id = ROW_MASK_STYLE_ID;
 
     // A key is dsh's to shape, so it is escaped for the attribute string rather than trusted.
@@ -1219,7 +1258,7 @@ export function ContextRowMask({
     return () => {
       el.textContent = "";
     };
-  }, [masked]);
+  }, [mine, order, on, instructionsOff, skillsOff, promptSent]);
 
   return null;
 }
@@ -1671,8 +1710,8 @@ function ModelRow({
     // still holds the list from before this save.
     void putCustomModels(box.provider, next)
       .then(onSaved)
-      .catch((error_: Error) => {
-        setError(error_.message);
+      .catch((cause: unknown) => {
+        setError(errorText(cause));
         onSaving(false);
       });
   };
@@ -1756,8 +1795,6 @@ export function ModelsBlock() {
   const [boxes, setBoxes] = useState<Array<PickerBox> | undefined>();
   const [error, setError] = useState("");
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => new Set());
-  const [reads, setReads] = useState(0);
-  const reread = useCallback(() => setReads((n) => n + 1), []);
   // The box whose added models are being saved, by provider. Each save sends the box's whole
   // list, so its rows and its form wait for one another: see `ModelRow`.
   const [saving, setSaving] = useState<string | undefined>();
@@ -1780,54 +1817,68 @@ export function ModelsBlock() {
     });
   }, []);
 
+  // The block's own save: the form below calls it after the server took a change. The effect
+  // below owns the read and puts it here.
+  const rereadRef = useRef(() => {});
+  const reread = useCallback(() => rereadRef.current(), []);
+
   useEffect(() => {
     let live = true;
+    // Newest read wins: a save's re-read and the hints event it raises are out at once.
+    let latest = 0;
 
-    const load = () =>
-      fetch(`${ROUTE}/models?all=1`)
-        .then((r) => readJson<{ models?: Array<PickerBox> }>(r))
-        .then((b) => {
-          if (!live) {
-            return;
-          }
+    /** Reads the lineup and puts it on screen. Never rejects: a failure is the error line. */
+    const load = async () => {
+      const seq = ++latest;
 
-          const next = b.models ?? [];
+      try {
+        const b = await readJson<{ models?: Array<PickerBox> }>(
+          await fetch(`${ROUTE}/models?all=1`),
+        );
 
-          // Rows report their state as they mount, and a row that stays mounted does not report
-          // again, so only the keys of rows that are gone (a removed box, a model that left the
-          // lineup) are dropped from the count; the rest keep what they said.
-          const alive = new Set(
-            next.flatMap((box) => box.models.map((m) => `hideModel:${box.provider}:${m.id}`)),
-          );
+        if (!live || seq !== latest) {
+          return;
+        }
 
-          setHiddenKeys((prev) => new Set([...prev].filter((k) => alive.has(k))));
-          setBoxes(next);
-          // The rows now hold the list a save left behind, so the next save may go.
-          setSaving(undefined);
-        })
-        .catch((error_: Error) => {
-          if (!live) {
-            return;
-          }
+        const next = b.models ?? [];
 
-          setError(error_.message);
-          setSaving(undefined);
-        });
+        // Rows report their state as they mount, and a row that stays mounted does not report
+        // again, so only the keys of rows that are gone (a removed box, a model that left the
+        // lineup) are dropped from the count; the rest keep what they said.
+        const alive = new Set(
+          next.flatMap((box) => box.models.map((m) => `hideModel:${box.provider}:${m.id}`)),
+        );
 
-    void load();
+        setHiddenKeys((prev) => new Set([...prev].filter((k) => alive.has(k))));
+        setBoxes(next);
+        // The rows now hold the list a save left behind, so the next save may go.
+        setSaving(undefined);
+      } catch (error_) {
+        if (!live || seq !== latest) {
+          return;
+        }
+
+        setError(errorText(error_));
+        setSaving(undefined);
+      }
+    };
+
+    const again = () => void load();
+    rereadRef.current = again;
+    again();
     // A box added or removed in the card above changes the groups here; the card announces it.
-    window.addEventListener(BOXES_EVENT, load);
+    window.addEventListener(BOXES_EVENT, again);
     // A model added or removed in another tab arrives as a hints event (the route publishes one);
     // a hide switch flipped anywhere does too, and costs this block one re-read.
-    window.addEventListener(HINTS_EVENT, load);
+    window.addEventListener(HINTS_EVENT, again);
 
     return () => {
       live = false;
-      window.removeEventListener(BOXES_EVENT, load);
-      window.removeEventListener(HINTS_EVENT, load);
+      window.removeEventListener(BOXES_EVENT, again);
+      window.removeEventListener(HINTS_EVENT, again);
     };
-    // `reads` is the block's own save: the form below bumps it after the server took a change.
-  }, [reads]);
+  }, []);
+
   const total = boxes?.reduce((n, b) => n + b.models.length, 0) ?? 0;
 
   /** A box's rows the picker leaves out for the route alone: not counting one switched off as
@@ -2131,10 +2182,15 @@ const awayLabel = (ms: number): string => {
 export function SpendGuardField() {
   useLocale();
   const [stored, setStored] = useHintValue("spendWarnUsd");
-  const [draft, setDraft] = useState("");
-  useEffect(() => {
-    setDraft(numberOr(stored) === undefined ? "" : String(stored));
-  }, [stored]);
+  const storedText = numberOr(stored) === undefined ? "" : String(stored);
+  const [draft, setDraft] = useState(storedText);
+  // A value saved here, in another tab or on another device replaces the draft as it arrives.
+  const [draftOf, setDraftOf] = useState(storedText);
+
+  if (draftOf !== storedText) {
+    setDraftOf(storedText);
+    setDraft(storedText);
+  }
 
   const save = () => {
     const v = draft.trim();
@@ -2150,7 +2206,7 @@ export function SpendGuardField() {
     if (Number.isFinite(n) && n >= 0) {
       setStored(n);
     } else {
-      setDraft(numberOr(stored) === undefined ? "" : String(stored));
+      setDraft(storedText);
     }
   };
 

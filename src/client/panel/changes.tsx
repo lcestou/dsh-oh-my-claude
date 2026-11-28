@@ -13,6 +13,7 @@ import {
   ROUTE,
   activeClaudeSession,
   hasRunTurn,
+  errorText,
 } from "../shared.js";
 import type { ClientCtx } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
@@ -71,7 +72,7 @@ export function ChangesBody({
 }) {
   useLocale();
   const isClaude = activeClaudeSession(ctx) === sessionId;
-  const [reply, setReply] = useState<DiffReply | null>(null);
+  const [liveReply, setReply] = useState<DiffReply | null>(null);
   const [shown, setShown] = useState<string | null>(null);
   // Which Ask is in flight, by path ("" is the whole tree), so pressing one does not blank the other.
   const [asking, setAsking] = useState<string | null>(null);
@@ -109,29 +110,35 @@ export function ChangesBody({
     }
   };
 
-  useEffect(() => {
-    let live = true;
+  // A session switch starts the tab clean, during the render that switches.
+  const [shownFor, setShownFor] = useState(sessionId);
+
+  if (shownFor !== sessionId) {
+    setShownFor(sessionId);
     setReply(null);
     setShown(null);
     setNote("");
+  }
 
-    // A session that has never run has no CLI to ask, and the route can only refuse. Answer it here
-    // so the tab reads the same without the round trip.
-    if (!hasRunTurn(ctx, sessionId)) {
-      setReply(NOT_RUNNING);
+  // A session that has never run has no CLI to ask, and the route can only refuse. Answer it here
+  // so the tab reads the same without the round trip.
+  const started = hasRunTurn(ctx, sessionId);
+  const reply = started ? liveReply : NOT_RUNNING;
 
-      return;
+  useEffect(() => {
+    let live = true;
+
+    if (started) {
+      fetch(`${ROUTE}/diff?session=${encodeURIComponent(sessionId)}`)
+        .then((r) => readJson<DiffReply>(r))
+        .then((b) => live && setReply(b))
+        .catch((cause: unknown) => live && setReply({ ok: false, error: errorText(cause) }));
     }
-
-    fetch(`${ROUTE}/diff?session=${encodeURIComponent(sessionId)}`)
-      .then((r) => readJson<DiffReply>(r))
-      .then((b) => live && setReply(b))
-      .catch((error: Error) => live && setReply({ ok: false, error: error.message }));
 
     return () => {
       live = false;
     };
-  }, [sessionId]);
+  }, [sessionId, started]);
 
   if (!isClaude) {
     return null;

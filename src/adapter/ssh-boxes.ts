@@ -148,7 +148,9 @@ export function reconcileSshBoxes(
     // the far claudes it left running (2026-09-08: the first restart after holds shipped left the
     // nova session's cli alive on the box with nothing attached, because only the main mount
     // adopted). A hot reload finds the processes already in the shared registry and skips them.
-    void adapter.adoptHolds().catch((error) => log("warn", `hold adoption: ${errorText(error)}`));
+    void adapter
+      .adoptHolds()
+      .catch((cause: unknown) => log("warn", `hold adoption: ${errorText(cause)}`));
   }
 }
 

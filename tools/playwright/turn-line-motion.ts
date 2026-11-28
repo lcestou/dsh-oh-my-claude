@@ -4,6 +4,8 @@
 // now (PW_SESSION names its row, else the first row dsh labels Running). Point PLAYWRIGHT_ROOT at
 // any project with Playwright installed; arg 1 is the dsh launch token. `--shots <dir>` also saves
 // a screenshot of the line per read, named by viewport and scheme.
+import z from "@deepseek-ai/schemastery";
+import { fits } from "../../src/schema-fits.js";
 import { dshUrl, launch } from "./pw.js";
 
 const token = process.argv[2];
@@ -76,20 +78,21 @@ async function read(
     const cs = line ? getComputedStyle(line) : null;
     const root = getComputedStyle(document.documentElement);
     const sid = new URL(location.href).searchParams.get("session") ?? "";
-    let live: Read["live"] = {};
+    let liveText = "";
 
     try {
       // The route needs the session id; the row's own subscription knows it, the check does not,
-      // so read the first live-turn body off the event stream instead.
-      live = await new Promise<Read["live"]>((resolve) => {
+      // so read the first live-turn body off the event stream instead. It is decoded outside the
+      // page, where the schema is.
+      liveText = await new Promise<string>((resolve) => {
         const es = new EventSource("/dsh-oh-my-claude/events");
         es.addEventListener("live-turn", (e) => {
-          // SAFETY: an EventSource listener for a named event receives a MessageEvent.
-          resolve(JSON.parse(e.data).data);
+          // An event stream's data is always text.
+          resolve(String(e.data));
           es.close();
         });
         setTimeout(() => {
-          resolve({});
+          resolve("");
           es.close();
         }, 3000);
       });
@@ -108,7 +111,7 @@ async function read(
       shimmerOnLine: cs?.getPropertyValue("--omc-shimmer").trim() ?? "",
       detail: line?.querySelector("[data-omc-turn-detail]")?.textContent ?? "",
       spinner: line?.querySelector("span[aria-hidden]")?.textContent ?? "",
-      live,
+      liveText,
       sid,
     };
   });
@@ -126,7 +129,28 @@ async function read(
 
   await ctx.close();
 
-  return out;
+  const { liveText, ...seen } = out;
+
+  return { ...seen, live: liveOf(liveText) };
+}
+
+/** The part of a live-turn event this check prints. */
+const LiveTurn = z.object({
+  data: z.object({ elapsedMs: z.number(), tokens: z.number(), mode: z.string() }),
+});
+
+/** The figures of one live-turn event's text, empty when none arrived or it does not parse or fit:
+ *  the figures are optional. */
+function liveOf(text: string): Read["live"] {
+  let raw: unknown;
+
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return {};
+  }
+
+  return fits(LiveTurn, raw) ? LiveTurn(raw).data : {};
 }
 
 const result = {

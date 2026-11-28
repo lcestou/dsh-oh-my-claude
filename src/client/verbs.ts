@@ -286,10 +286,10 @@ export function bracketOpen(s: {
   return s.elapsedMs >= BRACKET_AFTER_MS || s.tokens > 0 || s.thinking || s.relay;
 }
 
-/** Pick a verb at random from the list using the provided random function. */
+/** Pick a verb at random from the list using the provided random function; "" from an empty list.
+ *  random() returns [0,1), so the index is always inside a non-empty list. */
 export function pickVerb(list: ReadonlyArray<string>, random: () => number): string {
-  // SAFETY: random() returns [0,1), so floor(random()*length) is always a valid index.
-  return list[Math.floor(random() * list.length)]!;
+  return list[Math.floor(random() * list.length)] ?? "";
 }
 
 /** Merge default verbs with a settings.json spinnerVerbs entry. */

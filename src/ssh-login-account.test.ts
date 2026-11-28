@@ -2,7 +2,8 @@
 // writes the credentials there, and it is held under its own key: This box's login and an account's
 // can run at once without one killing the other.
 import { strict as assert } from "node:assert";
-import { EventEmitter } from "node:events";
+import { ChildProcess } from "node:child_process";
+import { PassThrough } from "node:stream";
 import { cancelSshLogin, pollSshLogin, startSshLogin, THIS_BOX } from "./ssh-login.js";
 
 let killed = 0;
@@ -10,28 +11,32 @@ let killed = 0;
 /** A child that prints the sign-in URL and records the options it was spawned with. */
 const seen: Array<{ command: string; env?: NodeJS.ProcessEnv }> = [];
 
-const spawnFn = ((command: string, _args: Array<string>, opts: { env?: NodeJS.ProcessEnv }) => {
+const spawnFn: NonNullable<Parameters<typeof startSshLogin>[1]> = (command, _args, opts) => {
   seen.push({ command, env: opts.env });
-  // SAFETY: startSshLogin reads stdout/stderr events, `kill` and `on`, nothing else
-  const child = new EventEmitter() as EventEmitter & Record<string, unknown>;
-  child.stdout = new EventEmitter();
-  child.stderr = new EventEmitter();
-  child.stdin = { write() {} };
-  child.kill = () => {
-    killed++;
-  };
+  // startSshLogin reads stdout/stderr events, `kill` and `on`, nothing else.
+  const stdout = new PassThrough();
+
+  // Own properties: the runtime's ChildProcess serves its streams through getters.
+  const child = Object.defineProperties(new ChildProcess(), {
+    stdout: { value: stdout },
+    stderr: { value: new PassThrough() },
+    stdin: { value: new PassThrough() },
+    kill: {
+      value: () => {
+        killed++;
+
+        return true;
+      },
+    },
+  });
 
   setTimeout(
-    () =>
-      (child.stdout as EventEmitter).emit(
-        "data",
-        Buffer.from("visit: https://claude.com/cai/oauth/authorize?x=1\n"),
-      ),
+    () => stdout.emit("data", Buffer.from("visit: https://claude.com/cai/oauth/authorize?x=1\n")),
     5,
   );
 
   return child;
-}) as unknown as Parameters<typeof startSshLogin>[1];
+};
 
 const env = { ...process.env, CLAUDE_CONFIG_DIR: "/tmp/omc-acct/work" };
 

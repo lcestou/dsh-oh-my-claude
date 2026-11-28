@@ -4,10 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { subscribe } from "../events.js";
 import type { PermissionModeState } from "../events.js";
-import { meta, T, readJson, ROUTE, activeClaudeSession } from "../shared.js";
+import { meta, T, readJson, ROUTE, activeClaudeSession, errorText } from "../shared.js";
 import type { ClientCtx } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
-import type { OmcKey } from "../i18n.js";
 import { Menu } from "@deepseek-ai/dsh-client-ui-primitives";
 import {
   IconChevronDownOutlineRegular,
@@ -20,6 +19,7 @@ import type { FeatureSwitches } from "../../switches.js";
 import type { PermissionRules, HooksListing } from "../../process.js";
 import { clearsOverride, keepsShield, PRESET_FOR_MODE, presetForMode } from "./mode-pick.js";
 import { useStickyAnchorFix } from "./menu-anchor.js";
+import { isHTMLElement } from "../dom-guards.js";
 
 /** The mode to show for a session: the process's own when one runs, else the one the next spawn gets. */
 const shownMode = (snap: PermissionModeState): string => snap.liveMode ?? snap.mode;
@@ -59,13 +59,15 @@ const MODE_KEYS = [
   "bypassPermissions",
 ] as const;
 
+/** True for one of the six Claude modes this menu has a row and a label for. */
+const isModeKey = (mode: string): mode is (typeof MODE_KEYS)[number] =>
+  MODE_KEYS.some((key) => key === mode);
+
 /** The glyph dsh draws for a preset in its own permission menu, keyed the way `PRESET_FOR_MODE`
  *  names them; a Claude mode shows the glyph of the preset it maps to, so the six rows read like
  *  dsh's three. Draws nothing for an unknown mode (the empty string before the first fetch). */
 const ModeGlyph = ({ mode }: { mode: string }) => {
-  // SAFETY: widening the readonly tuple to string[] only loosens `includes`; the membership check
-  // is what makes `presetForMode` safe to call with an arbitrary string.
-  const preset = (MODE_KEYS as ReadonlyArray<string>).includes(mode) ? presetForMode(mode) : "";
+  const preset = isModeKey(mode) ? presetForMode(mode) : "";
 
   if (preset === "read-only") {
     return <PermissionIconReadOnlyRegular aria-hidden />;
@@ -83,9 +85,7 @@ const ModeGlyph = ({ mode }: { mode: string }) => {
 };
 
 /** How a Claude mode is labelled in the menu, translated; a mode not in `MODE_KEYS` shows raw. */
-const modeLabel = (m: string): string =>
-  // SAFETY: the membership check guarantees `panel.access.mode.<m>` is a defined dictionary key.
-  (MODE_KEYS as ReadonlyArray<string>).includes(m) ? t(`panel.access.mode.${m}` as OmcKey) : m;
+const modeLabel = (m: string): string => (isModeKey(m) ? t(`panel.access.mode.${m}`) : m);
 
 /**
  * Imperative rework: relabels dsh's own trigger and injects Claude-mode rows into its menu.
@@ -148,12 +148,14 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
 
       const labelSpan = (): HTMLElement | null => {
         for (const child of Array.from(trigger.children)) {
-          if (child instanceof HTMLElement && child.className.includes("Label")) {
+          if (isHTMLElement(child) && child.className.includes("Label")) {
             return child;
           }
         }
 
-        return trigger.children[1] instanceof HTMLElement ? trigger.children[1] : null;
+        const second = trigger.children.item(1);
+
+        return isHTMLElement(second) ? second : null;
       };
 
       // dsh's own label and aria-label, kept for the cleanup; refreshed whenever dsh rewrites them.
@@ -224,22 +226,30 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
           .then((r) => readJson<PermissionModeState>(r))
           .catch(() => null);
 
-      fetchMode().then((snap) => {
+      // Never rejects: fetchMode answers null on a failed read.
+      void (async () => {
+        const snap = await fetchMode();
+
         if (snap) {
           currentMode = shownMode(snap);
           reapplyLabel();
         }
-      });
+      })();
 
       // Which settings file, if any, refuses bypass mode. A failed read leaves the label alone.
       const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
-      fetch(`${ROUTE}/feature-switches${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`)
-        .then((r) => readJson<FeatureSwitches>(r))
-        .then((s) => {
+      void (async () => {
+        try {
+          const s = await readJson<FeatureSwitches>(
+            await fetch(`${ROUTE}/feature-switches${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`),
+          );
+
           bypassRefusedIn = s.bypassDisabled?.scope ?? "";
           reapplyLabel();
-        })
-        .catch(() => {});
+        } catch {
+          // the label stays as it is
+        }
+      })();
 
       const parent = trigger.parentElement;
 
@@ -319,9 +329,10 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
           menuObserver.observe(dshMenu, { childList: true, subtree: true });
 
           // Take template from the first itemWrap (parent of the first menuitem).
-          const firstItemWrap = menuItems[0]?.parentElement;
+          const firstItem = menuItems.at(0);
+          const firstItemWrap = firstItem?.parentElement;
 
-          if (!firstItemWrap) {
+          if (!firstItem || !firstItemWrap) {
             continue;
           }
 
@@ -342,13 +353,12 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
             }
           }
 
-          // SAFETY: firstItemWrap exists only when menuItems[0] exists; checked above.
           const baseClass = selectedToken
-            ? menuItems[0]!.className
+            ? firstItem.className
                 .split(" ")
                 .filter((tok) => tok !== selectedToken)
                 .join(" ")
-            : menuItems[0]!.className;
+            : firstItem.className;
 
           // Record each original row's icon svg keyed by preset id via labels.
           const svgByPresetId: Record<string, string> = {};
@@ -377,25 +387,26 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
 
           // Capture stateSnapshot for click handlers.
           let stateSnapshot: PermissionModeState | null = null;
-          fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`)
-            .then((r) => readJson<PermissionModeState>(r))
-            .then((snap) => {
-              stateSnapshot = snap;
-            })
-            .catch(() => {
-              /* ignore */
-            });
+          // Never rejects: fetchMode answers null on a failed read, and a click fetches again.
+          void (async () => {
+            stateSnapshot = await fetchMode();
+          })();
 
           // Append six new wraps in MODE_KEYS order.
           for (const m of MODE_KEYS) {
-            // SAFETY: cloneNode on a HTMLElement returns a Node tree rooted at that element.
-            const wrap = firstItemWrap.cloneNode(true) as HTMLElement;
-            wrap.style.display = ""; // the template was hidden before cloning
+            const wrap = firstItemWrap.cloneNode(true);
+
+            if (!isHTMLElement(wrap)) {
+              continue;
+            }
+
             const menuitem = wrap.querySelector<HTMLElement>("button[role='menuitem']");
 
             if (!menuitem) {
               continue;
             }
+
+            wrap.style.display = ""; // the template was hidden before cloning
 
             menuitem.className =
               m === currentMode && selectedToken ? `${baseClass} ${selectedToken}` : baseClass;
@@ -419,17 +430,17 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
 
             // Replace the label text node or span with MODE_LABELS[m].
             const labelChild = Array.from(menuitem.children).find(
-              (c) => c instanceof HTMLElement && c.className.includes("Label"),
+              (c) => isHTMLElement(c) && c.className.includes("Label"),
             );
 
-            if (labelChild instanceof HTMLElement) {
+            if (isHTMLElement(labelChild)) {
               labelChild.textContent = modeLabel(m);
             } else {
               const textNode = Array.from(menuitem.childNodes).find(
                 (n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim(),
               );
 
-              if (textNode instanceof Text) {
+              if (textNode) {
                 textNode.textContent = modeLabel(m);
               }
             }
@@ -437,14 +448,15 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
             menuitem.setAttribute("data-mode", m);
             menuitem.addEventListener("click", () => {
               // The snapshot fetched at open may still be in flight on a fast click: fetch then.
-              (stateSnapshot ? Promise.resolve(stateSnapshot) : fetchMode()).then((snap) => {
-                if (!snap) {
-                  return;
-                }
+              // Never rejects: fetchMode answers null on a failed read, and the pick is skipped.
+              void (async () => {
+                const snap = await (stateSnapshot ?? fetchMode());
 
-                stateSnapshot = snap;
-                pick(snap);
-              });
+                if (snap) {
+                  stateSnapshot = snap;
+                  pick(snap);
+                }
+              })();
             });
 
             const pick = (snap: PermissionModeState) => {
@@ -473,81 +485,82 @@ export function AccessShield({ sessionId, ctx }: { sessionId: string; ctx: Clien
                 reapplyLabel();
               };
 
-              const doSet = () => {
+              /** Puts the real mode back on the label and shows why in the menu's error line. */
+              const fail = (text: string) => {
+                revert();
+                const errEl = parent.querySelector<HTMLElement>("[data-err]");
+
+                if (errEl) {
+                  errEl.textContent = text;
+                }
+              };
+
+              /** Writes the mode, then reads it back for the label. Never rejects: a refused or
+               *  failed write goes to `fail`. */
+              const doSet = async () => {
                 const clearDefault = clearsOverride(m, snap);
-                fetch(`${ROUTE}/permission-mode`, {
-                  method: "PUT",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ session: sessionId, mode: clearDefault ? null : m }),
-                })
-                  .then((r) => readJson<PermissionModeState>(r))
-                  .then((reply) => {
-                    if (reply.error) {
-                      revert();
-                      const errEl = parent.querySelector<HTMLElement>("[data-err]");
 
-                      if (errEl) {
-                        errEl.textContent = reply.error;
-                      }
-                    } else {
-                      fetchMode().then((next) => {
-                        if (next) {
-                          currentMode = shownMode(next);
-                        }
+                try {
+                  const reply = await readJson<PermissionModeState>(
+                    await fetch(`${ROUTE}/permission-mode`, {
+                      method: "PUT",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ session: sessionId, mode: clearDefault ? null : m }),
+                    }),
+                  );
 
-                        reapplyLabel();
-                      });
-                    }
-                  })
-                  .catch((error) => {
-                    revert();
-                    const errEl = parent.querySelector<HTMLElement>("[data-err]");
+                  if (reply.error) {
+                    fail(reply.error);
 
-                    if (errEl) {
-                      errEl.textContent = error instanceof Error ? error.message : String(error);
-                    }
-                  });
+                    return;
+                  }
+                } catch (error) {
+                  fail(errorText(error));
+
+                  return;
+                }
+
+                const next = await fetchMode();
+
+                if (next) {
+                  currentMode = shownMode(next);
+                }
+
+                reapplyLabel();
               };
 
               if (need !== have) {
                 const live = ctx.sessions.binding?.(sessionId)?.session;
 
                 if (!live) {
-                  revert();
-                  const errEl = parent.querySelector<HTMLElement>("[data-err]");
-
-                  if (errEl) {
-                    errEl.textContent = t("panel.access.notMaterialized");
-                  }
+                  fail(t("panel.access.notMaterialized"));
 
                   return;
                 }
 
-                live
-                  .command(`/permission ${need}`)
-                  .then((reply) => {
+                /** Moves dsh's shield to the mode's preset, then writes the mode once dsh has
+                 *  settled. Never rejects: a refused command goes to `fail`. */
+                const shieldThenSet = async () => {
+                  try {
+                    const reply = await live.command(`/permission ${need}`);
+
                     if (!reply || !reply.ok) {
-                      revert();
-                      const errEl = parent.querySelector<HTMLElement>("[data-err]");
+                      fail(reply?.error?.message ?? t("panel.access.commandFailed"));
 
-                      if (errEl) {
-                        errEl.textContent =
-                          reply?.error?.message ?? t("panel.access.commandFailed");
-                      }
-                    } else {
-                      setTimeout(doSet, 700);
+                      return;
                     }
-                  })
-                  .catch((error) => {
-                    revert();
-                    const errEl = parent.querySelector<HTMLElement>("[data-err]");
+                  } catch (error) {
+                    fail(errorText(error));
 
-                    if (errEl) {
-                      errEl.textContent = error instanceof Error ? error.message : String(error);
-                    }
-                  });
+                    return;
+                  }
+
+                  setTimeout(() => void doSet(), 700);
+                };
+
+                void shieldThenSet();
               } else {
-                doSet();
+                void doSet();
               }
 
               document.dispatchEvent(
@@ -787,23 +800,31 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
   // any pick. The session is fixed while this mounts, so the cwd does not change.
   useEffect(() => {
     let live = true;
-    fetchModeState(sessionId).then((snap) => {
-      if (!live || !snap) {
-        return;
-      }
+    // Neither read rejects: fetchModeState answers null on a failure, and a failed switches read
+    // leaves the badge off.
+    void (async () => {
+      const snap = await fetchModeState(sessionId);
 
-      setMode(shownMode(snap));
-      setPending(pendingMode(snap));
-    });
+      if (live && snap) {
+        setMode(shownMode(snap));
+        setPending(pendingMode(snap));
+      }
+    })();
+
     const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
-    fetch(`${ROUTE}/feature-switches${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`)
-      .then((r) => readJson<FeatureSwitches>(r))
-      .then((s) => {
+    void (async () => {
+      try {
+        const s = await readJson<FeatureSwitches>(
+          await fetch(`${ROUTE}/feature-switches${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ""}`),
+        );
+
         if (live) {
           setBypassRefusedIn(s.bypassDisabled?.scope ?? "");
         }
-      })
-      .catch(() => {});
+      } catch {
+        // no badge
+      }
+    })();
 
     return () => {
       live = false;
@@ -826,19 +847,19 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
     return off;
   }, [sessionId]);
   useEffect(() => {
-    if (!pending) {
-      return;
-    }
-
     let live = true;
-    fetchModeState(sessionId).then((snap) => {
-      if (!live || !snap) {
-        return;
-      }
 
-      setMode(shownMode(snap));
-      setPending(pendingMode(snap));
-    });
+    // Read only while a deferred pick is waiting. Never rejects: a failed read answers null.
+    if (pending) {
+      void (async () => {
+        const snap = await fetchModeState(sessionId);
+
+        if (live && snap) {
+          setMode(shownMode(snap));
+          setPending(pendingMode(snap));
+        }
+      })();
+    }
 
     return () => {
       live = false;
@@ -856,7 +877,16 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
    */
   const pick = (m: string) => {
     setOpen(false);
-    fetchModeState(sessionId).then((snap) => {
+
+    // dsh's menu hands back the id of a row it drew from MODE_KEYS.
+    if (!isModeKey(m)) {
+      return;
+    }
+
+    // Never rejects: every failure below ends in revert() and the error line.
+    void (async () => {
+      const snap = await fetchModeState(sessionId);
+
       if (!snap) {
         return;
       } // nothing to compare against; leave the current mode as is
@@ -871,60 +901,64 @@ export function AccessTrigger({ sessionId, ctx }: { sessionId: string; ctx: Clie
       const revert = () => setMode(wasMode);
       const need = presetForMode(m);
 
-      const settle = () => {
+      /** PUTs the mode and shows the read-back. Never rejects: a failure reverts and says why. */
+      const settle = async () => {
         const clearDefault = clearsOverride(m, snap);
-        fetch(`${ROUTE}/permission-mode`, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ session: sessionId, mode: clearDefault ? null : m }),
-        })
-          .then((r) => readJson<PermissionModeState>(r))
-          .then((reply) => {
-            if (reply.error) {
-              revert();
-              setError(reply.error);
-            } else {
-              setError(null);
-              // The reply is the read-back: the process's own mode, and the stored one when the CLI
-              // could not take the pick live, so a deferred Bypass reads as the old mode plus a note.
-              setMode(shownMode(reply));
-              setPending(pendingMode(reply));
-            }
-          })
-          .catch((error_) => {
+
+        try {
+          const reply = await readJson<PermissionModeState>(
+            await fetch(`${ROUTE}/permission-mode`, {
+              method: "PUT",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ session: sessionId, mode: clearDefault ? null : m }),
+            }),
+          );
+
+          if (reply.error) {
             revert();
-            setError(error_ instanceof Error ? error_.message : String(error_));
-          });
+            setError(reply.error);
+          } else {
+            setError(null);
+            // The reply is the read-back: the process's own mode, and the stored one when the CLI
+            // could not take the pick live, so a deferred Bypass reads as the old mode plus a note.
+            setMode(shownMode(reply));
+            setPending(pendingMode(reply));
+          }
+        } catch (error_) {
+          revert();
+          setError(errorText(error_));
+        }
       };
 
-      if (need !== snap.accessMode) {
-        const live = ctx.sessions.binding?.(sessionId)?.session;
+      if (need === snap.accessMode) {
+        await settle();
 
-        if (!live) {
-          revert();
-          setError(t("panel.access.notMaterialized"));
-
-          return;
-        }
-
-        live
-          .command(`/permission ${need}`)
-          .then((reply) => {
-            if (!reply || !reply.ok) {
-              revert();
-              setError(reply?.error?.message ?? t("panel.access.commandFailed"));
-            } else {
-              setTimeout(settle, 700);
-            }
-          })
-          .catch((error_) => {
-            revert();
-            setError(error_ instanceof Error ? error_.message : String(error_));
-          });
-      } else {
-        settle();
+        return;
       }
-    });
+
+      const live = ctx.sessions.binding?.(sessionId)?.session;
+
+      if (!live) {
+        revert();
+        setError(t("panel.access.notMaterialized"));
+
+        return;
+      }
+
+      try {
+        const reply = await live.command(`/permission ${need}`);
+
+        if (!reply || !reply.ok) {
+          revert();
+          setError(reply?.error?.message ?? t("panel.access.commandFailed"));
+        } else {
+          setTimeout(() => void settle(), 700);
+        }
+      } catch (error_) {
+        revert();
+        setError(errorText(error_));
+      }
+    })();
   };
 
   const chevronOpen = open ? { transform: "rotate(180deg)" } : undefined;

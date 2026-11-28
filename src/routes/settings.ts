@@ -217,7 +217,7 @@ export function settingsRoutes(c: RouteCtx): RouteHandler {
 
       const result = await run(
         box.command || command || "claude",
-        ["plugin", verb, body.key, "--scope", String(body.scope)],
+        ["plugin", verb, body.key, "--scope", target.scope],
         cliEnvFor(box.configDir),
         target.cwd,
       );
@@ -226,7 +226,7 @@ export function settingsRoutes(c: RouteCtx): RouteHandler {
         return json(res, 400, { error: result.error });
       }
 
-      log("info", `plugin ${body.key} ${verb}d (${String(body.scope)})`);
+      log("info", `plugin ${body.key} ${verb}d (${target.scope})`);
 
       return json(res, 200, { ok: true, live: await applyReload(body.session) });
     }
@@ -255,7 +255,7 @@ export function settingsRoutes(c: RouteCtx): RouteHandler {
 
       const result = await run(
         box.command || command || "claude",
-        ["plugin", "uninstall", body.key, "--scope", String(body.scope), "-y"],
+        ["plugin", "uninstall", body.key, "--scope", target.scope, "-y"],
         cliEnvFor(box.configDir),
         target.cwd,
       );
@@ -264,7 +264,7 @@ export function settingsRoutes(c: RouteCtx): RouteHandler {
         return json(res, 400, { error: result.error });
       }
 
-      log("info", `plugin ${body.key} uninstalled (${String(body.scope)})`);
+      log("info", `plugin ${body.key} uninstalled (${target.scope})`);
 
       return json(res, 200, { ok: true, live: await applyReload(body.session) });
     }
@@ -296,7 +296,7 @@ export function settingsRoutes(c: RouteCtx): RouteHandler {
 
       const result = await run(
         box.command || command || "claude",
-        ["plugin", "marketplace", "add", body.source.trim(), "--scope", String(body.scope)],
+        ["plugin", "marketplace", "add", body.source.trim(), "--scope", target.scope],
         cliEnvFor(box.configDir),
         target.cwd,
         60_000,
@@ -306,7 +306,7 @@ export function settingsRoutes(c: RouteCtx): RouteHandler {
         return json(res, 400, { error: result.error });
       }
 
-      log("info", `marketplace added (${String(body.scope)})`);
+      log("info", `marketplace added (${target.scope})`);
 
       return json(res, 200, { ok: true, live: await applyReload(body.session) });
     }
@@ -334,7 +334,7 @@ export function settingsRoutes(c: RouteCtx): RouteHandler {
 
       const result = await run(
         box.command || command || "claude",
-        ["plugin", "marketplace", "remove", body.name, "--scope", String(body.scope)],
+        ["plugin", "marketplace", "remove", body.name, "--scope", target.scope],
         cliEnvFor(box.configDir),
         target.cwd,
       );
@@ -343,7 +343,7 @@ export function settingsRoutes(c: RouteCtx): RouteHandler {
         return json(res, 400, { error: result.error });
       }
 
-      log("info", `marketplace ${body.name} removed (${String(body.scope)})`);
+      log("info", `marketplace ${body.name} removed (${target.scope})`);
 
       return json(res, 200, { ok: true, live: await applyReload(body.session) });
     }

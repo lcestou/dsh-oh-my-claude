@@ -1,7 +1,7 @@
 // The Settings card for engine mode: which agent presets ("modes" in dsh's own words) run Claude
 // Code as dsh's model engine, and which of engine mode's changes apply. Box-wide, in the hints
 // store, under the keys `src/adapter/engine-mode.ts` reads on every turn.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { t, useLocale } from "./i18n.js";
 import { ROUTE, T, nested, readJson } from "./shared.js";
 import { HINTS_EVENT, loadHints, useHintFlag } from "./hints.js";
@@ -138,7 +138,9 @@ function useTickedPresets(): Set<string> {
 
     /** Re-reads the store and keeps the ids whose `enginePreset:` key is on. */
     const read = (): void =>
-      void loadHints().then((h) => {
+      void (async () => {
+        const h = await loadHints();
+
         if (!live) {
           return;
         }
@@ -148,7 +150,7 @@ function useTickedPresets(): Set<string> {
           .map((k) => k.slice(ENGINE_PRESET_PREFIX.length));
 
         setTicked(new Set(ids));
-      });
+      })();
 
     read();
     window.addEventListener(HINTS_EVENT, read);
@@ -175,18 +177,30 @@ function useTickedPresets(): Set<string> {
 export function EngineModeCard() {
   useLocale();
   const [presets, setPresets] = useState<Array<PresetRow> | undefined>();
-  const [reads, setReads] = useState(0);
+  // The fold's open calls the effect's reader through this ref, so a read it starts is guarded the
+  // same way the mount's is.
+  const rereadRef = useRef(() => {});
   useEffect(() => {
     let live = true;
-    fetch(`${ROUTE}/presets`)
-      .then((r) => readJson<{ presets?: Array<PresetRow> }>(r))
-      .then((r) => live && setPresets(r.presets ?? []))
-      .catch(() => live && setPresets([]));
+    // Newest read wins: opening the fold twice quickly sends two.
+    let latest = 0;
+
+    const load = () => {
+      const mine = ++latest;
+      const current = () => live && mine === latest;
+      fetch(`${ROUTE}/presets`)
+        .then((r) => readJson<{ presets?: Array<PresetRow> }>(r))
+        .then((r) => current() && setPresets(r.presets ?? []))
+        .catch(() => current() && setPresets([]));
+    };
+
+    rereadRef.current = load;
+    load();
 
     return () => {
       live = false;
     };
-  }, [reads]);
+  }, []);
   const [on, setOn] = useHintFlag(ENGINE_ON_KEY);
   const ticked = useTickedPresets();
 
@@ -216,7 +230,7 @@ export function EngineModeCard() {
       {on && (
         <details
           data-omc-engine-modes=""
-          onToggle={(e) => e.currentTarget.open && setReads((n) => n + 1)}
+          onToggle={(e) => e.currentTarget.open && rereadRef.current()}
           style={{ ...nested, margin: "0 0 12px", fontSize: 13 }}
         >
           <summary style={{ cursor: "pointer", color: T.muted }}>

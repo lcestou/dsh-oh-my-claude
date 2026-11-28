@@ -14,6 +14,7 @@ import {
   readJson,
   ROUTE,
   ago,
+  errorText,
 } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
 
@@ -58,20 +59,20 @@ export function AsidesBody({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     let live = true;
+
+    /** Puts the list on screen, or the route's refusal in the error line. */
+    const show = (b: { items: Array<AsideRow> } | { error: string }) => {
+      if ("error" in b) {
+        setError(b.error);
+      } else {
+        setItems(b.items ?? []);
+      }
+    };
+
     fetch(`${ROUTE}/side-questions?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<{ items: Array<AsideRow> } | { error: string }>(r))
-      .then((b) => {
-        if (!live) {
-          return;
-        }
-
-        if ("error" in b) {
-          setError(b.error);
-        } else {
-          setItems(b.items ?? []);
-        }
-      })
-      .catch((error_: Error) => live && setError(error_.message));
+      .then((b) => live && show(b))
+      .catch((cause: unknown) => live && setError(errorText(cause)));
 
     return () => {
       live = false;
@@ -99,10 +100,17 @@ export function AsidesBody({ sessionId }: { sessionId: string }) {
   // answer is still pending. A dismissed card lives only here, so this is where it gets copied from.
   const copy = (it: AsideRow) => {
     const text = it.answer ?? it.error ?? it.question;
-    void navigator.clipboard?.writeText(text).then(() => {
+    // A refused clipboard write shows no Copied mark and nothing else.
+    void (async () => {
+      try {
+        await navigator.clipboard?.writeText(text);
+      } catch {
+        return;
+      }
+
       setCopied(it.id);
       setTimeout(() => setCopied((cur) => (cur === it.id ? null : cur)), 1200);
-    });
+    })();
   };
 
   // An accordion of native <details>: the question is the row, the answer opens under it, and only

@@ -8,28 +8,37 @@ import {
   pluginsPageOpener,
   watchPluginsPage,
 } from "./plugins-page.js";
-import type { ClientCtx } from "./shared.js";
+import { fakeClientCtx } from "../test-context.js";
 
 const opened: Array<string> = [];
 let dispose: (() => void) | undefined;
 let present = false;
 
-// SAFETY: a stand-in carrying only the two cordis calls watchPluginsPage makes; its `inject` runs
-// the callback at once, as cordis does while the service is present, and keeps the effect's cleanup
-// so the test can take the service away again.
-const ctx = {
-  inject: (
-    names: Array<string>,
-    fn: (scope: { effect: (f: () => () => void) => void }) => void,
-  ) => {
+// A stand-in carrying only the two cordis calls watchPluginsPage makes; its `inject` runs the
+// callback at once, as cordis does while the service is present, and keeps the effect's cleanup so
+// the test can take the service away again.
+const ctx = fakeClientCtx({
+  inject: (names, fn) => {
     assert.deepEqual(names, ["pluginNavigation"]);
-    fn({ effect: (f) => void (dispose = f()) });
+    fn({
+      effect: (f) => {
+        dispose = f();
+      },
+    });
   },
-  get: (name: string) =>
-    present && name === "pluginNavigation"
-      ? { openBundle: (pkg: string) => void opened.push(pkg) }
-      : undefined,
-} as unknown as ClientCtx;
+  services: {
+    // Read at each lookup, so flipping `present` adds or takes away the service.
+    get pluginNavigation() {
+      return present
+        ? {
+            openBundle: (pkg: string) => {
+              opened.push(pkg);
+            },
+          }
+        : undefined;
+    },
+  },
+});
 
 let changes = 0;
 const off = onPluginsPageChange(() => changes++);

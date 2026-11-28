@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 
 import type { ClaudeUpdateState } from "../claude-update.js";
 import { BOXES_EVENT, SETTINGS_EVENT } from "./picker.js";
-import { btn, errText, meta, nested, readJson, ROUTE, select, T } from "./shared.js";
+import { btn, errText, meta, nested, readJson, ROUTE, select, T, errorText } from "./shared.js";
 import { LiveNote } from "./live-note.js";
 import { Switch } from "./switch.js";
 import { onBox, read, readTunables, updateSettings } from "./tune.js";
@@ -78,13 +78,15 @@ export function ClaudeUpdateDetails() {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    const load = () =>
+    /** Reads the ssh boxes; a failed read keeps the list as it is. */
+    const load = () => {
       fetch(`${ROUTE}/ssh-boxes`)
         .then((r) => readJson<{ boxes?: Array<UpdateBox> }>(r))
         .then((b) => setBoxes([LOCAL_BOX, ...(b.boxes ?? [])]))
         .catch(() => {});
+    };
 
-    void load();
+    load();
     window.addEventListener(BOXES_EVENT, load);
 
     return () => window.removeEventListener(BOXES_EVENT, load);
@@ -94,29 +96,32 @@ export function ClaudeUpdateDetails() {
   const provider = box?.provider;
   const url = (extra = "") => `${ROUTE}/claude-update?host=${encodeURIComponent(host)}${extra}`;
 
-  useEffect(() => {
-    let live = true;
+  // Another box starts the card clean, during the render that switches.
+  const shownBox = `${host}\n${provider}`;
+  const [shownFor, setShownFor] = useState(shownBox);
+
+  if (shownFor !== shownBox) {
+    setShownFor(shownBox);
     setUpd(null);
     setCheckLine("");
     setErr("");
+  }
+
+  useEffect(() => {
+    let live = true;
     fetch(`${ROUTE}/claude-update?host=${encodeURIComponent(host)}`)
       .then((r) => readJson<UpdateReply>(r))
       .then((s) => live && setUpd(s))
-      .catch((error: Error) => live && setErr(error.message));
+      .catch((cause: unknown) => live && setErr(errorText(cause)));
 
     /** The channel as the box's settings.json holds it now. */
-    const readChannel = () =>
+    const readChannel = () => {
       read(provider)
-        .then((f) => {
-          if (!live) {
-            return;
-          }
-
-          setChannel(readTunables(f.text).autoUpdatesChannel);
-        })
+        .then((f) => live && setChannel(readTunables(f.text).autoUpdatesChannel))
         .catch(() => live && setChannel(undefined));
+    };
 
-    void readChannel();
+    readChannel();
     // The settings editor on the same page writes the same file, so a channel set there shows here.
     window.addEventListener(SETTINGS_EVENT, readChannel);
 

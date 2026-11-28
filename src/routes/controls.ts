@@ -244,7 +244,9 @@ export function controlsRoutes(ctx: RouteCtx): RouteHandler {
         if (body.run === true) {
           void u
             .runUpdate("button")
-            .catch((error) => log("warn", `claude update on ${box.label}: ${errorText(error)}`));
+            .catch((cause: unknown) =>
+              log("warn", `claude update on ${box.label}: ${errorText(cause)}`),
+            );
           acted = true;
         }
 

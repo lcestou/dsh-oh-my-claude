@@ -3,6 +3,7 @@
 // from the install paths the CLI records in `plugins/installed_plugins.json`. A skill is a directory
 // holding a `SKILL.md` whose frontmatter names and describes it; the listing reads that head only.
 // Box-aware through the same helpers the instructions list uses, so an ssh box lists its own.
+import { parsedWith } from "./schema-fits.js";
 import { join } from "node:path";
 import z from "@deepseek-ai/schemastery";
 import { listDirsAt, readTextAt } from "./remote-fs.js";
@@ -137,11 +138,9 @@ async function installedPlugins(box: FsBox, claudeHome: string): Promise<Map<str
     return out;
   }
 
-  let parsed: ReturnType<typeof Installed>;
+  const parsed = parsedWith(Installed, text);
 
-  try {
-    parsed = Installed(JSON.parse(text));
-  } catch {
+  if (parsed === undefined) {
     return out;
   }
 

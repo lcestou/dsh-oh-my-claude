@@ -3,11 +3,16 @@
 // call time, including a plan mode the CLI entered on its own after spawn.
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
+import { asSessionId } from "./dsh.js";
+import type { DshToolsRegistry } from "./dsh.js";
 import { handleRpc } from "./mcp.js";
+import type { RpcEnv } from "./mcp.js";
+import { fakeAgent, rpcFirstText, rpcResult } from "./test-context.js";
 import { PLAN_REFUSAL, planRefuses } from "./plan-gate.js";
 import { ClaudeProcess, statusMode } from "./process.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
-const agent = { id: "a1" };
+const agent = fakeAgent({ id: asSessionId("a1") });
 const ran: Array<string> = [];
 
 /** A dsh tool fake that records its own name when executed. */
@@ -15,7 +20,7 @@ const fake = (name: string) => ({
   name,
   description: name,
   parameters: { type: "object", properties: {} },
-  execute: () => {
+  execute: async () => {
     ran.push(name);
 
     return [{ type: "text", text: `ran ${name}` }];
@@ -24,16 +29,14 @@ const fake = (name: string) => ({
 
 const registered = new Map(["bash", "subagent", "job_list"].map((n) => [n, fake(n)]));
 
-// SAFETY: partial fake for tests
-const tools = {
+const tools: DshToolsRegistry = {
   schemas: () => [...registered.values()],
-  get: (name: string) => registered.get(name),
+  get: (name) => registered.get(name),
 };
 
 let mode: string | undefined = "default";
 
-// SAFETY: cast to HandleRpcParams shape for test double
-const env = {
+const env: RpcEnv = {
   tools,
   agent,
   signal: new AbortController().signal,
@@ -41,20 +44,18 @@ const env = {
   mode: () => mode,
   wait: () => Promise.resolve("waited"),
   prompt: () => Promise.resolve("prompted"),
-} as unknown as Parameters<typeof handleRpc>[1];
-
-type Reply = { result: { content: Array<{ text: string }>; isError?: boolean } };
+};
 
 let id = 1;
 
 /** One tools/call through the bridge; returns its text and whether it was an error. */
 const call = async (name: string) => {
-  const r = (await handleRpc(
+  const r = await handleRpc(
     { jsonrpc: "2.0", id: id++, method: "tools/call", params: { name, arguments: {} } },
     env,
-  )) as Reply;
+  );
 
-  return { text: r.result.content[0]?.text, isError: r.result.isError === true };
+  return { text: rpcFirstText(r), isError: rpcResult(r).isError === true };
 };
 
 // Default mode: every tool runs as before.
@@ -161,7 +162,7 @@ const proc = new ClaudeProcess({
 /** Writes one CLI stdout line and lets the readline handler see it. */
 const feed = async (line: string) => {
   stdout.write(`${line}\n`);
-  await new Promise((r) => setTimeout(r, 10));
+  await sleep(10);
 };
 
 assert.equal(proc.liveMode, "default");

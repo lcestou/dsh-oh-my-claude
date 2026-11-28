@@ -1,6 +1,6 @@
 // The MCP tab: configured servers, the connectors list, the add form, and the status labels the
 // diagnostics tab borrows. The add form only shows in the modes that read a per-server override.
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import type { PermissionModeState } from "../events.js";
 import {
@@ -20,6 +20,7 @@ import {
   select,
   inputStyle,
   pill,
+  errorText,
 } from "../shared.js";
 import type { ClientCtx } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
@@ -75,7 +76,7 @@ export function McpBody({
 }) {
   useLocale();
   const isClaude = activeClaudeSession(ctx) === sessionId;
-  const [reply, setReply] = useState<McpReply | null>(null);
+  const [liveReply, setReply] = useState<McpReply | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const [showAdd, setShowAdd] = useState(false);
@@ -89,47 +90,54 @@ export function McpBody({
   const [configured, setConfigured] = useState<Array<ConfiguredMcpRow>>([]);
   const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
 
-  const loadConfigured = () => {
-    if (!cwd) {
-      return Promise.resolve();
-    }
+  /** Reads the configured servers; never rejects, a failed read lists none. */
+  const loadConfigured = useCallback(
+    () =>
+      cwd
+        ? fetch(
+            `${ROUTE}/mcp-servers/configured?cwd=${encodeURIComponent(cwd)}${boxParam(ctx, sessionId)}`,
+          )
+            .then((r) => readJson<{ servers?: Array<ConfiguredMcpRow> }>(r))
+            .then((b) => setConfigured(b.servers ?? []))
+            .catch(() => setConfigured([]))
+        : Promise.resolve(),
+    [cwd, ctx, sessionId],
+  );
 
-    return fetch(
-      `${ROUTE}/mcp-servers/configured?cwd=${encodeURIComponent(cwd)}${boxParam(ctx, sessionId)}`,
-    )
-      .then((r) => readJson<{ servers?: Array<ConfiguredMcpRow> }>(r))
-      .then((b) => setConfigured(b.servers ?? []))
-      .catch(() => setConfigured([]));
-  };
+  /** Reads the live servers and the configured ones; never rejects, a failure is the reply. */
+  const load = useCallback(
+    () =>
+      Promise.all([
+        fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
+          .then((r) => readJson<McpReply>(r))
+          .then(setReply)
+          .catch((cause: unknown) => setReply({ ok: false, error: errorText(cause) })),
+        loadConfigured(),
+      ]),
+    [sessionId, loadConfigured],
+  );
 
-  const load = () =>
-    Promise.all([
-      fetch(`${ROUTE}/mcp-servers?session=${encodeURIComponent(sessionId)}`)
-        .then((r) => readJson<McpReply>(r))
-        .then(setReply)
-        .catch((error: Error) => setReply({ ok: false, error: error.message })),
-      loadConfigured(),
-    ]);
+  // A session switch starts the tab clean, during the render that switches.
+  const [shownFor, setShownFor] = useState(sessionId);
 
-  useEffect(() => {
+  if (shownFor !== sessionId) {
+    setShownFor(sessionId);
     setReply(null);
     setNote("");
+    setPermMode(null);
+  }
 
-    if (!hasRunTurn(ctx, sessionId)) {
-      setReply(NOT_RUNNING);
-      void loadConfigured();
+  // A session nobody has prompted yet has no process to ask; its configured list still reads.
+  const started = hasRunTurn(ctx, sessionId);
+  const reply = started ? liveReply : NOT_RUNNING;
 
-      return;
-    }
-
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load closes over sessionId only
-  }, [sessionId]);
+  useEffect(() => {
+    void (started ? load() : loadConfigured());
+  }, [started, load, loadConfigured]);
   // Fetch the session's permission mode so rows can say whether the toggle is inert. A failed read
   // leaves permMode null; the row still renders because the mode may change while the tab is open.
   useEffect(() => {
     let live = true;
-    setPermMode(null);
     fetch(`${ROUTE}/permission-mode?session=${encodeURIComponent(sessionId)}`)
       .then((r) => readJson<PermissionModeState>(r))
       .then((snap) => live && setPermMode(snap))
@@ -178,16 +186,18 @@ export function McpBody({
   const watchUntilSignedIn = () => {
     let left = 30;
 
-    const tick = () => {
+    /** One re-read, then the next one after three seconds while tries are left. Never rejects:
+     *  load does not. */
+    const tick = async () => {
       left -= 1;
-      void load().then(() => {
-        if (left > 0) {
-          window.setTimeout(tick, 3000);
-        }
-      });
+      await load();
+
+      if (left > 0) {
+        window.setTimeout(() => void tick(), 3000);
+      }
     };
 
-    window.setTimeout(tick, 3000);
+    window.setTimeout(() => void tick(), 3000);
   };
 
   const login = async (serverName: string) => {
@@ -393,7 +403,8 @@ export function McpBody({
                 aria-label={t("panel.mcp.alwaysAskLabel", { name: s.name })}
                 data-omc-mcp-ask=""
                 disabled={busy !== null}
-                onClick={() => setAsk(s.name, s.asking !== true)}
+                // Each action reports its own failure in the note line, so nothing awaits it.
+                onClick={() => void setAsk(s.name, s.asking !== true)}
               >
                 {t("panel.mcp.alwaysAsk")}
               </button>
@@ -402,7 +413,7 @@ export function McpBody({
                   type="button"
                   style={btn}
                   disabled={busy !== null}
-                  onClick={() => reconnect(s.name)}
+                  onClick={() => void reconnect(s.name)}
                 >
                   {busy === s.name ? "…" : t("panel.mcp.reconnect")}
                 </button>
@@ -424,7 +435,7 @@ export function McpBody({
                 style={btn}
                 disabled={busy !== null}
                 busyLabel={busy === s.name ? "…" : undefined}
-                onAct={() => remove(s.name)}
+                onAct={() => void remove(s.name)}
               />
             </div>
             {s.status !== "connected" && (s.error || s.status === "needs-auth") ? (
@@ -486,7 +497,7 @@ export function McpBody({
               style={btn}
               disabled={busy !== null}
               busyLabel={busy === c.name ? "…" : undefined}
-              onAct={() => remove(c.name)}
+              onAct={() => void remove(c.name)}
             />
           </div>
         </div>
@@ -733,7 +744,12 @@ function McpAddForm({
           />
         </>
       )}
-      <button type="button" style={btnPrimary} disabled={busy || !name} onClick={submit}>
+      <button
+        type="button"
+        style={btnPrimary}
+        disabled={busy || !name}
+        onClick={() => void submit()}
+      >
         {busy ? t("panel.mcp.adding") : t("panel.add")}
       </button>
       {error && <span style={{ ...meta, display: "block", marginTop: 4 }}>{error}</span>}

@@ -2,7 +2,7 @@
 // component draws the releases it answers and marks the one this box runs. The items carry
 // backticks and nothing else, so the inline renderer is a split on backticks.
 import { useEffect, useState } from "react";
-import { ACCENT, errText, meta, pill, readJson, ROUTE, stateText, T } from "./shared.js";
+import { ACCENT, errText, meta, pill, readJson, ROUTE, stateText, T, errorText } from "./shared.js";
 import { t, useLocale } from "./i18n.js";
 import type { OmcKey } from "./i18n.js";
 
@@ -58,19 +58,19 @@ export function ChangelogBlock() {
 
   useEffect(() => {
     let live = true;
+
+    /** Puts the route's answer on screen. */
+    const showChangelog = (b: { version: string; releases: Array<Release> }) => {
+      setVersion(b.version);
+      setReleases(b.releases);
+    };
+
     fetch(`${ROUTE}/changelog`)
       .then((r) => readJson<{ version: string; releases: Array<Release> }>(r))
-      .then((b) => {
-        if (!live) {
-          return;
-        }
-
-        setVersion(b.version);
-        setReleases(b.releases);
-      })
-      .catch((error_) => {
+      .then((b) => live && showChangelog(b))
+      .catch((cause: unknown) => {
         if (live) {
-          setError(error_ instanceof Error ? error_.message : String(error_));
+          setError(errorText(cause));
         }
       });
 

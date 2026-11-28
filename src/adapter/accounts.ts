@@ -100,7 +100,7 @@ export function reconcileAccounts(
     // its sessions and are adopted here, the way the default mount adopts its own at apply.
     void adapter
       .adoptKeepers()
-      .catch((error) => log("warn", `keeper adoption: ${errorText(error)}`));
+      .catch((cause: unknown) => log("warn", `keeper adoption: ${errorText(cause)}`));
   }
 }
 
@@ -129,13 +129,17 @@ export function serialAccounts(
  *  mounts alike, with the dir they hand the CLI. SSH boxes are not accounts and are left out; a
  *  hand-written mount on the default dir comes back with loginKey "" and the routes skip it. */
 export function localMountsOf(adapters: Iterable<ClaudeCodeAdapter>): Array<LocalMount> {
-  return [...adapters]
-    .filter((m) => m.providerId !== "claude-code" && !m.config.sshHost)
-    .map((m) => ({
-      provider: m.providerId,
-      name: m.displayName,
-      home: m.realClaudeHome,
-      loginKey: m.loginKey,
-      command: m.config.command,
-    }));
+  return [...adapters].flatMap((m) =>
+    m.providerId === "claude-code" || m.config.sshHost
+      ? []
+      : [
+          {
+            provider: m.providerId,
+            name: m.displayName,
+            home: m.realClaudeHome,
+            loginKey: m.loginKey,
+            command: m.config.command,
+          },
+        ],
+  );
 }

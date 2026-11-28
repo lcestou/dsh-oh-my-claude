@@ -1,9 +1,12 @@
 // The model ladder, the baked-in model list, the on-disk catalog cache and how a model id resolves.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
+import { parsedWith } from "../schema-fits.js";
+import { isRec, numberValue, stringOf } from "../decode.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { LlmModelInfo, LlmResolvedModelInfo, ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
+import { brandString } from "@deepseek-ai/dsh-brand";
 import { firstPartyOf } from "../first-party.js";
 import type { FirstPartyProbe } from "../first-party.js";
 import type { RouteFilter } from "./routing.js";
@@ -28,9 +31,10 @@ function capEfforts(
   }
 
   const ceiling = EFFORTS_ALL.indexOf(cap);
+  const levels: ReadonlyArray<string> = EFFORTS_ALL;
 
   return efforts.filter((e) => {
-    const i = EFFORTS_ALL.findIndex((level) => level === e);
+    const i = levels.indexOf(e);
 
     return i === -1 || i <= ceiling;
   });
@@ -194,22 +198,24 @@ const CachedCatalog = z.array(
 /** Parse a persisted catalog file. Anything malformed reads as empty, so the caller falls back. */
 export function parseCatalogCache(text: string): Array<ReturnType<typeof M>> {
   try {
-    return CachedCatalog(JSON.parse(text))
-      .filter((r) => r.id.length > 0 && r.name.length > 0)
-      .map((r) => {
-        const row = M(r.id, r.name, r.contextWindow, r.efforts);
+    return (parsedWith(CachedCatalog, text) ?? []).flatMap((r) => {
+      if (r.id.length === 0 || r.name.length === 0) {
+        return [];
+      }
 
-        if (r.createdAt !== undefined) {
-          row.createdAt = r.createdAt;
-        }
+      const row = M(r.id, r.name, r.contextWindow, r.efforts);
 
-        // Kept across a restart, so Diagnostics still names a new level before the next live read.
-        if (r.unknownEfforts && r.unknownEfforts.length > 0) {
-          row.unknownEfforts = r.unknownEfforts;
-        }
+      if (r.createdAt !== undefined) {
+        row.createdAt = r.createdAt;
+      }
 
-        return row;
-      });
+      // Kept across a restart, so Diagnostics still names a new level before the next live read.
+      if (r.unknownEfforts && r.unknownEfforts.length > 0) {
+        row.unknownEfforts = r.unknownEfforts;
+      }
+
+      return [row];
+    });
   } catch {
     return [];
   }
@@ -249,6 +255,11 @@ async function persistCatalog(models: Array<ReturnType<typeof M>>) {
     /* read-only state dir or full disk: fall through, the fetch still served this boot */
   }
 }
+
+/** True for an effort capability block: an object whose every value is a flag or a level's block. */
+const isEffortCaps = (v: unknown): v is EffortCaps =>
+  isRec(v) &&
+  Object.values(v).every((x) => x === undefined || x === true || x === false || isRec(x));
 
 /** One entry of the Anthropic Models API list, in the shape the picker uses. */
 export function modelFromApi(m: {
@@ -336,9 +347,9 @@ const StoredWindows = z.dict(z.number());
 export const seedLiveWindows = (): Promise<void> =>
   (windowsSeed ??= (async () => {
     try {
-      const stored = StoredWindows(JSON.parse(await readFile(windowsPath(), "utf8")));
+      const stored = parsedWith(StoredWindows, await readFile(windowsPath(), "utf8"));
 
-      for (const [id, n] of Object.entries(stored)) {
+      for (const [id, n] of Object.entries(stored ?? {})) {
         if (Number.isFinite(n) && n > 0 && !liveWindows.has(id)) {
           liveWindows.set(id, n);
         }
@@ -733,9 +744,11 @@ export function mergeCatalog(
   // gets a refusal knows which update fixes it.
   // Dated only through the base: with no CLI row found there (a stale API cache), nothing is called
   // newer, since every dated row would be. Wrong for a real newer model in that state: unmarked.
-  const dated = cli
-    .map((c) => knownRow(base, c.resolvedModel)?.createdAt ?? 0)
-    .filter((n) => n > 0);
+  const dated = cli.flatMap((c) => {
+    const at = knownRow(base, c.resolvedModel)?.createdAt ?? 0;
+
+    return at > 0 ? [at] : [];
+  });
 
   const newestCli = dated.length > 0 ? Math.max(...dated) : Number.POSITIVE_INFINITY;
   const newer = (b: CatalogModel) => b.createdAt !== undefined && b.createdAt > newestCli;
@@ -758,7 +771,7 @@ export function mergeCatalog(
 
   let rows: Array<MergedRow> = [
     ...fromCli,
-    ...base.filter(keep).map((b) => ({ row: leftover(b), match: b.id, routers: false })),
+    ...base.flatMap((b) => (keep(b) ? [{ row: leftover(b), match: b.id, routers: false }] : [])),
   ];
 
   if (picker) {
@@ -901,9 +914,32 @@ async function refreshFromApi(fetchImpl: typeof fetch): Promise<void> {
       });
 
       if (res.ok) {
-        const data = (await res.json()).data ?? [];
-        // Two dated ids can land on one undated id; the first the API lists wins.
-        const mapped: Array<ReturnType<typeof M>> = data.map(modelFromApi);
+        const body: unknown = await res.json();
+
+        const data: ReadonlyArray<unknown> =
+          isRec(body) && Array.isArray(body.data) ? body.data : [];
+
+        // Two dated ids can land on one undated id; the first the API lists wins. A row that is
+        // not an object is skipped, and each field is kept only when it has the type read.
+        const mapped: Array<ReturnType<typeof M>> = data.flatMap((v) => {
+          if (!isRec(v)) {
+            return [];
+          }
+
+          const caps = v.capabilities;
+
+          return [
+            modelFromApi({
+              id: stringOf(v.id),
+              display_name: stringOf(v.display_name),
+              max_input_tokens: numberValue(v.max_input_tokens),
+              capabilities:
+                isRec(caps) && isEffortCaps(caps.effort) ? { effort: caps.effort } : undefined,
+              created_at: stringOf(v.created_at),
+            }),
+          ];
+        });
+
         const models = [...new Map(mapped.map((m) => [m.id, m])).values()];
 
         if (models.length > 0) {
@@ -987,8 +1023,8 @@ export function resolveModelInfo(
 
   if (efforts.length > 0) {
     info.reasoning = {
-      // SAFETY: effort ids come from the CLI's own catalog; the brand marks provenance only
-      efforts: efforts.map((id) => ({ id: id as ReasoningEffortId, name: id })),
+      // Effort ids come from the CLI's own catalog; the brand marks provenance only.
+      efforts: efforts.map((id) => ({ id: brandString<ReasoningEffortId>(id), name: id })),
     };
   }
 

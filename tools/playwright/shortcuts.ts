@@ -101,8 +101,8 @@ if ((await card.count()) > 0) {
   }
 
   // Esc closes from anywhere in the page, not only from the field: blur it first.
-  // SAFETY: the active element is the card's input, an HTMLElement, and `blur` is optional-chained
-  await p.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  // The focused element is the card's input; none focused leaves nothing to blur.
+  await p.evaluate(() => document.querySelector<HTMLElement>(":focus")?.blur());
   await p.keyboard.press("Escape");
   await p.waitForTimeout(400);
   console.log(" after esc from body: card", await card.count());

@@ -221,28 +221,33 @@ assert.deepEqual(kept, [
   { model: "bare", efforts: ["high"] },
 ]);
 
+/** The refusal checkCustomModels answers for `rows`; fails the test when it accepts them. */
+const refusal = (rows: Parameters<typeof checkCustomModels>[0]): string => {
+  const checked = checkCustomModels(rows);
+
+  assert.ok(typeof checked === "string", "the rows are refused");
+
+  return checked;
+};
+
 for (const bad of ["", "two words", "-flag", "default", "x".repeat(201)]) {
-  assert.match(String(checkCustomModels([{ model: bad }])), /^A model id is/, `id ${bad}`);
+  assert.match(refusal([{ model: bad }]), /^A model id is/, `id ${bad}`);
 }
 
-assert.match(String(checkCustomModels([{ model: "a" }, { model: " a" }])), /already in the list/);
+assert.match(refusal([{ model: "a" }, { model: " a" }]), /already in the list/);
 
-assert.match(String(checkCustomModels([{ model: "a", label: "n".repeat(101) }])), /^A name is/);
+assert.match(refusal([{ model: "a", label: "n".repeat(101) }]), /^A name is/);
 
 for (const bad of [999, 10_000_001, 1.5]) {
   assert.match(
-    String(checkCustomModels([{ model: "a", contextWindow: bad }])),
+    refusal([{ model: "a", contextWindow: bad }]),
     /^A context window is/,
     `window ${bad}`,
   );
 }
 
 assert.match(
-  String(
-    checkCustomModels(
-      Array.from({ length: CUSTOM_MODELS_MAX + 1 }, (_, i) => ({ model: `m${i}` })),
-    ),
-  ),
+  refusal(Array.from({ length: CUSTOM_MODELS_MAX + 1 }, (_, i) => ({ model: `m${i}` }))),
   /at most 50/,
 );
 

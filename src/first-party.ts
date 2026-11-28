@@ -1,3 +1,4 @@
+import { fits } from "./schema-fits.js";
 import z from "@deepseek-ai/schemastery";
 
 /**
@@ -80,7 +81,12 @@ export async function probeFirstParty(
       signal: abort.signal,
     });
 
-    const raw = await response.json().catch(() => ({}));
+    const raw: unknown = await response.json().catch(() => ({}));
+
+    // A body of another shape is no answer, as when the schema threw here.
+    if (!fits(ProbeBody, raw)) {
+      return undefined;
+    }
 
     return readsAsAnthropic(ProbeBody(raw), response.headers.get("request-id") ?? "");
   } catch {
@@ -150,8 +156,8 @@ interface ProbeStore {
 
 /** The process-wide store, made on first use. */
 const probeStore = (): ProbeStore => {
-  // SAFETY: this plugin's own key on globalThis, typed here once
-  const g = globalThis as typeof globalThis & { [PROBES]?: ProbeStore };
+  // This plugin's own key on globalThis, typed here once
+  const g: typeof globalThis & { [PROBES]?: ProbeStore } = globalThis;
 
   return (g[PROBES] ??= { kept: new Map(), asking: new Map() });
 };
@@ -224,11 +230,14 @@ export function firstPartyKnown(
     return kept.answer;
   }
 
-  void refreshFirstParty(baseUrl, probe).then((answer) => {
+  // Fire and forget: the caller reads the kept answer now, and `changed` reports a new one.
+  void (async () => {
+    const answer = await refreshFirstParty(baseUrl, probe);
+
     if (answer !== kept?.answer) {
       changed();
     }
-  });
+  })();
 
   return kept?.answer;
 }

@@ -1,16 +1,16 @@
-import { type GenerateOptions } from "@deepseek-ai/dsh-llm";
+import type { GenerateOptions } from "@deepseek-ai/dsh-llm";
 import type { JsonValue, ToolSchema } from "../dsh.js";
 import type { stopHookSettings } from "../test-gate.js";
-import { type RowsSupport } from "../rows-probe.js";
-import { Config } from "./config.js";
-import { type LooseMessage } from "./prompt.js";
+import type { RowsSupport } from "../rows-probe.js";
+import type { Config } from "./config.js";
+import type { LooseMessage } from "./prompt.js";
 /** Claude permission mode for a dsh access mode, or undefined for one this table does not know. */
 export declare const modeForAccess: (accessMode: string) => string | undefined;
 /** dsh's access-mode switch arrives as text in the runtime-context injection; the last snapshot wins. */
-export declare function accessModeOf(messages: LooseMessage[] | undefined): string | undefined;
+export declare function accessModeOf(messages: Array<LooseMessage> | undefined): string | undefined;
 /** dsh's approval-policy line rides in the same runtime-context injection as the file policy, and
  *  only while the policy is "never"; the last snapshot wins, so a switch back to "ask" clears it. */
-export declare function approvalsDisabled(messages: LooseMessage[] | undefined): boolean;
+export declare function approvalsDisabled(messages: Array<LooseMessage> | undefined): boolean;
 /** The CLI's permission mode for a turn: the configured one, or the one dsh's access mode maps to. */
 export declare function permissionModeFor(config: Schemastery.TypeT<typeof Config>, accessMode: string | undefined): string;
 /** The mode a session with no override runs in on each of dsh's three shields, keyed by access
@@ -29,7 +29,7 @@ export declare function unknownFlagIn(text: string): string | undefined;
  * a retry loop: the second refusal of the same flag is a real failure, not something to retry. */
 export declare function denyCliFlag(command: string, host: string | undefined, flag: string): boolean;
 /** The slice of node's execFile the probe uses; tests hand in a fake with this shape. */
-export type ExecLike = (cmd: string, args: string[], opts: {
+export type ExecLike = (cmd: string, args: Array<string>, opts: {
     timeout: number;
 }, cb: (err: Error | null, stdout: string | Buffer) => void) => void;
 /** The target binary's version and the flags its `--help` lists, probed once per binary. */
@@ -65,7 +65,7 @@ export declare const usesStdin: (flags: Set<string> | null | undefined) => boole
  * in for the missing ones, and the text says so: dsh's instructions name its tools bare (`bash`,
  * `read`), and the bridge can only offer them as `mcp__dsh__bash`, `mcp__dsh__read`.
  */
-export declare function dshToolsGuidance(tools?: readonly ToolSchema[], builtins?: readonly string[]): string;
+export declare function dshToolsGuidance(tools?: ReadonlyArray<ToolSchema>, builtins?: ReadonlyArray<string>): string;
 /**
  * The argument list for one `claude -p` spawn: every flag this plugin sends, in one place.
  *
@@ -95,7 +95,7 @@ export declare function buildArgs({ model, reasoningEffort, system, purpose, con
     /** The bridge for this session, with the dsh tools it will list (see `dshToolsGuidance`). */
     mcp?: {
         url: string;
-        tools?: readonly ToolSchema[] | undefined;
+        tools?: ReadonlyArray<ToolSchema> | undefined;
     } | undefined;
     /** /temporary: keep no Claude transcript for this session. */
     temporary?: boolean;
@@ -113,13 +113,13 @@ export declare function buildInput(prompt: string, images: Array<{
 /** Send it as written (`verbatimPrompts`); never for a line that is a command for the CLI. */
 composed?: boolean): string;
 /** Names from the CLI's init frame that dsh's command grammar accepts (lowercase, `[a-z0-9_-]`), deduped. */
-export declare function commandNames(value: JsonValue | undefined): string[];
+export declare function commandNames(value: JsonValue | undefined): Array<string>;
 /**
  * Bare tool names per MCP server, from the init frame's `mcp__<server>__<tool>` ids. Every known
  * server gets an entry, empty when it contributes nothing; an id whose server is not in the list
  * is dropped rather than guessed at.
  */
-export declare function mcpToolsByServer(serverNames: readonly string[], toolIds: readonly string[]): Map<string, string[]>;
+export declare function mcpToolsByServer(serverNames: ReadonlyArray<string>, toolIds: ReadonlyArray<string>): Map<string, Array<string>>;
 /** Bridged Claude commands are registered as `/claude-<name>` in dsh. */
 export declare const BRIDGE_PREFIX = "claude-";
 /**
@@ -166,6 +166,8 @@ export declare const NATIVE_TOOL_MAP: {
     readonly EnterPlanMode: "enter_plan_mode";
     readonly SlashCommand: "slash_command";
 };
+/** dsh's name for one of Claude Code's native tools, or undefined for a name the map does not list. */
+export declare const nativeToolName: (name: string) => string | undefined;
 /**
  * A session title as a model wrote it, without the wrappers dsh's prompt forbids and a model still
  * sends now and then: a JSON object with a `title` (the framed input is a JSON array, and Haiku

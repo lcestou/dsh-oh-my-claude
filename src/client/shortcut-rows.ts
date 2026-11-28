@@ -6,26 +6,8 @@
 import { HINTS_EVENT, loadHints } from "./hints.js";
 import { t } from "./i18n.js";
 import type { OmcKey } from "./i18n.js";
-import type { ClientCtx } from "./shared.js";
-
-/** One physical combination, as dsh's shortcuts service takes it. */
-interface Binding {
-  code: string;
-  modifiers: ReadonlyArray<"control" | "alt" | "shift" | "meta">;
-}
-
-/** The slice of dsh's `shortcuts` service this file calls (dsh-client-shortcuts `Shortcuts`),
- *  read with `ctx.get` since a dsh without the service answers undefined. */
-interface Shortcuts {
-  registerFixed(command: {
-    id: string;
-    label: () => string;
-    keys: ReadonlyArray<string>;
-    bindings: readonly [Binding, ...Array<Binding>];
-    group: "input";
-  }): () => void;
-  describeBinding(binding: Binding): { keys: ReadonlyArray<string> };
-}
+import type { ClientCtx, ShortcutBinding as Binding } from "./shared.js";
+import { reportWarning } from "./console-report.js";
 
 /** One row: the hint that switches the feature off, its label, and its keys in the order a
  *  person presses them (a repeated step repeats its binding, as dsh's own Esc Esc row does). */
@@ -72,7 +54,7 @@ export const ROWS: ReadonlyArray<Row> = [
  * still mounts. Returns the disposer that removes every row.
  */
 export function mountShortcutRows(ctx: ClientCtx): () => void {
-  const shortcuts = ctx.get?.<Shortcuts>("shortcuts");
+  const shortcuts = ctx.get?.("shortcuts");
 
   if (!shortcuts) {
     return () => {};
@@ -83,37 +65,40 @@ export function mountShortcutRows(ctx: ClientCtx): () => void {
   // remove.
   let disposed = false;
 
-  const sync = () =>
-    loadHints().then((hints) => {
-      if (disposed) {
-        return;
-      }
+  /** Lists the rows switched on and removes the rows switched off. Never rejects: a failed hints
+   *  read answers `{}`, which lists every row. */
+  const sync = async () => {
+    const hints = await loadHints();
 
-      for (const row of ROWS) {
-        const on = hints[row.hint] !== true;
-        const had = live.get(row.id);
+    if (disposed) {
+      return;
+    }
 
-        if (on && !had) {
-          try {
-            live.set(
-              row.id,
-              shortcuts.registerFixed({
-                id: row.id,
-                label: () => t(row.label),
-                keys: row.presses.flatMap((b) => shortcuts.describeBinding(b).keys),
-                bindings: row.presses,
-                group: "input",
-              }),
-            );
-          } catch (error) {
-            console.warn(`oh-my-claude: shortcut row ${row.id} not listed:`, error);
-          }
-        } else if (!on && had) {
-          had();
-          live.delete(row.id);
+    for (const row of ROWS) {
+      const on = hints[row.hint] !== true;
+      const had = live.get(row.id);
+
+      if (on && !had) {
+        try {
+          live.set(
+            row.id,
+            shortcuts.registerFixed({
+              id: row.id,
+              label: () => t(row.label),
+              keys: row.presses.flatMap((b) => shortcuts.describeBinding(b).keys),
+              bindings: row.presses,
+              group: "input",
+            }),
+          );
+        } catch (error) {
+          reportWarning(`oh-my-claude: shortcut row ${row.id} not listed:`, error);
         }
+      } else if (!on && had) {
+        had();
+        live.delete(row.id);
       }
-    });
+    }
+  };
 
   const onHints = () => void sync();
   void sync();

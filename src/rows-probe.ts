@@ -30,7 +30,7 @@ export interface RowsSupport {
 }
 
 /** The first line of a v3 log. */
-interface LogHeader {
+type LogHeader = {
   type: "session";
   version: number;
   id: string;
@@ -39,17 +39,17 @@ interface LogHeader {
   isSeeded: boolean;
   delegationDepth: number;
   agentPreset: string;
-}
+};
 
 /** One event line of a v3 log: the envelope dsh writes, with the payload it carries. */
-interface LogRow {
+type LogRow = {
   type: string;
   seq: number;
   time: number;
   surfaceOp?: "append";
   sourceEventSeqs?: Array<number>;
   data: JsonValue;
-}
+};
 
 export interface RawRowsLog {
   header: LogHeader;
@@ -65,6 +65,14 @@ export interface Catalog {
     options: { recovery: string; validation: string },
   ): { decodeRow(row: LogRow): void; finish(): void };
 }
+
+/**
+ * True for an object, taken as dsh's catalog: the export of dsh's own module, as before. A caller
+ * reads `currentVersion` off it directly, and one without `createRestore` throws inside the
+ * restore caller's catch. This file carries its own check rather than importing `decode.ts`: the
+ * startup probe runs it alone under node, where nothing beside it resolves.
+ */
+const isCatalog = (v: unknown): v is Catalog => typeof v === "object" && v !== null;
 
 const T0 = 1_700_000_000_000;
 
@@ -237,10 +245,19 @@ const catalogPath = (entry = process.argv[1] ?? ""): string | undefined => {
 
 /** The catalog as `import()` takes it: a file URL. Node reads a bare path as a URL, so a Windows
  *  path fails as the scheme "c:" and a `#` or `%` in a folder name is cut off or decoded (#246). */
-const importCatalog = async (at: string): Promise<{ sessionFormatCatalog?: Catalog }> =>
-  // SAFETY: `at` is dsh's own catalog module, found on disk by catalogPath; a dsh that renames the
-  // export answers undefined at the caller, and a failed load throws to the caller's catch.
-  (await import(pathToFileURL(at).href)) as { sessionFormatCatalog?: Catalog };
+const importCatalog = async (at: string): Promise<{ sessionFormatCatalog?: Catalog }> => {
+  // `at` is dsh's own catalog module, found on disk by catalogPath; a dsh that renames the export,
+  // or exports something else under it, answers undefined at the caller, and a failed load throws
+  // to the caller's catch.
+  const mod: unknown = await import(pathToFileURL(at).href);
+
+  const catalog =
+    typeof mod === "object" && mod !== null && "sessionFormatCatalog" in mod
+      ? mod.sessionFormatCatalog
+      : undefined;
+
+  return { sessionFormatCatalog: isCatalog(catalog) ? catalog : undefined };
+};
 
 /**
  * The installed dsh's session-format catalog, the module its own loader restores a log with.

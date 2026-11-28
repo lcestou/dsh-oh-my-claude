@@ -1,6 +1,9 @@
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { t, activeLocale } from "./i18n.js";
+import type { LocaleLike } from "./i18n.js";
+import { isElement, isNode, isStyleElement } from "./dom-guards.js";
+import { reportWarning } from "./console-report.js";
 
 export const ROUTE = "/dsh-oh-my-claude";
 
@@ -115,7 +118,7 @@ export const keywordMatches = (
   let at = 0;
 
   for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
+    const ch = text.charAt(i);
 
     if (open) {
       if (open === "[" && ch === "[") {
@@ -134,7 +137,7 @@ export const keywordMatches = (
       spans.push({ start: at, end: i + 1 });
       open = null;
     } else if (
-      (ch === "<" && i + 1 < text.length && /[a-zA-Z/]/.test(text[i + 1]!)) ||
+      (ch === "<" && i + 1 < text.length && /[a-zA-Z/]/.test(text.charAt(i + 1))) ||
       (ch === "'" && !wordy(text[i - 1])) ||
       (ch !== "<" && ch !== "'" && KEYWORD_PAIRS.has(ch))
     ) {
@@ -297,7 +300,7 @@ const PANEL_STYLE_ID = "dsh-oh-my-claude-panel";
  */
 export function ensurePanelStyle(): void {
   const existing = document.getElementById(PANEL_STYLE_ID);
-  const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
+  const el = isStyleElement(existing) ? existing : document.createElement("style");
   el.id = PANEL_STYLE_ID;
   const scope = `[${PANEL_ATTR}], [${DOCK_ATTR}]`;
   const controls = `:is(button, select, input, textarea, summary, [role="tab"])`;
@@ -484,9 +487,82 @@ export const codeInline: CSSProperties = {
   whiteSpace: "nowrap",
 };
 
+/** A parsed JSON value, typed: what `JSON.parse` returns, which TypeScript only calls `any`. */
+export type Json = string | number | boolean | null | Array<Json> | { [key: string]: Json };
+
+/** True for a value JSON can hold. A walk of the whole tree, so the type is earned, not assumed;
+ *  `undefined`, functions and class instances other than plain objects and arrays fail it. */
+const isJson = (value: unknown): value is Json => {
+  if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
+    return true;
+  }
+
+  if (Array.isArray(value)) {
+    return value.every((v) => isJson(v));
+  }
+
+  return (
+    typeof value === "object" &&
+    Object.getPrototypeOf(value) === Object.prototype &&
+    Object.values(value).every((v) => isJson(v))
+  );
+};
+
+/** `JSON.parse` with a typed result. Throws a `SyntaxError` on text that is not JSON, as
+ *  `JSON.parse` does; the check after it cannot fail on what `JSON.parse` returns. */
+export const parseJson = (text: string): Json => {
+  const value: unknown = JSON.parse(text);
+
+  if (!isJson(value)) {
+    throw new SyntaxError("JSON.parse returned a value JSON cannot hold");
+  }
+
+  return value;
+};
+
+/** A parsed JSON object, keyed by its own names. */
+export type JsonObject = { [key: string]: Json };
+
+/** True for a parsed JSON object: not `null`, not an array, not a string or number. The check the
+ *  client's JSON readers make before they look up a key. */
+export const isJsonObject = (value: Json | undefined): value is JsonObject =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** True for a JSON string; a number, boolean, object or missing value is not one. */
+export const isJsonString = (value: Json | undefined): value is string => typeof value === "string";
+
+/** True for a JSON number; a numeric string is not one. */
+export const isJsonNumber = (value: Json | undefined): value is number => typeof value === "number";
+
+/** The text a caught value shows on screen: an `Error`'s message, dsh's host message when a
+ *  directory call rejects with one, anything else stringified (a rejection is not always an
+ *  `Error`, and reading `.message` off one that is not shows nothing). */
+export const errorText = (cause: unknown): string => {
+  if (cause instanceof Error) {
+    return cause.message;
+  }
+
+  // dsh's host business failures reject with `{ rpcError: { message } }` rather than an Error.
+  if (typeof cause === "object" && cause !== null && "rpcError" in cause) {
+    const rpc = cause.rpcError;
+
+    if (
+      typeof rpc === "object" &&
+      rpc !== null &&
+      "message" in rpc &&
+      typeof rpc.message === "string"
+    ) {
+      return rpc.message;
+    }
+  }
+
+  return String(cause);
+};
+
 /** Decode a reply from this plugin's own routes; a non-2xx status throws its `error` text. */
 export const readJson = async <T>(r: Response): Promise<T> => {
   // SAFETY: the body comes from this plugin's own routes; the caller names the route's reply shape
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- replies come from this plugin's own routes, built from the same types, so one decode point is checked here instead of a decoder per route.
   const body = (await r.json().catch(() => ({}))) as T & { error?: string };
 
   if (!r.ok) {
@@ -572,7 +648,9 @@ async function openHere(
       ctx.workspaces.list.getSnapshot()?.archivedSessionIds?.includes(id) === true;
 
     for (let i = 0; i < 40 && (!known()[id] || archived()); i++) {
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => {
+        setTimeout(r, 50);
+      });
     }
 
     // Never listed: `open` below would be a no-op and the click would look dead, so throw for the
@@ -595,7 +673,7 @@ export { openHere };
  * service this warns and opens nothing.
  */
 export function openSession(ctx: ClientCtx, id: string): void {
-  const uiWorkspace = ctx.get?.<{ openSession?: (target: string) => void }>("uiWorkspace");
+  const uiWorkspace = ctx.get?.("uiWorkspace");
 
   if (uiWorkspace?.openSession) {
     uiWorkspace.openSession(id);
@@ -603,7 +681,7 @@ export function openSession(ctx: ClientCtx, id: string): void {
     return;
   }
 
-  console.warn(`[oh-my-claude] no session navigation on this dsh; cannot open ${id}`);
+  reportWarning(`[oh-my-claude] no session navigation on this dsh; cannot open ${id}`);
 }
 
 /** The ring's arc inside its button; `isRingRoot` says why it must be this exact shape. */
@@ -980,12 +1058,8 @@ export function useDismiss(
   root: { current: HTMLElement | null },
 ) {
   useEffect(() => {
-    if (!open) {
-      return;
-    }
-
     const onDown = (e: MouseEvent) => {
-      if (e.target instanceof Node && !root.current?.contains(e.target)) {
+      if (isNode(e.target) && !root.current?.contains(e.target)) {
         close("pointer");
       }
     };
@@ -996,8 +1070,11 @@ export function useDismiss(
       }
     };
 
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
+    // Listening only while open; removing a listener that was never added is a no-op.
+    if (open) {
+      document.addEventListener("mousedown", onDown);
+      document.addEventListener("keydown", onKey);
+    }
 
     return () => {
       document.removeEventListener("mousedown", onDown);
@@ -1108,6 +1185,8 @@ export interface UiWorkspaceFace {
     truncated?: boolean;
   }>;
   createDirectory: (path: string, name: string) => Promise<string>;
+  /** Brings a session to the foreground; absent on a dsh whose workspace UI has no session tabs. */
+  openSession?: (target: string) => void;
 }
 
 /** dsh's locale registry, read so a replaced dialog keeps dsh's own copy in dsh's language. */
@@ -1135,11 +1214,57 @@ export interface DirectoryFlowOwnerProps {
   onError: (message: string) => void;
 }
 
+/** True when a slot hands its occupant the directory-flow owner contract: dsh's slot typing names
+ *  only the session props, so the directory-flow cells' props are checked field by field here. */
+export const isDirectoryFlowOwnerProps = <P extends object>(
+  props: P,
+): props is P & DirectoryFlowOwnerProps =>
+  "open" in props &&
+  typeof props.open === "boolean" &&
+  "busy" in props &&
+  typeof props.busy === "boolean" &&
+  "onPicked" in props &&
+  typeof props.onPicked === "function" &&
+  "onCancel" in props &&
+  typeof props.onCancel === "function" &&
+  "onError" in props &&
+  typeof props.onError === "function";
+
 /** Mirrors: @deepseek-ai/dsh-client-ui-plugin-manager/lib/types/client/index.d.ts (`pluginNavigation`).
  *  dsh's plugin manager provides it; a dsh without that plugin has none. */
 export interface PluginNavigation {
   /** Select the Plugins panel and open one bundle's page; an unknown name shows the plugin list. */
   openBundle(packageName: string): void;
+}
+
+/** One physical key combination, as dsh's shortcuts service takes it. */
+export interface ShortcutBinding {
+  code: string;
+  modifiers: ReadonlyArray<"control" | "alt" | "shift" | "meta">;
+}
+
+/** The slice of dsh's `shortcuts` service the plugin calls (dsh-client-shortcuts `Shortcuts`): the
+ *  rows it adds to dsh's Keyboard shortcuts dialog, and the sequence gap Esc Esc reads per press. */
+export interface ShortcutsFace {
+  registerFixed(command: {
+    id: string;
+    label: () => string;
+    keys: ReadonlyArray<string>;
+    bindings: readonly [ShortcutBinding, ...Array<ShortcutBinding>];
+    group: "input";
+  }): () => void;
+  describeBinding(binding: ShortcutBinding): { keys: ReadonlyArray<string> };
+  /** How far apart, in ms, two presses of a sequence may land; absent on a dsh that fixes it. */
+  stopSequenceMs?: number;
+}
+
+/** The dsh services the plugin reads through `ctx.get` instead of naming them in `inject`, each
+ *  typed as far as the plugin uses it. A name missing here cannot be asked for. */
+export interface OptionalServices {
+  uiWorkspace: UiWorkspaceFace;
+  locale: LocaleLike;
+  pluginNavigation: PluginNavigation;
+  shortcuts: ShortcutsFace;
 }
 
 /** The dsh client services this panel uses, the ones `inject` names. */
@@ -1224,7 +1349,7 @@ export interface ClientCtx {
    * inject"), so this is the only way to treat one as optional: a dsh missing it keeps its own Add
    * workspace button and the plugin stays out of the way.
    */
-  get?: <T>(name: string) => T | undefined;
+  get?: <K extends keyof OptionalServices>(name: K) => OptionalServices[K] | undefined;
   // From dsh-client-ui-model-selection (`ModelDirectoryResolver`, registered as `modelDirectories`).
   modelDirectories: {
     directoryFor: (sessionId: string) => {
@@ -1571,7 +1696,7 @@ export const DOCK_CARD: CSSProperties = {
  * a key pressed in one composer is not taken by the other's listener.
  */
 export const inOwnComposer = (target: EventTarget | null, sessionId: string): boolean =>
-  target instanceof Element &&
+  isElement(target) &&
   target.closest("[data-composer-input]") !== null &&
   target.closest("[data-conversation-session]")?.getAttribute("data-conversation-session") ===
     sessionId;

@@ -4,7 +4,8 @@
 // in a `finally`, so a failed check does not leave every session orange. Point PLAYWRIGHT_ROOT at
 // any project with Playwright.
 // Usage: bun tools/playwright/spend-line.ts <token> [/tmp/pw/spend-line]
-import { dshUrl, launch } from "./pw.js";
+import z from "@deepseek-ai/schemastery";
+import { dshUrl, fetchJson, launch } from "./pw.js";
 
 const [token, out = "/tmp/pw/spend-line"] = process.argv.slice(2);
 const b = await launch();
@@ -15,22 +16,14 @@ await p.goto(dshUrl(token), { waitUntil: "load" });
 
 await p.waitForTimeout(3000);
 
-/** Read or write the plugin's hints from inside the page, which carries dsh's login. */
-const hints = (body?: Record<string, number | boolean | null>): Promise<Record<string, number>> =>
-  p.evaluate(async (patch) => {
-    const r = await fetch(
-      "/dsh-oh-my-claude/hints",
-      patch
-        ? {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(patch),
-          }
-        : undefined,
-    );
+/** The one hint this check reads, undefined while it is unset. */
+const SpendHint = z.object({
+  spendWarnUsd: z.union([z.const(undefined), z.number(), z.boolean()]),
+});
 
-    return r.json();
-  }, body);
+/** Read or write the plugin's hints from inside the page, which carries dsh's login. */
+const hints = (body?: Record<string, number | boolean | null>) =>
+  fetchJson(p, "/dsh-oh-my-claude/hints", SpendHint, body);
 
 /** The pill's state as the page shows it: the over mark, and the colour it is drawn in. */
 const pill = (): Promise<{ text: string; over: boolean; colour: string } | undefined> =>

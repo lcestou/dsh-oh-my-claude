@@ -1,8 +1,8 @@
-import { type Account } from "../accounts.js";
+import type { Account } from "../accounts.js";
 import type { PluginContext } from "../dsh.js";
 import { ClaudeCodeAdapter } from "./class.js";
-import { Config } from "./config.js";
-import { type SshBoxMount } from "./ssh-boxes.js";
+import type { Config } from "./config.js";
+import type { SshBoxMount } from "./ssh-boxes.js";
 import type { LocalMount } from "../routes/accounts.js";
 /** One mounted account: the same three handles an SSH box keeps. */
 export type AccountMount = SshBoxMount;
@@ -27,7 +27,7 @@ export interface SharedBridge {
  * An account never runs on the transcript mirror (`ownTranscripts` off): the session browser does
  * not list an account's transcripts, and a mirror built at mount misses a login made after it.
  */
-export declare function reconcileAccounts(ctx: PluginContext, base: Schemastery.TypeT<typeof Config>, accounts: Account[], mounts: Map<string, AccountMount>, adapters: Map<string, ClaudeCodeAdapter>, bridge: SharedBridge, log: (level: string, msg: string) => void): void;
+export declare function reconcileAccounts(ctx: PluginContext, base: Schemastery.TypeT<typeof Config>, accounts: Array<Account>, mounts: Map<string, AccountMount>, adapters: Map<string, ClaudeCodeAdapter>, bridge: SharedBridge, log: (level: string, msg: string) => void): void;
 /**
  * A reconcile that applies the saved list as it is when its turn comes. Calls run one at a time and
  * each re-reads, so a slow read started at boot cannot apply a list older than an add that was
@@ -35,8 +35,8 @@ export declare function reconcileAccounts(ctx: PluginContext, base: Schemastery.
  * caller may pass is ignored for the same reason. A failed read or apply rejects that call only;
  * the next one still runs.
  */
-export declare function serialAccounts(read: () => Promise<Account[]>, apply: (accounts: Account[]) => void): () => Promise<void>;
+export declare function serialAccounts(read: () => Promise<Array<Account>>, apply: (accounts: Array<Account>) => void): () => Promise<void>;
 /** Every local mount but the default, for the accounts routes: plugin accounts and hand-written
  *  mounts alike, with the dir they hand the CLI. SSH boxes are not accounts and are left out; a
  *  hand-written mount on the default dir comes back with loginKey "" and the routes skip it. */
-export declare function localMountsOf(adapters: Iterable<ClaudeCodeAdapter>): LocalMount[];
+export declare function localMountsOf(adapters: Iterable<ClaudeCodeAdapter>): Array<LocalMount>;

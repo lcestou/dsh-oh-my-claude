@@ -12,6 +12,26 @@ import {
 import type { LiveTask, HookRun } from "./translator.js";
 import type { PluginLoadError } from "./plugins.js";
 import type { FallbackRecord } from "./translator.js";
+import type { ClaudeContentBlock, ClaudeStreamPartial } from "./process.js";
+import type { ContentBlock, StreamChunk } from "@deepseek-ai/dsh-llm";
+
+/** The block the last chunk closes, or undefined when the last chunk closes none. */
+const lastBlock = (chunks: Array<StreamChunk>): ContentBlock | undefined => {
+  const last = chunks.at(-1);
+
+  return last?.type === "block-end" ? last.block : undefined;
+};
+
+/** The text a block carries, or undefined for none or a kind that carries no text. */
+const blockText = (block: ContentBlock | undefined): string | undefined =>
+  block !== undefined && "text" in block ? block.text : undefined;
+
+/** The text the last chunk streams, or undefined when it is not a text or reasoning delta. */
+const deltaText = (chunks: Array<StreamChunk>): string | undefined => {
+  const last = chunks.at(-1);
+
+  return last?.type === "text-delta" || last?.type === "reasoning-delta" ? last.text : undefined;
+};
 
 // Every header we write carries the mark right behind its glyph, and nothing else does: the client
 // requires it before it claims a paragraph as a tool header, so prose that opens with one of these
@@ -223,14 +243,13 @@ assert.equal(
 {
   const seen: Array<number> = [];
 
-  // SAFETY: Translator constructor type lacks statusNote in the exported declaration but the field is set
   const t = new Translator({
     statusNote: (code) => {
       seen.push(code);
 
       return " · Anthropic reports Degraded performance";
     },
-  }) as any;
+  });
 
   const degraded = t.translate({
     type: "system",
@@ -241,9 +260,9 @@ assert.equal(
     error: { status: 529, message: "overloaded" },
   });
 
-  assert.equal(degraded.at(-1).block.type, "reasoning");
+  assert.equal(lastBlock(degraded)?.type, "reasoning");
   assert.equal(
-    degraded.at(-1).block.text,
+    blockText(lastBlock(degraded)),
     "⚠ overloaded · Retrying in 2s · attempt 1/3 · Anthropic reports Degraded performance",
   );
   assert.deepEqual(seen, [529]);
@@ -257,7 +276,7 @@ assert.equal(
     error: { status: 429, message: "rate limit" },
   });
 
-  assert.equal(rateLimited.at(-1).block.text, "⚠ rate limit · Retrying in 2s · attempt 1/3");
+  assert.equal(blockText(lastBlock(rateLimited)), "⚠ rate limit · Retrying in 2s · attempt 1/3");
   assert.deepEqual(seen, [529]);
 }
 
@@ -267,11 +286,7 @@ console.log("translator format ok");
 // init (no key) clears with []; a commands_changed refresh passes undefined so stored errors are
 // left alone.
 {
-  // SAFETY: the test reaches onInit, a private field, to observe what translate forwards
-  const t = new Translator() as unknown as {
-    onInit?: (c: Array<string>, tools: Array<string>, pe?: Array<PluginLoadError>) => void;
-    translate: (e: unknown) => void;
-  };
+  const t = new Translator();
 
   let seen:
     | { names: Array<string>; tools: Array<string>; pe: Array<PluginLoadError> | undefined }
@@ -312,11 +327,7 @@ console.log("translator plugin-errors ok");
 // (byte search, notes/design/2026-09-19-model-fallback.md); the model_fallback frame is the shape
 // the Haiku probe produced live.
 {
-  // SAFETY: the test reaches onModel, a private field, to observe what translate forwards
-  const t = new Translator() as unknown as {
-    onModel?: (rec: Omit<FallbackRecord, "sessionId" | "at">) => void;
-    translate: (e: unknown) => Array<{ block?: { type?: string; text?: string } }>;
-  };
+  const t = new Translator();
 
   const seen: Array<Omit<FallbackRecord, "sessionId" | "at">> = [];
   t.onModel = (rec) => {
@@ -333,9 +344,9 @@ console.log("translator plugin-errors ok");
     api_refusal_category: "cyber",
   });
 
-  assert.equal(refusal.at(-1)?.block?.type, "reasoning", "refusal line is a reasoning block");
+  assert.equal(lastBlock(refusal)?.type, "reasoning", "refusal line is a reasoning block");
   assert.equal(
-    refusal.at(-1)?.block?.text,
+    blockText(lastBlock(refusal)),
     "⚠ Model switched: Fable 5.1 → Opus 4.8 (cyber safeguard)",
     "sticky refusal line names the category",
   );
@@ -356,7 +367,7 @@ console.log("translator plugin-errors ok");
   });
 
   assert.equal(
-    noFallback.at(-1)?.block?.text,
+    blockText(lastBlock(noFallback)),
     "⛔ Request blocked on Fable 5.1 (cyber safeguard)",
     "no-fallback line blocks with the category",
   );
@@ -377,7 +388,7 @@ console.log("translator plugin-errors ok");
   });
 
   assert.equal(
-    consent.at(-1)?.block?.text,
+    blockText(lastBlock(consent)),
     "⚠ Switched to Opus 5 — now your default model",
     "consent line uses the CLI content",
   );
@@ -398,7 +409,7 @@ console.log("translator plugin-errors ok");
   });
 
   assert.equal(
-    primary.at(-1)?.block?.text,
+    blockText(lastBlock(primary)),
     "⚠ Switched to Haiku 4.5 because claude-nonexistent-9-9 is not available",
     "model_fallback line uses the CLI content",
   );
@@ -412,16 +423,7 @@ console.log("translator model-fallback ok");
 // undefined so stored warnings are left alone. reload carries no warning_count, so warnings refresh
 // only from a fresh init frame.
 {
-  // SAFETY: the test reaches onInit, a private field, to observe what translate forwards
-  const t = new Translator() as unknown as {
-    onInit?: (
-      c: Array<string>,
-      tools: Array<string>,
-      pe?: Array<PluginLoadError>,
-      pw?: Array<PluginLoadError>,
-    ) => void;
-    translate: (e: unknown) => void;
-  };
+  const t = new Translator();
 
   let seen:
     | { pe: Array<PluginLoadError> | undefined; pw: Array<PluginLoadError> | undefined }
@@ -473,7 +475,6 @@ console.log("translator plugin-warnings ok");
   const modes: Array<string> = [];
   const tools: Array<{ tool: boolean; frame: boolean }> = [];
 
-  // SAFETY: the test feeds hand-built frames, the way the blocks above do
   const t = new Translator({
     onProgress: (p) => {
       if (p.mode) {
@@ -484,9 +485,9 @@ console.log("translator plugin-warnings ok");
         tools.push({ tool: p.tool, frame: p.frame === true });
       }
     },
-  }) as any;
+  });
 
-  const ev = (event: object, parent?: string) =>
+  const ev = (event: ClaudeStreamPartial, parent?: string) =>
     t.translate({ type: "stream_event", event, parent_tool_use_id: parent ?? null });
 
   const echo = (id: string, parent?: string) =>
@@ -570,16 +571,11 @@ console.log("translator plugin-warnings ok");
 
 // init frame: an environment API key draws one reasoning line; the login draws nothing
 {
-  // SAFETY: the strict event union is bypassed the way the api_retry block above does it
-  const t = new Translator() as any;
+  const t = new Translator();
   const keyed = t.translate({ type: "system", subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" });
-  assert.equal(
-    keyed.at(-1)?.block?.type,
-    "reasoning",
-    "the key is announced on the reasoning lane",
-  );
+  assert.equal(lastBlock(keyed)?.type, "reasoning", "the key is announced on the reasoning lane");
   assert.ok(
-    String(keyed.at(-1)?.block?.text).includes("ANTHROPIC_API_KEY"),
+    String(blockText(lastBlock(keyed))).includes("ANTHROPIC_API_KEY"),
     "the line names the variable",
   );
   assert.deepEqual(t.translate({ type: "system", subtype: "init", apiKeySource: "none" }), []);
@@ -588,8 +584,7 @@ console.log("translator plugin-warnings ok");
     [],
     "an old CLI without the field",
   );
-  // SAFETY: as above
-  const noted = new Translator({ noteApiKey: () => false }) as any;
+  const noted = new Translator({ noteApiKey: () => false });
   assert.deepEqual(
     noted.translate({ type: "system", subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" }),
     [],
@@ -600,8 +595,7 @@ console.log("translator plugin-warnings ok");
 // task frames reach onTask: start inserts, updated carries the status, notification ends it
 {
   const seen: Array<[string, string]> = [];
-  // SAFETY: the strict event union is bypassed the way the api_retry block above does it
-  const t = new Translator({ onTask: (id, patch) => seen.push([id, patch.status]) }) as any;
+  const t = new Translator({ onTask: (id, patch) => seen.push([id, patch.status]) });
   t.translate({
     type: "system",
     subtype: "task_started",
@@ -630,8 +624,7 @@ console.log("translator plugin-warnings ok");
   // A background task outlives its turn: the next turn's translator has no block for it, and the
   // status still has to reach the list.
   const late: Array<[string, string]> = [];
-  // SAFETY: as above
-  const fresh = new Translator({ onTask: (id, patch) => late.push([id, patch.status]) }) as any;
+  const fresh = new Translator({ onTask: (id, patch) => late.push([id, patch.status]) });
   fresh.translate({
     type: "system",
     subtype: "task_updated",
@@ -711,8 +704,7 @@ console.log("translator plugin-warnings ok");
 // to HOOK_OUTPUT_LIMIT; only a failed one also draws a line.
 {
   const runs: Array<HookRun> = [];
-  // SAFETY: the strict event union is bypassed the way the api_retry block above does it
-  const t = new Translator({ onHookRun: (r) => runs.push(r) }) as any;
+  const t = new Translator({ onHookRun: (r) => runs.push(r) });
 
   const clean = t.translate({
     type: "system",
@@ -753,8 +745,7 @@ console.log("translator plugin-warnings ok");
 
 // task_progress draws the CLI's per-step description once per change, beside the tool name
 {
-  // SAFETY: the strict event union is bypassed the way the api_retry block above does it
-  const t = new Translator() as any;
+  const t = new Translator();
   t.translate({
     type: "system",
     subtype: "task_started",
@@ -771,7 +762,7 @@ console.log("translator plugin-warnings ok");
   });
 
   assert.ok(
-    String(first.at(-1)?.text).includes("Bash\nRunning Count lines in a.ts"),
+    String(deltaText(first)).includes("Bash\nRunning Count lines in a.ts"),
     "tool and step on the first frame",
   );
 
@@ -793,7 +784,7 @@ console.log("translator plugin-warnings ok");
     description: "Running Count lines in b.ts",
   });
 
-  assert.equal(String(next.at(-1)?.text), "\nRunning Count lines in b.ts", "a new step alone");
+  assert.equal(String(deltaText(next)), "\nRunning Count lines in b.ts", "a new step alone");
 
   const summed = t.translate({
     type: "system",
@@ -804,11 +795,7 @@ console.log("translator plugin-warnings ok");
     summary: "Counting b",
   });
 
-  assert.equal(
-    String(summed.at(-1)?.text),
-    "\nCounting b",
-    "a summary equal to the step draws once",
-  );
+  assert.equal(String(deltaText(summed)), "\nCounting b", "a summary equal to the step draws once");
 }
 
 // A user frame whose content is a string is text the CLI wrote itself, not a tool result. The two
@@ -842,28 +829,29 @@ console.log("translator plugin-warnings ok");
 // The test gate's block reason arrives as a synthetic user frame whose content is a plain string
 // (CLI 2.1.332, seen on a live run 2026-11-25), and must draw one reasoning line all the same.
 {
-  // SAFETY: translate takes the CLI's frame union; this literal is the user frame the CLI sends
-  const t = new Translator() as any;
+  const t = new Translator();
 
   const text =
     "Stop hook feedback:\n[test gate 1/3] The tests failed, so your turn did not end.\nCommand: x";
 
-  for (const content of [text, [{ type: "text", text }]]) {
+  const contents: Array<string | Array<ClaudeContentBlock>> = [text, [{ type: "text", text }]];
+
+  for (const content of contents) {
     const out = t.translate({
       type: "user",
       isSynthetic: true,
-      message: { role: "user", content },
+      message: { content },
     });
 
-    assert.equal(out.at(-1)?.block?.type, "reasoning", `gate line drawn for ${typeof content}`);
-    assert.match(out.at(-1)?.block?.text ?? "", /1\/3/);
+    assert.equal(lastBlock(out)?.type, "reasoning", `gate line drawn for ${typeof content}`);
+    assert.match(blockText(lastBlock(out)) ?? "", /1\/3/);
   }
 
   // Other synthetic string text still draws nothing.
   const other = t.translate({
     type: "user",
     isSynthetic: true,
-    message: { role: "user", content: "Stop hook feedback:\nsomething else" },
+    message: { content: "Stop hook feedback:\nsomething else" },
   });
 
   assert.equal(other.length, 0);

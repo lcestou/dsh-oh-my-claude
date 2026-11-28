@@ -13,6 +13,7 @@ import {
   select,
   openSession,
   whenContextGone,
+  errorText,
 } from "./shared.js";
 import type { ClientCtx } from "./shared.js";
 import { subscribe } from "./events.js";
@@ -185,26 +186,30 @@ export function PhoneNoticesBlock() {
   /** Re-read the box's list and this browser's subscription. `reseed` also puts the saved webhook
    *  in the field: true on open and after a save, false on another tab's change, so a URL being
    *  typed here is not wiped when a phone subscribes elsewhere. */
-  const load = useCallback(async (reseed: boolean) => {
-    const next = await call<NotifyState>("/notify");
-    setState(next);
+  const load = useCallback(
+    (reseed: boolean) =>
+      call<NotifyState>("/notify")
+        .then((read) => {
+          setState(read);
 
-    if (reseed) {
-      setHook(next.webhookUrl ?? "");
-    }
+          if (reseed) {
+            setHook(read.webhookUrl ?? "");
+          }
 
-    const sub = await currentSubscription();
-    setMine(sub ? await idOf(sub.endpoint) : null);
-  }, []);
+          return currentSubscription();
+        })
+        .then((sub) => (sub ? idOf(sub.endpoint) : null))
+        .then(setMine),
+    [],
+  );
 
   useEffect(() => {
-    if (!on) {
-      return;
+    if (on) {
+      void load(true).catch((cause: unknown) => setStatus(errorText(cause)));
     }
 
-    void load(true).catch((error: Error) => setStatus(error.message));
-
-    return subscribe("notify", () => void load(false).catch(() => {}));
+    // Another tab's change, while the block is on.
+    return on ? subscribe("notify", () => void load(false).catch(() => {})) : undefined;
   }, [on, load]);
 
   /** Run one button's job with the buttons disabled; its string, or its error, goes to the status
@@ -214,7 +219,7 @@ export function PhoneNoticesBlock() {
     setStatus("");
     void job()
       .then((msg) => msg && setStatus(msg))
-      .catch((error: Error) => setStatus(error.message))
+      .catch((cause: unknown) => setStatus(errorText(cause)))
       .finally(() => setBusy(false));
   };
 
@@ -250,6 +255,9 @@ export function PhoneNoticesBlock() {
       }
 
       await load(false);
+
+      // Nothing for the status line: the device list now shows this browser.
+      return "";
     });
 
   /** Take this browser off the box's list and end its subscription. */
@@ -297,7 +305,7 @@ export function PhoneNoticesBlock() {
   const test = () =>
     run(async () => {
       // A test sent before any save still links to this browser's address.
-      if (state?.openUrl == null) {
+      if ((state?.openUrl ?? null) === null) {
         await call<NotifyState>(
           "/notify",
           jsonInit("PUT", { webhookUrl: state?.webhookUrl ?? "", openUrl: location.origin }),
@@ -495,7 +503,7 @@ export function watchPhoneOpen(ctx: ClientCtx): void {
     const target = e.data?.omcOpen;
 
     if (target) {
-      open(String(target));
+      open(target);
     }
   };
 

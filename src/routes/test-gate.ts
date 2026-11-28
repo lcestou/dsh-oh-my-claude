@@ -1,6 +1,8 @@
 // The test gate's routes: a workspace's gate as Settings reads and saves it, with a command
 // suggested from the project's files, and a session's latest run for the dock card.
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { JsonReply } from "../sessions.js";
+import { stringOf } from "../decode.js";
+import type { IncomingMessage } from "node:http";
 import { readdir, readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import type { JsonValue } from "../dsh.js";
@@ -25,7 +27,7 @@ import {
 export interface TestGateRouteCtx {
   ROUTE_PREFIX: string;
   stateDir: string;
-  json: (res: ServerResponse, status: number, value: object) => void;
+  json: JsonReply;
   readBody: (req: IncomingMessage) => Promise<{ [key: string]: JsonValue }>;
 }
 
@@ -134,7 +136,7 @@ export function testGateRoutes(c: TestGateRouteCtx): RouteHandler {
         req.method === "GET"
           ? (url.searchParams.get("session") ?? "")
           : req.method === "POST"
-            ? String((await c.readBody(req)).session ?? "")
+            ? (stringOf((await c.readBody(req)).session) ?? "")
             : "";
 
       if (!SESSION_ID.test(session)) {

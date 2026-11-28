@@ -5,9 +5,11 @@
 // `claude update` there when asked, or on its own when the box's switch is on. One record per box
 // under `claude-updates.json` in the plugin's state dir keeps the two choices and the history.
 
+import { isRec } from "./decode.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { isNewer, parse } from "./update.js";
+import { serialQueue } from "./state.js";
 
 /** The CLI's three release channels; `latest` is its default for an absent key. */
 export type Channel = "latest" | "stable" | "rc";
@@ -38,9 +40,6 @@ export interface ClaudeUpdates {
   /** Newest last; at most 50 kept. */
   log: Array<ClaudeUpdateEntry>;
 }
-
-/** The file: one record per box, keyed "this-box" or the ssh host. */
-export type ClaudeUpdatesFile = Record<string, ClaudeUpdates>;
 
 /** What the routes answer: the box, the two versions, why checks are off, and the record. */
 export interface ClaudeUpdateState {
@@ -153,12 +152,12 @@ const jsonObject = (text: string | undefined): Record<string, unknown> | undefin
     return undefined;
   }
 
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isRec(value)) {
     return undefined;
   }
 
   // SAFETY: a non-null, non-array object parsed from JSON has only string keys.
-  return value as Record<string, unknown>;
+  return value;
 };
 
 /** The user's release channel from settings, or `"latest"` when there is no key or it is unrecognised. */
@@ -200,12 +199,12 @@ export function offBy(
 
   const rawEnv = jsonObject(settingsText)?.env;
 
-  if (typeof rawEnv !== "object" || rawEnv === null || Array.isArray(rawEnv)) {
+  if (!isRec(rawEnv)) {
     return undefined;
   }
 
   // SAFETY: a non-null, non-array object from JSON; each value is re-checked by `asString`.
-  const nested = rawEnv as Record<string, unknown>;
+  const nested = rawEnv;
 
   if (isOn(asString(nested.DISABLE_UPDATES))) {
     return "DISABLE_UPDATES";
@@ -236,18 +235,13 @@ export function lastLine(out: string, error: string | undefined): string | undef
   return undefined;
 }
 
-/** A log entry as it may appear in untrusted JSON. */
-type RawEntry = {
-  at?: unknown;
-  by?: unknown;
-  ok?: unknown;
-  from?: unknown;
-  to?: unknown;
-  note?: unknown;
-};
+/** True when `e`, a log entry as it may appear in untrusted JSON, has the shape of a
+ *  ClaudeUpdateEntry; used to filter bad history rows. */
+const isValidEntry = (e: unknown): e is ClaudeUpdateEntry => {
+  if (!isRec(e)) {
+    return false;
+  }
 
-/** True when `e` has the shape of a ClaudeUpdateEntry; used to filter bad history rows. */
-const isValidEntry = (e: RawEntry): e is ClaudeUpdateEntry => {
   if (typeof e.at !== "number" || !Number.isFinite(e.at)) {
     return false;
   }
@@ -287,20 +281,20 @@ const readFileMap = async (dir: string): Promise<Record<string, unknown> | undef
 export async function readUpdates(dir: string, key: string): Promise<ClaudeUpdates> {
   const rec = (await readFileMap(dir))?.[key];
 
-  if (typeof rec !== "object" || rec === null || Array.isArray(rec)) {
+  if (!isRec(rec)) {
     return { log: [] };
   }
 
   // SAFETY: a non-null, non-array object from JSON; every field is checked before use below.
-  const raw = rec as Record<string, unknown>;
+  const raw = rec;
 
   if (!Array.isArray(raw.log)) {
     return { log: [] };
   }
 
   const result: ClaudeUpdates = {
-    // SAFETY: `isValidEntry` checked every field of `e`; the filter keeps only those that passed.
-    log: raw.log.filter((e): e is ClaudeUpdateEntry => isValidEntry(e as RawEntry)),
+    // `isValidEntry` checks every field; the filter keeps only the entries that pass.
+    log: raw.log.filter(isValidEntry),
   };
 
   if (raw.auto === true) {
@@ -318,7 +312,8 @@ export async function readUpdates(dir: string, key: string): Promise<ClaudeUpdat
   return result;
 }
 
-let updatesChain = Promise.resolve();
+/** The file's writes, one at a time. */
+const updates = serialQueue();
 
 /**
  * Persist one box's record under `dir/claude-updates.json`, serialised against other writers by a
@@ -327,20 +322,19 @@ let updatesChain = Promise.resolve();
  * `recursive: true` when it does not exist yet.
  */
 export function writeUpdates(dir: string, key: string, data: ClaudeUpdates): Promise<void> {
-  // The caller sees a failed write; the chain does not, or one full disk would fail every write
-  // after it (the `holdsChain` idiom in state.ts).
-  const write = updatesChain.then(async () => {
-    const file: ClaudeUpdatesFile = {};
+  // The caller sees a failed write; the queue does not, or one full disk would fail every write
+  // after it (`serialQueue` in state.ts).
+  return updates(async () => {
+    // Other boxes' records ride along as they were read.
+    const file: Record<string, unknown> = {};
 
     // Other boxes' records are carried across unread; `readUpdates` checks a record when it is
     // asked for, so a malformed one costs its own box, not the file.
     for (const [k, v] of Object.entries((await readFileMap(dir)) ?? {})) {
-      if (typeof v !== "object" || v === null || Array.isArray(v)) {
-        continue;
+      // A plain object from the plugin's own file; re-checked on read.
+      if (isRec(v)) {
+        file[k] = v;
       }
-
-      // SAFETY: a non-null, non-array object from the plugin's own file; re-checked on read.
-      file[k] = v as ClaudeUpdates;
     }
 
     const rec: ClaudeUpdates = { log: data.log.slice(-50) };
@@ -361,10 +355,6 @@ export function writeUpdates(dir: string, key: string, data: ClaudeUpdates): Pro
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "claude-updates.json"), JSON.stringify(file, null, 2) + "\n");
   });
-
-  updatesChain = write.catch(() => {});
-
-  return write;
 }
 
 /** True when `state` has a newer release available and neither disable knob is on. */

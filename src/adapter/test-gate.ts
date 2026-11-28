@@ -59,6 +59,15 @@ export function watchRuns(
   mkdirSync(dir, { recursive: true });
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
+  /** Read one settled run file and hand it on; a file that is gone or torn reads as nothing. */
+  const deliver = async (name: string) => {
+    const run = await readRunFile(join(dir, name));
+
+    if (run) {
+      onRun(name.slice(0, -".json".length), run);
+    }
+  };
+
   const w: FSWatcher = watch(dir, { persistent: false }, (_event, name) => {
     if (name === null || !name.endsWith(".json")) {
       return;
@@ -69,11 +78,8 @@ export function watchRuns(
       name,
       setTimeout(() => {
         timers.delete(name);
-        void readRunFile(join(dir, name)).then((run) => {
-          if (run) {
-            onRun(name.slice(0, -".json".length), run);
-          }
-        });
+        // Fire and forget: the timer has nothing to hand the result to.
+        void deliver(name);
       }, 50),
     );
   });

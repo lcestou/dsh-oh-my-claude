@@ -2,7 +2,41 @@
 // The dsh packages are NOT dependencies of this repo; we mirror only what this plugin touches.
 
 // Mirrors: @deepseek-ai/cordis/lib/types/context.d.ts + per-service module augmentations
-import type { ContentBlock, GenerateOptions, Message } from "@deepseek-ai/dsh-llm";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { brandString } from "@deepseek-ai/dsh-brand";
+import type { Branded } from "@deepseek-ai/dsh-brand";
+import type { Readable, Writable } from "node:stream";
+import type {
+  AdapterRegistrationHandle,
+  ContentBlock,
+  DirectoryRegistrationHandle,
+  GenerateOptions,
+  LlmAdapter,
+  ToolCallId,
+  ToolResultMessage,
+  Message,
+  StreamChunk,
+} from "@deepseek-ai/dsh-llm";
+import type { LocaleSettingsReader } from "./locale.js";
+
+/** Mirrors: @deepseek-ai/dsh-skill `SkillInvocationSource` and its `MessageSourceMap` entry: the
+ *  source dsh's own skill injection writes, which the chat draws folded. */
+declare module "@deepseek-ai/dsh-llm" {
+  interface MessageSourceMap {
+    "skill-invocation": {
+      readonly kind: "skill-invocation";
+      readonly name: string;
+      readonly form: "instructions";
+    };
+    /** This plugin's own notice source in a v4 log (dsh 0.1.7 on), where each producer declares
+     *  its own kind and the v3 `{ kind: "plugin", plugin }` wrapper is refused. */
+    "dsh-oh-my-claude": {
+      readonly kind: "plugin:dsh-oh-my-claude";
+      readonly form: "notice";
+      readonly summary: string;
+    };
+  }
+}
 
 /** Map of providerId → adapter on globalThis (hot-reload cross-plugin process adoption; per-instance). */
 export const ADAPTER_CURRENT = Symbol.for("dsh-oh-my-claude.adapter");
@@ -48,10 +82,15 @@ export type JsonValue =
   | Array<JsonValue>
   | { [key: string]: JsonValue };
 
-/** dsh session ids are plain strings on the wire; this is the one place they get their brand. */
-export const asSessionId = (id: string): SessionId =>
-  // SAFETY: the brand only marks provenance; every id reaching the adapter came from dsh itself
-  id as SessionId;
+/** dsh session ids are plain strings on the wire; this is the one place they get their brand. The
+ *  brand only marks provenance: every id reaching the adapter came from dsh itself. */
+export const asSessionId = (id: string): SessionId => brandString<SessionId>(id);
+
+/** A tool call id for a block this plugin streams (Claude's own ids, or ones this plugin mints). */
+export const asToolCallId = (id: string): ToolCallId => brandString<ToolCallId>(id);
+
+/** A workspace id read back from the plugin's own files, where every one came from dsh's registry. */
+export const asWorkspaceId = (id: string): WorkspaceId => brandString<WorkspaceId>(id);
 
 /** Mirrors: @deepseek-ai/dsh-session/lib/types/types.d.ts */
 export interface SessionHeader {
@@ -86,11 +125,13 @@ export interface Session {
   snapshotEvents(fromSeq?: number, toSeqExclusive?: number): ReadonlyArray<SessionEvent>;
   isOwnSeq(seq: number): boolean;
   get seq(): number;
-  append<T extends string>(
-    type: T,
-    data: Record<string, JsonValue>,
+  /** Mirrors dsh-session `SessionEventMap["tool/result"]`: a tool's result message in its step. */
+  append(
+    type: "tool/result",
+    data: { turn: number; step: number; message: ToolResultMessage; meta?: JsonValue },
     ...opts: Array<unknown>
   ): SessionEvent;
+  append(type: string, data: Record<string, JsonValue>, ...opts: Array<unknown>): SessionEvent;
   deriveMessages(): Array<Message>;
   /** The folded `request/header`; `config` is the route the last request ran on, and `tools` is
    *  exactly what dsh offers the model next, so code mode shows only `run_code` there. */
@@ -221,9 +262,9 @@ export interface AgentRegistry {
 
 /** Mirrors: @deepseek-ai/dsh-subprocess/lib/types/types.d.ts */
 export interface SubprocessHandle {
-  stdin: import("node:stream").Writable;
-  stdout: import("node:stream").Readable;
-  stderr: import("node:stream").Readable;
+  stdin: Writable;
+  stdout: Readable;
+  stderr: Readable;
   done: Promise<{ exitCode: number | null; signal: string | null }>;
   terminate(): void;
   waitForExit(): Promise<void>;
@@ -299,7 +340,7 @@ export interface UserQuestionService {
 }
 
 /** Mirrors: @deepseek-ai/dsh-workspace/lib/types/index.d.ts */
-export type WorkspaceId = string & { readonly __brand: "WorkspaceId" };
+export type WorkspaceId = Branded<"WorkspaceId">;
 
 export interface Workspace {
   id: WorkspaceId;
@@ -430,10 +471,7 @@ export interface WebServer {
     path: string;
     /** dsh past 0.2.2-rc.5 (harness #8266) checks this before the handler runs, `required` (login cookie) by default; older dsh ignores it. */
     auth?: "anonymous" | "required" | "deny";
-    handler: (
-      req: import("node:http").IncomingMessage,
-      res: import("node:http").ServerResponse,
-    ) => Promise<void>;
+    handler: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
   }): () => void;
 }
 
@@ -442,7 +480,7 @@ export interface ConnectionPolicy {
   /** Gone from dsh past 0.2.2-rc.5 (harness #8266), whose web server checks each route's `auth`
    *  itself. Absent means that check already ran; the plugin's routes are safe to skip their own
    *  only because of it. */
-  requestRejection?(req: import("node:http").IncomingMessage): number | undefined;
+  requestRejection?(req: IncomingMessage): number | undefined;
 }
 
 /** Mirrors: @deepseek-ai/dsh-session-persistence-jsonl/lib/types/index.d.ts */
@@ -482,6 +520,53 @@ export interface SessionWriteHandle {
   close(): Promise<void>;
 }
 
+/** The optional services `PluginContext.get` looks up by name, each as dsh provides it. */
+export interface OptionalServices {
+  commands: NonNullable<PluginContext["commands"]>;
+  sessionTitle: NonNullable<PluginContext["sessionTitle"]>;
+  workspaceRegistry: WorkspaceRegistry;
+  /** Mirrors: @deepseek-ai/dsh-agent-default-model. The model a session runs on before anyone picks one. */
+  agentDefaultModel: { currentSelection(): { provider: string } };
+  /** Mirrors: @deepseek-ai/dsh-skill `SkillRegistry.get`. dsh expands a typed `/name` itself when it serves that skill. */
+  skills: {
+    get(
+      name: string,
+      options?: { scope?: Agent; cwd?: string; signal?: AbortSignal },
+    ): Promise<{ invocation: { userInvocable: boolean } } | undefined>;
+  };
+  /** Mirrors: @deepseek-ai/dsh-working-directory. The agent's working directory, for project-level skills. */
+  workingDirectory: { ensure(agent: Agent, signal?: AbortSignal): Promise<string> };
+  /**
+   * Mirrors: dsh-plugin-desktop/src/desktop-browser-access.ts (the community DSH Desktop shell).
+   * Present only when dsh runs under that shell's Electron launcher, whose web server then answers
+   * 403 to every request that lacks its window's own header. The plugin reads presence only.
+   */
+  desktopBrowserAccess: { readonly ordinaryBrowserEnabled: boolean };
+  /** dsh's settings service, narrowed to the locale namespace the server strings read. */
+  settings: LocaleSettingsReader;
+  /** Mirrors: @deepseek-ai/dsh-app-boot `ProfileContext`, narrowed to its directory. dsh provides it
+   *  on the host before any plugin loads (profile-boot, 0.2.2-rc.1), so it is there at `apply`. */
+  profileContext: { readonly dir: string };
+  /** Mirrors: @deepseek-ai/dsh-session-query `SessionQueryEngine.observeSession`, narrowed to the
+   *  header and events a wake reads. Works for a session dsh has not loaded, without loading it. */
+  sessionQuery: SessionQueryReader;
+  /** Mirrors: @deepseek-ai/dsh-subagent `SubagentRuntime.sendMessage`. The one way to reach a
+   *  subagent's session that dsh does not hold live: through its exact live parent. */
+  subagents: SubagentMessenger;
+  /** dsh's compaction seam (`dsh-compaction`) at the root, mounted when a backend is. dsh's web and
+   *  desktop profiles disable it and mount one inside each agent preset; see `agentPresets`. */
+  compaction: CompactionService;
+  /** Mirrors @deepseek-ai/dsh-agent-preset-registry `AgentPresetRegistry`. `serviceFor` is a service
+   *  supplied inside the agent's isolated preset group, undefined when its preset has none; `list`
+   *  is the presets a session can start under; `presetForSession` is the one a session runs, fixed
+   *  once it has a message, null when none was recorded. */
+  agentPresets: {
+    serviceFor?(agent: Agent, name: "compaction"): CompactionService | undefined;
+    list(): Promise<ReadonlyArray<{ id: string; name?: string; broken?: string }>>;
+    presetForSession(session: Session): string | null;
+  };
+}
+
 /** Mirrors: @deepseek-ai/cordis/lib/types/context.d.ts intersected with dsh service augmentations */
 export interface PluginContext {
   root: PluginContext;
@@ -497,11 +582,8 @@ export interface PluginContext {
         settingsNs: string;
         settingsPath: Array<string>;
       }>,
-    ) => import("@deepseek-ai/dsh-llm").DirectoryRegistrationHandle;
-    registerAdapter: (
-      providers: Array<string>,
-      adapter: import("@deepseek-ai/dsh-llm").LlmAdapter,
-    ) => import("@deepseek-ai/dsh-llm").AdapterRegistrationHandle;
+    ) => DirectoryRegistrationHandle;
+    registerAdapter: (providers: Array<string>, adapter: LlmAdapter) => AdapterRegistrationHandle;
     /** The `[File …]` text dsh sends for one attached file in this environment, the same string
      *  its request assembly writes. Optional: a dsh without it leaves file steers to the boundary. */
     fileRequestText?: (ref: { attachmentId: string; name: string; bytes: number }) => string;
@@ -522,7 +604,7 @@ export interface PluginContext {
       signal?: AbortSignal,
     ): Promise<{
       config: Omit<GenerateOptions, "messages">;
-      stream(options: GenerateOptions): AsyncIterable<import("@deepseek-ai/dsh-llm").StreamChunk>;
+      stream(options: GenerateOptions): AsyncIterable<StreamChunk>;
     }>;
   };
   logger: {
@@ -533,41 +615,7 @@ export interface PluginContext {
   approval: ApprovalService;
   userQuestions: UserQuestionService;
   /** Optional-service lookup (cordis `ctx.get`); undefined when the provider is absent. */
-  get(name: "commands"): PluginContext["commands"];
-  get(name: "sessionTitle"): PluginContext["sessionTitle"];
-  get(name: "workspaceRegistry"): WorkspaceRegistry | undefined;
-  /** Mirrors: @deepseek-ai/dsh-agent-default-model. The model a session runs on before anyone picks one. */
-  get(name: "agentDefaultModel"): { currentSelection(): { provider: string } } | undefined;
-  /** Mirrors: @deepseek-ai/dsh-skill `SkillRegistry.get`. dsh expands a typed `/name` itself when it serves that skill. */
-  get(name: "skills"):
-    | {
-        get(
-          name: string,
-          options?: { scope?: Agent; cwd?: string; signal?: AbortSignal },
-        ): Promise<{ invocation: { userInvocable: boolean } } | undefined>;
-      }
-    | undefined;
-  /** Mirrors: @deepseek-ai/dsh-working-directory. The agent's working directory, for project-level skills. */
-  get(
-    name: "workingDirectory",
-  ): { ensure(agent: Agent, signal?: AbortSignal): Promise<string> } | undefined;
-  /**
-   * Mirrors: dsh-plugin-desktop/src/desktop-browser-access.ts (the community DSH Desktop shell).
-   * Present only when dsh runs under that shell's Electron launcher, whose web server then answers
-   * 403 to every request that lacks its window's own header. The plugin reads presence only.
-   */
-  get(name: "desktopBrowserAccess"): { readonly ordinaryBrowserEnabled: boolean } | undefined;
-  /** dsh's settings service, narrowed to the locale namespace the server strings read. */
-  get(name: "settings"): import("./locale.js").LocaleSettingsReader | undefined;
-  /** Mirrors: @deepseek-ai/dsh-app-boot `ProfileContext`, narrowed to its directory. dsh provides it
-   *  on the host before any plugin loads (profile-boot, 0.2.2-rc.1), so it is there at `apply`. */
-  get(name: "profileContext"): { readonly dir: string } | undefined;
-  /** Mirrors: @deepseek-ai/dsh-session-query `SessionQueryEngine.observeSession`, narrowed to the
-   *  header and events a wake reads. Works for a session dsh has not loaded, without loading it. */
-  get(name: "sessionQuery"): SessionQueryReader | undefined;
-  /** Mirrors: @deepseek-ai/dsh-subagent `SubagentRuntime.sendMessage`. The one way to reach a
-   *  subagent's session that dsh does not hold live: through its exact live parent. */
-  get(name: "subagents"): SubagentMessenger | undefined;
+  get<K extends keyof OptionalServices>(name: K): OptionalServices[K] | undefined;
   /** dsh-commands (`/name` in the composer); optional so a host without it still mounts the plugin. */
   commands?: {
     register(definition: {
@@ -607,6 +655,12 @@ export interface PluginContext {
   };
   workspaceRegistry: WorkspaceRegistry;
   subprocess?: SubprocessRuntime;
+  /** Mirrors: @deepseek-ai/dsh-permission-presets `PermissionPresetService.current`, the shield's
+   *  preset name for a session. Optional: a host without the service still mounts the plugin. */
+  permissionPresets?: { current(session: Session): string };
+  /** Mirrors: @deepseek-ai/dsh-goal `GoalService.get`, narrowed to the phase read. Optional: some
+   *  profiles mount no goal service. */
+  goals?: { get(agent: Agent): { readonly phase: string } | undefined };
   attachments: {
     readImage: (ref: ImageAttachmentRef, signal?: AbortSignal) => Promise<StoredImageAttachment>;
   };
@@ -630,20 +684,6 @@ export interface PluginContext {
     inject?: Array<string>;
     apply(ctx: PluginContext): void;
   }): object;
-  /** dsh's compaction seam (`dsh-compaction`) at the root, mounted when a backend is. dsh's web and
-   *  desktop profiles disable it and mount one inside each agent preset; see `agentPresets`. */
-  get(name: "compaction"): CompactionService | undefined;
-  /** Mirrors @deepseek-ai/dsh-agent-preset-registry `AgentPresetRegistry`. `serviceFor` is a service
-   *  supplied inside the agent's isolated preset group, undefined when its preset has none; `list`
-   *  is the presets a session can start under; `presetForSession` is the one a session runs, fixed
-   *  once it has a message, null when none was recorded. */
-  get(name: "agentPresets"):
-    | {
-        serviceFor?(agent: Agent, name: "compaction"): CompactionService | undefined;
-        list(): Promise<ReadonlyArray<{ id: string; name?: string; broken?: string }>>;
-        presetForSession(session: Session): string | null;
-      }
-    | undefined;
 }
 
 /** dsh's compaction service (`dsh-compaction`): its `compactNow` is what dsh's own `/compact` runs.

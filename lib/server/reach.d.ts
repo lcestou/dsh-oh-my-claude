@@ -1,12 +1,3 @@
-/**
- * Reach: why an SSH box did not answer, told apart so the Boxes row can name the fix, and the
- * Tailscale peers this box can see, so a box on a tailnet is a click rather than a hostname typed.
- *
- * Every stage below is a different repair for the user: a name that does not resolve is a tunnel
- * or DNS problem, a route that fails is the box or its network being down, a refused key is the
- * ssh setup, and a box that answers but has no `claude` needs an install. Before this, all four
- * read as one ssh error string in the row.
- */
 import type { SshBox } from "./sessions.js";
 export type ReachStage = "dns" | "route" | "hostkey" | "auth" | "policy" | "shell" | "no-cli" | "ok";
 export interface Reach {
@@ -41,9 +32,9 @@ export interface TailscalePeer {
  * when the tailnet has one (it is what `ssh` resolves through the tailscale resolver), else the
  * first Tailscale IP. This box's own entry is not a peer. Anything malformed reads as no peers.
  */
-export declare function tailscalePeers(text: string): TailscalePeer[];
+export declare function tailscalePeers(text: string): Array<TailscalePeer>;
 /** A peer that is already a saved box, by host, so the picker can say so instead of adding twice. */
-export declare const peerSaved: (peer: TailscalePeer, boxes: SshBox[]) => boolean;
+export declare const peerSaved: (peer: TailscalePeer, boxes: Array<SshBox>) => boolean;
 /** What `tailscale status --json` says about this node: whether it is on a tailnet, and who it is. */
 export interface TailscaleState {
     /** `Running`, `NeedsLogin`, `Stopped`, `NoState`, or whatever the daemon says. */
@@ -54,7 +45,7 @@ export interface TailscaleState {
         host: string;
         ip: string;
     };
-    peers: TailscalePeer[];
+    peers: Array<TailscalePeer>;
 }
 /** Parses `tailscale status --json` output, returning undefined on anything it cannot read and
  *  deriving login state from the 'Running' backend state. */
@@ -66,7 +57,7 @@ export interface WireguardPeer {
     iface: string;
     /** The first allowed address without its mask: what ssh dials. */
     host: string;
-    allowedIps: string[];
+    allowedIps: Array<string>;
     endpoint: string;
     /** Seconds since the last handshake, or nothing when there has never been one. */
     handshakeAge: number | null;
@@ -77,7 +68,7 @@ export interface WireguardPeer {
  * keepalive). The host is the peer's first single address (/32 or /128); a peer whose allowed
  * ranges hold no single address is skipped, since there is no one host to dial in a range.
  */
-export declare function wireguardPeers(dump: string, now?: number): WireguardPeer[];
+export declare function wireguardPeers(dump: string, now?: number): Array<WireguardPeer>;
 /** What the card sends to join a tailnet; both fields optional, both checked before a shell. */
 export interface TailnetJoin {
     loginServer: string;

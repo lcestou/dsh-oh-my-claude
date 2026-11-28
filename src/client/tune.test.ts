@@ -2,6 +2,7 @@
 // a control at its default removes its key, and a bad auto-compact value never reaches the file.
 import assert from "node:assert/strict";
 import { isFable, noTrailers, readTunables, updateSettings } from "./tune.js";
+import { objectOf, parseJson } from "../test-context.js";
 
 // A key the file does not have yet is added.
 {
@@ -203,7 +204,7 @@ const written = (r: ReturnType<typeof updateSettings>) => {
     throw new Error(r.error);
   }
 
-  return JSON.parse(r.text);
+  return objectOf(parseJson(r.text));
 };
 
 // The two deadlines take the CLI's enum and nothing else; "never" is a value, not an absent key.

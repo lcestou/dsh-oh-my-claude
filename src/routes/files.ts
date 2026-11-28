@@ -1,5 +1,6 @@
 // The file routes: transcript import, Claude's memory, skills and instructions.
 // The blocks are the chain's own, in its order; sessions.ts calls this group after the transcripts.
+import { stringOf } from "../decode.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -169,13 +170,15 @@ export function filesRoutes(c: RouteCtx): RouteHandler {
     // scope only; a plugin's skills are edited where the plugin ships them.
     if (req.method === "POST" && url.pathname === `${ROUTE_PREFIX}/skills/create`) {
       const body = await readBody(req);
-      const scope = String(body.scope ?? "");
+      const scope = stringOf(body.scope) ?? "";
 
       if (!isWritableSkillScope(scope)) {
         return json(res, 400, { error: "scope is user or project" });
       }
 
-      if (typeof body.name !== "string" || !validSkillName(body.name)) {
+      const name = stringOf(body.name);
+
+      if (name === undefined || !validSkillName(name)) {
         return json(res, 400, {
           error: "A skill name is lowercase letters, digits and hyphens, e.g. my-skill.",
         });
@@ -183,7 +186,7 @@ export function filesRoutes(c: RouteCtx): RouteHandler {
 
       const cwd = await knownCwd(body.cwd, sessionPersistence);
       const { box, cwd: at } = targetOf(url, cwd);
-      const target = skillTargetPath(scope, body.name, await claudeHomeOf(box), at ?? undefined);
+      const target = skillTargetPath(scope, name, await claudeHomeOf(box), at ?? undefined);
 
       if (target === null) {
         return json(res, 400, { error: "project skills need a workspace open" });
@@ -191,12 +194,12 @@ export function filesRoutes(c: RouteCtx): RouteHandler {
 
       if ((await readTextAt(box, target)) !== null) {
         return json(res, 409, {
-          error: `A skill called ${body.name} already exists in ${body.scope} skills.`,
+          error: `A skill called ${name} already exists in ${scope} skills.`,
         });
       }
 
-      await writeAt(box, target, skillTemplate(body.name, String(body.description ?? "")));
-      log("info", `skill ${body.name} created (${body.scope})`);
+      await writeAt(box, target, skillTemplate(name, stringOf(body.description) ?? ""));
+      log("info", `skill ${name} created (${scope})`);
 
       return json(res, 200, {
         ok: true,

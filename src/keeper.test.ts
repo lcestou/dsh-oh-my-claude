@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { attachKeeper, keeperHolder, pidAlive, readKeeperInfo, spawnKeeper } from "./process.js";
 import { tempDir } from "./test-tmp.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 // A stand-in for claude: echoes each stdin line at once and again 300 ms later, exits on "quit".
 const fake = `
@@ -31,7 +32,7 @@ const lines = (r: NodeJS.ReadableStream) => {
   return out;
 };
 
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const wait = (ms: number) => sleep(ms);
 
 const h1 = await spawnKeeper(
   dir,
@@ -229,7 +230,9 @@ console.log("keeper-respawn ok");
 for (const h of [h1, h2]) {
   try {
     h.terminate();
-  } catch {}
+  } catch {
+    // Already gone: the cleanup only makes sure nothing outlives the case.
+  }
 }
 
 await Promise.race([h1.done, wait(3000)]);

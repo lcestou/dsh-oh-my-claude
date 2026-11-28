@@ -16,7 +16,7 @@ export type McpScope = (typeof MCP_SCOPES)[number];
 export const scopeNeedsCwd = (scope: McpScope): boolean => scope !== "user";
 
 /** True only for one of the MCP scopes the CLI accepts, `user`, `local` and `project`. */
-export function isMcpScope(value: unknown): value is McpScope {
+export function isMcpScope(value: JsonValue | undefined): value is McpScope {
   return MCP_SCOPES.some((scope) => scope === value);
 }
 
@@ -24,7 +24,7 @@ export function isMcpScope(value: unknown): value is McpScope {
  * The CLI's own name rule: `mcp remove` and `mcp add-json` take the name as one argv word, so a
  * name starting with a dash would be read as a flag and anything with a space would be two words.
  */
-export const isMcpName = (name: unknown): name is string =>
+export const isMcpName = (name: JsonValue | undefined): name is string =>
   typeof name === "string" && /^[@\w][\w@/-]*$/.test(name);
 
 /** One server as the CLI stores it. `env` and `headers` are left out when they are empty. */
@@ -68,7 +68,8 @@ const pairs = (
 };
 
 /** True for the shape `pairs` returns when a line does not parse. */
-const isError = (value: object): value is { error: string } => "error" in value;
+const isError = (value: Record<string, string> | { error: string }): value is { error: string } =>
+  "error" in value;
 
 /** The form the browser posts. Every field arrives as text; nothing here is trusted. */
 export interface AddServerForm {

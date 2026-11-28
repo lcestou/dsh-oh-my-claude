@@ -1,4 +1,4 @@
-import { type FsBox } from "./remote-fs.js";
+import type { FsBox } from "./remote-fs.js";
 import type { FoldedTranscript } from "./transcript.js";
 /** One scheduled task, from either the durable file or the session transcript. */
 export interface ScheduledTask {
@@ -23,14 +23,14 @@ export interface DshGoal {
 /** The body of GET /scheduled-tasks. */
 export interface ScheduledTasksReply {
     ok: true;
-    durable: ScheduledTask[];
-    session: ScheduledTask[];
+    durable: Array<ScheduledTask>;
+    session: Array<ScheduledTask>;
     goal: {
         text: string;
         at: number;
     } | null;
     /** dsh's own goals for the session, newest first; the first is current unless it has ended. */
-    dshGoals: DshGoal[];
+    dshGoals: Array<DshGoal>;
     path: string;
 }
 /** The same route when it could not answer. */
@@ -46,24 +46,24 @@ export declare const durableTasksPath: (cwd: string) => string;
  * show, because silently reading it as empty would say "nothing is scheduled" about a file nobody
  * could read, and a box that cannot be reached throws for the same reason.
  */
-export declare function readDurableTasks(box: FsBox, cwd: string): Promise<ScheduledTask[]>;
+export declare function readDurableTasks(box: FsBox, cwd: string): Promise<Array<ScheduledTask>>;
 /**
  * The session-only tasks a transcript shows, which is the only place they appear: `durable: false`
  * is the CLI's default and those jobs live in the process's memory until it exits. A later
  * CronDelete for a name cancels the create before it, and a task created durable is left out
  * because the file above already lists it.
  */
-export declare function sessionTasksFrom(folded: FoldedTranscript): ScheduledTask[];
+export declare function sessionTasksFrom(folded: FoldedTranscript): Array<ScheduledTask>;
 /**
  * Fold a dsh session's `goal/change` records into one entry per goal, newest first. dsh writes a
  * full snapshot on every change (create, edit, pause, resume, complete, block) and a separate clear
  * record naming the goal it removed, which marks that goal `cleared` here. A record of another shape
  * is skipped rather than trusted, since the log is dsh's and its format can move.
  */
-export declare function dshGoalsFrom(events: readonly {
+export declare function dshGoalsFrom(events: ReadonlyArray<{
     type: string;
     data?: unknown;
-}[]): DshGoal[];
+}>): Array<DshGoal>;
 /**
  * The goal the CLI is holding, which it keeps nowhere but the transcript: on resume it recovers one
  * by reading its own messages backwards. The last proposal wins, and its step's time is when it was

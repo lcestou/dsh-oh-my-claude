@@ -4,7 +4,7 @@
 // workspace, everywhere on the box); Enter sends the row, Tab writes it into the composer and
 // Escape closes. The match rule is a pure function (`historyMatches`) so it is testable without
 // a DOM; the component owns the key listener, the list and the fetch.
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import { t, useLocale } from "./i18n.js";
 import type { OmcKey } from "./i18n.js";
@@ -19,8 +19,10 @@ import {
   meta,
   readJson,
   rowBtn,
+  errorText,
 } from "./shared.js";
 import type { ClientCtx } from "./shared.js";
+import { isElement } from "./dom-guards.js";
 
 /** The scope button beside the search field. `rowBtn` is a full-width list row; left at 100% here
  *  it took the whole line and squeezed the field to its 50 px of padding, hiding what was typed. */
@@ -94,7 +96,7 @@ export const isOpenKey = (e: KeyboardEvent): boolean =>
   !e.metaKey &&
   !e.shiftKey &&
   !e.isComposing &&
-  e.target instanceof Element &&
+  isElement(e.target) &&
   e.target.closest("[data-composer-input]") !== null;
 
 /** Puts the keyboard back in dsh's composer once the card closes. */
@@ -122,12 +124,15 @@ export function useHistoryOpen({
 }): [boolean, (open: boolean) => void] {
   const [off] = useHintFlag("historySearchOff");
   const [open, setOpen] = useState(false);
-  useEffect(() => setOpen(false), [sessionId]);
-  useEffect(() => {
-    if (off || !setDraft) {
-      return;
-    }
+  // A session switch closes the card, during the render that switches.
+  const [openFor, setOpenFor] = useState(sessionId);
 
+  if (openFor !== sessionId) {
+    setOpenFor(sessionId);
+    setOpen(false);
+  }
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (
         !isOpenKey(e) ||
@@ -145,13 +150,17 @@ export function useHistoryOpen({
     /** Opens this session's card only: the Rewind button sends the event with the session id it
      *  targets, and another session's dock hears it too. */
     const onOpen = (e: Event) => {
-      if (e instanceof CustomEvent && e.detail === sessionId && isClaudeSession(ctx, sessionId)) {
+      if ("detail" in e && e.detail === sessionId && isClaudeSession(ctx, sessionId)) {
         setOpen(true);
       }
     };
 
-    document.addEventListener("keydown", onKey, true);
-    window.addEventListener(OPEN_HISTORY_EVENT, onOpen);
+    // Off, or with no composer to fill, nothing opens the card; removing what was never added is a
+    // no-op.
+    if (!off && setDraft) {
+      document.addEventListener("keydown", onKey, true);
+      window.addEventListener(OPEN_HISTORY_EVENT, onOpen);
+    }
 
     return () => {
       document.removeEventListener("keydown", onKey, true);
@@ -197,47 +206,67 @@ export function HistorySearch({
   // An already empty cache is kept as is: a fresh object here on mount re-ran the fetch effect
   // and cancelled the first read a beat after it was sent.
   const clear = () => setLists((cur) => (Object.keys(cur).length === 0 ? cur : {}));
-  useEffect(() => {
-    if (!running) {
+  // The turn ending and the session changing are both noticed during render.
+  const [listsSession, setListsSession] = useState(sessionId);
+  const [listsRunning, setListsRunning] = useState(running);
+
+  if (listsSession !== sessionId || listsRunning !== running) {
+    setListsSession(sessionId);
+    setListsRunning(running);
+
+    if (listsSession !== sessionId || !running) {
       clear();
     }
-  }, [running]);
-  useEffect(clear, [sessionId]);
-  // Each open starts clean, and the field takes the keyboard, so typing filters at once.
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
+  }
 
-    setQuery("");
-    setAt(0);
-    document.querySelector<HTMLElement>("[data-omc-history-query]")?.focus();
+  // Each open starts clean, and the field takes the keyboard, so typing filters at once.
+  const [openSeen, setOpenSeen] = useState(false);
+
+  if (openSeen !== open) {
+    setOpenSeen(open);
+
+    if (open) {
+      setQuery("");
+      setAt(0);
+    }
+  }
+
+  useEffect(() => {
+    if (open) {
+      document.querySelector<HTMLElement>("[data-omc-history-query]")?.focus();
+    }
   }, [open]);
   // The scope's list, read once per open scope; the empty list is a real answer and stays.
+  const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
+  const readDue = open && lists[scope] === undefined && cwd ? cwd : null;
+  // A read starting clears the last one's error, during the render that makes it due.
+  const [readSeen, setReadSeen] = useState({ due: readDue, lists, scope });
+
+  if (readSeen.due !== readDue || readSeen.lists !== lists || readSeen.scope !== scope) {
+    setReadSeen({ due: readDue, lists, scope });
+
+    if (readDue !== null) {
+      setError("");
+    }
+  }
+
   useEffect(() => {
-    if (!open || lists[scope] !== undefined) {
-      return;
-    }
-
-    const cwd = ctx.sessions.list.getSnapshot()?.byId[sessionId]?.cwd;
-
-    if (!cwd) {
-      return;
-    }
-
     let live = true;
-    setError("");
-    fetch(
-      `${ROUTE}/history?session=${encodeURIComponent(sessionId)}&cwd=${encodeURIComponent(cwd)}&scope=${scope}${boxParam(ctx, sessionId)}`,
-    )
-      .then((r) => readJson<{ prompts?: Array<HistoryItem> }>(r))
-      .then((b) => live && setLists((cur) => ({ ...cur, [scope]: b.prompts ?? [] })))
-      .catch((error_: Error) => live && setError(error_.message));
+
+    if (open && lists[scope] === undefined && cwd) {
+      fetch(
+        `${ROUTE}/history?session=${encodeURIComponent(sessionId)}&cwd=${encodeURIComponent(cwd)}&scope=${scope}${boxParam(ctx, sessionId)}`,
+      )
+        .then((r) => readJson<{ prompts?: Array<HistoryItem> }>(r))
+        .then((b) => live && setLists((cur) => ({ ...cur, [scope]: b.prompts ?? [] })))
+        .catch((cause: unknown) => live && setError(errorText(cause)));
+    }
 
     return () => {
       live = false;
     };
-  }, [open, scope, lists, ctx, sessionId]);
+  }, [open, scope, lists, cwd, ctx, sessionId]);
+
   // Two ways out that do not depend on the keyboard being in the field. Zen and Arc take Ctrl+S
   // at the browser level and move the keyboard to their sidebar, outside the page, so the card
   // sat open with no Esc able to reach it (owner, 2026-11-04). The window losing focus is that
@@ -246,13 +275,13 @@ export function HistorySearch({
   // the page. The card is transient, so closing on a tab switch costs nothing. Declared above
   // the early return below, so a closed render runs the same hooks as an open one; the listeners
   // themselves exist only while the card is open.
-  const closeRef = useRef<() => void>(() => {});
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
+  const close = useCallback(() => {
+    onClose();
+    focusComposer();
+  }, [onClose]);
 
-    const onBlur = () => closeRef.current();
+  useEffect(() => {
+    const onBlur = () => close();
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.isComposing) {
@@ -261,7 +290,7 @@ export function HistorySearch({
 
       // An Escape meant for a dialog or menu someone opened over the card (a dsh dialog, the ✻
       // panel's Rewind) is theirs: taking it here closed the card and left that dialog open.
-      if (e.target instanceof Element) {
+      if (isElement(e.target)) {
         const surface = e.target.closest('[role="dialog"], [role="menu"], [role="listbox"]');
 
         if (surface && !surface.closest("[data-omc-history-search]")) {
@@ -271,17 +300,19 @@ export function HistorySearch({
 
       e.preventDefault();
       e.stopPropagation();
-      closeRef.current();
+      close();
     };
 
-    window.addEventListener("blur", onBlur);
-    document.addEventListener("keydown", onKey, true);
+    if (open) {
+      window.addEventListener("blur", onBlur);
+      document.addEventListener("keydown", onKey, true);
+    }
 
     return () => {
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("keydown", onKey, true);
     };
-  }, [open]);
+  }, [open, close]);
 
   if (!open) {
     return null;
@@ -290,13 +321,6 @@ export function HistorySearch({
   const entries = lists[scope];
   const rows = historyMatches(entries ?? [], query);
   const picked = rows[Math.min(at, Math.max(0, rows.length - 1))];
-
-  const close = () => {
-    onClose();
-    focusComposer();
-  };
-
-  closeRef.current = close;
 
   const fill = () => {
     if (picked) {

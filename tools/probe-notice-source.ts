@@ -71,9 +71,31 @@ async function loadCatalog(prefix: string): Promise<Catalog> {
     throw new Error(`no session-format catalog under ${prefix} (use --dsh)`);
   }
 
-  // SAFETY: `p` is dsh's own catalog module, checked to exist above; a dsh that renames the export
-  // fails on `createRestore` below, which is the loud failure this check exists to surface.
-  return (await import(p)).sessionFormatCatalog as Catalog;
+  // `p` is dsh's own catalog module, checked to exist above; a dsh that renames the export fails
+  // the check below, which is the loud failure this check exists to surface.
+  const mod: unknown = await import(p);
+
+  const catalog =
+    typeof mod === "object" && mod !== null && "sessionFormatCatalog" in mod
+      ? mod.sessionFormatCatalog
+      : undefined;
+
+  if (!isCatalog(catalog)) {
+    throw new TypeError(`${p} exports no sessionFormatCatalog with a createRestore function`);
+  }
+
+  return catalog;
+}
+
+/** Whether a module export is dsh's catalog as far as a cheap check goes: an object with a
+ *  `createRestore` function. The rest of its shape is trusted; a mismatch fails on first use. */
+function isCatalog(v: unknown): v is Catalog {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    "createRestore" in v &&
+    typeof v.createRestore === "function"
+  );
 }
 
 /** Restore a one-turn log plus a second turn opened by a user message carrying `source`, the way
@@ -81,18 +103,23 @@ async function loadCatalog(prefix: string): Promise<Catalog> {
  *  the refusing message, or undefined when dsh accepts the whole log. */
 function refusal(catalog: Catalog, version: number, source: Source): string | undefined {
   const base = rawRowsLog(version);
-  // SAFETY: a JSON round trip of rows `rawRowsLog` just built keeps their shape; it only detaches
-  // the copy so a restore consuming one run cannot touch the next.
-  const rows = JSON.parse(JSON.stringify(base.rows)) as Array<Row>;
+  // A deep copy detaches the rows `rawRowsLog` just built, so a restore consuming one run cannot
+  // touch the next.
+  const rows = structuredClone(base.rows);
   const n = rows.length;
   const msg = { content: [{ type: "text", text: "notice" }], source, role: "user", id: "n1" };
 
-  const at = (i: number, seq: number, type: string, data: Row["data"]): Row => ({
-    ...rows[i]!,
-    seq,
-    type,
-    data,
-  });
+  /** A copy of row `i` renumbered to `seq` and given `type` and `data`; throws when the base log
+   *  is shorter than the splice assumes. */
+  const at = (i: number, seq: number, type: string, data: Row["data"]): Row => {
+    const row = rows[i];
+
+    if (!row) {
+      throw new RangeError(`the base log has no row ${i}`);
+    }
+
+    return { ...row, seq, type, data };
+  };
 
   const extra: Array<Row> = [
     at(0, n, "agent/inbox/spliced", {

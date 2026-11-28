@@ -1,5 +1,6 @@
 // The plan-window history on disk: the usage route's one store, read once and written back in the
 // background. Server only; the pure fold and view it calls are usage-history.ts's.
+import { fits, parsedWith } from "./schema-fits.js";
 import z from "@deepseek-ai/schemastery";
 import { historyView, pruneLogins, recordWindows } from "./usage-history.js";
 import type { HistoryFile, HistoryRow, HistoryWindow } from "./usage-history.js";
@@ -22,11 +23,9 @@ const File = z.object({ logins: z.dict(z.any()) });
  *  older build's, a hand edit). A malformed row is dropped alone; the rest of its login survives. */
 export function parseUsageHistory(text: string): HistoryFile {
   const out: HistoryFile = { version: 1, logins: {} };
-  let file: ReturnType<typeof File>;
+  const file = parsedWith(File, text);
 
-  try {
-    file = File(JSON.parse(text));
-  } catch {
+  if (file === undefined) {
     return out;
   }
 
@@ -37,11 +36,12 @@ export function parseUsageHistory(text: string): HistoryFile {
 
     const rows: Array<HistoryRow> = [];
 
-    for (const raw of list) {
-      try {
+    const listed: ReadonlyArray<unknown> = list;
+
+    for (const raw of listed) {
+      // A row that is not a row: dropped alone.
+      if (fits(Row, raw)) {
         rows.push(Row(raw));
-      } catch {
-        // A row that is not a row: dropped alone.
       }
     }
 
@@ -67,17 +67,24 @@ export function createUsageHistory(
 
   /** Reads the file once per store; a missing or damaged file leaves the map empty, and a login
    *  already in memory wins over the one on disk. */
-  const load = (): Promise<void> =>
-    (loaded ??= read()
-      .then(parseUsageHistory)
-      .catch(() => parseUsageHistory(""))
-      .then((file) => {
-        for (const [key, rows] of Object.entries(file.logins)) {
-          if (!logins.has(key)) {
-            logins.set(key, rows);
-          }
-        }
-      }));
+  const load = (): Promise<void> => (loaded ??= fill());
+
+  /** The one read behind `load`: an unreadable file reads as an empty one. */
+  async function fill(): Promise<void> {
+    let file: HistoryFile;
+
+    try {
+      file = parseUsageHistory(await read());
+    } catch {
+      file = parseUsageHistory("");
+    }
+
+    for (const [key, rows] of Object.entries(file.logins)) {
+      if (!logins.has(key)) {
+        logins.set(key, rows);
+      }
+    }
+  }
 
   let saving: Promise<void> = Promise.resolve();
 

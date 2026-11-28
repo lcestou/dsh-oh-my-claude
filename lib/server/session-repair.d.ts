@@ -16,18 +16,18 @@ export type Block = {
 export type Data = {
     callId?: string;
     message?: {
-        content?: Block[];
+        content?: Array<Block>;
         source?: {
             callId?: string;
             [key: string]: unknown;
         };
         [key: string]: unknown;
     };
-    shadowedSeqs?: number[];
+    shadowedSeqs?: Array<number>;
     shadowedRange?: Range;
-    messageSeqs?: number[];
-    texts?: string[];
-    dt?: number[];
+    messageSeqs?: Array<number>;
+    texts?: Array<string>;
+    dt?: Array<number>;
     [key: string]: unknown;
 };
 /** A log row. Ordinary rows own one `seq`; a packed chunk run owns `seq0` plus one slot per chunk. */
@@ -37,23 +37,27 @@ export type Row = {
     seq0?: number;
     data?: Data;
     surfaceOp?: string | Record<string, unknown>;
-    sourceEventSeqs?: Ref[];
+    sourceEventSeqs?: Array<Ref>;
     [key: string]: unknown;
 };
 export type Header = {
     version?: number;
     [key: string]: unknown;
 };
-/** As much of dsh's session-format catalog as the repair calls. The header and row parameters
- *  are `object` so the probe's own catalog type (`src/rows-probe.ts`, typed on its fixture's
- *  shapes) is assignable here without a cast; the repair passes its own Header and Row. */
+/** A header or row line as dsh's catalog takes it: any JSON object, which it validates itself. */
+export type LogLine = {
+    readonly [key: string]: unknown;
+};
+/** As much of dsh's session-format catalog as the repair calls. Its lines are `LogLine` so the
+ *  probe's own catalog type (`src/rows-probe.ts`, typed on its fixture's shapes) is assignable
+ *  here without a cast; the repair passes its own Header and Row. */
 export type Catalog = {
     currentVersion?: number;
-    createRestore(header: object, options: {
+    createRestore(header: LogLine, options: {
         recovery: string;
         validation: string;
     }): {
-        decodeRow(row: object): void;
+        decodeRow(row: LogLine): void;
         finish(): void;
     };
 };
@@ -70,15 +74,15 @@ export declare const SURFACE: Set<string>;
  * since 2026-09-23 ahead of it, inside the same step, in the source shape `version` requires
  * (plugin source up to v3, system-prompt from v4). A log with no surface row at all is left as is.
  */
-export declare function repair(rows: Row[], version?: number): {
-    rows: Row[];
+export declare function repair(rows: Array<Row>, version?: number): {
+    rows: Array<Row>;
     droppedCalls: number;
     addedHead: boolean;
     closedCalls: number;
 };
 /** Whether the log's first surface row is something other than a `system/message`: the shape the
  *  Restore tab seeded before 2026-09-23. A log with no surface row at all is not headless. */
-export declare const headless: (rows: Row[]) => boolean;
+export declare const headless: (rows: Array<Row>) => boolean;
 /** The four refusal texts the repair mends, as dsh 0.1.5 to 0.1.7 word them, plus `headless`,
  *  the plugin's own word (never dsh's) for a log that loads today but has no system head and
  *  will be refused after its first live turn. A message holding none of them is a refusal the
@@ -95,7 +99,7 @@ export declare function knownRefusal(message: string): boolean;
  *  the frames are cut at their magic bytes and decoded one by one, the way dsh reads the log. */
 export declare function readLog(file: string): {
     header: Header;
-    rows: Row[];
+    rows: Array<Row>;
 };
 /** One zstd frame. dsh reads the header as its own frame ("first frame is not exactly one header
  *  line" otherwise), then the rows; two frames back to back are one valid stream. */
@@ -104,7 +108,7 @@ export declare const frame: (text: string) => Buffer;
  *  `<file>.bak-<ms>`, rename the new file into place, and return the backup path. The path is
  *  never absent: the rename is atomic on one filesystem, and a crash between the copy and the
  *  rename leaves the original in place and a `.bak` beside it. */
-export declare function writeLog(file: string, header: Header, rows: Row[]): string;
+export declare function writeLog(file: string, header: Header, rows: Array<Row>): string;
 /** Move a refused log out of dsh's way, for a reseed the person asked for: copy it to
  *  `<file>.bak-<ms>` first, then unlink it, and return the backup path. The copy comes first, as
  *  in `writeLog`, so a crash between the two leaves the original in place. */
@@ -115,5 +119,5 @@ export declare function restoreBak(file: string, bak: string): void;
 /** Feed rows through dsh's restore with the options its own load uses; undefined on success,
  *  the refusal message otherwise. Mirrors what dsh does at load, so a log this answers undefined
  *  for is one dsh loads. */
-export declare function migrate(catalog: Catalog, header: Header, rows: Row[]): string | undefined;
+export declare function migrate(catalog: Catalog, header: Header, rows: Array<Row>): string | undefined;
 export {};

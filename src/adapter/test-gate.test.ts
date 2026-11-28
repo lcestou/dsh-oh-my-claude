@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { TestGateRun } from "../test-gate.js";
 import { writeJsonAtomic } from "../test-gate-files.js";
 import { watchRuns } from "./test-gate.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const dir = join(mkdtempSync(join(tmpdir(), "omc-gate-")), "runs");
 const seen: Array<[string, string]> = [];
@@ -29,10 +30,10 @@ await writeJsonAtomic(join(dir, "s1.json"), run);
 
 // Poll the condition, not a fixed sleep: a loaded box delivers inotify late.
 for (let i = 0; i < 400 && seen.length === 0; i++) {
-  await new Promise((r) => setTimeout(r, 5));
+  await sleep(5);
 }
 
-await new Promise((r) => setTimeout(r, 120));
+await sleep(120);
 
 stop();
 

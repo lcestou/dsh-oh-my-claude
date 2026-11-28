@@ -10,7 +10,9 @@
 // markup is not ours, so when those are not found the labels seen are printed and the leg is
 // skipped, not failed. Point PLAYWRIGHT_ROOT at any project with Playwright installed.
 // Usage: bun tools/playwright/remote-ws-sync.ts <token>
-import { dshUrl, launch } from "./pw.js";
+import z from "@deepseek-ai/schemastery";
+import { fits } from "../../src/schema-fits.js";
+import { dshUrl, fetchJson, launch } from "./pw.js";
 import type { Page } from "./pw.js";
 
 const token = process.argv[2];
@@ -39,10 +41,17 @@ const call = (p: Page, method: string, body?: Record<string, string>): Promise<R
     [method, body === undefined ? "" : JSON.stringify(body)],
   );
 
+/** The part of the remote-workspaces listing the sweep reads. */
+const Listing = z.object({
+  workspaces: z.array(z.object({ name: z.string(), path: z.string() })),
+});
+
 /** Remove every row this check made, on this run or one that died half way. */
 const sweep = async (p: Page) => {
   const listed = await call(p, "GET");
-  const rows: Array<{ name: string; path: string }> = JSON.parse(listed.text).workspaces ?? [];
+  const raw: unknown = JSON.parse(listed.text);
+  // A listing of another shape holds no row this check could have made.
+  const rows = fits(Listing, raw) ? Listing(raw).workspaces : [];
 
   for (const w of rows.filter((row) => row.name === NAME)) {
     await call(p, "DELETE", { path: w.path });
@@ -100,12 +109,13 @@ await p.goto(dshUrl(token), { waitUntil: "networkidle" });
 
 await p.waitForTimeout(2000);
 
-const host = await p.evaluate(async () => {
-  const r = await fetch("/dsh-oh-my-claude/ssh-boxes");
-  const body: { boxes?: Array<{ host: string }> } = await r.json();
+const saved = await fetchJson(
+  p,
+  "/dsh-oh-my-claude/ssh-boxes",
+  z.object({ boxes: z.array(z.object({ host: z.string() })) }),
+);
 
-  return body.boxes?.[0]?.host ?? "";
-});
+const host = saved.boxes[0]?.host ?? "";
 
 if (!host) {
   console.log("SKIPPED: no ssh box is saved, so there is no box to pin a workspace to");

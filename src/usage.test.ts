@@ -16,6 +16,10 @@ import {
   usageWindows,
 } from "./usage.js";
 import { tempDir } from "./test-tmp.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import type { ConnectionPolicy } from "./dsh.js";
+import { fakePluginContext, objectOf, serveRoutes } from "./test-context.js";
+import type { RouteHandler } from "./test-context.js";
 
 // The endpoint names a slightly different instant on every read; both land on the same minute.
 assert.deepEqual(
@@ -516,7 +520,7 @@ console.log("breakdown-cache ok");
   };
 
   const reader = () => createUsageReader(file, fake, () => clock);
-  const flush = () => new Promise((r) => setTimeout(r, 30));
+  const flush = () => sleep(30);
 
   const first = reader();
   // many tabs asking at once share one read; later asks inside the cache life read nothing
@@ -613,7 +617,7 @@ console.log("breakdown-cache ok");
 
     const slowFirst = async (_file: string, value: unknown) => {
       const text = JSON.stringify(value);
-      await new Promise((r) => setTimeout(r, writes++ === 0 ? 50 : 0));
+      await sleep(writes++ === 0 ? 50 : 0);
       disk = text;
     };
 
@@ -624,7 +628,7 @@ console.log("breakdown-cache ok");
 
     const both = createUsageReader(join(dir, "order.json"), ok, () => clock, slowFirst);
     await Promise.all([both(home), both(second)]);
-    await new Promise((r) => setTimeout(r, 120));
+    await sleep(120);
     assert.equal(writes, 2);
     // every login's reply, not just the slow first write's snapshot (which predates the second reply)
     const onDisk: Record<string, UsageMemo> = JSON.parse(disk).entries;
@@ -640,41 +644,73 @@ console.log("breakdown-cache ok");
   console.log("usage reader ok");
 }
 
+/** Mounts the usage route on a host double with `connection`, `identity` and the route options,
+ *  and serves it over a loopback socket. The route reads the injected host's webServer, connection
+ *  and effect, nothing more. */
+const mountUsage = async (
+  identity: Parameters<typeof registerUsageRoute>[2],
+  options?: Parameters<typeof registerUsageRoute>[3],
+  connection: ConnectionPolicy = {},
+) => {
+  let handler: RouteHandler | undefined;
+
+  const host = fakePluginContext({
+    webServer: {
+      port: 0,
+      register: (route) => {
+        handler = route.handler;
+
+        return () => {};
+      },
+    },
+    connection,
+    effect: (fn) => {
+      fn();
+    },
+  });
+
+  registerUsageRoute(
+    fakePluginContext({
+      inject: (_deps, cb) => {
+        cb(host);
+      },
+    }),
+    () => {},
+    identity,
+    options,
+  );
+
+  return serveRoutes(() => handler);
+};
+
+/** A usage route's JSON reply, decoded to its `ok` and `history`. */
+const usageReply = (text: string) => {
+  const body = objectOf(JSON.parse(text));
+
+  return { ok: body.ok, history: body.history };
+};
+
+/** An upstream usage answer of `percent` on the weekly window, as a real fetch Response. */
+const weeklyAnswer = (percent: number, resetsAt: number) =>
+  new Response(
+    JSON.stringify({
+      limits: [{ kind: "weekly_all", percent, resets_at: new Date(resetsAt).toISOString() }],
+    }),
+    { status: 200 },
+  );
+
 // dsh past 0.2.2-rc.5 (harness #8266) checks the login cookie before a plugin route runs and dropped
 // `connection.requestRejection`; an older dsh still leans on the plugin's own check.
 {
   /** Mounts the usage route on a host double with `connection` and POSTs to it; returns the status, 405 when the route itself answered. */
-  const serve = async (connection: { requestRejection?: () => number | undefined }) => {
-    let handler: ((req: unknown, res: unknown) => Promise<void>) | undefined;
-
-    // SAFETY: the route reads the injected host's webServer, connection and effect, nothing more
-    const ctx = {
-      inject: (_deps: Array<string>, cb: (host: unknown) => void) =>
-        cb({
-          webServer: {
-            register: (r: { handler: typeof handler }) => {
-              handler = r.handler;
-
-              return () => {};
-            },
-          },
-          connection,
-          effect: (fn: () => void) => fn(),
-        }),
-    } as never;
-
-    registerUsageRoute(
-      ctx,
-      () => {},
+  const serve = async (connection: ConnectionPolicy) => {
+    const { send } = await mountUsage(
       async () => ({ host: "h", email: null }),
-    );
-    let status = 0;
-    await handler!(
-      { method: "POST", url: "/dsh-oh-my-claude/usage" },
-      { writeHead: (s: number) => void (status = s), end: () => {} },
+      undefined,
+      connection,
     );
 
-    return status;
+    return (await send("POST", "/dsh-oh-my-claude/usage")).status;
   };
 
   assert.equal(await serve({}), 405, "a dsh without requestRejection reaches the route itself");
@@ -694,58 +730,23 @@ console.log("breakdown-cache ok");
   );
   const resetsAt = Date.now() + 86_400_000;
   const realFetch = globalThis.fetch;
-  // SAFETY: readUsage reads status, headers.get and json() off the answer, nothing more
-  globalThis.fetch = (async () => ({
-    status: 200,
-    headers: { get: () => null },
-    json: async () => ({
-      limits: [{ kind: "weekly_all", percent: 17, resets_at: new Date(resetsAt).toISOString() }],
-    }),
-  })) as never;
+  globalThis.fetch = async () => weeklyAnswer(17, resetsAt);
 
   /** Mounts a fresh usage route whose identity names `email`, GETs it once and answers the body. */
   const get = async (email: string | null) => {
-    let handler: ((req: unknown, res: unknown) => Promise<void>) | undefined;
+    const { send } = await mountUsage(async () => ({ host: "h", email }), {
+      home,
+      realHome: home,
+    });
 
-    // SAFETY: the route reads the injected host's webServer, connection and effect, nothing more
-    const ctx = {
-      inject: (_deps: Array<string>, cb: (host: unknown) => void) =>
-        cb({
-          webServer: {
-            register: (r: { handler: typeof handler }) => {
-              handler = r.handler;
-
-              return () => {};
-            },
-          },
-          connection: {},
-          effect: (fn: () => void) => fn(),
-        }),
-    } as never;
-
-    registerUsageRoute(
-      ctx,
-      () => {},
-      async () => ({ host: "h", email }),
-      {
-        home,
-        realHome: home,
-      },
-    );
-    let body = "";
-    await handler!(
-      { method: "GET", url: "/dsh-oh-my-claude/usage" },
-      { writeHead: () => {}, end: (b: string) => void (body = b) },
-    );
-
-    return JSON.parse(body) as { ok: boolean; history?: Record<string, Array<unknown>> };
+    return usageReply((await send("GET", "/dsh-oh-my-claude/usage")).text);
   };
 
   const file = join(process.env.DSH_OMC_STATE_DIR ?? "", "usage-history.json");
   const anonymous = await get(null);
   assert.equal(anonymous.ok, true);
   assert.equal(anonymous.history, undefined, "no email, no history");
-  await new Promise((r) => setTimeout(r, 50));
+  await sleep(50);
   assert.equal(existsSync(file), false, "no email, nothing written");
   const reply = await get("a@example.com");
   globalThis.fetch = realFetch;
@@ -754,14 +755,12 @@ console.log("breakdown-cache ok");
 
   // The file lands under the login's email, written in the background, readable by the owner only.
   for (let i = 0; i < 200 && !existsSync(file); i++) {
-    await new Promise((r) => setTimeout(r, 5));
+    await sleep(5);
   }
 
-  const saved = JSON.parse(readFileSync(file, "utf8")) as {
-    logins: Record<string, Array<unknown>>;
-  };
+  const saved = objectOf(JSON.parse(readFileSync(file, "utf8")));
 
-  assert.deepEqual(Object.keys(saved.logins), ["a@example.com"]);
+  assert.deepEqual(Object.keys(objectOf(saved.logins)), ["a@example.com"]);
   assert.equal(statSync(file).mode & 0o777, 0o600);
   console.log("usage route history ok");
 }
@@ -777,54 +776,17 @@ console.log("breakdown-cache ok");
   const resetsAt = Date.now() + 86_400_000;
   const realFetch = globalThis.fetch;
   let fetches = 0;
-  // SAFETY: readUsage reads status, headers.get and json() off the answer, nothing more
-  globalThis.fetch = (async () => {
+  globalThis.fetch = async () => {
     fetches++;
 
-    return {
-      status: 200,
-      headers: { get: () => null },
-      json: async () => ({
-        limits: [{ kind: "weekly_all", percent: 40, resets_at: new Date(resetsAt).toISOString() }],
-      }),
-    };
-  }) as never;
+    return weeklyAnswer(40, resetsAt);
+  };
+
   let email = "old@example.com";
-  let handler: ((req: unknown, res: unknown) => Promise<void>) | undefined;
-
-  // SAFETY: the route reads the injected host's webServer, connection and effect, nothing more
-  const ctx = {
-    inject: (_deps: Array<string>, cb: (host: unknown) => void) =>
-      cb({
-        webServer: {
-          register: (r: { handler: typeof handler }) => {
-            handler = r.handler;
-
-            return () => {};
-          },
-        },
-        connection: {},
-        effect: (fn: () => void) => fn(),
-      }),
-  } as never;
-
-  registerUsageRoute(
-    ctx,
-    () => {},
-    async () => ({ host: "h", email }),
-    { home, realHome: home },
-  );
+  const { send } = await mountUsage(async () => ({ host: "h", email }), { home, realHome: home });
 
   /** GETs the mounted route once and answers the parsed body. */
-  const get = async () => {
-    let body = "";
-    await handler!(
-      { method: "GET", url: "/dsh-oh-my-claude/usage" },
-      { writeHead: () => {}, end: (b: string) => void (body = b) },
-    );
-
-    return JSON.parse(body) as { ok: boolean; history?: Record<string, Array<unknown>> };
-  };
+  const get = async () => usageReply((await send("GET", "/dsh-oh-my-claude/usage")).text);
 
   await get();
   email = "new@example.com";

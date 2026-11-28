@@ -30,75 +30,82 @@ export function useFitAbove(
 ): number {
   const [maxHeight, setMaxHeight] = useState(cap);
   useLayoutEffect(() => {
-    const el = ref.current;
+    // The panel mounts as it opens, so the element is there to measure only while `open`.
+    const el = open ? ref.current : null;
 
-    if (el === null) {
-      return;
-    }
-
-    const fit = () => {
-      let top = 0;
-
-      for (let a = el.parentElement; a; a = a.parentElement) {
-        const c = getComputedStyle(a);
-
-        if (c.overflowX !== "visible" || c.overflowY !== "visible") {
-          top = Math.max(top, a.getBoundingClientRect().top);
-        }
-      }
-
-      // A phone's soft keyboard shrinks only the visual viewport and scrolls it down; without this
-      // the top of a 640 px panel sat above the visible band while the keyboard was up. Zero on a
-      // desktop that is not pinch-zoomed, so the desktop fit is unchanged.
-      top = Math.max(top, window.visualViewport?.offsetTop ?? 0);
-      // max-height sizes the content box, so the panel's own padding and border come off too.
-      const own = getComputedStyle(el);
-
-      const frame =
-        Number.parseFloat(own.paddingTop) +
-        Number.parseFloat(own.paddingBottom) +
-        Number.parseFloat(own.borderTopWidth) +
-        Number.parseFloat(own.borderBottomWidth);
-
-      const room = el.getBoundingClientRect().bottom - top - FIT_MARGIN - frame;
-      setMaxHeight(Math.min(cap, Math.max(0, room)));
-    };
-
-    // The scroll listener is on the capture phase of the window, so it fires for every scroll of
-    // every scroller, including the conversation following a streaming turn; each fit reads
-    // layout up the whole ancestor chain. One fit per frame is all a screen can show.
-    let queued = 0;
-
-    const fitSoon = () => {
-      if (queued !== 0) {
-        return;
-      }
-
-      queued = requestAnimationFrame(() => {
-        queued = 0;
-        fit();
-      });
-    };
-
-    fit();
-    window.addEventListener("resize", fitSoon);
-    window.addEventListener("scroll", fitSoon, true);
-    window.visualViewport?.addEventListener("resize", fitSoon);
-    window.visualViewport?.addEventListener("scroll", fitSoon);
-
-    return () => {
-      if (queued !== 0) {
-        cancelAnimationFrame(queued);
-      }
-
-      window.removeEventListener("resize", fitSoon);
-      window.removeEventListener("scroll", fitSoon, true);
-      window.visualViewport?.removeEventListener("resize", fitSoon);
-      window.visualViewport?.removeEventListener("scroll", fitSoon);
-    };
+    return el === null ? undefined : watchFit(el, cap, setMaxHeight);
   }, [ref, cap, open]);
 
   return maxHeight;
+}
+
+/** useFitAbove's measuring for one mounted panel: fits now, again on resize and on any scroll
+ *  (one fit per frame), and returns the cleanup that stops listening. */
+function watchFit(
+  el: HTMLElement,
+  cap: number,
+  setMaxHeight: (height: number) => void,
+): () => void {
+  const fit = () => {
+    let top = 0;
+
+    for (let a = el.parentElement; a; a = a.parentElement) {
+      const c = getComputedStyle(a);
+
+      if (c.overflowX !== "visible" || c.overflowY !== "visible") {
+        top = Math.max(top, a.getBoundingClientRect().top);
+      }
+    }
+
+    // A phone's soft keyboard shrinks only the visual viewport and scrolls it down; without this
+    // the top of a 640 px panel sat above the visible band while the keyboard was up. Zero on a
+    // desktop that is not pinch-zoomed, so the desktop fit is unchanged.
+    top = Math.max(top, window.visualViewport?.offsetTop ?? 0);
+    // max-height sizes the content box, so the panel's own padding and border come off too.
+    const own = getComputedStyle(el);
+
+    const frame =
+      Number.parseFloat(own.paddingTop) +
+      Number.parseFloat(own.paddingBottom) +
+      Number.parseFloat(own.borderTopWidth) +
+      Number.parseFloat(own.borderBottomWidth);
+
+    const room = el.getBoundingClientRect().bottom - top - FIT_MARGIN - frame;
+    setMaxHeight(Math.min(cap, Math.max(0, room)));
+  };
+
+  // The scroll listener is on the capture phase of the window, so it fires for every scroll of
+  // every scroller, including the conversation following a streaming turn; each fit reads
+  // layout up the whole ancestor chain. One fit per frame is all a screen can show.
+  let queued = 0;
+
+  const fitSoon = () => {
+    if (queued !== 0) {
+      return;
+    }
+
+    queued = requestAnimationFrame(() => {
+      queued = 0;
+      fit();
+    });
+  };
+
+  fit();
+  window.addEventListener("resize", fitSoon);
+  window.addEventListener("scroll", fitSoon, true);
+  window.visualViewport?.addEventListener("resize", fitSoon);
+  window.visualViewport?.addEventListener("scroll", fitSoon);
+
+  return () => {
+    if (queued !== 0) {
+      cancelAnimationFrame(queued);
+    }
+
+    window.removeEventListener("resize", fitSoon);
+    window.removeEventListener("scroll", fitSoon, true);
+    window.visualViewport?.removeEventListener("resize", fitSoon);
+    window.visualViewport?.removeEventListener("scroll", fitSoon);
+  };
 }
 
 /**
@@ -112,44 +119,46 @@ export function useHeightEase(ref: { current: HTMLElement | null }, active: bool
   useEffect(() => {
     const el = ref.current;
 
-    if (!active || !el) {
+    return active && el ? easeHeights(el) : undefined;
+  }, [ref, active]);
+}
+
+/** useHeightEase's watch on one element: animates each settled height change from the last one,
+ *  and returns the cleanup that stops watching and cancels a running animation. */
+function easeHeights(el: HTMLElement): () => void {
+  let last = el.getBoundingClientRect().height;
+  let anim: Animation | undefined;
+
+  const ro = new ResizeObserver(() => {
+    if (anim?.playState === "running") {
       return;
     }
 
-    let last = el.getBoundingClientRect().height;
-    let anim: Animation | undefined;
+    const next = el.getBoundingClientRect().height;
 
-    const ro = new ResizeObserver(() => {
-      if (anim?.playState === "running") {
-        return;
-      }
+    if (Math.abs(next - last) < 1) {
+      return;
+    }
 
-      const next = el.getBoundingClientRect().height;
+    const from = last;
+    last = next;
 
-      if (Math.abs(next - last) < 1) {
-        return;
-      }
+    if (easeMs() === 0) {
+      return;
+    }
 
-      const from = last;
-      last = next;
-
-      if (easeMs() === 0) {
-        return;
-      }
-
-      anim = el.animate([{ height: `${from}px` }, { height: `${next}px` }], {
-        duration: easeMs() * 1.5,
-        easing: "ease",
-      });
+    anim = el.animate([{ height: `${from}px` }, { height: `${next}px` }], {
+      duration: easeMs() * 1.5,
+      easing: "ease",
     });
+  });
 
-    ro.observe(el);
+  ro.observe(el);
 
-    return () => {
-      ro.disconnect();
-      anim?.cancel();
-    };
-  }, [ref, active]);
+  return () => {
+    ro.disconnect();
+    anim?.cancel();
+  };
 }
 
 /** A session's display name. The server answers an empty string, not undefined, for a transcript

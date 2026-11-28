@@ -13,8 +13,11 @@ import {
   whenContextGone,
   fmtDuration,
   controlStatesCss,
+  isJsonString,
+  parseJson,
 } from "./shared.js";
 import type { ClientCtx } from "./shared.js";
+import { reportError } from "./console-report.js";
 import { hexToRgb, gated, hasTheme } from "./theme.js";
 import { TURN_STATUS_SELECTOR } from "./contract.js";
 import type { LiveMode } from "../translator.js";
@@ -43,6 +46,7 @@ import {
 } from "./closing.js";
 import { COST_DIALOG_CSS } from "./cost.js";
 import { SETTINGS_EVENT } from "./picker.js";
+import { isHTMLElement, isStyleElement } from "./dom-guards.js";
 
 /** Default frames, played out and back on the CLI's eased 2 s cosine (see spinnerFrameAt). */
 const DEFAULT_FRAMES = ["·", "✢", "✳", "✶", "✻", "✻"] as const;
@@ -62,7 +66,7 @@ const loadSpinnerSettings = async (): Promise<{
 }> => {
   try {
     const body = await readJson<SettingsFile>(await fetch(`${ROUTE}/settings`));
-    const parsed = JSON.parse(body.text);
+    const parsed = parseJson(body.text);
 
     if (!isObj(parsed)) {
       return { frameSet: [...DEFAULT_FRAMES] };
@@ -70,20 +74,21 @@ const loadSpinnerSettings = async (): Promise<{
 
     const sv = parsed.spinnerVerbs;
 
-    // SAFETY: spinnerVerbs comes from parsed JSON (a JsonObject); the cast is to read its known keys.
-    if (!isObj(sv) || !Array.isArray((sv as { verbs?: unknown }).verbs)) {
+    if (!isObj(sv) || !Array.isArray(sv.verbs)) {
       return { frameSet: [...DEFAULT_FRAMES] };
     }
 
-    // SAFETY: mode is a string key on the JsonObject; we validate the value below.
-    const mode = (sv as { mode?: string }).mode;
+    const mode = sv.mode;
 
     if (mode !== "append" && mode !== "replace") {
       return { frameSet: [...DEFAULT_FRAMES] };
     }
 
-    // SAFETY: mode and verbs have been validated above; the cast narrows to the expected shape.
-    return { setting: sv as SpinnerVerbSetting, frameSet: [...DEFAULT_FRAMES] };
+    // A verb that is not a string is dropped rather than drawn.
+    return {
+      setting: { mode, verbs: sv.verbs.filter(isJsonString) },
+      frameSet: [...DEFAULT_FRAMES],
+    };
   } catch {
     return { frameSet: [...DEFAULT_FRAMES] };
   }
@@ -101,7 +106,7 @@ const accentRgb = (fallback: Rgb): Rgb => {
  *  one's sheet, and returning early here left the old rules in force until a hand reload. */
 const ensureTurnStatusStyle = () => {
   const found = document.getElementById("dsh-oh-my-claude-turn-status");
-  const styleEl = found instanceof HTMLStyleElement ? found : document.createElement("style");
+  const styleEl = isStyleElement(found) ? found : document.createElement("style");
   styleEl.id = "dsh-oh-my-claude-turn-status";
   // The frames differ in advance width in a proportional font; a fixed cell keeps the verb still.
   // The glyph sits at the cell's start, not its middle, which is what the terminal does for free:
@@ -359,13 +364,19 @@ const turnStatusRow = (found: HTMLElement): HTMLElement | undefined => {
   return found.getBoundingClientRect().height > 2 ? found : undefined;
 };
 
+/** What `stopTurnLine` reads off a turn line: its mark, its turn group (to mark done), and
+ *  removing it. A real `HTMLElement` is one; a test passes a plain object. */
+export type TurnLine = Pick<Element, "hasAttribute" | "remove"> & {
+  closest(selectors: string): Pick<Element, "setAttribute"> | null;
+};
+
 /** Give a 0.1.7 process group its own sentence back: removing the plugin's line is enough, because
  *  the rule that hides dsh's own only applies while that line is in the button. Called when the
  *  turn ends and when the bundle is disposed, and safe to call twice. `ended` marks the group so
  *  no later scan wires it again; a bundle being replaced passes false, since its turn is still
  *  running and the next bundle has to find a group that wants wiring. Marking it there took the
  *  header line down for the rest of every turn a rebuild landed in (owner, 2026-09-23). */
-export const stopTurnLine = (el: HTMLElement, ended = true): void => {
+export const stopTurnLine = (el: TurnLine, ended = true): void => {
   if (!el.hasAttribute("data-omc-turn-line")) {
     return;
   }
@@ -426,13 +437,13 @@ const wireTurnStatus = (
       return;
     }
 
-    // SAFETY: spinnerFrameAt answers an index in [0, frames.length).
-    spinner.textContent = frames[spinnerFrameAt(Date.now() - spinStart, frames.length)]!;
+    // spinnerFrameAt answers an index in [0, frames.length), so the empty fallback never shows.
+    spinner.textContent = frames[spinnerFrameAt(Date.now() - spinStart, frames.length)] ?? "";
   };
 
-  // Set below once the gone watcher is registered; `undefined` while it runs immediately on a
-  // retired bundle, which is why `stop` calls it optionally.
-  let offGone: (() => void) | undefined;
+  // Set below once the gone watcher is registered; a no-op while it runs immediately on a retired
+  // bundle, which is why it starts as one.
+  let offGone: () => void = noop;
 
   const stop = () => {
     clearInterval(interval);
@@ -441,7 +452,7 @@ const wireTurnStatus = (
     obs.disconnect();
     // Drop the gone watcher too: it holds `el`, the spinner and the observer, and the Set it sits
     // in lives as long as the bundle, so every row dsh ever unmounted stayed reachable.
-    offGone?.();
+    offGone();
   };
 
   const interval = setInterval(
@@ -537,7 +548,7 @@ const wireTurnStatus = (
 
       const text = (child.textContent ?? "").trim();
 
-      if (/^\d+\s*[hms]/.test(text) && child instanceof HTMLElement) {
+      if (/^\d+\s*[hms]/.test(text) && isHTMLElement(child)) {
         return child;
       }
     }
@@ -1019,10 +1030,7 @@ export function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientC
   // only when missing or dropped, React renders only on a change, and a hidden tab gets no frames.
   useEffect(() => {
     // Nothing to decide while the line is switched off, so no frame loop runs.
-    if (!running || off) {
-      return;
-    }
-
+    const watching = running && !off;
     const startedAt = Date.now();
     let header: HTMLElement | null = null;
     let box: HTMLElement | null = null;
@@ -1062,50 +1070,54 @@ export function DockStatus({ sessionId, ctx }: { sessionId: string; ctx: ClientC
       flushSync(() => setHeaderAway(next));
     };
 
-    frame = requestAnimationFrame(check);
+    if (watching) {
+      frame = requestAnimationFrame(check);
+    }
 
     // A turn that ended with its header scrolled away left `headerAway` true, and resetting it
     // when the next turn started came one render late: the first render of the new turn drew the
     // dock beside the new header. Reset as the turn ends instead, so the next one starts hidden.
     return () => {
-      cancelAnimationFrame(frame);
-      setHeaderAway(false);
+      if (watching) {
+        cancelAnimationFrame(frame);
+        setHeaderAway(false);
+      }
     };
   }, [running, off]);
   const shown = running && hasTheme("row") && !off && headerAway;
   useEffect(() => {
-    if (!shown) {
-      return;
-    }
-
-    const el = line.current;
-
-    if (el === null) {
-      return;
-    }
-
-    spinnerSettings ??= loadSpinnerSettings();
+    const el = shown ? line.current : null;
     let live = true;
-    void spinnerSettings.then((settings) => {
-      if (!live || !el.isConnected) {
-        return;
-      }
 
-      const defaults = activeLocale().startsWith("zh") ? ZH_VERBS : DEFAULT_VERBS;
-      wireTurnStatus(
-        el,
-        sessionId,
-        mergeVerbs(defaults, settings.setting),
-        settings.frameSet,
-        () => ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running === true,
-      );
-    }, console.error);
+    if (el !== null) {
+      const pending = (spinnerSettings ??= loadSpinnerSettings());
+      void (async () => {
+        try {
+          const settings = await pending;
+
+          if (!live || !el.isConnected) {
+            return;
+          }
+
+          const defaults = activeLocale().startsWith("zh") ? ZH_VERBS : DEFAULT_VERBS;
+          wireTurnStatus(
+            el,
+            sessionId,
+            mergeVerbs(defaults, settings.setting),
+            settings.frameSet,
+            () => ctx.sessions.list.getSnapshot()?.byId[sessionId]?.running === true,
+          );
+        } catch (error) {
+          reportError(error);
+        }
+      })();
+    }
 
     // The beat inside `wireTurnStatus` stops on its own once the span leaves the document, which
     // React does when `shown` flips; the mark is cleared so a re-show wires a fresh line.
     return () => {
       live = false;
-      el.removeAttribute(TURN_MARK);
+      el?.removeAttribute(TURN_MARK);
     };
   }, [shown, sessionId, ctx]);
 
@@ -1283,6 +1295,16 @@ const paintClosing = (
   }
 };
 
+/** Does nothing: the stand-in for a cleanup not registered yet. */
+const noop = (): void => {};
+
+/** Drops the cached spinner read. The verbs come from settings.json, which the settings editor on
+ *  this page can rewrite, so the next row wired reads the file again; a row already up keeps the
+ *  verbs it drew with. */
+const dropSpinner = () => {
+  spinnerSettings = undefined;
+};
+
 /** Wire a running turn's status: attach dsh's [role=status][aria-live=polite] element to this
  *  session, keep the body marked to the active Claude session, and tear both down on unmount. */
 export function watchTurnStatus(ctx: ClientCtx) {
@@ -1309,12 +1331,6 @@ export function watchTurnStatus(ctx: ClientCtx) {
   markBody();
   const beat = setInterval(guard(markBody), 1000);
   whenContextGone(() => clearInterval(beat));
-
-  // The verbs come from settings.json, which the settings editor on this page can rewrite. Drop the
-  // read so the next row wired reads the file again; a row already up keeps the verbs it drew with.
-  const dropSpinner = () => {
-    spinnerSettings = undefined;
-  };
 
   window.addEventListener(SETTINGS_EVENT, dropSpinner);
   whenContextGone(() => window.removeEventListener(SETTINGS_EVENT, dropSpinner));
@@ -1371,24 +1387,30 @@ export function watchTurnStatus(ctx: ClientCtx) {
       return;
     } // the Claude look's status row is off: dsh's own text stays
 
-    spinnerSettings ??= loadSpinnerSettings(); // until a settings write drops it
+    const pending = (spinnerSettings ??= loadSpinnerSettings()); // until a settings write drops it
     // The read is shared until a settings write drops it, so after the first frame this is a microtask.
     // The await used to be unhandled, so a throw inside `wireTurnStatus` became a rejection
     // `guard` never saw: the spinner simply never appeared, with nothing on the console to say why.
-    void spinnerSettings.then((settings) => {
-      if (!el.isConnected) {
-        return;
-      }
+    void (async () => {
+      try {
+        const settings = await pending;
 
-      const defaults = activeLocale().startsWith("zh") ? ZH_VERBS : DEFAULT_VERBS;
-      wireTurnStatus(
-        el,
-        activeId,
-        mergeVerbs(defaults, settings.setting),
-        settings.frameSet,
-        () => ctx.sessions.list.getSnapshot()?.byId[activeId]?.running === true,
-      );
-    }, console.error);
+        if (!el.isConnected) {
+          return;
+        }
+
+        const defaults = activeLocale().startsWith("zh") ? ZH_VERBS : DEFAULT_VERBS;
+        wireTurnStatus(
+          el,
+          activeId,
+          mergeVerbs(defaults, settings.setting),
+          settings.frameSet,
+          () => ctx.sessions.list.getSnapshot()?.byId[activeId]?.running === true,
+        );
+      } catch (error) {
+        reportError(error);
+      }
+    })();
   };
 
   /** One document walk per mutation batch, shared by every scan in it. */
@@ -1509,29 +1531,31 @@ export function RowMark({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx 
   useEffect(() => {
     const treeRow = ref.current?.closest('[role="treeitem"]');
 
-    if (!treeRow) {
-      return;
-    }
-
-    const refresh = () => {
-      const s = ctx.sessions.list.getSnapshot()?.byId[sessionId];
-      const want = s?.running === true && isClaudeSession(ctx, sessionId);
-
-      if (want) {
-        treeRow.setAttribute(ROW_MARK, "1");
-      } else {
-        treeRow.removeAttribute(ROW_MARK);
-      }
-    };
-
-    refresh();
-    const off = ctx.sessions.list.subscribe?.(refresh);
-
-    return () => {
-      off?.();
-      treeRow.removeAttribute(ROW_MARK);
-    };
+    return treeRow ? markRunningRow(treeRow, sessionId, ctx) : undefined;
   }, [sessionId, ctx]);
 
   return <span ref={ref} hidden data-omc-row-mark={sessionId} />;
+}
+
+/** RowMark's work on the row it found: marks it while the session runs on a Claude mount, follows
+ *  the list store, and returns the cleanup that unsubscribes and clears the mark. */
+function markRunningRow(treeRow: Element, sessionId: string, ctx: ClientCtx): () => void {
+  const refresh = () => {
+    const s = ctx.sessions.list.getSnapshot()?.byId[sessionId];
+    const want = s?.running === true && isClaudeSession(ctx, sessionId);
+
+    if (want) {
+      treeRow.setAttribute(ROW_MARK, "1");
+    } else {
+      treeRow.removeAttribute(ROW_MARK);
+    }
+  };
+
+  refresh();
+  const off = ctx.sessions.list.subscribe?.(refresh);
+
+  return () => {
+    off?.();
+    treeRow.removeAttribute(ROW_MARK);
+  };
 }

@@ -3,6 +3,8 @@
 // read-only, and a login runs under the account's own config dir and key.
 import { strict as assert } from "node:assert";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { IncomingMessage, ServerResponse } from "node:http";
+import { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Account } from "../accounts.js";
@@ -11,6 +13,8 @@ import { pollSshLogin, THIS_BOX } from "../ssh-login.js";
 import { accountsRoutes } from "./accounts.js";
 import type { AccountRouteCtx, LocalMount } from "./accounts.js";
 import { UNHANDLED } from "./context.js";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fieldsOf, objectOf, rowsOf } from "../test-context.js";
 
 const dir = mkdtempSync(join(tmpdir(), "omc-acct-"));
 const path = join(dir, "accounts.json");
@@ -29,7 +33,9 @@ const calls: Array<string> = [];
 /** Config dirs the stand-in CLI has logged out. */
 const loggedOut = new Set<string>();
 let body: { [key: string]: JsonValue } = {};
-let answer: { status: number; value: unknown } = { status: 0, value: null };
+
+// What the group answered, as the JSON the browser receives.
+let answer: { status: number; value: JsonValue } = { status: 0, value: null };
 
 const ctx: AccountRouteCtx = {
   ROUTE_PREFIX: "/p",
@@ -38,7 +44,9 @@ const ctx: AccountRouteCtx = {
   defaultHome: "/home/u/.claude",
   command: "claude",
   json: (_res, status, value) => {
-    answer = { status, value };
+    const sent = JSON.stringify(value);
+
+    answer = { status, value: JSON.parse(sent) };
   },
   readBody: async () => body,
   // Logged in only under the work account's dir, as the real CLI reads its login from there.
@@ -93,11 +101,12 @@ const route = accountsRoutes(ctx);
 const hit = async (method: string, path: string, b: { [key: string]: JsonValue } = {}) => {
   body = b;
   answer = { status: 0, value: null };
-  // SAFETY: the group reads `method` off the request and the body through readBody, nothing else
-  const req = { method } as never;
+  // The group reads `method` off the request and the body through readBody, nothing else; the
+  // fake json never touches the response.
+  const req = new IncomingMessage(new Socket());
+  req.method = method;
 
-  // SAFETY: the fake json never touches the response
-  return route(req, {} as never, new URL(`http://dsh${path}`));
+  return route(req, new ServerResponse(req), new URL(`http://dsh${path}`));
 };
 
 // Add: saved normalised, mounted, every tab told.
@@ -113,7 +122,7 @@ assert.ok(mounted.has("claude-code-work"));
 
 assert.ok(calls.includes("publish"));
 
-const listed = (answer.value as { accounts: Array<{ provider: string; source: string }> }).accounts;
+const listed = rowsOf(objectOf(answer.value).accounts, { provider: "string", source: "string" });
 
 assert.deepEqual(
   listed.map((r) => `${r.provider}:${r.source}`),
@@ -134,14 +143,18 @@ await hit("POST", "/p/accounts", { name: "Main", configDir: "~/.claude" });
 
 assert.equal(answer.status, 400);
 
-assert.match(String((answer.value as { error: string }).error), /~\/\.claude/);
+assert.match(fieldsOf(answer.value, { error: "string" }).error, /~\/\.claude/);
 
 // Status: one row per account with its running count.
 await hit("GET", "/p/accounts/status");
 
-const rows = (
-  answer.value as { accounts: Array<{ provider: string; status: { running: number } }> }
-).accounts;
+const statusRows = objectOf(answer.value).accounts;
+
+assert.ok(Array.isArray(statusRows), "status answers a list");
+
+const rows = statusRows.map((r) => ({
+  status: fieldsOf(objectOf(r).status, { running: "number" }),
+}));
 
 assert.deepEqual(
   rows.map((r) => r.status.running),
@@ -218,11 +231,11 @@ const pollUntilDone = async () => {
   for (let i = 0; i < 100; i++) {
     await hit("POST", "/p/accounts/login/poll", { provider: "claude-code-work" });
 
-    if (!(answer.value as { pending?: boolean }).pending) {
+    if (!fieldsOf(answer.value, { pending: "boolean?" }).pending) {
       return;
     }
 
-    await new Promise((r) => setTimeout(r, 100));
+    await sleep(100);
   }
 
   assert.fail("the login never finished");
@@ -231,7 +244,7 @@ const pollUntilDone = async () => {
 {
   await hit("POST", "/p/accounts/login/start", { provider: "claude-code-work" });
   assert.match(
-    String((answer.value as { url?: string }).url),
+    String(fieldsOf(answer.value, { url: "string?" }).url),
     /d=\/home\/u\/\.claude-work$/,
     "the login runs under the account's config dir",
   );
@@ -262,7 +275,7 @@ const pollUntilDone = async () => {
 // Remove cancels a login still running on the account, so it cannot finish into a dir nobody owns.
 await hit("POST", "/p/accounts/login/start", { provider: "claude-code-work" });
 
-assert.ok((answer.value as { url?: string }).url);
+assert.ok(fieldsOf(answer.value, { url: "string?" }).url);
 
 // Remove: withdrawn and gone from the file; an unknown id is a 404.
 await hit("POST", "/p/accounts/remove", { provider: "claude-code-work" });
@@ -278,7 +291,7 @@ mounted.set("claude-code-work", { name: "Work", configDir: "~/.claude-work" });
 await hit("POST", "/p/accounts/login/poll", { provider: "claude-code-work" });
 
 assert.match(
-  String((answer.value as { error?: string }).error),
+  String(fieldsOf(answer.value, { error: "string?" }).error),
   /no login in progress/,
   "remove cancelled the account's login",
 );
@@ -298,7 +311,7 @@ await Promise.all([
 ]);
 
 assert.deepEqual(
-  (JSON.parse(readFileSync(path, "utf8")) as Array<Account>).map((a) => a.name),
+  rowsOf(JSON.parse(readFileSync(path, "utf8")), { name: "string" }).map((a) => a.name),
   ["A", "B"],
 );
 
@@ -308,7 +321,7 @@ for (const bad of ["{ not json", '[{"name":"x","configDir":"relative"}]']) {
   writeFileSync(path, bad);
   await hit("POST", "/p/accounts", { name: "Later" });
   assert.equal(answer.status, 500);
-  assert.match(String((answer.value as { error: string }).error), /accounts\.json/);
+  assert.match(fieldsOf(answer.value, { error: "string" }).error, /accounts\.json/);
   await hit("POST", "/p/accounts/remove", { provider: "claude-code-later" });
   assert.equal(answer.status, 500);
   assert.equal(readFileSync(path, "utf8"), bad, "the file is left as it was");

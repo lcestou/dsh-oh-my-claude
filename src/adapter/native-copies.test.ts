@@ -6,8 +6,12 @@ import { buildPrompt, contextSizes, promptTextOf } from "./prompt.js";
 import type { LooseMessage } from "./prompt.js";
 import { stepContextFor } from "./turn.js";
 
-// SAFETY: the slot bridgeCommands writes, set here as the CLI's init frame would
-(globalThis as { [COMMAND_CATALOG]?: Array<string> })[COMMAND_CATALOG] = ["review"];
+// The slot bridgeCommands writes, set here as the CLI's init frame would.
+Object.defineProperty(globalThis, COMMAND_CATALOG, {
+  value: ["review"],
+  configurable: true,
+  writable: true,
+});
 
 const bundle: LooseMessage = {
   role: "user",

@@ -10,11 +10,18 @@
 // target. Tokens from the earlier `setup-token` flow still live under `ssh-tokens/` on boxes that
 // logged in that way; they are read and injected until Log out forgets them, never minted again.
 import { spawn } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
+import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { sshArgs } from "./process.js";
 
-type SpawnFn = typeof spawn;
+/** The one `spawn` overload the login uses: piped stdio, so a fake needs only this shape. */
+type SpawnFn = (
+  command: string,
+  args: ReadonlyArray<string>,
+  options: SpawnOptions,
+) => ChildProcess;
 
 interface LoginProc {
   child: ReturnType<SpawnFn>;
@@ -77,7 +84,9 @@ export function readSshToken(stateDir: string, host: string): string | undefined
 export function deleteSshToken(stateDir: string, host: string): void {
   try {
     rmSync(sshTokenPath(stateDir, host));
-  } catch {}
+  } catch {
+    // Already gone: nothing to remove.
+  }
 }
 
 /** The last non-empty line, for a terse error without dumping the whole PTY buffer (which carries the
@@ -311,7 +320,7 @@ export function submitSshLoginCode(
     const submittedAt = Date.now();
 
     for (;;) {
-      await new Promise((r) => setTimeout(r, 250));
+      await sleep(250);
       const out = await loginOutcome(proc, verify);
 
       if (out) {

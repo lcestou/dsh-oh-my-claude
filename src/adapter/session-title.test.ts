@@ -5,9 +5,9 @@ import assert from "node:assert/strict";
 import type { StreamChunk } from "@deepseek-ai/dsh-llm";
 import { ClaudeCodeAdapter, Config } from "../adapter.js";
 import { asSessionId } from "../dsh.js";
-import type { PluginContext } from "../dsh.js";
 import { cleanTitle } from "./cli.js";
 import { tempDir } from "../test-tmp.js";
+import { fakePluginContext } from "../test-context.js";
 
 assert.equal(cleanTitle('{"title":"Mailchimp segment change"}'), "Mailchimp segment change");
 
@@ -30,7 +30,7 @@ assert.equal(cleanTitle(""), "");
 /** The adapter with its one-shot replaced by `chunks`, and the text and finish stream() answers. */
 const titleFrom = async (chunks: Array<StreamChunk>) => {
   const a = new ClaudeCodeAdapter(
-    { on() {}, logger: { info() {}, warn() {} } } as unknown as PluginContext,
+    fakePluginContext({ on() {}, logger: { info() {}, warn() {} } }),
     Config({}),
   );
 

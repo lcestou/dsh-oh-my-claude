@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { FetchLike, RouteHost } from "./sessions.js";
 import {
   dshSessionsFor,
   openTranscriptOnce,
@@ -35,17 +36,32 @@ import type {
   McpStatusReply,
   PermissionReadoutReply,
 } from "./adapter.js";
-import type { InstructionFile } from "./instructions.js";
-import type { TranscriptListItem } from "./transcript.js";
+import type { TurnRecord } from "./adapter/turn.js";
 import { tempDir } from "./test-tmp.js";
+import {
+  fakePluginContext,
+  fakeRouteHost,
+  fakeSession,
+  fakeWorkspace,
+  notFaked,
+  rowsOf,
+  serveRoutes,
+} from "./test-context.js";
+import type { RouteHandler } from "./test-context.js";
+import { asSessionId } from "./dsh.js";
+import type {
+  JsonValue,
+  SessionEvent,
+  SessionHeader,
+  SessionId,
+  SessionPersistence,
+} from "./dsh.js";
 
 // probeBox forwards init.method and init.body, plus content-type when body is set. Fake fetch, no network.
 {
-  const calls: Array<
-    [string, { headers?: Record<string, string>; method?: string; body?: string }]
-  > = [];
+  const calls: Array<[string, Parameters<FetchLike>[1] & { method?: string; body?: string }]> = [];
 
-  // SAFETY: partial fake for tests
+  // A fake for tests: the reply fields probeBox reads.
   const res = (
     status: number,
     headers: Record<string, string> = {},
@@ -58,9 +74,9 @@ import { tempDir } from "./test-tmp.js";
     text: async () => JSON.stringify(body),
   });
 
-  // SAFETY: partial fake for tests
-  const fakeFetch = async (u: string, init?: Record<string, unknown>) => {
-    calls.push([u, init as Record<string, unknown>]);
+  // A fake for tests: the reply fields probeBox reads.
+  const fakeFetch: FetchLike = async (u, init) => {
+    calls.push([u, init]);
 
     if (u === "http://box/dsh-oh-my-claude/settings") {
       return res(
@@ -73,13 +89,10 @@ import { tempDir } from "./test-tmp.js";
     throw new Error("unexpected call to " + u);
   };
 
-  // SAFETY: cast to fetch signature for test double
-  const result = await probeBox(
-    { name: "box", url: "http://box" },
-    fakeFetch as unknown as typeof fetch,
-    "settings",
-    { method: "PUT", body: JSON.stringify({ text: "{}\n" }) },
-  );
+  const result = await probeBox({ name: "box", url: "http://box" }, fakeFetch, "settings", {
+    method: "PUT",
+    body: JSON.stringify({ text: "{}\n" }),
+  });
 
   assert.equal(result.ok, true);
   const lastCall = calls.at(-1)!;
@@ -95,8 +108,8 @@ import { tempDir } from "./test-tmp.js";
 {
   const calls: Array<string> = [];
 
-  // SAFETY: partial fake for tests
-  const fakeFetch = async (u: string) => {
+  // A fake for tests: the reply fields probeBox reads.
+  const fakeFetch: FetchLike = async (u) => {
     calls.push(u);
 
     return {
@@ -108,8 +121,7 @@ import { tempDir } from "./test-tmp.js";
     };
   };
 
-  // SAFETY: cast to fetch signature for test double
-  await probeBox({ name: "b", url: "http://b" }, fakeFetch as unknown as typeof fetch);
+  await probeBox({ name: "b", url: "http://b" }, fakeFetch);
   assert.equal(calls.length, 1);
   assert.equal(calls[0], "http://b/dsh-oh-my-claude/status");
 }
@@ -128,8 +140,8 @@ import { tempDir } from "./test-tmp.js";
     cancel: () => void (cancelled = true),
   });
 
-  // SAFETY: partial fake for tests; only the status route is asked
-  const fakeFetch = async () => ({
+  // A fake for tests; only the status route is asked.
+  const fakeFetch: FetchLike = async () => ({
     status: 200,
     ok: true,
     headers: { get: () => null },
@@ -138,10 +150,7 @@ import { tempDir } from "./test-tmp.js";
     body: endless,
   });
 
-  const result = await probeBox(
-    { name: "b", url: "http://b" },
-    fakeFetch as unknown as typeof fetch,
-  );
+  const result = await probeBox({ name: "b", url: "http://b" }, fakeFetch);
 
   assert.equal(result.ok, false);
   assert.match(result.error, /larger than 16 MB/);
@@ -201,37 +210,18 @@ import { tempDir } from "./test-tmp.js";
     "utf8",
   );
 
-  let handler: ((req: any, res: any) => void) | undefined;
+  const routes = fakeRouteHost({
+    // The instructions routes only answer for a directory a dsh session is open in, so the
+    // fake registry has to know the one the assertions below use.
+    persisted: [
+      { id: "sid1", cwd: "/work/app" },
+      { id: "sid2", cwd: localWorkspace },
+      { id: "sid3", cwd: sshWorkspace },
+      { id: "sid4", cwd: repoSub },
+    ],
+  });
 
-  // SAFETY: partial fake for tests
-  const ctx = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
-
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        // The instructions routes only answer for a directory a dsh session is open in, so the
-        // fake registry has to know the one the assertions below use.
-        sessionPersistence: {
-          list: async () => [
-            { id: "sid1", cwd: "/work/app" },
-            { id: "sid2", cwd: localWorkspace },
-            { id: "sid3", cwd: sshWorkspace },
-            { id: "sid4", cwd: repoSub },
-          ],
-        },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
-
-  registerSessionRoutes(ctx, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     remoteWorkspacesPath,
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
@@ -256,44 +246,15 @@ import { tempDir } from "./test-tmp.js";
     rewind: async (sid, uuid, dryRun) => ({ ok: true, dryRun, canRewind: true }),
     settingsPath: join(tmp, "claude", "settings.json"),
   });
-  assert.ok(handler);
+  assert.ok(routes.handler());
 
-  const respond = async (method: string, url: string, body?: string, raw = false) => {
-    let respBody = "";
-    const resChunks: Array<Buffer> = [];
+  const { send } = await serveRoutes(routes.handler);
 
-    // SAFETY: partial fake for tests
-    const fakeRes = {
-      writeHead: (_s: number, _h: Record<string, string>) => {},
-      end: (b: Buffer | string) => {
-        if (typeof b === "string") {
-          resChunks.push(Buffer.from(b));
-        } else {
-          resChunks.push(b);
-        }
-      },
-    };
+  /** One request to the routes, its body parsed as JSON. */
+  const respond = async (method: string, url: string, body?: string) => {
+    const parsed: RouteReply["body"] = JSON.parse((await send(method, url, body)).text);
 
-    // SAFETY: partial fake for tests
-    const fakeReq = {
-      method,
-      url,
-      on: (ev: string, cb: (c?: Buffer) => void) => {
-        if (ev === "data" && body !== undefined) {
-          cb(Buffer.from(body));
-        }
-
-        if (ev === "end") {
-          cb();
-        }
-      },
-      destroy: () => {},
-    } as any;
-
-    await handler!(fakeReq, fakeRes);
-    respBody = Buffer.concat(resChunks).toString("utf8");
-
-    return raw ? respBody : JSON.parse(respBody);
+    return parsed;
   };
 
   // 400: missing url param
@@ -350,7 +311,7 @@ import { tempDir } from "./test-tmp.js";
   assert.equal(r.ok, true);
   r = await respond("GET", `${mem}&provider=claude-code-other`);
   assert.deepEqual(
-    (r.files as Array<{ name: string }>).map((f) => f.name),
+    rowsOf(r.files, { name: "string" }).map((f) => f.name),
     ["b.md"],
     "the other box lists its own memories",
   );
@@ -413,7 +374,7 @@ import { tempDir } from "./test-tmp.js";
       `/dsh-oh-my-claude/instructions?cwd=${encodeURIComponent(at)}&provider=${provider}`,
     );
 
-    return (reply.files as Array<InstructionFile>)
+    return rowsOf(reply.files, { kind: "string", path: "string" })
       .filter((f) => f.kind === "User")
       .map((f) => f.path);
   };
@@ -483,7 +444,7 @@ import { tempDir } from "./test-tmp.js";
   );
   r = await respond("GET", `${wsMem}&provider=claude-code-other`);
   assert.deepEqual(
-    (r.files as Array<{ name: string }>).map((f) => f.name),
+    rowsOf(r.files, { name: "string" }).map((f) => f.name),
     ["w.md"],
     "another model selected does not move the workspace's memories",
   );
@@ -548,17 +509,15 @@ import { tempDir } from "./test-tmp.js";
   assert.notEqual(again.id, r.id, "a second copy takes a fresh id rather than overwriting");
   r = await respond("GET", "/dsh-oh-my-claude/sessions?all=1");
 
-  const row = (r.sessions as Array<{ id: string; imported?: boolean }>).find(
+  const row = rowsOf(r.sessions, { id: "string", imported: "boolean?" }).find(
     (x) => x.id === "11111111-2222-3333-4444-555555555555",
   );
 
   assert.equal(row?.imported, true, "the merged list shows it, marked as imported");
 
-  const file = await respond(
+  const { text: file } = await send(
     "GET",
     "/dsh-oh-my-claude/transcript?id=11111111-2222-3333-4444-555555555555",
-    undefined,
-    true,
   );
 
   assert.equal(file, transcript, "the download is the file as it sits on disk");
@@ -570,7 +529,7 @@ import { tempDir } from "./test-tmp.js";
   const rw = `/dsh-oh-my-claude/rewind?session=sid1&cwd=${encodeURIComponent(cwd)}`;
   r = await respond("GET", rw);
   assert.deepEqual(r.prompts, [], "no transcript: empty list");
-  const line = (o: object) => JSON.stringify(o) + "\n";
+  const line = (o: JsonValue) => JSON.stringify(o) + "\n";
   await writeFile(
     join(tmp, "claude", "projects", projectDirName(cwd), "sid1.jsonl"),
     line({
@@ -600,7 +559,7 @@ import { tempDir } from "./test-tmp.js";
   );
   r = await respond("GET", rw);
   assert.deepEqual(
-    r.prompts.map((p: { id: string; text: string }) => [p.id, p.text]),
+    rowsOf(r.prompts, { id: "string", text: "string" }).map((p) => [p.id, p.text]),
     [
       ["u-2", "second prompt"],
       ["u-1", "first prompt"],
@@ -629,7 +588,7 @@ import { tempDir } from "./test-tmp.js";
   const find = `/dsh-oh-my-claude/search?q=quokka%20enclosure&cwd=${encodeURIComponent(cwd)}`;
   r = await respond("GET", find);
   assert.deepEqual(
-    r.hits.map((h: { id: string }) => h.id),
+    rowsOf(r.hits, { id: "string" }).map((h) => h.id),
     [searched],
   );
   const realPath = process.env.PATH;
@@ -642,7 +601,7 @@ import { tempDir } from "./test-tmp.js";
   }
 
   assert.deepEqual(
-    r.hits.map((h: { id: string }) => h.id),
+    rowsOf(r.hits, { id: "string" }).map((h) => h.id),
     [searched],
     "no grep on the box",
   );
@@ -682,7 +641,7 @@ import { tempDir } from "./test-tmp.js";
   r = await respond("GET", `/dsh-oh-my-claude/settings/scopes?${inRepo}`);
 
   const scopePaths = Object.fromEntries(
-    (r.scopes as Array<{ scope: string; path: string }>).map((s) => [s.scope, s.path]),
+    rowsOf(r.scopes, { scope: "string", path: "string" }).map((s) => [s.scope, s.path]),
   );
 
   assert.equal(scopePaths.local, join(repo, ".claude", "settings.local.json"));
@@ -711,7 +670,7 @@ import { tempDir } from "./test-tmp.js";
   r = await respond("GET", `/dsh-oh-my-claude/plugins?${inRepo}`);
 
   const roster = Object.fromEntries(
-    (r.plugins as Array<{ key: string; enabled: boolean }>).map((p) => [p.key, p.enabled]),
+    rowsOf(r.plugins, { key: "string", enabled: "boolean" }).map((p) => [p.key, p.enabled]),
   );
 
   assert.deepEqual(roster, { "both@m": false, "own@m": true });
@@ -720,80 +679,31 @@ import { tempDir } from "./test-tmp.js";
 type RouteReply = { status: number; body: Record<string, any> };
 
 /**
- * Drives one route handler with a fake req/res pair and hands back the status beside the parsed
- * body. The status is half of what the route tests assert: a 400, a 404 and a 409 all carry an
+ * Serves one route handler over a real socket and hands back a caller that answers the status beside
+ * the parsed body. The status is half of what the route tests assert: a 400, a 404 and a 409 all carry an
  * `error`, so a test that reads the text alone passes on the wrong one. Takes a getter rather than
  * the handler, because every block below registers its routes twice - once without the bag entry to
  * prove the 404, once with it - and the second registration replaces the handler the first captured.
  */
-const responder =
-  (handler: () => ((req: any, res: any) => void) | undefined) =>
-  async (method: string, url: string, body?: string): Promise<RouteReply> => {
-    const resChunks: Array<Buffer> = [];
-    let status = 0;
+const responder = async (handler: () => RouteHandler | undefined) => {
+  const { send } = await serveRoutes(handler);
 
-    // SAFETY: partial fake for tests
-    const fakeRes = {
-      writeHead: (s: number, _h: Record<string, string>) => {
-        status = s;
-      },
-      end: (b: Buffer | string) => {
-        if (typeof b === "string") {
-          resChunks.push(Buffer.from(b));
-        } else {
-          resChunks.push(b);
-        }
-      },
-    } as any;
+  return async (method: string, url: string, body?: string): Promise<RouteReply> => {
+    const { status, text } = await send(method, url, body);
 
-    // SAFETY: partial fake for tests
-    const fakeReq = {
-      method,
-      url,
-      on: (ev: string, cb: (c?: Buffer) => void) => {
-        if (ev === "data" && body !== undefined) {
-          cb(Buffer.from(body));
-        }
-
-        if (ev === "end") {
-          cb();
-        }
-      },
-      destroy: () => {},
-    } as any;
-
-    await handler()!(fakeReq, fakeRes);
-
-    return { status, body: JSON.parse(Buffer.concat(resChunks).toString("utf8")) };
+    return { status, body: JSON.parse(text) };
   };
+};
 
 // The steer card's routes: GET /side-questions carries the waiting and held steers, and POST
 // /steer-edit validates its body and passes each action through (remove is a hold and a drop).
 {
   const tmp = tempDir("dsh-steer-edit-test-");
-  let handler: ((req: any, res: any) => void) | undefined;
   const calls: Array<{ sid: string; op: string; arg: Array<string> }> = [];
 
-  // SAFETY: partial fake for tests
-  const ctx = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
+  const routes = fakeRouteHost();
 
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [] },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
-
-  registerSessionRoutes(ctx, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
     projectsDir: [join(tmp, "claude", "projects")],
@@ -825,10 +735,10 @@ const responder =
       return { ok: true as const };
     },
   });
-  assert.ok(handler);
-  const respond = responder(() => handler);
+  assert.ok(routes.handler());
+  const respond = await responder(routes.handler);
 
-  const post = (body: object) =>
+  const post = (body: JsonValue) =>
     respond("POST", "/dsh-oh-my-claude/steer-edit", JSON.stringify(body));
 
   let r = await respond("GET", "/dsh-oh-my-claude/side-questions?session=s1");
@@ -891,28 +801,10 @@ const responder =
 // and 200 that proves the callback received the parsed body.
 {
   const tmp = tempDir("dsh-side-question-test-");
-  let handler: ((req: any, res: any) => void) | undefined;
 
-  // SAFETY: partial fake for tests
-  const ctx = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
+  const routes = fakeRouteHost();
 
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [] },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
-
-  registerSessionRoutes(ctx, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
     projectsDir: [join(tmp, "claude", "projects")],
@@ -924,9 +816,9 @@ const responder =
     instanceFor: () => undefined,
     instanceForHost: () => ({ configDir: join(tmp, "box") }),
   });
-  assert.ok(handler);
+  assert.ok(routes.handler());
 
-  const respond = responder(() => handler);
+  const respond = await responder(routes.handler);
 
   // 404: askAside is absent from the bag.
   let r = await respond(
@@ -954,26 +846,8 @@ const responder =
   };
 
   // Re-register with the callbacks; registerSessionRoutes is called once per ctx but we pass a new one.
-  // SAFETY: partial fake for tests
-  const ctx2 = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
 
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [] },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
-
-  registerSessionRoutes(ctx2, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
     projectsDir: [join(tmp, "claude", "projects")],
@@ -1072,28 +946,10 @@ const responder =
 // and 200 that returns both lists with decoded content.
 {
   const tmp = tempDir("dsh-permissions-test-");
-  let handler: ((req: any, res: any) => void) | undefined;
 
-  // SAFETY: partial fake for tests
-  const ctx = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
+  const routes = fakeRouteHost();
 
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [] },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
-
-  registerSessionRoutes(ctx, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
     projectsDir: [join(tmp, "claude", "projects")],
@@ -1105,9 +961,9 @@ const responder =
     instanceFor: () => undefined,
     instanceForHost: () => ({ configDir: join(tmp, "box") }),
   });
-  assert.ok(handler);
+  assert.ok(routes.handler());
 
-  const respond = responder(() => handler);
+  const respond = await responder(routes.handler);
 
   // 404: permissionReadout is absent from the bag.
   let r = await respond("GET", "/dsh-oh-my-claude/permissions?session=sid1");
@@ -1124,26 +980,8 @@ const responder =
   });
 
   // Re-register with the callback; registerSessionRoutes is called once per ctx but we pass a new one.
-  // SAFETY: partial fake for tests
-  const ctx2 = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
 
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [] },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
-
-  registerSessionRoutes(ctx2, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
     projectsDir: [join(tmp, "claude", "projects")],
@@ -1179,33 +1017,15 @@ const responder =
 // and how long the relay has been out, so the status row can say what the turn is waiting on.
 {
   const tmp = tempDir("dsh-live-turn-test-");
-  let handler: ((req: any, res: any) => void) | undefined;
 
-  // SAFETY: partial fake for tests
-  const ctx = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
-
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [] },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
+  const routes = fakeRouteHost();
 
   const liveTurn = new Map<string, LiveTurn>([
     ["waiting", { at: 1, output: 120, tool: true, relay: { name: "bash", at: Date.now() - 5000 } }],
     ["writing", { at: 1, output: 40 }],
   ]);
 
-  registerSessionRoutes(ctx, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
     projectsDir: [join(tmp, "claude", "projects")],
@@ -1218,8 +1038,8 @@ const responder =
     instanceForHost: () => ({ configDir: join(tmp, "box") }),
     liveTurn,
   });
-  assert.ok(handler);
-  const respond = responder(() => handler);
+  assert.ok(routes.handler());
+  const respond = await responder(routes.handler);
 
   let r = await respond("GET", "/dsh-oh-my-claude/live-turn");
   assert.equal(r.status, 400, "no session param");
@@ -1250,28 +1070,10 @@ const responder =
 // and 200 that proves the callback received session, name and the boolean.
 {
   const tmp = tempDir("dsh-mcp-ask-test-");
-  let handler: ((req: any, res: any) => void) | undefined;
 
-  // SAFETY: partial fake for tests
-  const ctx = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
+  const routes = fakeRouteHost();
 
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [] },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
-
-  registerSessionRoutes(ctx, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
     projectsDir: [join(tmp, "claude", "projects")],
@@ -1283,9 +1085,9 @@ const responder =
     instanceFor: () => undefined,
     instanceForHost: () => ({ configDir: join(tmp, "box") }),
   });
-  assert.ok(handler);
+  assert.ok(routes.handler());
 
-  const respond = responder(() => handler);
+  const respond = await responder(routes.handler);
 
   // 404: mcp is absent from the bag.
   let r = await respond(
@@ -1312,26 +1114,8 @@ const responder =
   };
 
   // Re-register with the callback; registerSessionRoutes is called once per ctx but we pass a new one.
-  // SAFETY: partial fake for tests
-  const ctx2 = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
 
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [] },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
-
-  registerSessionRoutes(ctx2, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
     projectsDir: [join(tmp, "claude", "projects")],
@@ -1579,7 +1363,7 @@ const responder =
   await mkdir(cwd, { recursive: true });
   const dir = join(tmp, "projects", projectDirName(cwd));
   await mkdir(dir, { recursive: true });
-  const line = (o: object) => JSON.stringify(o) + "\n";
+  const line = (o: JsonValue) => JSON.stringify(o) + "\n";
   const id = "0ba11aa4-46c8-4a48-a360-3ab1bdaf4204";
   await writeFile(
     join(dir, `${id}.jsonl`),
@@ -1614,29 +1398,43 @@ const responder =
     const dshId = opts.dshId ?? id;
     const calls: Array<string> = [];
     const attached: Array<{ id: string; events: number }> = [];
-    let written: { header: Record<string, unknown>; events: Array<unknown> } | undefined;
+    let written: { header: SessionHeader; events: Array<SessionEvent> } | undefined;
 
-    const ws = {
-      id: "w1",
+    const ws = fakeWorkspace("w1", {
       path: cwd,
       title: "work",
-      sessionIds: [],
-      attachSession: async (sid: string) =>
+      attachSession: async (sid) =>
         void attached.push({ id: sid, events: written?.events.length ?? 0 }),
+    });
+
+    let state: { archivedSessionIds: Array<SessionId> } = {
+      archivedSessionIds: opts.archived ? [asSessionId(dshId)] : [],
     };
 
-    let state: { archivedSessionIds: Array<string> } = {
-      archivedSessionIds: opts.archived ? [dshId] : [],
-    };
-
-    // SAFETY: partial fakes; the function reads only these members
-    const ctx = {
-      sessions: {
-        get: () => (opts.inStore ? { id } : undefined),
-      },
+    // The function reads only these members; the rest throw if reached.
+    const ctx: RouteHost = {
+      webServer: { port: 0, register: notFaked("webServer.register") },
+      connection: {},
+      sessions: fakePluginContext({
+        sessions: { get: () => (opts.inStore ? fakeSession({ id: asSessionId(id) }) : undefined) },
+      }).sessions,
       sessionPersistence: {
-        list: async () => (opts.persisted ? [{ header: { id: dshId, cwd } }] : []),
-        create: async (header: Record<string, unknown>) => {
+        list: async () =>
+          opts.persisted
+            ? [
+                {
+                  header: {
+                    version: 0,
+                    id: asSessionId(dshId),
+                    cwd,
+                    createdAt: 0,
+                    isSeeded: false,
+                  },
+                },
+              ]
+            : [],
+        open: notFaked("sessionPersistence.open"),
+        create: async (header) => {
           calls.push("create");
 
           if (opts.createCollision) {
@@ -1648,7 +1446,7 @@ const responder =
           written = { header, events: [] };
 
           return {
-            append: async (events: Array<unknown>) => {
+            append: async (events) => {
               calls.push("append");
               written?.events.push(...events);
             },
@@ -1657,20 +1455,22 @@ const responder =
           };
         },
       },
-    } as any;
+    };
 
-    const registry = {
-      get archivedSessionIds() {
-        return state.archivedSessionIds;
+    const registry = fakePluginContext({
+      workspaceRegistry: {
+        get archivedSessionIds() {
+          return state.archivedSessionIds;
+        },
+        resolveByPath: async (p) => (p === cwd ? ws : undefined),
+        create: async () => ws,
+        unarchiveSession: async (sid) =>
+          void (state = {
+            ...state,
+            archivedSessionIds: state.archivedSessionIds.filter((x) => x !== sid),
+          }),
       },
-      resolveByPath: async (p: string) => (p === cwd ? ws : undefined),
-      create: async () => ws,
-      unarchiveSession: async (sid: string) =>
-        void (state = {
-          ...state,
-          archivedSessionIds: state.archivedSessionIds.filter((x: string) => x !== sid),
-        }),
-    } as any;
+    }).workspaceRegistry;
 
     const out = await openTranscriptOnce(
       ctx,
@@ -1749,20 +1549,26 @@ const responder =
 // on Windows before #246): a stored log dsh marks current names it, and 4 stands when none does.
 {
   /** A stored session header at `version`; only the version matters to createVersion. */
-  const header = (version: number) => ({ id: "s", version, createdAt: 0, isSeeded: false });
+  const header = (version: number): SessionHeader => ({
+    id: asSessionId("s"),
+    version,
+    createdAt: 0,
+    isSeeded: false,
+  });
 
-  /** A persistence whose list() answers `entries`, or rejects when given an Error. */
-  // SAFETY: partial fakes; createVersion reads only list()
-  const persistence = (entries: Array<unknown> | Error) =>
-    ({
-      list: async () => {
-        if (entries instanceof Error) {
-          throw entries;
-        }
+  /** A persistence whose list() answers `entries`, or rejects when given an Error. createVersion
+   *  reads only list(). */
+  const persistence = (
+    entries: Awaited<ReturnType<SessionPersistence["list"]>> | Error,
+  ): Pick<SessionPersistence, "list"> => ({
+    list: async () => {
+      if (entries instanceof Error) {
+        throw entries;
+      }
 
-        return entries;
-      },
-    }) as any;
+      return entries;
+    },
+  });
 
   assert.equal(
     await createVersion(persistence([{ header: header(5), formatStatus: "current" }])),
@@ -1883,9 +1689,15 @@ const responder =
     maxBuffer: 1 << 24,
   }).toString();
 
-  // SAFETY: the script writes `JSON.stringify` of the array it built; a parse failure is the
-  // failure this check is for.
-  const rows = JSON.parse(out) as Array<TranscriptListItem>;
+  // The script writes `JSON.stringify` of the array it built; a parse failure is the failure this
+  // check is for.
+  const rows = rowsOf(JSON.parse(out), {
+    id: "string",
+    title: "string",
+    cwd: "string?",
+    turns: "number",
+  });
+
   assert.deepEqual(
     rows.map((r) => r.id).toSorted(),
     [small, huge].toSorted(),
@@ -1928,30 +1740,13 @@ const responder =
   assert.equal(JSON.parse(await readFile(remoteWorkspacesPath, "utf8")).length, 2);
 
   const published: Array<Array<string>> = [];
-  let handler: ((req: any, res: any) => void) | undefined;
 
-  // SAFETY: partial fake for tests
-  const ctx = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
+  const routes = fakeRouteHost({
+    // dsh's registry after a sidebar trash: it knows `w-kept` and nothing else.
+    workspaceRegistry: { get: (id) => (id === "w-kept" ? fakeWorkspace(id) : undefined) },
+  });
 
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [] },
-        // dsh's registry after a sidebar trash: it knows `w-kept` and nothing else.
-        workspaceRegistry: { get: (id: string) => (id === "w-kept" ? { id } : undefined) },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
-
-  registerSessionRoutes(ctx, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     remoteWorkspacesPath,
     onRemoteWorkspaces: (ws) => {
@@ -1967,19 +1762,19 @@ const responder =
     instanceFor: () => undefined,
     instanceForHost: () => ({ configDir: join(tmp, "box") }),
   });
-  assert.ok(handler);
-  const respond = responder(() => handler);
+  assert.ok(routes.handler());
+  const respond = await responder(routes.handler);
 
   const r = await respond("GET", "/dsh-oh-my-claude/remote-workspaces");
   assert.equal(r.status, 200);
   assert.deepEqual(
-    r.body.workspaces.map((w: { workspaceId: string }) => w.workspaceId),
+    rowsOf(r.body.workspaces, { workspaceId: "string" }).map((w) => w.workspaceId),
     ["w-kept"],
     "GET answers only the row the registry still has",
   );
   const onDisk = JSON.parse(await readFile(remoteWorkspacesPath, "utf8"));
   assert.deepEqual(
-    onDisk.map((w: { workspaceId: string }) => w.workspaceId),
+    rowsOf(onDisk, { workspaceId: "string" }).map((w) => w.workspaceId),
     ["w-kept"],
     "the ghost row left the file",
   );
@@ -2025,42 +1820,25 @@ const responder =
   const deleted: Array<string> = [];
   const failing = new Set<string>(["wb2"]);
   const mounted: Array<Array<string>> = [];
-  let handler: ((req: any, res: any) => void) | undefined;
 
-  // SAFETY: partial fake for tests
-  const ctx = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
+  const routes = fakeRouteHost({
+    // Every row is a live workspace to dsh; a delete of an id in `failing` throws the way a
+    // failed table write does.
+    workspaceRegistry: {
+      get: (id) => fakeWorkspace(id),
+      delete: async (id) => {
+        deleted.push(id);
 
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [] },
-        // Every row is a live workspace to dsh; a delete of an id in `failing` throws the way a
-        // failed table write does.
-        workspaceRegistry: {
-          get: (id: string) => ({ id }),
-          delete: async (id: string) => {
-            deleted.push(id);
+        if (failing.has(id)) {
+          throw new Error("table write failed");
+        }
 
-            if (failing.has(id)) {
-              throw new Error("table write failed");
-            }
-
-            return true;
-          },
-        },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
+        return true;
+      },
     },
-  } as any;
+  });
 
-  registerSessionRoutes(ctx, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     remoteWorkspacesPath,
     sshBoxesPath,
@@ -2077,8 +1855,8 @@ const responder =
     instanceFor: () => undefined,
     instanceForHost: () => ({ configDir: join(tmp, "box") }),
   });
-  assert.ok(handler);
-  const respond = responder(() => handler);
+  assert.ok(routes.handler());
+  const respond = await responder(routes.handler);
 
   const idsOnDisk = async () =>
     (await readRemoteWorkspaces(remoteWorkspacesPath)).map((w) => w.workspaceId);
@@ -2117,7 +1895,7 @@ const responder =
   );
   assert.equal(r.status, 200);
   assert.deepEqual(
-    r.body.workspaces.map((w: { workspaceId: string }) => w.workspaceId),
+    rowsOf(r.body.workspaces, { workspaceId: "string" }).map((w) => w.workspaceId),
     ["wa"],
   );
   assert.deepEqual(await idsOnDisk(), ["wa"]);
@@ -2155,26 +1933,8 @@ console.log("sessions ok");
 // with no record answers null. Mirrors the POST block's fake ctx and route registration.
 {
   const tmp = tempDir("dsh-fallback-route-test-");
-  let handler: ((req: any, res: any) => void) | undefined;
 
-  // SAFETY: partial fake for tests
-  const ctx = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
-
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [] },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
+  const routes = fakeRouteHost();
 
   const rec: FallbackRecord = {
     sessionId: "sid1",
@@ -2187,7 +1947,7 @@ console.log("sessions ok");
     at: 1_700_000_000_000,
   };
 
-  registerSessionRoutes(ctx, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
     projectsDir: [join(tmp, "claude", "projects")],
@@ -2200,8 +1960,8 @@ console.log("sessions ok");
     instanceForHost: () => ({ configDir: join(tmp, "box") }),
     sessionFallbacks: new Map([["sid1", rec]]),
   });
-  assert.ok(handler);
-  const respond = responder(() => handler);
+  assert.ok(routes.handler());
+  const respond = await responder(routes.handler);
 
   let r = await respond("GET", "/dsh-oh-my-claude/side-questions?session=sid1");
   assert.equal(r.status, 200);
@@ -2233,28 +1993,9 @@ console.log("sessions ok");
   );
   const pluginPath = join(tmp, "plug", "skills", "pfoo", "SKILL.md");
 
-  let handler: ((req: any, res: any) => void) | undefined;
+  const routes = fakeRouteHost({ persisted: [{ id: "s1", cwd }] });
 
-  // SAFETY: partial fake for tests
-  const ctx = {
-    inject: (_deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
-
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [{ id: "s1", cwd }] },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
-
-  registerSessionRoutes(ctx, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     projectDir: (c: string) => [join(tmp, "claude", "projects", projectDirName(c))],
     projectsDir: [join(tmp, "claude", "projects")],
@@ -2267,8 +2008,8 @@ console.log("sessions ok");
     instanceForHost: () => ({ configDir: join(tmp, "box") }),
     reloadSkills: async () => ({ ok: true, live: true }),
   });
-  assert.ok(handler);
-  const respond = responder(() => handler);
+  assert.ok(routes.handler());
+  const respond = await responder(routes.handler);
 
   // create: a plugin scope is refused
   let r = await respond(
@@ -2370,32 +2111,29 @@ console.log("sessions ok");
 // GET /turns with only `turnRecords` wired (no `events`): the route's own body sums the records.
 {
   const tmp = tempDir("dsh-live-turn-test-");
-  let handler: ((req: any, res: any) => void) | undefined;
 
-  // SAFETY: partial fake for tests
-  const ctx = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
+  const routes = fakeRouteHost();
 
-            return () => {};
-          },
+  const turnRecords = new Map<string, Array<TurnRecord>>([
+    [
+      "s1",
+      [
+        {
+          at: 0,
+          costUsd: 0.5,
+          durationMs: 100,
+          apiMs: 0,
+          turns: 1,
+          input: 10,
+          output: 20,
+          cacheRead: 5,
+          cacheWrite: 1,
         },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [] },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
+      ],
+    ],
+  ]);
 
-  const turnRecords = new Map([
-    ["s1", [{ costUsd: 0.5, durationMs: 100, input: 10, output: 20, cacheRead: 5, cacheWrite: 1 }]],
-  ]) as any;
-
-  registerSessionRoutes(ctx, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
     projectsDir: [join(tmp, "claude", "projects")],
@@ -2408,8 +2146,8 @@ console.log("sessions ok");
     instanceForHost: () => ({ configDir: join(tmp, "box") }),
     turnRecords,
   });
-  assert.ok(handler);
-  const respond = responder(() => handler);
+  assert.ok(routes.handler());
+  const respond = await responder(routes.handler);
   let r = await respond("GET", "/dsh-oh-my-claude/turns");
   assert.equal(r.status, 400, "no session param");
   r = await respond("GET", "/dsh-oh-my-claude/turns?session=s1");
@@ -2421,34 +2159,16 @@ console.log("sessions ok");
   console.log("turns-route-fallback ok");
 }
 
-// GET /events: an event stream. The fake res gains `write` and `on`; the hub writes the headers,
-// the connected comment and the snapshot, and holds the response open (no `end`).
+// GET /events: an event stream, read over a real socket. The hub writes the headers, the connected
+// comment and the snapshot, and holds the response open (no `end`).
 {
   const tmp = tempDir("dsh-live-turn-test-");
-  let handler: ((req: any, res: any) => void) | undefined;
 
-  // SAFETY: partial fake for tests
-  const ctx = {
-    inject: (deps: Array<string>, cb: (host: any) => void) => {
-      cb({
-        webServer: {
-          register: (r: any) => {
-            handler = r.handler as (req: any, res: any) => void;
-
-            return () => {};
-          },
-        },
-        connection: { requestRejection: () => undefined },
-        sessions: { get: () => undefined },
-        sessionPersistence: { list: async () => [] },
-        effect: (fn: () => void | (() => void)) => fn(),
-      });
-    },
-  } as any;
+  const routes = fakeRouteHost();
 
   const { EventHub } = await import("./events.js");
   const hub = new EventHub();
-  registerSessionRoutes(ctx, {
+  registerSessionRoutes(routes.ctx, {
     log: () => {},
     projectDir: (cwd: string) => [join(tmp, "claude", "projects", projectDirName(cwd))],
     projectsDir: [join(tmp, "claude", "projects")],
@@ -2500,40 +2220,36 @@ console.log("sessions ok");
       },
     },
   });
-  assert.ok(handler);
-  const chunks: Array<string> = [];
-  let status = 0;
-  let headers: Record<string, string> = {};
-  let ended = false;
+  assert.ok(routes.handler());
+  const served = await serveRoutes(routes.handler);
+  const opened = new AbortController();
 
-  const res = {
-    writeHead: (s: number, h: Record<string, string>) => {
-      status = s;
-      headers = h;
-    },
-    write: (c: string) => {
-      chunks.push(c);
+  const stream = await fetch(`${served.origin}/dsh-oh-my-claude/events?session=s1`, {
+    signal: opened.signal,
+  });
 
-      return true;
-    },
-    end: () => {
-      ended = true;
-    },
-    on: () => {},
-    writableNeedDrain: false,
-  } as any;
+  assert.equal(stream.status, 200, "events status");
+  assert.equal(stream.headers.get("content-type"), "text/event-stream", "events content type");
+  assert.ok(stream.body, "events has a body");
 
-  await handler(
-    {
-      method: "GET",
-      url: "/dsh-oh-my-claude/events?session=s1",
-      on: () => {},
-      destroy: () => {},
-    } as any,
-    res,
-  );
-  assert.equal(status, 200, "events status");
-  assert.equal(headers["content-type"], "text/event-stream", "events content type");
+  // Frames arrive in whatever pieces the socket hands over, so read until the connected comment and
+  // both snapshot frames are in; a stream that ends first fails the open-stream check.
+  const reader = stream.body.getReader();
+  const decoder = new TextDecoder();
+  let received = "";
+
+  while (received.split("\n\n").length < 4) {
+    const { value, done } = await reader.read();
+
+    assert.equal(done, false, "the stream stays open");
+    received += decoder.decode(value, { stream: true });
+  }
+
+  const chunks = received
+    .split("\n\n")
+    .slice(0, 3)
+    .map((frame) => `${frame}\n\n`);
+
   assert.equal(chunks[0], ": connected\n\n", "events opens with the connected comment");
   assert.equal(
     chunks[1],
@@ -2545,10 +2261,9 @@ console.log("sessions ok");
     'event: idle\ndata: {"session":"s1","data":{"deadline":null,"timeoutMs":7}}\n\n',
     "the session's idle snapshot frame",
   );
-  assert.equal(ended, false, "the stream stays open");
   assert.equal(hub.connections.size, 1, "the hub holds the connection");
   // The same registration answers /live-turn through the builder now.
-  const respond = responder(() => handler);
+  const respond = await responder(routes.handler);
   const r = await respond("GET", "/dsh-oh-my-claude/live-turn?session=s1");
   assert.equal(r.status, 200);
   assert.deepEqual(
@@ -2557,6 +2272,7 @@ console.log("sessions ok");
     "live-turn answers with the builder when events is wired",
   );
   hub.close();
+  opened.abort();
   console.log("events-route ok");
 }
 
@@ -2571,7 +2287,12 @@ console.log("sessions ok");
   const id = f.sessionId("open-heal");
   const tid = f.transcriptId(id);
 
-  const row = (seq: number, type: string, data: object, extra: object = {}) => ({
+  const row = (
+    seq: number,
+    type: string,
+    data: JsonValue,
+    extra: Record<string, JsonValue> = {},
+  ) => ({
     type,
     seq,
     time: seq,
@@ -2637,14 +2358,13 @@ console.log("sessions ok");
     const { registry, attached } = f.registry(cwd);
     const before = f.calls.length;
 
-    // SAFETY: partial fakes; the function reads only these members
     const out = await openTranscriptOnce(
-      f.ctx() as any,
+      f.ctx(),
       [f.projectDir(cwd)],
       cwd,
       tid,
       f.transcriptId,
-      registry as any,
+      registry,
       withHeal ? f.heal(f.root) : undefined,
     );
 
@@ -2692,8 +2412,18 @@ console.log("sessions ok");
   const tid = f.transcriptId(id);
 
   /** A transcript of `n` completed turns, prompt i reading `prompt <i>` (or `texts[i]`). */
+  /** One line of the Claude Code transcript this block writes: a prompt or its answer. */
+  interface TranscriptLine {
+    type: "user" | "assistant";
+    uuid: string;
+    parentUuid?: string;
+    cwd: string;
+    timestamp: string;
+    message: { id?: string; role: string; content: string | Array<{ type: string; text: string }> };
+  }
+
   const transcript = (n: number, texts: Array<string> = []) => {
-    const rows: Array<object> = [];
+    const rows: Array<TranscriptLine> = [];
 
     for (let i = 1; i <= n; i++) {
       rows.push(
@@ -2735,7 +2465,7 @@ console.log("sessions ok");
   );
 
   const run = async (
-    transcriptRows: Array<object>,
+    transcriptRows: Array<TranscriptLine>,
     opts: { owned?: boolean; openTail?: boolean } = {},
   ) => {
     f.writeLog(
@@ -2748,14 +2478,13 @@ console.log("sessions ok");
     f.appended.length = 0;
     const { registry } = f.registry(cwd);
 
-    // SAFETY: partial fakes; the function reads only these members
     const out = await openTranscriptOnce(
-      f.ctx() as any,
+      f.ctx(),
       [f.projectDir(cwd)],
       cwd,
       tid,
       f.transcriptId,
-      registry as any,
+      registry,
       f.heal(f.root),
     );
 
@@ -2801,8 +2530,11 @@ console.log("sessions ok");
   assert.equal(r.out.turnsAdded, 1, "only the genuinely new prompt folds");
   // A slash command typed at a terminal after the session was stored is caught up like a prompt.
   const withCommand = transcript(3);
-  // SAFETY: transcript(3) builds six rows; index 4 is the third prompt
-  (withCommand[4] as { message: { content: unknown } }).message.content =
+  // transcript(3) builds six rows; index 4 is the third prompt
+  const thirdPrompt = withCommand[4];
+
+  assert.ok(thirdPrompt);
+  thirdPrompt.message.content =
     "<command-message>ship</command-message>\n<command-name>/ship</command-name>\n<command-args>no restart</command-args>";
   r = await run(withCommand);
   assert.equal(r.out.turnsAdded, 1, "a command turn the log lacks folds");
@@ -2847,9 +2579,9 @@ console.log("sessions ok");
   const cwd = join(f.root, "work");
   const id = f.sessionId("reseed");
   const logPath = f.logPath(id, cwd);
-  const row = (seq: number, type: string, data: object) => ({ type, seq, time: seq, data });
+  const row = (seq: number, type: string, data: JsonValue) => ({ type, seq, time: seq, data });
   f.writeLog(id, cwd, [row(0, "turn/start", { turn: 1 }), row(1, "turn/end", { turn: 1 })]);
-  const { respond } = f.routes();
+  const { respond } = await f.routes();
   const reseed = () => respond("POST", "/dsh-oh-my-claude/reseed", JSON.stringify({ id }));
   let r = await reseed();
   assert.equal(r.status, 404, "no record yet");
@@ -2863,7 +2595,10 @@ console.log("sessions ok");
   });
   r = await reseed();
   assert.equal(r.status, 409, "a record but no transcript");
-  assert.match(String(r.body.error), /nothing to reseed from/);
+  const refused = r.body.error;
+
+  assert.ok(typeof refused === "string", "a refusal carries its reason");
+  assert.match(refused, /nothing to reseed from/);
   assert.equal(existsSync(logPath), true, "no transcript: the log stays");
   f.writeTranscript(f.transcriptId(id), cwd, [
     {
@@ -2928,7 +2663,7 @@ console.log("sessions ok");
     seed: { withDiff: boolean; path: string; quote: string };
   }> = [];
 
-  const { respond } = f.routes({
+  const { respond } = await f.routes({
     askAside: async (sid, question, seed) => {
       seen.push({ sid, question, seed });
 
@@ -2936,7 +2671,7 @@ console.log("sessions ok");
     },
   });
 
-  const post = (body: object) =>
+  const post = (body: JsonValue) =>
     respond("POST", "/dsh-oh-my-claude/side-questions", JSON.stringify(body));
 
   let r = await post({ session: "s", question: "", quote: "x".repeat(5000) });
@@ -2961,7 +2696,7 @@ console.log("sessions ok");
   const { fakeDsh } = await import("./test-dsh.js");
   const { STATE_DIR } = await import("./state.js");
   const f = fakeDsh(join(STATE_DIR, "route-auth"));
-  const unified = f.routes({ sshBoxesPath: join(f.root, "unified", "ssh-boxes.json") }, {});
+  const unified = await f.routes({ sshBoxesPath: join(f.root, "unified", "ssh-boxes.json") }, {});
   let r = await unified.respond("GET", "/dsh-oh-my-claude/hints");
   assert.equal(r.status, 200, "a dsh without requestRejection still serves the routes");
   r = await unified.respond("POST", "/dsh-oh-my-claude/hints", JSON.stringify({ costOff: true }));
@@ -2971,7 +2706,7 @@ console.log("sessions ok");
 
   const legacyDir = join(f.root, "legacy");
 
-  const legacy = f.routes(
+  const legacy = await f.routes(
     { sshBoxesPath: join(legacyDir, "ssh-boxes.json") },
     { requestRejection: () => 401 },
   );

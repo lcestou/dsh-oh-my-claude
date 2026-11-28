@@ -62,13 +62,12 @@ assert.equal(updateCommand("dsh-oh-my-claude", "desktop"), undefined);
   let calls = 0;
   let reply: { ok: boolean; body: unknown } = { ok: true, body: { version: "1.0.1" } };
 
-  const fetchFn = (async (url: string) => {
+  const fetchFn = async (url: string) => {
     calls++;
     assert.equal(url, "https://registry.npmjs.org/dsh-oh-my-claude/latest");
 
-    // SAFETY: the reader only calls `ok` and `text()`; a whole Response is more than the check needs
-    return { ok: reply.ok, text: async () => JSON.stringify(reply.body) } as Response;
-  }) as typeof fetch;
+    return new Response(JSON.stringify(reply.body), { status: reply.ok ? 200 : 500 });
+  };
 
   const t0 = 1_000_000;
   assert.equal(await latestVersion("dsh-oh-my-claude", fetchFn, t0), "1.0.1");
@@ -109,9 +108,9 @@ assert.equal(updateCommand("dsh-oh-my-claude", "desktop"), undefined);
   // A fetch that throws (offline) is swallowed.
   forgetLatest();
 
-  const boom = (async () => {
+  const boom = async () => {
     throw new Error("ENOTFOUND");
-  }) as typeof fetch;
+  };
 
   assert.equal(await latestVersion("dsh-oh-my-claude", boom, t0), undefined);
 }

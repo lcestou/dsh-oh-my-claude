@@ -15,6 +15,7 @@ import { homedir } from "node:os";
 import { delimiter, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PassThrough, Writable } from "node:stream";
+import type { Readable } from "node:stream";
 import { createInterface } from "node:readline";
 import type {
   AskUserQuestionItem,
@@ -26,6 +27,7 @@ import type { ContextSizes, ContextSource } from "./context-sources.js";
 import { STATE_DIR } from "./state.js";
 import { SOCKET_PATH_MAX, keeperSocketPath } from "./keeper-socket.js";
 import { isWebUrl } from "./web-url.js";
+import { isJsonValue, isRec } from "./decode.js";
 
 export type { JsonValue } from "./dsh.js";
 
@@ -233,9 +235,9 @@ export function resolveCommand(
 
 /** The child process seam this plugin uses: dsh's own spawner and the node one both answer it. */
 export interface SubprocessHandle {
-  stdin: import("node:stream").Writable;
-  stdout: import("node:stream").Readable;
-  stderr: import("node:stream").Readable;
+  stdin: Writable;
+  stdout: Readable;
+  stderr: Readable;
   done: Promise<{ exitCode: number | null; signal: string | null }>;
   terminate(): void;
   /** The stdout line at `index` (0 for this handle's first line) was used by a turn, or consumed
@@ -414,6 +416,17 @@ export type ClaudeEvent =
       errors?: Array<unknown>;
       api_error_status?: number;
       subtype?: string;
+      /** The turn's accounting; an older CLI can leave any of these out. */
+      total_cost_usd?: number;
+      duration_ms?: number;
+      duration_api_ms?: number;
+      num_turns?: number;
+      /** The tool calls the turn's permission checks refused; a member can be null. */
+      permission_denials?: Array<{
+        tool_name?: string;
+        tool_use_id?: string;
+        tool_input?: Record<string, JsonValue>;
+      } | null>;
       usage?: {
         input_tokens?: number;
         output_tokens?: number;
@@ -457,10 +470,13 @@ export type ClaudeEvent =
   | { type: "control_cancel_request"; request_id: string }
   | {
       type: "control_response";
-      request_id: string;
+      /** The CLI nests the id in `response`; the top-level one is the older form. */
+      request_id?: string;
       response?: { subtype?: string; request_id?: string; response?: unknown; error?: unknown };
     }
   | { type: "timeout" }
+  /** A heartbeat the CLI (2.1.318) can send between turns; it carries nothing to draw. */
+  | { type: "keep_alive" }
   /** Queued by the adapter's idle watchdog shortly before it stops a silent process. */
   | { type: "idle_warning"; silentSeconds: number; leftSeconds: number }
   | RelayEvent;
@@ -528,7 +544,23 @@ export interface ClaudeStreamPartial {
   /** `message_start` only: the message these deltas belong to. */
   message?: { id?: string };
   content_block?: { type?: string; id?: string; name?: string };
-  delta?: { text?: string; thinking?: string; partial_json?: string; signature?: string };
+  /** `content_block_delta` only; `type` names the kind (`text_delta`, `thinking_delta`,
+   *  `input_json_delta`, `signature_delta`). */
+  delta?: {
+    type?: string;
+    text?: string;
+    thinking?: string;
+    partial_json?: string;
+    signature?: string;
+  };
+  /** `message_delta` only: running token counts for the message so far. */
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
+    output_tokens_details?: { thinking_tokens?: number };
+  };
 }
 
 /**
@@ -884,15 +916,27 @@ export function interruptLine(requestId: string): string {
   return `${JSON.stringify({ type: "control_request", request_id: requestId, request: { subtype: "interrupt" } })}\n`;
 }
 
-/** A control response payload as JSON, or undefined when it is not representable. */
+/**
+ * The stdout boundary: an object with a string `type` is taken as a CLI event. Only `type` is
+ * checked here; every consumer branches on it and checks the fields it reads, with a logged
+ * fallback for a type it does not know.
+ */
+export const isClaudeEvent = (v: unknown): v is ClaudeEvent =>
+  isRec(v) && typeof v.type === "string";
+
+/** A control response payload as JSON, or undefined when it is not representable. The round trip
+ *  drops what JSON cannot hold (undefined members, functions) and applies `toJSON`; a cycle or a
+ *  bare function makes it throw, which answers undefined. */
 export function toJsonValue(v: unknown): JsonValue | undefined {
   if (v === undefined) {
     return undefined;
   }
 
   try {
-    // SAFETY: a JSON round trip yields JSON by construction
-    return JSON.parse(JSON.stringify(v)) as JsonValue;
+    const text = JSON.stringify(v);
+    const copy: unknown = JSON.parse(text);
+
+    return isJsonValue(copy) ? copy : undefined;
   } catch {
     return undefined;
   }
@@ -1008,9 +1052,8 @@ export const costStateOf = (transcript: string): RunningTotals | undefined => {
     try {
       const row: unknown = JSON.parse(transcript.slice(start, stop < 0 ? undefined : stop));
 
-      if (typeof row === "object" && row !== null) {
-        // SAFETY: a non-null object off JSON.parse; both members are checked as numbers below
-        const { totalCostUSD: cost, totalAPIDuration: api } = row as Record<string, unknown>;
+      if (isRec(row)) {
+        const { totalCostUSD: cost, totalAPIDuration: api } = row;
 
         if (typeof cost === "number" && typeof api === "number" && cost >= 0 && api >= 0) {
           return { costUsd: cost, apiMs: api };
@@ -1480,7 +1523,7 @@ function schemaProps(schema: JsonValue | undefined): Array<SchemaProp> | undefin
     const prop: SchemaProp = { key, type };
 
     if (Array.isArray(def.enum)) {
-      prop.enum = def.enum.map((e) => String(e));
+      prop.enum = def.enum.map((e) => (typeof e === "string" ? e : JSON.stringify(e)));
     }
 
     if (typeof def.title === "string") {
@@ -1577,12 +1620,7 @@ export function isResultLine(line: string): boolean {
   try {
     const parsed: unknown = JSON.parse(line);
 
-    // SAFETY: a non-null object compared to one literal, never trusted as typed
-    return (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      (parsed as { type?: unknown }).type === "result"
-    );
+    return isRec(parsed) && parsed.type === "result";
   } catch {
     return false;
   }
@@ -1593,14 +1631,9 @@ export function isResultLine(line: string): boolean {
 export function isBackgroundTasksFrame(line: string): boolean {
   try {
     const parsed: unknown = JSON.parse(line);
-    // SAFETY: a non-null object; each field is compared to a literal, never trusted as typed
-    const r = parsed as { type?: unknown; subtype?: unknown };
 
     return (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      r.type === "system" &&
-      r.subtype === "background_tasks_changed"
+      isRec(parsed) && parsed.type === "system" && parsed.subtype === "background_tasks_changed"
     );
   } catch {
     return false;
@@ -1617,14 +1650,12 @@ export function isIdleReply(line: string): boolean {
   try {
     const parsed: unknown = JSON.parse(line);
 
-    if (typeof parsed !== "object" || parsed === null) {
-      return false;
-    }
-
-    // SAFETY: a non-null object; each field is compared to a literal, never trusted as typed
-    const r = parsed as { type?: unknown; is_error?: unknown; subtype?: unknown };
-
-    return r.type === "result" && r.is_error !== true && r.subtype !== "error_during_execution";
+    return (
+      isRec(parsed) &&
+      parsed.type === "result" &&
+      parsed.is_error !== true &&
+      parsed.subtype !== "error_during_execution"
+    );
   } catch {
     return false; // not JSON: nextEvent() files it under `stray`
   }
@@ -1668,9 +1699,10 @@ export function parseQuestions(
   }
 
   const out: Array<AskUserQuestionItem> = [];
+  const items: ReadonlyArray<unknown> = list;
 
-  for (const [index, item] of list.entries()) {
-    if (!item || typeof item !== "object" || typeof item.question !== "string" || !item.question) {
+  for (const [index, item] of items.entries()) {
+    if (!isRec(item) || typeof item.question !== "string" || !item.question) {
       return undefined;
     }
 
@@ -1680,8 +1712,10 @@ export function parseQuestions(
     // that holds a fence of its own survives.
     const previews: Array<string> = [];
 
-    for (const o of Array.isArray(item.options) ? item.options : []) {
-      if (!o || typeof o.label !== "string" || !o.label) {
+    const offered: ReadonlyArray<unknown> = Array.isArray(item.options) ? item.options : [];
+
+    for (const o of offered) {
+      if (!isRec(o) || typeof o.label !== "string" || !o.label) {
         return undefined;
       }
 
@@ -1751,7 +1785,8 @@ export function permissionReason(
   input: Record<string, unknown>,
   request: Record<string, unknown>,
 ): string {
-  const head = request?.title ?? request?.description ?? "";
+  const named = request?.title ?? request?.description;
+  const head = typeof named === "string" ? named : "";
   let detail = "";
 
   // Any tool that runs a command line (`Bash`, and `PowerShell` on Windows) shows the command.
@@ -1773,10 +1808,14 @@ export function permissionReason(
 /** Returned by `next(timeoutMs)` when nothing arrived in time; the waiter is withdrawn, no line is lost. */
 export const TIMEOUT = Symbol("timeout");
 
+/** What the line queue holds: a raw stdout line, or an event put there already parsed (the MCP
+ *  bridge's relays, and the partial frames tests inject). */
+type QueuedLine = string | ClaudeEvent | Record<string, unknown>;
+
 /** Async line queue over a child's stdout: `next()` resolves with the next line, or null once the child is gone. */
 export class LineQueue {
-  lines: Array<string | ClaudeEvent | Record<string, unknown>>;
-  waiters: Array<(line: string | typeof TIMEOUT | null) => void>;
+  lines: Array<QueuedLine>;
+  waiters: Array<(line: QueuedLine | typeof TIMEOUT | null) => void>;
   closed: boolean;
 
   /** Start with no queued lines, no waiters and no close flag; every field stays empty until the
@@ -1788,12 +1827,11 @@ export class LineQueue {
   }
   /** Hand a line to the earliest waiter if one is waiting, else buffer it, so a line never arrives
    *  before its reader. */
-  push(line: string | ClaudeEvent | Record<string, unknown>) {
+  push(line: QueuedLine) {
     const w = this.waiters.shift();
 
-    if (w && line !== null) {
-      // SAFETY: TIMEOUT is never pushed; only strings or parsed objects reach here
-      w(line as string);
+    if (w) {
+      w(line);
     } else {
       this.lines.push(line);
     }
@@ -1809,12 +1847,9 @@ export class LineQueue {
   }
   /** Resolve with the next queued line, a timeout after `timeoutMs` with nothing, or null once the
    *  queue is closed. */
-  next(timeoutMs?: number): Promise<string | typeof TIMEOUT | null> {
+  next(timeoutMs?: number): Promise<QueuedLine | typeof TIMEOUT | null> {
     if (this.lines.length > 0) {
-      const line = this.lines.shift();
-
-      // SAFETY: TIMEOUT sentinel is never stored in lines; only strings or objects arrive here
-      return Promise.resolve((line ?? null) as string | typeof TIMEOUT | null);
+      return Promise.resolve(this.lines.shift() ?? null);
     }
 
     if (this.closed) {
@@ -1822,7 +1857,7 @@ export class LineQueue {
     }
 
     return new Promise((resolve) => {
-      const waiter = (line: string | typeof TIMEOUT | null) => {
+      const waiter = (line: QueuedLine | typeof TIMEOUT | null) => {
         clearTimeout(timer);
         resolve(line);
       };
@@ -1931,6 +1966,14 @@ export interface ClaudeProcessSpec {
    *  preset): the spawner hands it isolate's environment, which is fixed at spawn like the rest. */
   isolate?: true;
 }
+
+/**
+ * A process spec read back from one of the plugin's own files (holds.json), where it was written
+ * from a ClaudeProcessSpec. Any object is taken as one, on purpose: a file an older plugin wrote
+ * may lack a field added since, and refusing it would drop a live hold on upgrade, while a stale
+ * shape only mis-keys a respawn (`specKey` compares the spec whole, so it is kept as written).
+ */
+export const isStoredProcessSpec = (v: unknown): v is ClaudeProcessSpec => isRec(v);
 
 /** What the caller wants to know when a Claude process ends, live or after a restart. */
 export interface ClaudeProcessOnExit {
@@ -2198,17 +2241,17 @@ export function attachKeeper(dir: string, timeoutMs = 5000): Promise<SubprocessH
         };
 
         createInterface({ input: sock, crlfDelay: Infinity }).on("line", (raw) => {
-          let msg: {
-            t?: string;
-            line?: string;
-            n?: number;
-            code?: number | null;
-            signal?: string | null;
-          };
+          // The peer is this plugin's keeper.ts; each field is checked before use.
+          let msg: Record<string, unknown>;
 
           try {
-            // SAFETY: the peer is this plugin's keeper.ts; fields are checked before use
-            msg = JSON.parse(raw) as typeof msg;
+            const parsed: unknown = JSON.parse(raw);
+
+            if (!isRec(parsed)) {
+              return;
+            }
+
+            msg = parsed;
           } catch {
             return;
           }
@@ -2224,7 +2267,10 @@ export function attachKeeper(dir: string, timeoutMs = 5000): Promise<SubprocessH
           } else if (msg.t === "err" && typeof msg.line === "string") {
             stderr.write(`${msg.line}\n`);
           } else if (msg.t === "exit") {
-            settle(msg.code ?? null, msg.signal ?? null);
+            settle(
+              typeof msg.code === "number" ? msg.code : null,
+              typeof msg.signal === "string" ? msg.signal : null,
+            );
           }
         });
         // A closed socket with no `exit` first means the keeper is gone (crashed, or another dsh
@@ -2304,8 +2350,8 @@ export function lazyHandle(pending: Promise<SubprocessHandle>): SubprocessHandle
 
       return h.done;
     },
-    (error: Error) => {
-      stderr.write(`keeper: ${error.message}\n`);
+    (cause: unknown) => {
+      stderr.write(`keeper: ${errorText(cause)}\n`);
       stdout.end();
       stderr.end();
 
@@ -2357,27 +2403,22 @@ export interface KeeperSpec {
   sock?: string;
 }
 
+/**
+ * spec.json is written by spawnKeeper from a KeeperSpec, so a file that has the fields a respawn
+ * cannot do without (command, args, session id) is taken as one; the rest are not re-checked.
+ */
+const isKeeperSpec = (v: unknown): v is KeeperSpec =>
+  isRec(v) &&
+  typeof v.command === "string" &&
+  Array.isArray(v.args) &&
+  typeof v.sessionId === "string";
+
 /** The spawn arguments a keeper was started with, for adopting or respawning it after a restart. */
 export function readKeeperSpec(dir: string): KeeperSpec | undefined {
   try {
     const parsed: unknown = JSON.parse(readFileSync(keeperPaths(dir).spec, "utf8"));
 
-    if (typeof parsed !== "object" || parsed === null) {
-      return undefined;
-    }
-
-    // SAFETY: spec.json is written by spawnKeeper from a KeeperSpec; the fields that matter are re-checked
-    const s = parsed as KeeperSpec;
-
-    if (
-      typeof s.command !== "string" ||
-      !Array.isArray(s.args) ||
-      typeof s.sessionId !== "string"
-    ) {
-      return undefined;
-    }
-
-    return s;
+    return isKeeperSpec(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
@@ -2585,7 +2626,9 @@ export class ClaudeProcess {
   child: SubprocessHandle;
   key?: string;
   resuming?: boolean;
-  onIdleResult?(): void;
+  /** The adapter's wake for a reply that arrived with no turn reading; its answer (whether a turn
+   *  opened) is not read here. */
+  onIdleResult?(): Promise<boolean> | void;
   /** An interrupt was written and the CLI has not answered it yet. dsh ends the turn's generator
    *  on a user Stop before that answer lands, so the answer reaches an idle process; a stopped
    *  turn answers with an error, which the wake filter drops, but a stopped `/compact` answers
@@ -2754,10 +2797,10 @@ export class ClaudeProcess {
 
       if (line.includes('"control_response"')) {
         try {
-          // SAFETY: I/O boundary; the listener branches on `type` and ignores anything else
-          const event = JSON.parse(line) as ClaudeEvent;
+          // The listener branches on `type` and ignores anything else.
+          const event: unknown = JSON.parse(line);
 
-          if (this.controlListener?.(event)) {
+          if (isClaudeEvent(event) && this.controlListener?.(event)) {
             return this.used(index);
           }
 
@@ -2765,7 +2808,7 @@ export class ClaudeProcess {
           // its waiter gave up (initialize waits 15 s, mcp_reconnect 10 s) or answers an interrupt
           // whose turn had ended. Queued, it woke an idle session after a restart, and the keeper
           // replayed it to every boot until a turn read it (#241). No turn reads it for anything.
-          if (event.type === "control_response") {
+          if (isClaudeEvent(event) && event.type === "control_response") {
             return this.used(index);
           }
         } catch {
@@ -2977,11 +3020,9 @@ export class ClaudeProcess {
     try {
       // A throw here is inside readline's data handler: it would take the whole host down.
       // The adapter behind the callback may have been hot-reloaded away (dead cordis scope).
-      const r: unknown = this.onIdleResult();
-
-      if (typeof r === "object" && r !== null && "catch" in r && typeof r.catch === "function") {
-        r.catch(() => {});
-      }
+      // Fire and forget: the wake logs its own failures; this only keeps a rejection unhandled
+      // by it from reaching the host.
+      void Promise.resolve(this.onIdleResult()).catch(() => {});
     } catch {
       // logged by the adapter when it can; nothing else to do here
     }
@@ -2998,7 +3039,9 @@ export class ClaudeProcess {
       }
 
       try {
-        if (JSON.parse(line).type === "result") {
+        const parsed: unknown = JSON.parse(line);
+
+        if (isRec(parsed) && parsed.type === "result") {
           n++;
         }
       } catch {
@@ -3062,16 +3105,10 @@ export class ClaudeProcess {
       }
 
       try {
-        const parsed: unknown = JSON.parse(line);
+        const r: unknown = JSON.parse(line);
 
-        if (typeof parsed !== "object" || parsed === null) {
-          continue;
-        }
-
-        // SAFETY: a non-null object; each field is checked for its type before use
-        const r = parsed as { type?: unknown; subtype?: unknown } & Record<string, unknown>;
-
-        if (r.type !== "system" || r.subtype !== "task_notification") {
+        // Each field is checked for its type before use.
+        if (!isRec(r) || r.type !== "system" || r.subtype !== "task_notification") {
           continue;
         }
 
@@ -3115,9 +3152,14 @@ export class ClaudeProcess {
         return { type: "timeout" };
       }
 
+      // Injected by inject(): already parsed, so only the shape is checked.
       if (typeof line === "object") {
-        return line;
-      } // injected by inject()
+        if (isClaudeEvent(line)) {
+          return line;
+        }
+
+        continue;
+      }
 
       const index = this.queuedIndexes.shift();
 
@@ -3126,9 +3168,13 @@ export class ClaudeProcess {
       }
 
       try {
-        // SAFETY: this is the I/O boundary; a parsed line is treated as a CLI event and every
-        // consumer branches on `type` with a logged fallback for shapes it does not know.
-        return JSON.parse(line) as ClaudeEvent;
+        const parsed: unknown = JSON.parse(line);
+
+        if (isClaudeEvent(parsed)) {
+          return parsed;
+        }
+
+        this.stray = (this.stray + line + "\n").slice(-2000);
       } catch {
         this.stray = (this.stray + line + "\n").slice(-2000);
       }

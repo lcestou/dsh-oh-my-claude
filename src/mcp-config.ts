@@ -5,6 +5,7 @@
 // `project` in the `.mcp.json` of the session's directory and of every directory above it. The MCP
 // tab shows these beside the servers the running process has, so a server added a moment ago has a
 // row before Claude next starts.
+import { parsedWith } from "./schema-fits.js";
 import { dirname, join } from "node:path";
 import z from "@deepseek-ai/schemastery";
 import { readTextAt } from "./remote-fs.js";
@@ -61,15 +62,6 @@ const rowsOf = (
     summary: e.url ?? `${e.command ?? ""} ${(e.args ?? []).join(" ")}`.trim(),
   }));
 
-/** A schema call that throws on an off-shape file reads as no file. */
-const safe = <T>(read: () => T): T | null => {
-  try {
-    return read();
-  } catch {
-    return null;
-  }
-};
-
 /**
  * Rows from the files' text. Pure, so the listing is checked without a filesystem: `claudeJson` is
  * `.claude.json`, and `mcpJsons` are the `.mcp.json` files from the session's directory upwards,
@@ -82,13 +74,12 @@ export function configuredFrom(
   mcpJsons: ReadonlyArray<string | null>,
   key: string,
 ): Array<ConfiguredMcp> {
-  // JSON.parse feeds the schema call as it does elsewhere in this plugin; either throwing reads
-  // as no file.
-  const top = claudeJson === null ? null : safe(() => ClaudeJson(JSON.parse(claudeJson)));
+  // Text that is not JSON, or JSON of another shape, reads as no file.
+  const top = claudeJson === null ? null : (parsedWith(ClaudeJson, claudeJson) ?? null);
   const project = new Map<string, ConfiguredMcp>();
 
   for (const text of mcpJsons) {
-    const file = text === null ? null : safe(() => McpJson(JSON.parse(text)));
+    const file = text === null ? null : (parsedWith(McpJson, text) ?? null);
 
     for (const row of rowsOf(file?.mcpServers, "project")) {
       if (!project.has(row.name)) {

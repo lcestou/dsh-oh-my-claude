@@ -9,5 +9,5 @@
     "outDir": "lib/server"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts", "src/client/**"]
+  "exclude": ["src/**/*.test.ts", "src/test-context.ts", "src/test-dsh.ts", "src/client/**"]
 }

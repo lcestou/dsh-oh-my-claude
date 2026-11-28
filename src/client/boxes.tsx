@@ -3,7 +3,7 @@
 import { isNewer } from "../update.js";
 import { t, useLocale, activeLocale } from "./i18n.js";
 import { BOXES_EVENT, canBrowseDirs, OPEN_EVENT, RW_EVENT, SETTINGS_EVENT } from "./picker.js";
-import { SCOPE_LABELS, SETTINGS_SCOPES, overrideNote } from "./settings.js";
+import { SCOPE_LABELS, SETTINGS_SCOPES, isSettingsScope, overrideNote } from "./settings.js";
 import type { SettingsScope, SettingsScopeInfo } from "./settings.js";
 import { LiveNote } from "./live-note.js";
 import { useViewRead } from "./view-read.js";
@@ -28,16 +28,14 @@ import {
   readJson,
   row,
   select,
+  errorText,
+  isJsonObject,
+  parseJson,
 } from "./shared.js";
-import type { ClientCtx } from "./shared.js";
-
-type Json = string | number | boolean | null | Array<Json> | { [key: string]: Json };
-
-type JsonObject = { [key: string]: Json };
+import type { ClientCtx, Json, JsonObject } from "./shared.js";
 
 /** JSON.parse hands back one of six shapes; this tells the plain object apart. */
-export const isObj = (v: Json | undefined): v is JsonObject =>
-  v instanceof Object && !Array.isArray(v);
+export const isObj = (v: Json | undefined): v is JsonObject => isJsonObject(v);
 
 /** Counts items in a parsed value: array length, object keys, or 0 when v is neither. */
 const count = (v: Json | undefined): number =>
@@ -158,6 +156,11 @@ export function Card({ id, title, summary, actions, open, onToggle, children }: 
   );
 }
 
+/** A settings value as one line: a string, number or boolean as itself, an object or array as its
+ *  JSON, so a hand-edited value of the wrong kind reads as what the file holds. */
+const jsonText = (v: Json): string =>
+  isObj(v) || Array.isArray(v) ? JSON.stringify(v) : String(v);
+
 /** Facts worth a glance before opening the editor. */
 export function summarize(settings: JsonObject | undefined): Array<[string, string]> {
   if (!settings) {
@@ -167,7 +170,7 @@ export function summarize(settings: JsonObject | undefined): Array<[string, stri
   const out: Array<[string, string]> = [];
 
   if (settings.model) {
-    out.push(["model", String(settings.model)]);
+    out.push(["model", jsonText(settings.model)]);
   }
 
   const hooksObj = settings.hooks;
@@ -201,12 +204,12 @@ export function summarize(settings: JsonObject | undefined): Array<[string, stri
   const p = settings.permissions;
 
   if (isObj(p)) {
-    const parts = ["allow", "ask", "deny"]
-      .filter((k) => count(p[k]) > 0)
-      .map((k) => `${count(p[k])} ${k}`);
+    const parts = ["allow", "ask", "deny"].flatMap((k) =>
+      count(p[k]) > 0 ? [`${count(p[k])} ${k}`] : [],
+    );
 
     if (p.defaultMode) {
-      parts.unshift(String(p.defaultMode));
+      parts.unshift(jsonText(p.defaultMode));
     }
 
     if (parts.length) {
@@ -325,64 +328,86 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
     ? `${ROUTE}/settings/scopes?cwd=${encodeURIComponent(projectCwd)}`
     : `${ROUTE}/settings/scopes`;
 
-  const show = (loaded: SettingsFile) => {
+  /** Puts a freshly read file on screen and leaves edit mode. Only state setters inside. */
+  const show = useCallback((loaded: SettingsFile) => {
     setFile(loaded);
     setText(loaded.text);
     setEditing(false);
     setSaved("");
-  };
+  }, []);
 
   // Newest read wins: two quick scope changes can answer out of order, and the older answer
   // showed the previous scope's file under the new scope's tab.
   const loadSeq = useRef(0);
+  const isBox = box !== undefined;
 
-  const load = () => {
+  /** Reads the file on show. Sets state only as the answer lands, so the effect below can start
+   *  it; whoever calls it marks the editor busy first. */
+  const readFile = useCallback(() => {
     const seq = ++loadSeq.current;
     const current = () => seq === loadSeq.current;
-    setBusy(true);
-    setError("");
 
     // A box answers one file and knows nothing of scopes; everything else reads every scope at
     // once, so the editor can show one and say which keys another file overrides.
-    const done = box
-      ? fetch(settingsUrl)
-          .then((r) => readJson<SettingsFile>(r))
-          .then((f) => current() && show(f))
-      : fetch(scopesUrl)
-          .then((r) => readJson<{ scopes?: Array<SettingsScopeInfo> }>(r))
-          .then((b) => {
-            if (!current()) {
-              return;
-            }
+    /** The read for whichever kind of editor this is; rejects on a failed request. */
+    const read = async () => {
+      if (isBox) {
+        const f = await readJson<SettingsFile>(await fetch(settingsUrl));
 
-            const all = b.scopes ?? [];
-            setScopes(all);
+        if (current()) {
+          show(f);
+        }
 
-            const wanted =
-              all.find((s) => s.scope === scope) ?? all.find((s) => s.scope === "user");
+        return;
+      }
 
-            if (wanted) {
-              show(wanted);
-            }
-          });
+      const b = await readJson<{ scopes?: Array<SettingsScopeInfo> }>(await fetch(scopesUrl));
 
-    done
-      .catch((error_: Error) => current() && setError(error_.message))
+      if (!current()) {
+        return;
+      }
+
+      const all = b.scopes ?? [];
+      setScopes(all);
+
+      const wanted = all.find((s) => s.scope === scope) ?? all.find((s) => s.scope === "user");
+
+      if (wanted) {
+        show(wanted);
+      }
+    };
+
+    read()
+      .catch((cause: unknown) => current() && setError(errorText(cause)))
       .finally(() => current() && setBusy(false));
-  };
+  }, [isBox, settingsUrl, scopesUrl, scope, show]);
 
-  useEffect(load, [settingsUrl, scopesUrl, scope]);
+  /** Reload: busy, error cleared, the file read again. */
+  const load = useCallback(() => {
+    setBusy(true);
+    setError("");
+    readFile();
+  }, [readFile]);
+
+  // A different file to show (another box, scope or project) marks the editor busy during render,
+  // as Reload does, and the effect reads it.
+  const fileKey = `${settingsUrl}\n${scopesUrl}\n${scope}`;
+  const [readKey, setReadKey] = useState<string | null>(null);
+
+  if (readKey !== fileKey) {
+    setReadKey(fileKey);
+    setBusy(true);
+    setError("");
+  }
+
+  useEffect(readFile, [readFile]);
   // Another control on the page wrote a settings file (the Claude updates channel, the Tune tab):
   // show the new text, unless an edit is open, which would lose what was typed. The editor's own
   // save skips this, so its "Saved at" line stays up.
   const ownSave = useRef(false);
   useEffect(() => {
-    if (editing) {
-      return;
-    }
-
     const again = () => {
-      if (!ownSave.current) {
+      if (!editing && !ownSave.current) {
         load();
       }
     };
@@ -390,11 +415,11 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
     window.addEventListener(SETTINGS_EVENT, again);
 
     return () => window.removeEventListener(SETTINGS_EVENT, again);
-  });
+  }, [editing, load]);
 
   const parsed = useMemo<{ value?: JsonObject; error?: string }>(() => {
     try {
-      const value: Json = JSON.parse(text);
+      const value = parseJson(text);
 
       if (!isObj(value)) {
         return { error: t("main.settings.mustBeObject") };
@@ -428,29 +453,34 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
       body.mtime = file.mtime;
     }
 
-    fetch(settingsUrl, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    })
-      .then((r) => readJson<{ mtime?: number; backup?: string }>(r))
-      .then((b) => {
-        setFile((f) => ({ ...f, text, exists: true, mtime: b.mtime }));
-        setEditing(false);
-        setSaved(
-          t("main.settings.saved", {
-            time: new Date(b.mtime ?? 0).toLocaleTimeString(activeLocale()),
-            backup: b.backup ?? "?",
-          }),
-        );
-        // A read another control's write started before this save would answer with the file as
-        // it was; counting the save as newer drops that answer.
-        loadSeq.current++;
-        ownSave.current = true;
-        window.dispatchEvent(new Event(SETTINGS_EVENT));
-        ownSave.current = false;
-      })
-      .catch((error_: Error) => setError(error_.message))
+    /** The PUT and what a taken save puts on screen; rejects on a refusal. */
+    const write = async () => {
+      const b = await readJson<{ mtime?: number; backup?: string }>(
+        await fetch(settingsUrl, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+
+      setFile((f) => ({ ...f, text, exists: true, mtime: b.mtime }));
+      setEditing(false);
+      setSaved(
+        t("main.settings.saved", {
+          time: new Date(b.mtime ?? 0).toLocaleTimeString(activeLocale()),
+          backup: b.backup ?? "?",
+        }),
+      );
+      // A read another control's write started before this save would answer with the file as
+      // it was; counting the save as newer drops that answer.
+      loadSeq.current++;
+      ownSave.current = true;
+      window.dispatchEvent(new Event(SETTINGS_EVENT));
+      ownSave.current = false;
+    };
+
+    write()
+      .catch((cause: unknown) => setError(errorText(cause)))
       .finally(() => setBusy(false));
   };
 
@@ -542,8 +572,11 @@ function SettingsEditor({ open, onToggle, box, ctx }: SettingsEditorProps) {
               id="dsh-oh-my-claude-scope"
               value={scope}
               onChange={(e) => {
-                // SAFETY: the options are the scope names themselves, so the value is one of them.
-                setScope(e.target.value as SettingsScope);
+                const picked = e.target.value;
+
+                if (isSettingsScope(picked)) {
+                  setScope(picked);
+                }
               }}
               disabled={busy || editing}
               style={{
@@ -656,22 +689,22 @@ export function useBoxList() {
   const [loaded, setLoaded] = useState(false);
 
   const wrote = useViewRead("boxes", (fresh) => {
-    fetch(`${ROUTE}/boxes`)
-      .then((r) => readJson<{ boxes?: Array<BoxData> }>(r))
-      .then((b) => {
-        if (!fresh()) {
-          return;
-        }
+    // Never rejects: a failed read only sets the error line.
+    void (async () => {
+      try {
+        const b = await readJson<{ boxes?: Array<BoxData> }>(await fetch(`${ROUTE}/boxes`));
 
-        setError("");
-        setLoaded(true);
-        setShown(b.boxes ?? []);
-      })
-      .catch((error_: Error) => {
         if (fresh()) {
-          setError(error_.message);
+          setError("");
+          setLoaded(true);
+          setShown(b.boxes ?? []);
         }
-      });
+      } catch (error_) {
+        if (fresh()) {
+          setError(errorText(error_));
+        }
+      }
+    })();
   });
 
   /** The card's setter: a saved list counts as newer than any read already in flight. */
@@ -929,60 +962,77 @@ const SSH_LOGIN: LoginRoutes = { base: "ssh-boxes/login", field: "host" };
 
 const DSH_LOGIN: LoginRoutes = { base: "boxes/login", field: "url" };
 
+/** POSTs one login step (`start`, `poll`, `code`) for `host` to the login routes given. */
+const postLogin = (
+  routes: LoginRoutes,
+  route: string,
+  host: string,
+  extra: Record<string, string> = {},
+) =>
+  fetch(`${ROUTE}/${routes.base}/${route}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ [routes.field]: host, ...extra }),
+  });
+
 /** Login state for one box plus the start and submit handlers; each step POSTs to a login route. */
 export function useLoginFlow(onDone: (host: string) => void, routes: LoginRoutes = SSH_LOGIN) {
   const [login, setLogin] = useState<LoginFlow | null>(null);
 
-  const post = (route: string, host: string, extra: Record<string, string> = {}) =>
-    fetch(`${ROUTE}/${routes.base}/${route}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ [routes.field]: host, ...extra }),
-    });
+  const post = (route: string, host: string, extra?: Record<string, string>) =>
+    postLogin(routes, route, host, extra);
+
+  // Callers pass a fresh arrow each render; the poll below reads the newest one through this ref
+  // rather than restarting its 2s timer on every render.
+  const onDoneRef = useRef(onDone);
+
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
 
   const startLogin = (host: string) => {
     setLogin({ host, code: "", busy: true });
     post("start", host)
       .then((r) => readJson<{ url?: string; error?: string }>(r))
       .then((b) => setLogin({ host, code: "", url: b.url, error: b.error }))
-      .catch((error: Error) => setLogin({ host, code: "", error: error.message }));
+      .catch((cause: unknown) => setLogin({ host, code: "", error: errorText(cause) }));
   };
 
   // While the link is up, ask every 2s whether setup-token finished by itself (it does when the
   // box already has a login: no browser, no code). Paused during a submit, stopped on an error.
   const pollKey = login && login.url && !login.busy && !login.error ? login.host : null;
   useEffect(() => {
-    if (pollKey === null) {
-      return;
-    }
-
-    const host = pollKey;
     let live = true;
 
-    const tick = () =>
-      post("poll", host)
-        .then((r) => readJson<{ pending?: boolean; done?: boolean; error?: string }>(r))
-        .then((b) => {
-          if (!live || b.pending) {
-            return;
-          }
+    /** One poll of `host`; never rejects, since a failed poll is simply asked again next tick. */
+    const tick = async (host: string) => {
+      try {
+        const b = await readJson<{ pending?: boolean; done?: boolean; error?: string }>(
+          await postLogin(routes, "poll", host),
+        );
 
-          if (b.done) {
-            setLogin(null);
-            onDone(host);
-          } else {
-            setLogin((cur) => (cur && cur.host === host ? { ...cur, error: b.error } : cur));
-          }
-        })
-        .catch(() => {});
+        if (!live || b.pending) {
+          return;
+        }
 
-    const timer = setInterval(tick, 2000);
+        if (b.done) {
+          setLogin(null);
+          onDoneRef.current(host);
+        } else {
+          setLogin((cur) => (cur && cur.host === host ? { ...cur, error: b.error } : cur));
+        }
+      } catch {
+        // the next tick asks again
+      }
+    };
+
+    const timer = pollKey === null ? undefined : setInterval(() => void tick(pollKey), 2000);
 
     return () => {
       live = false;
       clearInterval(timer);
     };
-  }, [pollKey]);
+  }, [pollKey, routes]);
 
   const submitLogin = () => {
     if (!login) {
@@ -991,17 +1041,23 @@ export function useLoginFlow(onDone: (host: string) => void, routes: LoginRoutes
 
     const host = login.host;
     setLogin({ ...login, busy: true, error: undefined });
-    post("code", host, { code: login.code })
-      .then((r) => readJson<{ done?: boolean; loggedIn?: boolean; error?: string }>(r))
-      .then((b) => {
-        if (b.error) {
-          return setLogin({ host, code: "", error: b.error });
-        }
+    // Never rejects: a refusal or a failed request shows as the login's error.
+    void (async () => {
+      try {
+        const b = await readJson<{ done?: boolean; loggedIn?: boolean; error?: string }>(
+          await post("code", host, { code: login.code }),
+        );
 
-        setLogin(null);
-        onDone(host);
-      })
-      .catch((error: Error) => setLogin({ host, code: "", error: error.message }));
+        if (b.error) {
+          setLogin({ host, code: "", error: b.error });
+        } else {
+          setLogin(null);
+          onDone(host);
+        }
+      } catch (error_) {
+        setLogin({ host, code: "", error: errorText(error_) });
+      }
+    })();
   };
 
   return { login, setLogin, startLogin, submitLogin };
@@ -1110,31 +1166,33 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
   useEffect(loadNets, [loadNets]);
   // While an approval link is out, look every 3 s for the tailnet to come up; stop once it has.
   useEffect(() => {
-    if (!tsLogin?.url || ts?.loggedIn) {
-      return;
-    }
-
-    const timer = setInterval(loadNets, 3000);
+    const timer = !tsLogin?.url || ts?.loggedIn ? undefined : setInterval(loadNets, 3000);
 
     return () => clearInterval(timer);
   }, [tsLogin?.url, ts?.loggedIn, loadNets]);
 
   const joinTailnet = () => {
     setTsLogin({ busy: true });
-    fetch(`${ROUTE}/tailscale/login`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(tsServer),
-    })
-      .then((r) => readJson<{ url?: string; joined?: boolean; error?: string }>(r))
-      .then((b) => {
+    // Never rejects: a failed join shows as the login's error.
+    void (async () => {
+      try {
+        const b = await readJson<{ url?: string; joined?: boolean; error?: string }>(
+          await fetch(`${ROUTE}/tailscale/login`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(tsServer),
+          }),
+        );
+
         setTsLogin({ url: b.url, error: b.error });
 
         if (b.joined) {
           loadNets();
         }
-      })
-      .catch((error_: Error) => setTsLogin({ error: error_.message }));
+      } catch (error_) {
+        setTsLogin({ error: errorText(error_) });
+      }
+    })();
   };
 
   const [busy, setBusy] = useState(false);
@@ -1152,46 +1210,38 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
     ) : undefined;
 
   const [rws, setRws] = useState<Array<RemoteWs>>([]);
-  const { login, setLogin, startLogin, submitLogin } = useLoginFlow(() => refresh());
-  const dsh = useLoginFlow(() => refresh(), DSH_LOGIN);
-
-  const logoutDsh = (target: string) => {
-    setBusy(true);
-    fetch(`${ROUTE}/boxes/login/logout`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url: target }),
-    })
-      .then(() => refresh())
-      .catch((error_: Error) => setError(error_.message))
-      .finally(() => setBusy(false));
-  };
 
   /** This box's own row. Read on mount and again after every login change here: the row used to
    *  keep its old pills and its Log out button until the page was reloaded, which read as the
    *  click having done nothing. */
-  const loadMe = () =>
-    fetch(`${ROUTE}/status`)
-      .then((r) => readJson<RuntimeStatus | null>(r))
-      .then(setMe)
-      .catch(() => {});
+  const loadMe = useCallback(
+    () =>
+      fetch(`${ROUTE}/status`)
+        .then((r) => readJson<RuntimeStatus | null>(r))
+        .then(setMe)
+        .catch(() => {}),
+    [],
+  );
 
-  /** The remote-workspace rows. Only state setters inside, so an effect may keep the first one. */
-  const loadRws = () => {
+  /** The remote-workspace rows. Only state setters inside, so it keeps one identity for good. */
+  const loadRws = useCallback(() => {
     fetch(`${ROUTE}/remote-workspaces`)
       .then((r) => readJson<{ workspaces?: Array<RemoteWs> }>(r))
       .then((b) => setRws(b.workspaces ?? []))
       .catch(() => {});
-  };
+  }, []);
 
   /** The saved SSH boxes. Read on mount and again on BOXES_EVENT, which a save here, in another
    *  tab or in another browser raises: a tab that kept an old list would PUT it back on its next add
    *  and drop the box the other tab saved. */
-  const loadSsh = () =>
-    fetch(`${ROUTE}/ssh-boxes`)
-      .then((r) => readJson<{ boxes?: Array<SshBoxData> }>(r))
-      .then((b) => setSsh(b.boxes ?? []))
-      .catch((error_: Error) => setError(error_.message));
+  const loadSsh = useCallback(
+    () =>
+      fetch(`${ROUTE}/ssh-boxes`)
+        .then((r) => readJson<{ boxes?: Array<SshBoxData> }>(r))
+        .then((b) => setSsh(b.boxes ?? []))
+        .catch((cause: unknown) => setError(errorText(cause))),
+    [],
+  );
 
   useEffect(() => {
     void loadSsh();
@@ -1201,7 +1251,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
     window.addEventListener(BOXES_EVENT, onBoxes);
 
     return () => window.removeEventListener(BOXES_EVENT, onBoxes);
-  }, []);
+  }, [loadSsh, loadMe, loadRws]);
   // The rows follow dsh's own workspace list, which changes on an add from the picker, a trash in
   // the sidebar and a box removal alike (the store carries every registry change, dsh's own or this
   // plugin's route). It also publishes a frame per drag-reorder and per archive, so the ids are
@@ -1232,26 +1282,31 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
       off();
       window.removeEventListener(RW_EVENT, loadRws);
     };
-  }, [ctx]);
+  }, [ctx, loadRws]);
 
-  const refresh = () => {
-    setBusy(true);
-    setError("");
-    setTick((n) => n + 1);
+  const hasBoxes = boxes.length > 0;
+  const hasSsh = ssh.length > 0;
+
+  /** Every read the card's Refresh stands for. Sets state only as the answers land, so the box-set
+   *  effect below can start it; `refresh` and the render-time block mark the card busy first. */
+  const probeAll = useCallback(() => {
+    /** The dsh boxes' reachability and this box's plugin version. */
+    const probeBoxes = async () => {
+      const b = await readJson<{ self?: { plugin?: string }; boxes?: Array<ProbeEntry> }>(
+        await fetch(`${ROUTE}/boxes/status`),
+      );
+
+      setSelf(b.self ?? null);
+      setProbe(Object.fromEntries((b.boxes ?? []).map((entry) => [entry.url, entry])));
+    };
+
     const jobs: Array<Promise<unknown>> = [loadMe()];
 
-    if (boxes.length) {
-      jobs.push(
-        fetch(`${ROUTE}/boxes/status`)
-          .then((r) => readJson<{ self?: { plugin?: string }; boxes?: Array<ProbeEntry> }>(r))
-          .then((b) => {
-            setSelf(b.self ?? null);
-            setProbe(Object.fromEntries((b.boxes ?? []).map((entry) => [entry.url, entry])));
-          }),
-      );
+    if (hasBoxes) {
+      jobs.push(probeBoxes());
     }
 
-    if (ssh.length) {
+    if (hasSsh) {
       jobs.push(
         fetch(`${ROUTE}/ssh-boxes/status`)
           .then((r) => readJson<{ boxes?: Array<SshProbeEntry> }>(r))
@@ -1261,11 +1316,50 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
 
     loadNets();
     Promise.all(jobs)
-      .catch((error_: Error) => setError(error_.message))
+      .catch((cause: unknown) => setError(errorText(cause)))
       .finally(() => setBusy(false));
+  }, [hasBoxes, hasSsh, loadMe, loadNets]);
+
+  /** The card's Refresh: busy, error cleared, the account rows told to re-read (`tick`), then every
+   *  read again. */
+  const refresh = () => {
+    setBusy(true);
+    setError("");
+    setTick((n) => n + 1);
+    probeAll();
   };
 
-  useEffect(refresh, [boxes.map((b) => b.url).join("|"), ssh.map((b) => b.host).join("|")]);
+  // Probed again whenever the set of boxes changes, not only its size: a box swapped for another
+  // has a status of its own to show. The change is marked during render, as a Refresh click marks
+  // it, and the effect starts the reads.
+  const boxUrls = boxes.map((b) => b.url).join("|");
+  const sshHosts = ssh.map((b) => b.host).join("|");
+  const boxSet = `${boxUrls}\n${sshHosts}`;
+  const [probedSet, setProbedSet] = useState<string | null>(null);
+
+  if (probedSet !== boxSet) {
+    setProbedSet(boxSet);
+    setBusy(true);
+    setError("");
+    setTick((n) => n + 1);
+  }
+
+  useEffect(probeAll, [probeAll, boxSet]);
+
+  const { login, setLogin, startLogin, submitLogin } = useLoginFlow(refresh);
+  const dsh = useLoginFlow(refresh, DSH_LOGIN);
+
+  const logoutDsh = (target: string) => {
+    setBusy(true);
+    fetch(`${ROUTE}/boxes/login/logout`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: target }),
+    })
+      .then(() => refresh())
+      .catch((cause: unknown) => setError(errorText(cause)))
+      .finally(() => setBusy(false));
+  };
 
   const saveDsh = (next: Array<BoxData>) => {
     if (!loaded) {
@@ -1284,26 +1378,32 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
     })
       .then((r) => readJson<{ boxes?: Array<BoxData> }>(r))
       .then((b) => setBoxes(b.boxes ?? []))
-      .catch((error_: Error) => setError(error_.message))
+      .catch((cause: unknown) => setError(errorText(cause)))
       .finally(() => setBusy(false));
   };
 
-  const saveSsh = (next: Array<SshBoxData>) => {
+  /** PUTs the SSH box list and shows what the server kept. Never rejects: a failure is the card's
+   *  error line. */
+  const saveSsh = async (next: Array<SshBoxData>) => {
     setBusy(true);
     setError("");
 
-    return fetch(`${ROUTE}/ssh-boxes`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ boxes: next }),
-    })
-      .then((r) => readJson<{ boxes?: Array<SshBoxData> }>(r))
-      .then((b) => {
-        setSsh(b.boxes ?? []);
-        window.dispatchEvent(new Event(BOXES_EVENT));
-      })
-      .catch((error_: Error) => setError(error_.message))
-      .finally(() => setBusy(false));
+    try {
+      const b = await readJson<{ boxes?: Array<SshBoxData> }>(
+        await fetch(`${ROUTE}/ssh-boxes`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ boxes: next }),
+        }),
+      );
+
+      setSsh(b.boxes ?? []);
+      window.dispatchEvent(new Event(BOXES_EVENT));
+    } catch (error_) {
+      setError(errorText(error_));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const clear = () => setDraft({ name: "", url: "", token: "", host: "" });
@@ -1326,21 +1426,23 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
         box.via = kind;
       }
 
-      saveSsh([...ssh, box]).then(clear);
+      // The draft clears either way; a refused save shows in the error line (saveSsh never rejects).
+      void saveSsh([...ssh, box]).then(clear);
     } else {
       if (!draft.url.trim()) {
         return;
       }
 
-      saveDsh([
+      void saveDsh([
         ...boxes,
         { name: draft.name.trim(), url: draft.url.trim(), token: draft.token },
       ]).then(clear);
     }
   };
 
-  const removeDsh = (url: string) => saveDsh(boxes.filter((b) => b.url !== url));
-  const removeSsh = (host: string) => saveSsh(ssh.filter((b) => b.host !== host));
+  // Both saves catch their own failure into the error line, so nothing is left to await here.
+  const removeDsh = (url: string) => void saveDsh(boxes.filter((b) => b.url !== url));
+  const removeSsh = (host: string) => void saveSsh(ssh.filter((b) => b.host !== host));
 
   const logout = (host: string) => {
     setBusy(true);
@@ -1350,7 +1452,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
       body: JSON.stringify({ host }),
     })
       .then(() => refresh())
-      .catch((error_: Error) => setError(error_.message))
+      .catch((cause: unknown) => setError(errorText(cause)))
       .finally(() => setBusy(false));
   };
 
@@ -1364,7 +1466,7 @@ export function Boxes({ ctx, boxes, setBoxes, loaded, open, onToggle, accounts }
     })
       .then((r) => readJson<{ workspaces?: Array<RemoteWs> }>(r))
       .then((b) => setRws(b.workspaces ?? []))
-      .catch((error_: Error) => setError(error_.message))
+      .catch((cause: unknown) => setError(errorText(cause)))
       .finally(() => setBusy(false));
   };
 
@@ -2173,10 +2275,6 @@ function BoxUpdateButton({
     };
   }, [url]);
   useEffect(() => {
-    if (phase !== "busy") {
-      return;
-    }
-
     let live = true;
     const startedAt = Date.now();
 
@@ -2210,7 +2308,8 @@ function BoxUpdateButton({
       }
     };
 
-    const id = setInterval(() => void tick(), 3000);
+    // Polled only while an update runs; tick never rejects.
+    const id = phase === "busy" ? setInterval(() => void tick(), 3000) : undefined;
 
     return () => {
       live = false;
@@ -2228,8 +2327,8 @@ function BoxUpdateButton({
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ run: true }),
-    }).catch((error: Error) => {
-      setNote(error.message);
+    }).catch((cause: unknown) => {
+      setNote(errorText(cause));
       setPhase("failed");
     });
   };

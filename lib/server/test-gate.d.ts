@@ -67,7 +67,7 @@ export declare function decide(prevAttempt: number, stopHookActive: boolean, exi
  *  asking. Under acceptEdits or default, Claude could edit package.json's `test` script (an edit
  *  is approved there, a command is not) and the gate would run it unasked. Wrong case: a session
  *  in acceptEdits is never gated, though the owner switched the workspace on. */
-export declare const GATE_MODES: readonly string[];
+export declare const GATE_MODES: ReadonlyArray<string>;
 /** `env` without the names `DROPPED_ENV` matches, and without unset names. */
 export declare function testEnv(env: Readonly<Record<string, string | undefined>>): {
     [k: string]: string;
@@ -100,7 +100,7 @@ export declare function stopHookSettings(node: string, script: string, gatePath:
 export interface ProjectFiles {
     /** package.json's `scripts.test`. */
     testScript?: string | undefined;
-    lockfiles: string[];
+    lockfiles: Array<string>;
     pyproject?: string | undefined;
     hasPytestIni?: boolean;
     cargoToml?: boolean;

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import type { HistoryFile } from "./usage-history.js";
 import { createUsageHistory, parseUsageHistory } from "./usage-history-store.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const D = 86_400_000;
 const t0 = 1_800_000_000_000;
@@ -44,7 +45,7 @@ await store.record("a@x", [s1], t0);
 
 await store.record("a@x", [s1], t0);
 
-await new Promise((r) => setTimeout(r, 0));
+await sleep(0);
 
 assert.equal(writes.length, 1);
 

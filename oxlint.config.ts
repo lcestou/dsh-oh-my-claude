@@ -44,6 +44,10 @@ export default defineConfig({
     "jsx-a11y/no-autofocus": "error",
     "jsx-a11y/no-static-element-interactions": "error",
     "jsx-a11y/no-noninteractive-element-interactions": "error",
+    // anti-slop/no-unknown-parameters lets an `unknown` parameter through only when it is named
+    // `cause`, and typescript/use-unknown-in-catch-callback-variable wants catch callbacks typed
+    // `unknown`, so `cause` is the one name that satisfies all three rules.
+    "unicorn/catch-error-name": ["error", { ignore: ["^cause$"] }],
     "unicorn/consistent-function-scoping": "error",
     "unicorn/no-array-sort": "error",
     "no-unused-vars": "error",
@@ -52,6 +56,14 @@ export default defineConfig({
     "typescript/no-explicit-any": "error",
   },
   overrides: [
+    // Tests and the checks under tools/ are command-line scripts: the terminal is where they
+    // report, and there is no test runner to report through.
+    {
+      files: ["src/**/*.test.ts", "tools/**"],
+      rules: {
+        "no-console": "off",
+      },
+    },
     // Tests stand partial fakes in for dsh services and feed the translator events it has never
     // seen (tools/oxlint/README.md).
     {
@@ -82,7 +94,9 @@ export default defineConfig({
     {
       files: [
         "src/anthropic-status.ts",
+        "src/decode.ts",
         "src/process.ts",
+        "src/rows-probe.ts",
         "src/stars.ts",
         "src/remote-fs.ts",
         "src/hold.ts",
@@ -116,6 +130,7 @@ export default defineConfig({
     {
       files: [
         "src/anthropic-status.ts",
+        "src/decode.ts",
         "src/process.ts",
         "src/remote-fs.ts",
         "src/hold.ts",
@@ -146,6 +161,7 @@ export default defineConfig({
     },
     {
       files: [
+        "src/decode.ts",
         "src/anthropic-status.ts",
         "src/process.ts",
         "src/hold.ts",
@@ -172,6 +188,35 @@ export default defineConfig({
         "anti-slop/no-runtime-typeof": "off",
         "quality/no-unsafe-dictionary-type": "off",
         "quality/no-known-value-widening": "off",
+      },
+    },
+    // Dev checks that read dsh's and the CLI's JSON (JSON-RPC stdout, session logs, package files)
+    // and decode it into typed values.
+    {
+      files: ["tools/cli-compaction-check.ts"],
+      rules: {
+        "anti-slop/no-runtime-typeof": "off",
+        "quality/no-unsafe-dictionary-type": "off",
+      },
+    },
+    // Test-only fakes: Node's server.address() answers `AddressInfo | string | null`, and only
+    // typeof tells the string form apart.
+    {
+      files: ["src/test-context.ts"],
+      rules: {
+        "anti-slop/no-runtime-typeof": "off",
+      },
+    },
+    // Dev checks that load dsh's or Playwright's modules by path and check the one function they
+    // call before calling it.
+    {
+      files: [
+        "tools/dsh-session-repair.ts",
+        "tools/probe-notice-source.ts",
+        "tools/playwright/pw.ts",
+      ],
+      rules: {
+        "anti-slop/no-runtime-typeof": "off",
       },
     },
     // The scratch dsh test harness drives dsh's untyped service surface.

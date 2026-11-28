@@ -2,6 +2,7 @@
 // of the working-tree diff and the card above the composer lists what it found. Off until a model is
 // picked in Settings → Oh My Claude, which writes `second-opinion.json` under the plugin's state.
 // The pure half (marks, review text, parsing) is exported for the test; `opinions` is the runtime.
+import { fits } from "../schema-fits.js";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import z from "@deepseek-ai/schemastery";
@@ -140,7 +141,7 @@ export function changedPaths(before: TreeMarks | undefined, after: TreeMarks): A
     return [];
   }
 
-  return [...after].filter(([path, mark]) => before.get(path) !== mark).map(([path]) => path);
+  return [...after].flatMap(([path, mark]) => (before.get(path) === mark ? [] : [path]));
 }
 
 /** The user message the reviewer reads: the request, then each changed file in diff order until
@@ -256,7 +257,13 @@ export async function loadSecondOpinion(dir: string): Promise<SecondOpinionSetti
   let row;
 
   try {
-    row = SettingFile(JSON.parse(await readFile(SETTING_FILE(dir), "utf8")));
+    const raw: unknown = JSON.parse(await readFile(SETTING_FILE(dir), "utf8"));
+
+    if (!fits(SettingFile, raw)) {
+      return undefined;
+    }
+
+    row = SettingFile(raw);
   } catch {
     return undefined;
   }

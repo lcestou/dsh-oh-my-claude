@@ -6,6 +6,7 @@ import { guard, whenContextGone, activeClaudeSession, keywordMatches, T } from "
 import type { ClientCtx } from "./shared.js";
 import { hasTheme } from "./theme.js";
 import { pageIsDark } from "./dom.js";
+import { isBRElement, isElement, isStyleElement } from "./dom-guards.js";
 
 /** The CLI's rainbow for the word `ultrathink` (2.1.268, `ZT` over the `rainbow_*` theme entries,
  *  the same seven values in all four themes): each character of the word takes the next colour,
@@ -45,9 +46,9 @@ export const ULTRACODE_INDEX = RAINBOW.length;
 
 /** Each highlight name this module registers, with the declaration that colours it. Quoted lines in
  *  the composer read the way a Markdown quote does: dimmed, the marker more so. */
-export const HIGHLIGHT_RULES: Readonly<Record<string, string>> = Object.fromEntries([
-  ...RAINBOW.map((c, i) => [`omc-rainbow-${i}`, `color:${c}`]),
-  ...RAINBOW_SHIMMER.map((c, i) => [`omc-rainbow-s${i}`, `color:${c}`]),
+export const HIGHLIGHT_RULES: Readonly<Record<string, string>> = Object.fromEntries<string>([
+  ...RAINBOW.map((c, i): [string, string] => [`omc-rainbow-${i}`, `color:${c}`]),
+  ...RAINBOW_SHIMMER.map((c, i): [string, string] => [`omc-rainbow-s${i}`, `color:${c}`]),
   [`omc-rainbow-${ULTRACODE_INDEX}`, `color:var(--omc-ultracode,${ULTRACODE_DARK})`],
   [`omc-rainbow-s${ULTRACODE_INDEX}`, `color:${ULTRACODE_SHIMMER}`],
   ["omc-quote", `color:${T.muted}`],
@@ -73,7 +74,7 @@ const HIGHLIGHT_STYLE_ID = "dsh-oh-my-claude-highlights";
 /** Writes the highlight sheet's text, creating the element on first use. */
 const writeHighlightSheet = (css: string): void => {
   const existing = document.getElementById(HIGHLIGHT_STYLE_ID);
-  const el = existing instanceof HTMLStyleElement ? existing : document.createElement("style");
+  const el = isStyleElement(existing) ? existing : document.createElement("style");
   el.id = HIGHLIGHT_STYLE_ID;
   el.textContent = css;
 
@@ -82,9 +83,10 @@ const writeHighlightSheet = (css: string): void => {
   }
 };
 
-/** The slice of `CSS.highlights` the painter uses; a Map stands in for it in tests. */
-export interface HighlightTarget {
-  set(key: string, h: Highlight): void;
+/** The slice of `CSS.highlights` the painter uses; a Map stands in for it in tests. `H` is what it
+ *  stores, which the registry only carries through: a `Highlight` in the page, anything in a test. */
+export interface HighlightTarget<H = Highlight> {
+  set(key: string, h: H): void;
   delete(key: string): boolean;
   keys(): Iterable<string>;
 }
@@ -97,7 +99,10 @@ export interface HighlightTarget {
  * still registered, and the last of ours going empties it. Starts from whatever is already
  * registered, so a hot reload keeps the rules for highlights the old bundle left painted.
  */
-export function createHighlightRegistry(target: HighlightTarget, write: (css: string) => void) {
+export function createHighlightRegistry<H = Highlight>(
+  target: HighlightTarget<H>,
+  write: (css: string) => void,
+) {
   const ours = () => [...target.keys()].filter((k) => k in HIGHLIGHT_RULES);
   let painted = new Set(ours());
   let written = highlightCss(painted);
@@ -117,7 +122,7 @@ export function createHighlightRegistry(target: HighlightTarget, write: (css: st
 
   return {
     /** Registers `h` under `key`, and adds that name's rule when it has none yet. */
-    set(key: string, h: Highlight) {
+    set(key: string, h: H) {
       target.set(key, h);
 
       if (painted.has(key) || !(key in HIGHLIGHT_RULES)) {
@@ -216,7 +221,7 @@ export const segsIn = (host: Element): HostText => {
         continue;
       }
 
-      if (node instanceof Element && node.getAttribute("contenteditable") === "false") {
+      if (isElement(node) && node.getAttribute("contenteditable") === "false") {
         // Before any `>` the chip is U+FFFC, so the line no longer opens with one and is never
         // painted. After a `>` it is empty: a quote line is painted end to end, and the chip must
         // not be. A block holding nothing but a chip then reads blank, where dsh's would not.
@@ -224,7 +229,7 @@ export const segsIn = (host: Element): HostText => {
         continue;
       }
 
-      if (node instanceof HTMLBRElement && !node.hasAttribute("data-lexical-managed-linebreak")) {
+      if (isBRElement(node) && !node.hasAttribute("data-lexical-managed-linebreak")) {
         endLine();
         lineStart = node;
         continue;
@@ -376,12 +381,12 @@ export function watchUltrathink(ctx: ClientCtx) {
 
     for (const c of composer) {
       if (Math.abs(c.index - at) <= 1) {
-        lit[c.colour]!.push(c);
+        lit[c.colour]?.push(c);
       }
     }
 
     shimmerNames.forEach((key, i) => {
-      const cs = lit[i]!;
+      const cs = lit[i] ?? [];
 
       if (cs.length === 0) {
         registry.delete(key);
@@ -442,12 +447,12 @@ export function watchUltrathink(ctx: ClientCtx) {
       }
 
       for (const c of cs) {
-        buckets[c.colour]!.push(c);
+        buckets[c.colour]?.push(c);
       }
     }
 
     names.forEach((key, i) => {
-      const cs = buckets[i]!;
+      const cs = buckets[i] ?? [];
 
       if (cs.length === 0) {
         registry.delete(key);
@@ -499,14 +504,14 @@ export function watchUltrathink(ctx: ClientCtx) {
 
   const touchesHost = (records: Array<MutationRecord>): boolean => {
     for (const r of records) {
-      const el = r.target instanceof Element ? r.target : r.target.parentElement;
+      const el = isElement(r.target) ? r.target : r.target.parentElement;
 
       if (el?.closest(HOSTS)) {
         return true;
       }
 
       for (const n of r.addedNodes) {
-        if (n instanceof Element && (n.matches(HOSTS) || n.querySelector(HOSTS))) {
+        if (isElement(n) && (n.matches(HOSTS) || n.querySelector(HOSTS))) {
           return true;
         }
       }

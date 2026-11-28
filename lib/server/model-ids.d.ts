@@ -8,4 +8,4 @@
  * the alias itself): the family alias with the same `[1m]` choice, the plain alias, then the first
  * offered id of that family, which is the newest while the lineup lists newest first.
  */
-export declare function livingModelId(id: string, offered: readonly string[]): string | undefined;
+export declare function livingModelId(id: string, offered: ReadonlyArray<string>): string | undefined;

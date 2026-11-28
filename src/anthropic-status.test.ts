@@ -1,6 +1,7 @@
 // Offline self-check: bun src/anthropic-status.test.ts. Fake fetch, no network.
 import { strict as assert } from "node:assert";
 import { anthropicStatus, degradedNote, forgetStatus, peekStatus } from "./anthropic-status.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const makeFetch = (doc: unknown, status = 200) => {
   let calls = 0;
@@ -118,7 +119,7 @@ const makeFetch = (doc: unknown, status = 200) => {
 
   const fetchFn = async () => {
     calls += 1;
-    await new Promise((r) => setTimeout(r, 50));
+    await sleep(50);
 
     return new Response(
       JSON.stringify({ status: { indicator: "critical", description: "Down" } }),

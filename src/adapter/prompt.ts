@@ -1,5 +1,6 @@
 // How a dsh session's messages turn into the prompt text, its parts, its attachments and its images.
 // Declarations here came out of src/adapter.ts unchanged, each with the comment above it.
+import { isImageRef, isRec, numberValue, stringOf } from "../decode.js";
 import { basename } from "node:path";
 import { LlmError } from "@deepseek-ai/dsh-llm";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm";
@@ -48,6 +49,8 @@ export type LooseMessage = {
     /** dsh's shape for the block: `snapshot` for context injected before a step, `notice` for a
      *  notice a producer sends. */
     form?: string;
+    /** dsh's one-line summary of a `notice` context block. */
+    summary?: string;
     /** dsh 0.2.3, on a system-prompt message: which sources it sets or retires. Absent on a
      *  message that holds a whole prompt, which is every one dsh wrote up to 0.2.2. */
     sections?: ReadonlyArray<SystemSection>;
@@ -95,12 +98,18 @@ export const attachmentsOf = (content: LooseMessage["content"]): Array<SteerAtta
           return [];
         }
 
-        // SAFETY: both attachment refs carry `bytes`; only the file one always carries `name`
-        const ref = b.attachment as { name?: string; bytes?: number };
-        const chip: SteerAttachment = { kind: b.type, bytes: ref.bytes ?? 0 };
+        // Both attachment refs carry `bytes`; only the file one always carries `name`.
+        const ref: unknown = b.attachment;
 
-        if (ref.name) {
-          chip.name = ref.name;
+        const chip: SteerAttachment = {
+          kind: b.type,
+          bytes: (isRec(ref) ? numberValue(ref.bytes) : undefined) ?? 0,
+        };
+
+        const name = isRec(ref) ? stringOf(ref.name) : undefined;
+
+        if (name) {
+          chip.name = name;
         }
 
         return [chip];
@@ -421,9 +430,12 @@ export function contextSizes(
  *  2026-09-18 in transcript 50525676: 4.3 KB from dsh, then 8.7 KB from the CLI, one row after the
  *  other); a skill the CLI does not list is dsh's only copy, so it stays. Undefined before the
  *  first init frame writes it. */
-const cliCommands = (): Array<string> | undefined =>
-  // SAFETY: a plain slot on globalThis, written only in bridgeCommands
-  (globalThis as { [COMMAND_CATALOG]?: Array<string> })[COMMAND_CATALOG];
+const cliCommands = (): Array<string> | undefined => {
+  // A plain slot on globalThis, written only in bridgeCommands; the slot is optional, so no cast.
+  const g: typeof globalThis & { [COMMAND_CATALOG]?: Array<string> } = globalThis;
+
+  return g[COMMAND_CATALOG];
+};
 
 /** Prompt text of one dsh message: a withheld block answers empty, a skill-invocation the CLI also
  *  lists is dsh's duplicate of a body Claude Code injects itself (so it answers empty), and the
@@ -464,25 +476,27 @@ const partsOf = (
 ) => {
   const names = new Map(turns.flatMap((m) => toolCallsOf(m).map((c) => [c.id, c.name] as const)));
 
-  return turns
-    .map((m) => {
-      const callId = resultCallId(m);
+  // A turn that comes out with no text is left out.
+  return turns.flatMap((m) => {
+    const callId = resultCallId(m);
 
-      if (callId !== undefined) {
-        return {
+    if (callId !== undefined) {
+      return [
+        {
           role: "tool",
           text: `${names.get(callId) ?? "tool"} returned:\n${capped(textOf(m.content), cap)}`,
-        };
-      }
+        },
+      ];
+    }
 
-      const text = promptTextOf(m, drops, copies);
-      const calls = toolCallsOf(m).map((c) => `(called ${c.name} ${capped(c.input, cap)})`);
-      // A native model reads a developer message as an in-history system message.
-      const role = m.role === "developer" ? "system" : m.role;
+    const text = promptTextOf(m, drops, copies);
+    const calls = toolCallsOf(m).map((c) => `(called ${c.name} ${capped(c.input, cap)})`);
+    // A native model reads a developer message as an in-history system message.
+    const role = m.role === "developer" ? "system" : m.role;
+    const joined = [text, ...calls].filter(Boolean).join("\n");
 
-      return { role, text: [text, ...calls].filter(Boolean).join("\n") };
-    })
-    .filter((t) => t.text !== "");
+    return joined === "" ? [] : [{ role, text: joined }];
+  });
 };
 
 /**
@@ -572,7 +586,7 @@ export function attachmentNotes(
   images: ReadonlyArray<LoadedImage>,
 ): string {
   const pathOf = new Map(
-    images.filter((i) => i.attachmentId && i.path).map((i) => [i.attachmentId, i.path]),
+    images.flatMap((i) => (i.attachmentId && i.path ? [[i.attachmentId, i.path] as const] : [])),
   );
 
   const notes: Array<string> = [];
@@ -583,7 +597,7 @@ export function attachmentNotes(
     }
 
     for (const b of m.content) {
-      if (b.type !== "image" || !b.attachment) {
+      if (b.type !== "image" || !isImageRef(b.attachment)) {
         continue;
       }
 
@@ -672,7 +686,7 @@ export function imageRefs(turns: Array<LooseMessage>): Array<ImageAttachmentRef>
     }
 
     for (const b of m.content) {
-      if (b.type === "image" && b.attachment) {
+      if (b.type === "image" && isImageRef(b.attachment)) {
         refs.push(b.attachment);
       }
     }

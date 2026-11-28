@@ -1,6 +1,6 @@
 // The rewind tab: the user prompts from the route, their summary line, and the body that offers to reopen
 // the session at one of them. Its retention note and switch hook come from the restore tab.
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   btn,
   btnPrimary,
@@ -13,6 +13,7 @@ import {
   ago,
   activeClaudeSession,
   boxParam,
+  errorText,
 } from "../shared.js";
 import type { ClientCtx } from "../shared.js";
 import { t, useLocale } from "../i18n.js";
@@ -81,28 +82,38 @@ export function RewindBody({
   const switches = useFeatureSwitches(cwd);
   const [historyOff] = useHintFlag("historySearchOff");
 
-  useEffect(() => {
-    if (!cwd) {
-      return;
-    }
+  // Another session or workspace starts the walk clean, during the render that switches.
+  const walkOf = cwd ? `${sessionId}\n${cwd}` : null;
+  const [walkSeen, setWalkSeen] = useState<string | null>(null);
 
+  if (walkSeen !== walkOf) {
+    setWalkSeen(walkOf);
+
+    if (walkOf !== null) {
+      setPicked(null);
+      setPreview(null);
+      setError("");
+    }
+  }
+
+  useEffect(() => {
     let live = true;
-    setPicked(null);
-    setPreview(null);
-    setError("");
+
     // `full=1`: whole texts, so the prompt a rewind drops can go back into the composer as typed;
     // the row shows one line of it either way.
-    fetch(
-      `${ROUTE}/rewind?session=${encodeURIComponent(sessionId)}&cwd=${encodeURIComponent(cwd)}&full=1${boxParam(ctx, sessionId)}`,
-    )
-      .then((r) => readJson<{ prompts?: Array<RewindPrompt> }>(r))
-      .then((b) => live && setPrompts(b.prompts ?? []))
-      .catch((error_: Error) => live && setError(error_.message));
+    if (cwd) {
+      fetch(
+        `${ROUTE}/rewind?session=${encodeURIComponent(sessionId)}&cwd=${encodeURIComponent(cwd)}&full=1${boxParam(ctx, sessionId)}`,
+      )
+        .then((r) => readJson<{ prompts?: Array<RewindPrompt> }>(r))
+        .then((b) => live && setPrompts(b.prompts ?? []))
+        .catch((cause: unknown) => live && setError(errorText(cause)));
+    }
 
     return () => {
       live = false;
     };
-  }, [cwd, sessionId]);
+  }, [cwd, sessionId, ctx]);
 
   const run = async (uuid: string, dryRun: boolean) => {
     setBusy(true);
@@ -132,11 +143,24 @@ export function RewindBody({
     }
   };
 
+  /** Picks a row and asks for its dry run. Never rejects: run reports its own failure. */
   const pick = (p: RewindPrompt) => {
     setPicked(p);
     setPreview(null);
-    run(p.id, true);
+    void run(p.id, true);
   };
+
+  // The newest pick and spend, for the effect below, which runs on the flag and the list alone: a
+  // re-render for the preview must not pick (and post) again.
+  const pickRef = useRef(pick);
+  const onPickedRef = useRef(onPicked);
+
+  // After every commit, before any effect reads them: the latest-handler pattern useEffectEvent
+  // gives a newer React.
+  useLayoutEffect(() => {
+    pickRef.current = pick;
+    onPickedRef.current = onPicked;
+  });
 
   // Esc Esc: the newest prompt the person typed (not a notice this plugin sent, such as the
   // reattach line after a dsh restart) is picked once the list is in; spent at once so a Back
@@ -144,14 +168,10 @@ export function RewindBody({
   useEffect(() => {
     const latest = prompts.find((p) => !p.text.trimStart().startsWith(PLUGIN_NOTICE));
 
-    if (!pickLatest || latest === undefined) {
-      return;
+    if (pickLatest && latest !== undefined) {
+      onPickedRef.current?.();
+      pickRef.current(latest);
     }
-
-    onPicked?.();
-    pick(latest);
-    // Only the flag and the list: a re-render for the preview must not pick (and post) again.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- pick is a per-render closure
   }, [pickLatest, prompts]);
 
   if (!isClaude || !cwd) {
@@ -228,7 +248,7 @@ export function RewindBody({
               type="button"
               style={btnPrimary}
               disabled={busy || !preview?.ok}
-              onClick={() => run(picked.id, false)}
+              onClick={() => void run(picked.id, false)}
             >
               {t("panel.rewind.action")}
             </button>

@@ -1,6 +1,6 @@
 import type { FirstPartyProbe } from "../first-party.js";
 import type { ServerKey } from "../locale.js";
-import { type AliasNames } from "../sessions.js";
+import type { AliasNames } from "../sessions.js";
 /**
  * `direct`: the CLI talks to Anthropic, straight or through a proxy that forwards (headroom).
  * `routed`: its base URL is an endpoint that answers and is not Anthropic, a router such as CC

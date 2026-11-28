@@ -4,22 +4,20 @@
 import { strict as assert } from "node:assert";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { PluginContext } from "../dsh.js";
-import type { ClaudeProcess } from "../process.js";
 import { markBusy, takeInterrupted } from "../state.js";
 import type { LiveTask } from "../translator.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
 import { WAKE_TEXT } from "./turn.js";
 import { registryKey } from "./types.js";
+import { fakeClaudeProcess, fakePluginContext } from "../test-context.js";
 
-// SAFETY: partial fake; nothing here reaches past `on`
-const ctx = { on() {} } as unknown as PluginContext;
+const ctx = fakePluginContext({ on() {} });
 const WEB = "/home/u/.dsh/profiles/web";
 
 {
-  // SAFETY: partial fake; the constructor reads `get("profileContext")` and nothing else of it
-  const withProfile = { on() {}, get: () => ({ dir: WEB }) } as unknown as PluginContext;
+  // The constructor reads `get("profileContext")` and nothing else of it.
+  const withProfile = fakePluginContext({ on() {}, services: { profileContext: { dir: WEB } } });
   const adapter = new ClaudeCodeAdapter(withProfile, Config({}));
   assert.equal(adapter.keeperOwner, WEB, "every instance takes the tag at construction");
 }
@@ -27,19 +25,20 @@ const WEB = "/home/u/.dsh/profiles/web";
 {
   const adapter = new ClaudeCodeAdapter(ctx, Config({ maxProcesses: 2, processIdleMs: 10_000 }));
 
+  /** A live process last used at `lastUsed`; `killed()` counts the kills it took. */
   const fake = (lastUsed: number, busy = false) => {
-    const p = {
-      alive: true,
-      busy,
-      relays: new Map(),
-      lastUsed,
-      killed: 0,
-      kill() {
-        p.killed++;
-      },
-    };
+    let killed = 0;
 
-    return p;
+    // reapIdle reads alive, busy, relays, parked and lastUsed, and calls kill.
+    const proc = fakeClaudeProcess({
+      busy,
+      lastUsed,
+      kill() {
+        killed++;
+      },
+    });
+
+    return { proc, killed: () => killed };
   };
 
   const stale = fake(Date.now() - 20_000);
@@ -48,23 +47,30 @@ const WEB = "/home/u/.dsh/profiles/web";
   const fresh = [fake(Date.now()), fake(Date.now()), fake(Date.now())];
 
   const put = (id: string, p: ReturnType<typeof fake>) =>
-    // SAFETY: partial fake; reapIdle reads alive, busy, relays, parked and lastUsed, and calls kill
-    adapter.processes.set(registryKey("claude-code", id), p as unknown as ClaudeProcess);
+    adapter.processes.set(registryKey("claude-code", id), p.proc);
 
   put("stale", stale);
   put("busy", busy);
   put("tasked", tasked);
   fresh.forEach((p, i) => put(`fresh${i}`, p));
-  // SAFETY: partial LiveTask; reapIdle reads endedAt only
-  const running = { id: "t1", status: "running", at: 1 } as unknown as LiveTask;
+
+  // reapIdle reads endedAt only.
+  const running: LiveTask = {
+    id: "t1",
+    description: "",
+    backgrounded: true,
+    status: "running",
+    at: 1,
+  };
+
   adapter.sessionTasks.set("tasked", new Map([["t1", running]]));
   adapter.reapIdle();
-  assert.equal(stale.killed, 1, "idle past processIdleMs: reaped");
+  assert.equal(stale.killed(), 1, "idle past processIdleMs: reaped");
   assert.equal(adapter.processes.has(registryKey("claude-code", "stale")), false);
-  assert.equal(busy.killed, 0, "mid-turn: kept however old");
-  assert.equal(tasked.killed, 0, "a background task still running: kept");
+  assert.equal(busy.killed(), 0, "mid-turn: kept however old");
+  assert.equal(tasked.killed(), 0, "a background task still running: kept");
   assert.deepEqual(
-    fresh.map((p) => p.killed),
+    fresh.map((p) => p.killed()),
     [0, 0, 0],
     "no cap here: three live processes over maxProcesses 2 all stay",
   );
@@ -147,7 +153,9 @@ const WEB = "/home/u/.dsh/profiles/web";
   await adapter.adoptKeepers();
   assert.ok(adapter.processes.has(registryKey("claude-code", "s-stopped")), "still attached");
   assert.deepEqual(
-    drained.map(([id, text]) => [id, text]).toSorted(),
+    drained
+      .map(([id, text]) => [id, text])
+      .toSorted((x, y) => String(x[0]).localeCompare(String(y[0]))),
     [
       ["s-running", undefined],
       ["s-stopped", WAKE_TEXT],
@@ -193,17 +201,18 @@ const WEB = "/home/u/.dsh/profiles/web";
   const stale = () => false;
   const written: Array<string> = [];
 
-  const fake = {
+  // control() sets controlListener and calls write.
+  const fake = fakeClaudeProcess({
     controlListener: stale,
     write: (line: string) => {
       written.push(line);
 
       return true;
     },
-  };
+  });
 
-  // SAFETY: partial fake; control() sets controlListener and calls write
-  void adapter.control(fake as unknown as ClaudeProcess, { subtype: "get_settings" }, 10);
+  // The reply never comes; only the listener swap and the write are checked.
+  void adapter.control(fake, { subtype: "get_settings" }, 10);
   assert.notEqual(
     fake.controlListener,
     stale,

@@ -1,5 +1,6 @@
 import type { StreamChunk, ContentBlockType, LlmFailure, TokenUsage } from "@deepseek-ai/dsh-llm";
-import { toolResultText } from "./process.js";
+import { isRec, stringOf } from "./decode.js";
+import { toolResultText, errorText } from "./process.js";
 import type {
   ClaudeEvent,
   ClaudeStreamPartial,
@@ -7,11 +8,10 @@ import type {
   DshCall,
   SettingsKey,
 } from "./process.js";
-import { NATIVE_TOOL_MAP, commandNames } from "./adapter/cli.js";
+import { commandNames, nativeToolName } from "./adapter/cli.js";
 import type { TurnRecord } from "./adapter/turn.js";
 import { finishReason } from "./adapter/turn.js";
 import { suggestRule } from "./permissions.js";
-import type { JsonValue } from "./dsh.js";
 import { OWN_TOOL_NAMES } from "./mcp-config.js";
 import { pluginErrorsOf } from "./plugins.js";
 import type { PluginLoadError } from "./plugins.js";
@@ -86,13 +86,15 @@ const EXT_LANG = {
   lua: "lua",
 } satisfies Record<string, string>;
 
+/** Whether EXT_LANG lists `ext` as its own key (so `constructor` and the like never match). */
+const isKnownExt = (ext: string): ext is keyof typeof EXT_LANG => Object.hasOwn(EXT_LANG, ext);
+
 /** The fence language for a file path's extension, or "" when EXT_LANG does not know it. */
 const langOf = (path: string): string => {
   const m = /\.([a-z0-9]+)$/i.exec(path);
   const ext = m?.[1]?.toLowerCase() ?? "";
 
-  // SAFETY: `ext in EXT_LANG` proves ext is a key, so the keyof assertion holds
-  return ext in EXT_LANG ? (EXT_LANG[ext as keyof typeof EXT_LANG] ?? "") : "";
+  return isKnownExt(ext) ? EXT_LANG[ext] : "";
 };
 
 /** Wrap body in a fence long enough to survive any backtick run inside it. */
@@ -108,10 +110,6 @@ const fence = (body: string, lang = ""): string => {
 
 /** The value when it is a string, else "", so a missing tool input field reads as empty. */
 const asStr = (v: unknown): string => (typeof v === "string" ? v : "");
-
-/** True only for a plain object, so an array or null is never read as a record. */
-const isRec = (v: unknown): v is Record<string, unknown> =>
-  typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** The background shell a BashOutput or KillShell call names, under either of the CLI's two keys. */
 const shellId = (inp: Record<string, unknown>): string => asStr(inp.bash_id ?? inp.shell_id);
@@ -181,11 +179,12 @@ const mcpName = (name: string): string | undefined => {
   // A server mounted by a Claude Code plugin is registered as `plugin_<plugin>_<server>`, and the
   // two are usually the same word: `plugin_context-mode_context-mode`. The header reads the
   // server's own name.
-  let server = parts[1]!;
+  // Three parts or more, checked above, so the server part is there.
+  let server = parts[1] ?? "";
   const m = /^plugin_(.+)$/.exec(server);
 
   if (m) {
-    const rest = m[1]!;
+    const rest = m[1] ?? "";
     const half = rest.slice(0, Math.floor(rest.length / 2));
     server = rest === `${half}_${half}` ? half : rest;
   }
@@ -242,11 +241,16 @@ const prefixed = (text: string, mark: "-" | "+"): string =>
 export function formatToolCall(name: string, inputJson: string): string {
   let inp: Record<string, unknown> = {};
 
+  // inputJson is Claude's own tool_use input, stored verbatim; anything but an object reads as
+  // no fields, and each field is read defensively below.
   try {
-    // SAFETY: inputJson is Claude's own tool_use input, stored verbatim; shape read defensively below
-    inp = JSON.parse(inputJson) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(inputJson);
+
+    if (isRec(parsed)) {
+      inp = parsed;
+    }
   } catch {
-    inp = {};
+    // Not JSON: no fields.
   }
 
   const file = asStr(inp.file_path);
@@ -268,10 +272,10 @@ export function formatToolCall(name: string, inputJson: string): string {
       // Edit carries one `old_string`/`new_string` pair at the top level; MultiEdit maps to this
       // same presenter but carries `edits[]` instead, and reading the top level for it produced a
       // fence holding one bare `-` and one bare `+`.
-      // SAFETY: `edits` is Claude's own MultiEdit input; the array check is above and each entry's
-      // fields are read through `asStr`, which answers "" for anything that is not a string.
-      const edits = Array.isArray(inp.edits)
-        ? (inp.edits as Array<Record<string, unknown>>)
+      // `edits` is Claude's own MultiEdit input; an entry that is not an object reads as no fields,
+      // and each field is read through `asStr`, which answers "" for anything that is not a string.
+      const edits: ReadonlyArray<Record<string, unknown>> = Array.isArray(inp.edits)
+        ? inp.edits.map((e: unknown) => (isRec(e) ? e : {}))
         : [{ old_string: inp.old_string, new_string: inp.new_string }];
 
       const diff = edits
@@ -418,7 +422,8 @@ function usageEvent(u: {
 /** One open lane of a turn: which kind it is, what has been written into it, and when it started. */
 export interface TranslatorBlock {
   index: number;
-  blockType: string;
+  /** A dsh block kind, or `hidden` for a native tool's raw block, which never reaches `delta`. */
+  blockType: ContentBlockType | "hidden";
   text: string;
   started: boolean;
   tool?: boolean;
@@ -698,6 +703,11 @@ export interface FallbackRecord {
 /** The failure code a refused reply ends the turn with under `refusalAsFailure`. */
 export const REFUSAL_CODE = "REFUSAL";
 
+/** What a native tool result carries beside its text: an Edit's diff, for dsh's diff view. */
+export type ToolResultMeta = {
+  diffs: Array<{ path: string; oldText: string; newText: string }>;
+};
+
 /** Turns one CLI process's stream-json events into dsh stream chunks, and keeps the per-turn state
  *  that needs: open blocks, streamed ids, tool rows, usage and the result summary. */
 export class Translator {
@@ -781,7 +791,7 @@ export class Translator {
   /** Injected: append tool/call to the dsh session for a native Claude Code tool. */
   onToolCall?: (callId: string, name: string, args: string) => number | undefined;
   /** Injected: append tool/result to the dsh session for a native Claude Code tool. */
-  onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
+  onToolResult?: (callId: string, text: string, isError: boolean, meta?: ToolResultMeta) => void;
   /** Injected: fire per-turn accounting summary from the result frame. */
   onResult?: (summary: TurnRecord) => void;
   /** Injected: mask secret values in tool results before they are shown or appended. */
@@ -904,7 +914,7 @@ export class Translator {
     relayed?: Set<string>;
     log?: (level: string, msg: string) => void;
     onToolCall?: (callId: string, name: string, args: string) => number | undefined;
-    onToolResult?: (callId: string, text: string, isError: boolean, meta?: object) => void;
+    onToolResult?: (callId: string, text: string, isError: boolean, meta?: ToolResultMeta) => void;
     onResult?: (summary: TurnRecord) => void;
     redact?: (s: string) => string;
     onInit?: (
@@ -951,7 +961,7 @@ export class Translator {
     // dsh tool_use id → name and arguments, for the row of a call dsh did not draw, and to tell
     // the bridge's own tools apart. Shared across a turn's steps like dshIds: a call can outlive
     // the step that drew it.
-    this.dshCalls = dshCalls ?? new Map();
+    this.dshCalls = dshCalls ?? new Map<string, DshCall>();
     this.relayed = relayed ?? new Set(); // dsh tool_use ids dsh ran natively; results not drawn here
     this.limit = toolTextLimit;
     this.index = 0;
@@ -1003,7 +1013,7 @@ export class Translator {
 
   /** A block is announced on its first text. Claude emits thinking blocks that carry only a
    *  signature and never any text; announcing those eagerly draws an empty bubble. */
-  startBlock(blockType: string, prefix = "") {
+  startBlock(blockType: ContentBlockType, prefix = "") {
     const block: TranslatorBlock = { index: this.index++, blockType, text: "", started: false };
 
     return { block, events: prefix ? this.delta(block, prefix) : [] };
@@ -1018,14 +1028,10 @@ export class Translator {
     block.text += text;
     const events: Array<StreamChunk> = [];
 
-    if (!block.started) {
+    // Blocks are opened with "text", "reasoning" or "tool-call"; hidden ones never announce.
+    if (!block.started && block.blockType !== "hidden") {
       block.started = true;
-      // SAFETY: blocks are opened with "text", "reasoning" or "tool-call"; hidden ones never announce
-      events.push({
-        type: "block-start",
-        index: block.index,
-        blockType: block.blockType as ContentBlockType,
-      });
+      events.push({ type: "block-start", index: block.index, blockType: block.blockType });
     }
 
     events.push({ type: this.deltaType(block), index: block.index, text });
@@ -1070,7 +1076,7 @@ export class Translator {
 
   /** Emit a whole block at once, block-start then delta then block-end, for text that arrives in one
    *  piece rather than streamed in fragments. */
-  wholeBlock(blockType: string, text: string): Array<StreamChunk> {
+  wholeBlock(blockType: ContentBlockType, text: string): Array<StreamChunk> {
     const { block, events } = this.startBlock(blockType);
     events.push(...this.delta(block, text), ...this.endBlock(block));
 
@@ -1095,8 +1101,10 @@ export class Translator {
 
           if (Array.isArray(event.tools)) {
             for (const t of event.tools) {
-              if (String(t) === t) {
-                tools.push(t);
+              const tool = stringOf(t);
+
+              if (tool !== undefined) {
+                tools.push(tool);
               }
             }
           }
@@ -1719,13 +1727,9 @@ export class Translator {
         }
 
         // Per-turn accounting: forward the summary to the adapter's ring buffer.
-        // SAFETY: these fields are emitted by the Claude Code CLI on the result frame; they may not be in every schema version
-        const e = event as {
-          total_cost_usd?: unknown;
-          duration_ms?: unknown;
-          duration_api_ms?: unknown;
-          num_turns?: unknown;
-        };
+        // The CLI emits these on the result frame; they may not be in every schema version, and
+        // `Number` of a missing one is NaN, which the checks below read as absent.
+        const e = event;
 
         const totalCost = Number(e.total_cost_usd);
         const durationMs = Number(e.duration_ms);
@@ -1751,21 +1755,15 @@ export class Translator {
           // The frame names the calls a rule refused without ever naming the rule: `tool_name`,
           // `tool_use_id` and `tool_input`, nothing else. Only the rule-shaped label is kept, since
           // the record is written to disk and a tool input carries file contents and secrets.
-          // SAFETY: the field is off the wire and absent from ClaudeEvent, so it is read as unknown
-          // and the shape below is checked by Array.isArray plus the ?? on every member.
-          const denied = (event as { permission_denials?: unknown }).permission_denials;
+          // Off the wire: the list is checked by Array.isArray, and each member is used only
+          // through `?.` and `??`, so a frame of another shape, a null member included, yields the
+          // bare tool name rather than throwing.
+          const denied = event.permission_denials;
 
           if (Array.isArray(denied)) {
             const labels = new Set<string>();
 
-            // SAFETY: each member is used only through `?.` and `??`, so a frame of another shape,
-            // a null member included, yields the bare tool name rather than throwing.
-            const calls = denied as Array<{
-              tool_name?: string;
-              tool_input?: Record<string, JsonValue>;
-            } | null>;
-
-            for (const call of calls) {
+            for (const call of denied) {
               labels.add(suggestRule(call?.tool_name ?? "", call?.tool_input ?? {}));
             }
 
@@ -2036,11 +2034,7 @@ export class Translator {
           // Hidden blocks accumulate input via callInputs in the delta handler; live blocks use block.text.
           const input = this.callInputs.get(cbMeta.id) ?? block.text;
 
-          // SAFETY: NATIVE_TOOL_MAP is a closed literal type; keyof narrows index access to known keys
-          const mapped =
-            NATIVE_TOOL_MAP[(cbMeta.name ?? "") as keyof typeof NATIVE_TOOL_MAP] ??
-            cbMeta.name ??
-            "";
+          const mapped = nativeToolName(cbMeta.name ?? "") ?? cbMeta.name ?? "";
 
           // Gate on the id, never on the input: a tool called with no arguments (`ExitPlanMode`,
           // `ListMcpResources`, any MCP tool called with `{}`) streams one `input_json_delta`
@@ -2083,9 +2077,9 @@ export class Translator {
         // assistant message, so the figure climbs a step per tool step. Nothing is rendered from
         // it. It feeds the running count and the frame stays bookkeeping otherwise.
         if (ev?.type === "message_delta") {
-          // SAFETY: a stream event off the wire, read as unknown; every field used is checked as a
-          // number below, so a frame of another shape counts nothing rather than throwing.
-          const u = (ev as { usage?: Record<string, unknown> }).usage;
+          // Off the wire: every field used is checked as a number below, so a frame of another
+          // shape counts nothing rather than throwing.
+          const u = ev.usage;
           const out = countOf(u?.output_tokens);
 
           if (out > 0) {
@@ -2113,10 +2107,9 @@ export class Translator {
               this.stepUsage.cache_creation_input_tokens = countOf(u.cache_creation_input_tokens);
             }
 
-            // SAFETY: read as unknown off the wire and passed straight to `countOf`, which yields 0
-            // for anything that is not a positive number, so a frame of another shape adds nothing.
-            const details = u.output_tokens_details as { thinking_tokens?: unknown } | undefined;
-            this.stepUsage.reasoning_tokens += countOf(details?.thinking_tokens);
+            // Passed straight to `countOf`, which yields 0 for anything that is not a positive
+            // number, so a frame of another shape adds nothing.
+            this.stepUsage.reasoning_tokens += countOf(u.output_tokens_details?.thinking_tokens);
           }
 
           return [];
@@ -2289,8 +2282,7 @@ export class Translator {
         // Native tools render as session rows (onToolCall) or an inline markdown block.
         if (isNativeTool(toolName) && b.id) {
           const args = JSON.stringify(b.input ?? {});
-          // SAFETY: NATIVE_TOOL_MAP is a closed literal type; keyof narrows index access to known keys
-          const mapped = NATIVE_TOOL_MAP[toolName as keyof typeof NATIVE_TOOL_MAP] ?? toolName;
+          const mapped = nativeToolName(toolName) ?? toolName;
 
           if (this.onToolCall) {
             this.fireToolCall(b.id, mapped, args);
@@ -2356,7 +2348,7 @@ export class Translator {
 
   /** The kind and lead text of a non-dsh tool block drawn while it streams: collapsed reasoning
    *  headed by the tool's name. */
-  toolLead(cb: { name?: string }): [string, string] {
+  toolLead(cb: { name?: string }): [ContentBlockType, string] {
     return ["reasoning", `${cb.name} `];
   }
 
@@ -2532,7 +2524,7 @@ export class Translator {
     parentToolUseId: string | null | undefined,
     handback?: string,
   ) {
-    this.nested = parentToolUseId != null;
+    this.nested = parentToolUseId !== null && parentToolUseId !== undefined;
 
     for (const b of content) {
       if (b.type === "tool_result" && b.tool_use_id) {
@@ -2571,7 +2563,8 @@ export class Translator {
       const auto = b.is_error ? AUTO_DENIED_RE.exec(raw) : null;
 
       if (auto) {
-        this.autoDenied.push(auto[1]!);
+        // The pattern's one group always matches when the whole does.
+        this.autoDenied.push(auto[1] ?? "");
       } else if (b.is_error && DENIED_RE.test(raw)) {
         this.denied++;
       }
@@ -2605,15 +2598,17 @@ export class Translator {
             this.onToolResult(toolUseId, raw, b.is_error ?? false);
             continue;
           } catch (error) {
-            this.log("warn", `bridge tool result append failed: ${error}`);
+            this.log("warn", `bridge tool result append failed: ${errorText(error)}`);
             // fall through to render it as reasoning, like a native result that failed to append
           }
         }
       }
 
       // Inline native result: draw a formatted markdown block matching its call, in stream order.
-      if (!this.onToolResult && this.callNames.has(toolUseId)) {
-        const name = this.callNames.get(toolUseId)!;
+      const inlineName = this.onToolResult ? undefined : this.callNames.get(toolUseId);
+
+      if (inlineName !== undefined) {
+        const name = inlineName;
         const argsJson = this.callInputs.get(toolUseId) ?? "";
         this.callNames.delete(toolUseId);
         this.callInputs.delete(toolUseId);
@@ -2621,10 +2616,11 @@ export class Translator {
         let filePath = "";
 
         try {
-          // SAFETY: argsJson is Claude's own tool_use input; only file_path is read, defensively
-          filePath = asStr((JSON.parse(argsJson) as { file_path?: unknown }).file_path);
+          // argsJson is Claude's own tool_use input; only file_path is read, defensively.
+          const inp: unknown = JSON.parse(argsJson);
+          filePath = isRec(inp) ? asStr(inp.file_path) : "";
         } catch {
-          filePath = "";
+          // Not JSON: no path to name.
         }
 
         events.push(
@@ -2634,30 +2630,24 @@ export class Translator {
       }
 
       // Native tool result: append a dsh session row, skip reasoning text.
-      if (this.onToolResult && !this.callInputs.has(toolUseId)) {
-        // Not a native tool we tracked. Fall through to old behavior.
-      } else if (this.onToolResult && this.callInputs.has(toolUseId)) {
-        const argsJson = this.callInputs.get(toolUseId)!;
+      const argsJson = this.onToolResult ? this.callInputs.get(toolUseId) : undefined;
+
+      // Not a native tool we tracked: fall through to old behavior.
+      if (this.onToolResult && argsJson !== undefined) {
         // Result closes the call: both maps only need the entry until here (fire dedupe, Edit diff).
         this.callInputs.delete(toolUseId);
         this.firedCalls.delete(toolUseId);
-        let meta: object | undefined;
+        let meta: ToolResultMeta | undefined;
 
         try {
-          // SAFETY: argsJson was produced by Claude's tool_use input and stored verbatim; the shape is trusted here
-          interface EditCallInput {
-            file_path: string;
-            old_string: string;
-            new_string: string;
-          }
+          // argsJson is Claude's tool_use input, stored verbatim; an Edit's three fields make a diff.
+          const inp: unknown = JSON.parse(argsJson);
+          const path = isRec(inp) ? stringOf(inp.file_path) : undefined;
+          const oldText = isRec(inp) ? stringOf(inp.old_string) : undefined;
+          const newText = isRec(inp) ? stringOf(inp.new_string) : undefined;
 
-          // SAFETY: JSON.parse output cast to EditCallInput; fields validated below with truthiness checks
-          const inp = JSON.parse(argsJson) as EditCallInput;
-
-          if (inp.file_path && inp.old_string && inp.new_string) {
-            meta = {
-              diffs: [{ path: inp.file_path, oldText: inp.old_string, newText: inp.new_string }],
-            };
+          if (path && oldText && newText) {
+            meta = { diffs: [{ path, oldText, newText }] };
           }
         } catch {
           // ignore malformed input JSON
@@ -2666,7 +2656,7 @@ export class Translator {
         try {
           this.onToolResult(toolUseId, raw, b.is_error ?? false, meta);
         } catch (error) {
-          this.log("warn", `native tool result append failed: ${error}`);
+          this.log("warn", `native tool result append failed: ${errorText(error)}`);
           // fall through to render reasoning text as before
         }
 

@@ -9,10 +9,13 @@ import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import z from "@deepseek-ai/schemastery";
 import { claudeSessionId, projectDirName } from "../../src/adapter.js";
 import { readSshToken } from "../../src/ssh-login.js";
 import { STATE_DIR } from "../../src/state.js";
-import { dshUrl, launch } from "./pw.js";
+import { fits } from "../../src/schema-fits.js";
+import { dshUrl, fetchJson, launch } from "./pw.js";
 
 const [token] = process.argv.slice(2);
 const out = process.env.PW_OUT ?? "/tmp/pw";
@@ -38,9 +41,6 @@ const q = (s: string) => `'${s.replaceAll("'", String.raw`'\''`)}'`;
 const WORD = `KUMQUAT${Date.now() % 1000}`;
 const sessionsRoot = join(homedir(), ".dsh", "sessions");
 const projects = join(homedir(), ".claude", "projects");
-
-/** Resolve after a number of milliseconds, the polling delay the mirror waits use. */
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** In remote mode only the workspace that stands for that box's directory holds the session; its
  *  key carries the host and the path. */
@@ -107,13 +107,14 @@ await p.waitForTimeout(2500);
 // The mirror ships off, so the check that exercises it turns it on first. This goes through the page
 // because the plugin's own routes answer 401 to a token passed in the query string, while the page
 // already carries dsh's session cookie.
-const mirrorWas = await p.evaluate(async () => {
-  const r = await fetch("/dsh-oh-my-claude/terminal-sync");
-
-  // SAFETY: the plugin's own route answers `{ enabled: boolean }`. The one field read is compared
-  // against `true`, so a body of any other shape reads as off rather than being trusted as typed.
-  return ((await r.json()) as { enabled?: boolean }).enabled === true;
-});
+// The plugin's own route answers `{ enabled: boolean }`; an unset switch reads as off.
+const mirrorWas = (
+  await fetchJson(
+    p,
+    "/dsh-oh-my-claude/terminal-sync",
+    z.object({ enabled: z.boolean().default(false) }),
+  )
+).enabled;
 
 const mirrorOn = await p.evaluate(async () => {
   const r = await fetch("/dsh-oh-my-claude/terminal-sync", {
@@ -135,13 +136,20 @@ if (!mirrorOn) {
 // not select it — clicking a session inside it does. So to target PW_WORKSPACE reliably: expand it,
 // click its first session row (that selects the workspace), then New Session. The workspace headers
 // are dsh's own workspace titles, so a treeitem whose text is not one of those is a session row.
-// SAFETY: dsh's own workspace storage; only the title of each workspace is read, as a string.
-const wsStore = JSON.parse(
-  readFileSync(join(homedir(), ".dsh", "storages", "workspace.json"), "utf8"),
-) as { tables?: { workspaces?: Record<string, { title?: string }> } };
+// dsh's own workspace storage; only the title of each workspace is read, as a string.
+const WorkspaceStore = z.object({
+  tables: z.object({ workspaces: z.dict(z.object({ title: z.string() })) }),
+});
+
+const wsPath = join(homedir(), ".dsh", "storages", "workspace.json");
+const wsRaw: unknown = JSON.parse(readFileSync(wsPath, "utf8"));
+
+if (!fits(WorkspaceStore, wsRaw)) {
+  throw new TypeError(`${wsPath} is not the workspace store this check reads`);
+}
 
 const wsTitles = new Set(
-  Object.values(wsStore.tables?.workspaces ?? {}).flatMap((w) => (w.title ? [w.title] : [])),
+  Object.values(WorkspaceStore(wsRaw).tables.workspaces).flatMap((w) => (w.title ? [w.title] : [])),
 );
 
 /** Click the first session row under a workspace header by reading the tree, returning false when
@@ -157,7 +165,8 @@ const clickFirstSessionUnder = async (workspace: string): Promise<boolean> => {
   }
 
   for (let i = start + 1; i < texts.length; i++) {
-    const line = texts[i]!.trim().split("\n")[0]!.trim();
+    const [first = ""] = (texts[i] ?? "").trim().split("\n");
+    const line = first.trim();
 
     if (wsTitles.has(line)) {
       break;
@@ -171,10 +180,12 @@ const clickFirstSessionUnder = async (workspace: string): Promise<boolean> => {
   return false;
 };
 
-if (process.env.PW_WORKSPACE) {
+const pwWorkspace = process.env.PW_WORKSPACE;
+
+if (pwWorkspace) {
   const ws = p
     .locator('[role="treeitem"]')
-    .filter({ hasText: new RegExp(`^${process.env.PW_WORKSPACE}`) })
+    .filter({ hasText: new RegExp(`^${pwWorkspace}`) })
     .first();
 
   if (await ws.count()) {
@@ -196,7 +207,7 @@ if (process.env.PW_WORKSPACE) {
         return true;
       }
 
-      return clickFirstSessionUnder(process.env.PW_WORKSPACE!);
+      return clickFirstSessionUnder(pwWorkspace);
     };
 
     await ws.click({ force: true });
@@ -207,13 +218,13 @@ if (process.env.PW_WORKSPACE) {
       await p.waitForTimeout(1200);
 
       if (!(await selectUnder())) {
-        throw new Error(`no session under workspace ${process.env.PW_WORKSPACE} to select it`);
+        throw new Error(`no session under workspace ${pwWorkspace} to select it`);
       }
     }
 
     await p.waitForTimeout(2000);
   } else {
-    console.log("workspace not found:", process.env.PW_WORKSPACE);
+    console.log("workspace not found:", pwWorkspace);
   }
 }
 

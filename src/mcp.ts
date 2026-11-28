@@ -11,12 +11,13 @@
 // bridge served only there is unreachable and Claude sees zero dsh tools. Plain `dsh web` has no
 // gate and keeps the web server route alone, whose port is the one dsh was started on. The web
 // server route is registered either way, and is the fallback when the listener cannot start.
+import { setTimeout as sleep } from "node:timers/promises";
+import { idOf, isRec } from "./decode.js";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import { dirname, join } from "node:path";
-import type { AddressInfo } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readBody } from "./sessions.js";
 import { KEY_HEADER } from "./mcp-config.js";
@@ -232,7 +233,13 @@ const OWN_TOOLS = [OPEN_SESSION, PROMPT_SESSION, WAIT_SESSION];
 
 /** A call refused for its arguments. The caller made the mistake, so it gets the message alone:
  *  no stack in the answer, no line in the log. */
-class BadCall extends Error {}
+class BadCall extends Error {
+  /** Marks the refusal; the name stays `Error`, which the text Claude reads starts with. */
+  readonly refusedCall = true;
+}
+
+/** True for a BadCall, told by its marker: the one error class the bridge throws on purpose. */
+const isBadCall = (error: unknown): boolean => isRec(error) && error.refusedCall === true;
 
 /** The open_session arguments Claude sends, as far as the bridge reads them. */
 interface OpenSessionArgs {
@@ -405,7 +412,7 @@ async function switchRoute(
   // A wrong type is refused rather than dropped: dropped, the message would go out on the old
   // route while the caller believes it switched. A JSON null reads as "not given", as elsewhere.
   for (const key of ["provider", "model", "reasoningEffort"] as const) {
-    if (args[key] != null && typeof args[key] !== "string") {
+    if (args[key] !== null && args[key] !== undefined && typeof args[key] !== "string") {
       throw new BadCall(`prompt_session ${key} must be a string`);
     }
   }
@@ -522,8 +529,9 @@ export async function promptSession(
  *  dsh's reasoning blocks carry a `text` field too, so the block type is what is checked: tool
  *  calls and thinking are the session's working, not its answer. */
 function replyText(data: JsonValue): string {
-  // SAFETY: dsh event data is JsonValue; an assistant message nests its blocks under `message`
-  const content = (data as { message?: { content?: unknown } } | null)?.message?.content;
+  // An assistant message nests its blocks under `message`.
+  const message = isRec(data) ? data.message : undefined;
+  const content = isRec(message) ? message.content : undefined;
 
   return (Array.isArray(content) ? content : [])
     .flatMap((b: unknown) =>
@@ -662,10 +670,22 @@ interface CallResult {
 }
 
 /** A JSON-RPC reply: a result, or an error object. */
+/** What the bridge answers a JSON-RPC request with: the handshake, an empty pong, the tool list,
+ *  or a call's result. */
+export type JsonRpcResult =
+  | {
+      protocolVersion: string;
+      capabilities: { tools: Record<string, never> };
+      serverInfo: { name: string; version: string };
+    }
+  | Record<string, never>
+  | { tools: Array<ListedTool> }
+  | CallResult;
+
 export interface JsonRpcReply {
   jsonrpc: "2.0";
   id: JsonValue | undefined;
-  result?: object;
+  result?: JsonRpcResult;
   error?: { code: number; message: string };
 }
 
@@ -747,7 +767,7 @@ export async function handleRpc(
     own.set(WAIT_SESSION.name, wait);
   }
 
-  const reply = (result: object): JsonRpcReply => ({ jsonrpc: "2.0", id: msg.id, result });
+  const reply = (result: JsonRpcResult): JsonRpcReply => ({ jsonrpc: "2.0", id: msg.id, result });
 
   /** Writes a failed call to the log with its stack, and returns that stack. */
   const logged = (e: unknown): string => {
@@ -800,14 +820,20 @@ export async function handleRpc(
             return listed;
           })
           .concat(
-            OWN_TOOLS.filter((t) => own.has(t.name)).map((t) => ({
-              name: t.name,
-              description: t.description,
-              inputSchema: t.parameters,
-              // prompt_session changes another session, so the CLI runs it on its own: batched
-              // beside a wait_session, the wait could otherwise read the session before it lands.
-              annotations: { readOnlyHint: t !== PROMPT_SESSION },
-            })),
+            OWN_TOOLS.flatMap((t) =>
+              !own.has(t.name)
+                ? []
+                : [
+                    {
+                      name: t.name,
+                      description: t.description,
+                      inputSchema: t.parameters,
+                      // prompt_session changes another session, so the CLI runs it on its own: batched
+                      // beside a wait_session, the wait could otherwise read the session before it lands.
+                      annotations: { readOnlyHint: t !== PROMPT_SESSION },
+                    },
+                  ],
+            ),
           ),
       });
     case "tools/call": {
@@ -830,7 +856,7 @@ export async function handleRpc(
         } catch (error) {
           // The message alone goes back: a stack of plugin and dsh paths tells Claude nothing
           // about a mistyped session id. A refused argument is not logged either.
-          if (!(error instanceof BadCall)) {
+          if (!isBadCall(error)) {
             logged(error);
           }
 
@@ -970,7 +996,9 @@ function stableKey(file: string): string {
   try {
     mkdirSync(dirname(file), { recursive: true });
     chmodSync(dirname(file), 0o700);
-  } catch {}
+  } catch {
+    // Best effort: the key file below is still written owner-only.
+  }
 
   try {
     const k = readFileSync(file, "utf8").trim();
@@ -978,13 +1006,17 @@ function stableKey(file: string): string {
     if (/^[0-9a-f-]{36}$/.test(k)) {
       return k;
     }
-  } catch {}
+  } catch {
+    // No key yet: a new one is made below.
+  }
 
   const k = randomUUID();
 
   try {
     writeFileSync(file, k, { mode: 0o600 });
-  } catch {}
+  } catch {
+    // Unwritable: the key still serves this mount, and the next one makes its own.
+  }
 
   return k;
 }
@@ -1015,7 +1047,9 @@ function readPortFile(file: string): number | undefined {
     if (Number.isInteger(n) && n > 0 && n <= 65_535) {
       return n;
     }
-  } catch {}
+  } catch {
+    // No file yet: the mount takes any free port.
+  }
 
   return undefined;
 }
@@ -1025,7 +1059,9 @@ function writePortFile(file: string, port: number): void {
   try {
     mkdirSync(dirname(file), { recursive: true });
     writeFileSync(file, `${port}\n`);
-  } catch {}
+  } catch {
+    // Only the reuse is lost, never the mount.
+  }
 }
 
 /**
@@ -1163,8 +1199,8 @@ export function registerMcpBridge(
     agentWaitMs = AGENT_WAIT_MS,
   }: BridgeOptions,
 ): Promise<McpBridge> {
-  // SAFETY: the key symbol is this plugin's own key on globalThis, typed here once
-  const g = globalThis as typeof globalThis & { [KEY_REGISTRY]?: string };
+  // The key symbol is this plugin's own key on globalThis, typed here once
+  const g: typeof globalThis & { [KEY_REGISTRY]?: string } = globalThis;
   // A key file keeps the bridge key stable across dsh restarts, so a Claude process that outlived
   // dsh (keeper mode) still authenticates against the new bridge.
   const key = (g[KEY_REGISTRY] ??= keyFile ? stableKey(keyFile) : randomUUID());
@@ -1200,8 +1236,8 @@ export function registerMcpBridge(
           host.on?.(
             "agent/created",
             (payload) => {
-              // SAFETY: dsh's agent/created carries { agent, source }; only the agent's id is read
-              const id = (payload as { agent?: { id?: string } } | undefined)?.agent?.id;
+              // dsh's agent/created carries { agent, source }; only the agent's id is read.
+              const id = isRec(payload) ? idOf(payload.agent) : undefined;
 
               if (id !== undefined) {
                 gaveUp.delete(id);
@@ -1424,7 +1460,7 @@ export function registerMcpBridge(
           // only keepers, whose URL was fixed when they were spawned.
           for (let i = 0; i < PROBE_ATTEMPTS; i++) {
             if (i > 0) {
-              await new Promise((r) => setTimeout(r, PROBE_RETRY_MS).unref?.());
+              await sleep(PROBE_RETRY_MS, undefined, { ref: false });
             }
 
             if (disposed) {

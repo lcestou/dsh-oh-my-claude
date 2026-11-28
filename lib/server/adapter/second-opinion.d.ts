@@ -1,4 +1,4 @@
-import { type LooseMessage } from "./prompt.js";
+import type { LooseMessage } from "./prompt.js";
 import type { PluginContext } from "../dsh.js";
 import type { WorkspaceDiff } from "../process.js";
 import type { WorkspaceDiffReply } from "./types.js";
@@ -22,25 +22,25 @@ export type FailReason = "gone" | "timeout" | "error" | "empty";
 export type OpinionCard = {
     state: "ready";
     at: number;
-    files: string[];
+    files: Array<string>;
 } | {
     state: "running";
     at: number;
-    files: string[];
+    files: Array<string>;
     model: string;
     startedAt: number;
 } | {
     state: "done";
     at: number;
-    files: string[];
+    files: Array<string>;
     model: string;
-    findings: Finding[];
+    findings: Array<Finding>;
     reviewed: number;
     ms: number;
 } | {
     state: "failed";
     at: number;
-    files: string[];
+    files: Array<string>;
     model: string;
     reason: FailReason;
     detail?: string;
@@ -83,11 +83,11 @@ export declare function treeMarks(diff: WorkspaceDiff, texts: ReadonlyMap<string
  *  there is nothing to compare against, so nothing counts as this turn's. Gets wrong: a file the
  *  turn committed or reverted is gone from `after` and is not reviewed, and a file the person edited
  *  by hand between the snapshot and the turn's end counts as the turn's. */
-export declare function changedPaths(before: TreeMarks | undefined, after: TreeMarks): string[];
+export declare function changedPaths(before: TreeMarks | undefined, after: TreeMarks): Array<string>;
 /** The user message the reviewer reads: the request, then each changed file in diff order until
  *  the cap: a tracked file as its diff hunks, a new file whole. The first file always goes, cut at the cap if it alone is over, because a review
  *  with no diff in it is worthless. `reviewed` counts the files that went in. */
-export declare function reviewInput(request: string, diff: WorkspaceDiff, paths: readonly string[], texts: ReadonlyMap<string, string>): {
+export declare function reviewInput(request: string, diff: WorkspaceDiff, paths: ReadonlyArray<string>, texts: ReadonlyMap<string, string>): {
     text: string;
     reviewed: number;
 };
@@ -96,12 +96,12 @@ export declare function reviewInput(request: string, diff: WorkspaceDiff, paths:
  *  so anything else is a guess about code it never read. A reply with text but no line in the
  *  format becomes one `note` holding the reply, cut to 1500 characters, so a model that ignored the
  *  format is still read. Keeps the first `MAX_FINDINGS`. */
-export declare function parseFindings(reply: string, paths: readonly string[]): Finding[];
+export declare function parseFindings(reply: string, paths: ReadonlyArray<string>): Array<Finding>;
 /** The saved setting, or undefined for none, a missing or unreadable file, or a row without a model. */
 export declare function loadSecondOpinion(dir: string): Promise<SecondOpinionSetting | undefined>;
 /** The text of the last user message in a turn's history: what the person asked this turn. Empty
  *  for a turn with none, and for options that carry no history at all, which the review says. */
-export declare const requestText: (messages: readonly LooseMessage[] | undefined) => string;
+export declare const requestText: (messages: ReadonlyArray<LooseMessage> | undefined) => string;
 /** What the adapter that owns a session hands over at each turn start: the CLI's diff, a reader for
  *  a repo-relative path on the session's box (null when absent), and dsh's model service. */
 export interface TurnDeps {

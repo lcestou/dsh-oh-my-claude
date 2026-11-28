@@ -161,14 +161,15 @@ const ssh = (host: string, script: string, timeout = 15_000, input?: string): Pr
       sshArgs(host, `printf ${shq(MARK)}; ${script}`),
       { timeout, windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
       (e, out, err) => {
-        const said = afterMark(String(out));
+        const said = afterMark(out);
 
         const r: Ran = {
-          // SAFETY: execFile's error carries the remote exit status; anything else (spawn failure,
-          // timeout) has no code and reads as 255, the status ssh itself uses for a failed connection.
-          code: e === null ? 0 : ((e as { code?: number }).code ?? 255),
-          out: said ?? String(out),
-          err: String(err).trim().slice(0, 300),
+          // execFile's error carries the remote exit status as a number; anything else (a spawn
+          // failure's errno name, a timeout) reads as 255, the status ssh itself uses for a failed
+          // connection.
+          code: e === null ? 0 : typeof e.code === "number" ? e.code : 255,
+          out: said ?? out,
+          err: err.trim().slice(0, 300),
         };
 
         if (said === null) {
@@ -478,7 +479,10 @@ const FAR_ATTACHMENTS = '"$HOME"/.local/state/dsh-oh-my-claude/attachments';
 
 /** One path segment: what a far file name has to be, so it cannot leave the attachments dir. */
 const isSegment = (name: string): boolean =>
-  name !== "" && name !== "." && name !== ".." && ![...name].some((ch) => ch === "/" || ch < " ");
+  name !== "" &&
+  name !== "." &&
+  name !== ".." &&
+  !name.split("").some((ch) => ch === "/" || ch < " ");
 
 /**
  * Write stdin to `<attachments>/<name>` on the box and print the absolute path it has there. The

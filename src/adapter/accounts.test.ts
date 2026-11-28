@@ -2,32 +2,43 @@
 // default mount's bridge shared, an id something else holds left alone, a dropped account withdrawn.
 import { strict as assert } from "node:assert";
 import { ADAPTER_CURRENT } from "../dsh.js";
-import type { PluginContext } from "../dsh.js";
+import type { McpBridge } from "../mcp.js";
+import { fakeClaudeProcess, fakePluginContext, notFaked } from "../test-context.js";
 import { localMountsOf, reconcileAccounts, serialAccounts } from "./accounts.js";
 import type { AccountMount } from "./accounts.js";
 import { heldByOther, tagPluginMount } from "./ssh-boxes.js";
 import { ClaudeCodeAdapter } from "./class.js";
 import { Config } from "./config.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
 const registered: Array<string> = [];
 const disposed: Array<string> = [];
 
-// SAFETY: reconcileAccounts reaches the context through `llm` and the constructor through `on`
-const ctx = {
+/** A registration handle whose call runs `withdraw`; a replace is not part of these cases. */
+const registration = (withdraw: () => void) =>
+  Object.assign(
+    () => {
+      withdraw();
+    },
+    { replace: notFaked("registration.replace") },
+  );
+
+// reconcileAccounts reaches the context through `llm` and the constructor through `on`.
+const ctx = fakePluginContext({
   on() {},
   llm: {
-    registerConfigurableProviders: (rows: Array<{ provider: string }>) => {
+    registerConfigurableProviders: (rows) => {
       registered.push(`dir:${rows[0]?.provider}`);
 
-      return () => disposed.push(`dir:${rows[0]?.provider}`);
+      return registration(() => disposed.push(`dir:${rows[0]?.provider}`));
     },
-    registerAdapter: (ids: Array<string>) => {
+    registerAdapter: (ids) => {
       registered.push(`adapter:${ids[0]}`);
 
-      return () => disposed.push(`adapter:${ids[0]}`);
+      return registration(() => disposed.push(`adapter:${ids[0]}`));
     },
   },
-} as unknown as PluginContext;
+});
 
 // A command that answers nothing, so the mount's login probe reads logged out and spawns no Claude.
 // The transcript mirror is on for the default; an account must not inherit it.
@@ -38,8 +49,15 @@ const handWritten = new ClaudeCodeAdapter(ctx, Config({ providerId: "claude-code
 
 adapters.set("claude-code-side", handWritten);
 
-// SAFETY: the bridge is only carried, never called, in this test
-const bridge = { key: "k" } as unknown as ClaudeCodeAdapter["mcp"];
+// The bridge is only carried, never called, in this test.
+const bridge: McpBridge = {
+  base: "",
+  key: "k",
+  via: "webserver",
+  toolsFor: notFaked("bridge.toolsFor"),
+  openCalls: notFaked("bridge.openCalls"),
+};
+
 const mounting = Promise.resolve();
 const logs: Array<string> = [];
 
@@ -104,7 +122,7 @@ assert.ok(logs.some((l) => l.includes("already mounted; skipped")));
 
 // The mount-time login probe runs: /bin/false answers no login, so the name gains the suffix.
 for (let i = 0; i < 50 && work.providerInfo("x").name === "Work"; i++) {
-  await new Promise((r) => setTimeout(r, 50));
+  await sleep(50);
 }
 
 assert.notEqual(work.providerInfo("x").name, "Work", "the new mount probes its login");
@@ -131,8 +149,15 @@ await assert.rejects(work.listModels("claude-code-work"), /not logged in on Work
 // changes nothing.
 let killed = 0;
 
-// SAFETY: withdraw only calls kill on a held process
-work.processes.set("claude-code-work:s1", { kill: () => killed++, alive: true } as never);
+// Withdraw only calls kill on a held process.
+work.processes.set(
+  "claude-code-work:s1",
+  fakeClaudeProcess({
+    kill: () => {
+      killed++;
+    },
+  }),
+);
 
 run([]);
 
@@ -230,16 +255,16 @@ assert.equal(disposed.length, 2);
   const live = new Set<string>();
   const rows: Array<string> = [];
 
-  // SAFETY: as above, with a registry that refuses an id already live, the way dsh's does
-  const strict = {
+  // As above, with a registry that refuses an id already live, the way dsh's does.
+  const strict = fakePluginContext({
     on() {},
     llm: {
-      registerConfigurableProviders: (r: Array<{ provider: string }>) => {
+      registerConfigurableProviders: (r) => {
         rows.push(`+${r[0]?.provider}`);
 
-        return () => rows.push(`-${r[0]?.provider}`);
+        return registration(() => rows.push(`-${r[0]?.provider}`));
       },
-      registerAdapter: (ids: Array<string>) => {
+      registerAdapter: (ids) => {
         const id = ids[0] ?? "";
 
         if (live.has(id)) {
@@ -248,10 +273,10 @@ assert.equal(disposed.length, 2);
 
         live.add(id);
 
-        return () => live.delete(id);
+        return registration(() => live.delete(id));
       },
     },
-  } as unknown as PluginContext;
+  });
 
   const box = new ClaudeCodeAdapter(
     strict,

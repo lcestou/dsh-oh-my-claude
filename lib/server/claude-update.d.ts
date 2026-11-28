@@ -23,10 +23,8 @@ export interface ClaudeUpdates {
      *  beside `skipped`, so a fold made in one session or tab holds in every other on this box. */
     folded?: string;
     /** Newest last; at most 50 kept. */
-    log: ClaudeUpdateEntry[];
+    log: Array<ClaudeUpdateEntry>;
 }
-/** The file: one record per box, keyed "this-box" or the ssh host. */
-export type ClaudeUpdatesFile = Record<string, ClaudeUpdates>;
 /** What the routes answer: the box, the two versions, why checks are off, and the record. */
 export interface ClaudeUpdateState {
     host: string;
@@ -40,7 +38,7 @@ export interface ClaudeUpdateState {
     auto: boolean;
     skipped?: string;
     folded?: string;
-    log: ClaudeUpdateEntry[];
+    log: Array<ClaudeUpdateEntry>;
 }
 /** What the card above the composer needs: only when a release after `installed` is out. */
 export interface ClaudeUpdateCard {
@@ -51,7 +49,7 @@ export interface ClaudeUpdateCard {
     /** The card was folded for this release; it mounts as its header line. */
     folded: boolean;
 }
-export type Exec = (args: string[], timeoutMs: number) => Promise<{
+export type Exec = (args: Array<string>, timeoutMs: number) => Promise<{
     out: string;
     error?: string;
 }>;

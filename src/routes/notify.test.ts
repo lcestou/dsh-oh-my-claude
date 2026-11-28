@@ -3,32 +3,43 @@
 // sentence, a subscription is listed by id and service but never by endpoint, and a delete drops it.
 import assert from "node:assert/strict";
 import { createECDH } from "node:crypto";
-import type { IncomingMessage, ServerResponse } from "node:http";
-import type { RouteCtx } from "../sessions.js";
+import { IncomingMessage, ServerResponse } from "node:http";
+import { Socket } from "node:net";
+import type { JsonValue } from "../dsh.js";
+import { objectOf, parseJson, rowsOf } from "../test-context.js";
 import { UNHANDLED } from "./context.js";
 import { notifyRoutes } from "./notify.js";
 
 let status = 0;
-let reply: Record<string, unknown> = {};
 
-const ctx = {
+// What the group answered, as the JSON the browser receives.
+let reply: { [key: string]: JsonValue } = {};
+
+// The body the next request carries; readBody hands it over as the parsed JSON it would be.
+let body: { [key: string]: JsonValue } = {};
+
+const ctx: Parameters<typeof notifyRoutes>[0] = {
   ROUTE_PREFIX: "/dsh-oh-my-claude",
-  json: (_res: ServerResponse, s: number, v: Record<string, unknown>) => {
+  json: (_res, s, v) => {
+    const sent = JSON.stringify(v);
+
     status = s;
-    reply = v;
+    reply = objectOf(parseJson(sent));
   },
-  readBody: async (req: IncomingMessage & { body?: unknown }) => req.body ?? {},
+  readBody: async () => body,
   log: () => {},
-} as unknown as RouteCtx;
+};
 
 const routes = notifyRoutes(ctx);
 
 /** Send one request through the group; returns what it answered, or UNHANDLED. */
-async function send(method: string, path: string, body?: unknown) {
-  const req = { method, body } as unknown as IncomingMessage;
-  const url = new URL(path, "http://dsh");
+async function send(method: string, path: string, b: { [key: string]: JsonValue } = {}) {
+  body = b;
 
-  return routes(req, {} as ServerResponse, url);
+  const req = new IncomingMessage(new Socket());
+  req.method = method;
+
+  return routes(req, new ServerResponse(req), new URL(path, "http://dsh"));
 }
 
 {
@@ -60,11 +71,11 @@ async function send(method: string, path: string, body?: unknown) {
   assert.equal(status, 400, "keys of the wrong size are refused");
   await send("POST", "/dsh-oh-my-claude/notify/devices", { endpoint, keys });
   assert.equal(status, 200);
-  const devices = reply.devices as Array<Record<string, unknown>>;
+  const devices = rowsOf(reply.devices, { service: "string", id: "string" });
   assert.equal(devices.length, 1);
   assert.equal(devices[0]?.service, "Apple");
   assert.ok(!JSON.stringify(reply).includes("QGuQyavXutnMH"), "the endpoint never leaves the box");
-  await send("DELETE", `/dsh-oh-my-claude/notify/devices?id=${String(devices[0]?.id)}`);
+  await send("DELETE", `/dsh-oh-my-claude/notify/devices?id=${devices[0]?.id}`);
   assert.deepEqual(reply.devices, [], "a delete by id drops it");
 }
 

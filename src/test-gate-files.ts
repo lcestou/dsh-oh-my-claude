@@ -21,15 +21,28 @@ const isObj = (v: Json | undefined): v is { [key: string]: Json } =>
 const num = (v: Json | undefined, d: number): number =>
   typeof v === "number" && Number.isFinite(v) ? v : d;
 
+/** True when `v` is JSON all the way down, as anything `JSON.parse` hands back is. */
+const isJson = (v: unknown): v is Json =>
+  v === null ||
+  typeof v === "string" ||
+  typeof v === "number" ||
+  typeof v === "boolean" ||
+  (Array.isArray(v) ? v.every(isJson) : typeof v === "object" && Object.values(v).every(isJson));
+
 /** `JSON.parse` that answers undefined for text that is not JSON. */
 const parse = (text: string): Json | undefined => {
   try {
-    // SAFETY: JSON.parse returns only the JSON value shapes `Json` spells out
-    return JSON.parse(text) as Json;
+    const parsed: unknown = JSON.parse(text);
+
+    return isJson(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }
 };
+
+/** A failure's text for the hook's stderr; the hook cannot load `process.ts`'s `errorText`. */
+export const failureText = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
 
 /** Whether `s` is one of the run states. */
 const isState = (s: string): s is RunState => RUN_STATES.some((r) => r === s);

@@ -6,12 +6,13 @@
 // conversation as one block of text written by the user, mostly tool output, rather than as turns:
 // its own earlier replies are no longer its own, and the people it talks with are a few lines inside
 // it. Written as a transcript, the history keeps its turns, and the CLI resumes it like any other.
+import { isJsonValue, isRec } from "../decode.js";
 import { createHash, randomUUID } from "node:crypto";
 import { readdir, unlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { ContextSource } from "../context-sources.js";
 import type { JsonValue } from "../dsh.js";
-import { NATIVE_TOOL_MAP } from "./cli.js";
+import { NATIVE_TOOL_MAP, nativeToolName } from "./cli.js";
 import { promptTextOf, textOf } from "./prompt.js";
 import type { LooseMessage, NativeCopies } from "./prompt.js";
 
@@ -67,8 +68,7 @@ export function announcementOf(callId: string, toolName: string) {
     return { id: `${callId}:dsh`, name: toolName.slice("mcp__dsh__".length) };
   }
 
-  // SAFETY: NATIVE_TOOL_MAP is a closed literal type; an unlisted name reads as undefined
-  const name = NATIVE_TOOL_MAP[toolName as keyof typeof NATIVE_TOOL_MAP] ?? toolName;
+  const name = nativeToolName(toolName) ?? toolName;
 
   return { id: `${callId}:call`, name };
 }
@@ -126,16 +126,18 @@ const inputOf = (args: string) => {
     return {} satisfies ToolInput;
   }
 
-  let value: JsonValue;
+  let parsed: unknown;
 
   try {
-    // SAFETY: JSON.parse of text yields a JSON value
-    value = JSON.parse(args) as JsonValue;
+    parsed = JSON.parse(args);
   } catch {
     return { input: args } satisfies ToolInput;
   }
 
-  if (value instanceof Object && !Array.isArray(value)) {
+  // Always JSON, coming off JSON.parse; the check is what types it.
+  const value = isJsonValue(parsed) ? parsed : null;
+
+  if (isRec(value)) {
     return value;
   }
 
@@ -193,7 +195,12 @@ export function historyEnd(messages: ReadonlyArray<LooseMessage>): number {
   let end = last + 1;
 
   for (let i = last + 1; i < messages.length; i++) {
-    const m = messages[i]!;
+    const m = messages[i];
+
+    if (m === undefined) {
+      break;
+    }
+
     const id = resultCallId(m);
 
     if (id !== undefined && calls.has(id)) {

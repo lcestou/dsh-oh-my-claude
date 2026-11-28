@@ -40,6 +40,25 @@ function TranscriptRow({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  /** Opens the transcript here and closes the panel. Never rejects: a failure is the row's error. */
+  const restore = async () => {
+    setBusy(true);
+    setError("");
+
+    try {
+      await openHere(ctx, s, cwd);
+      onClose();
+    } catch (error_) {
+      setError(
+        t("panel.restore.failed", {
+          error: error_ instanceof Error ? error_.message : String(error_),
+        }),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div data-omc-restore-row={s.id}>
       <button
@@ -51,23 +70,7 @@ function TranscriptRow({
           ...rowBtn,
           overflow: "hidden",
         }}
-        onClick={async () => {
-          setBusy(true);
-          setError("");
-
-          try {
-            await openHere(ctx, s, cwd);
-            onClose();
-          } catch (error_) {
-            setError(
-              t("panel.restore.failed", {
-                error: error_ instanceof Error ? error_.message : String(error_),
-              }),
-            );
-          } finally {
-            setBusy(false);
-          }
-        }}
+        onClick={() => void restore()}
       >
         <span
           style={{
@@ -103,15 +106,14 @@ function TranscriptRow({
 export function useFeatureSwitches(cwd: string | undefined): FeatureSwitches | null {
   const [switches, setSwitches] = useState<FeatureSwitches | null>(null);
   useEffect(() => {
-    if (!cwd) {
-      return;
-    }
-
     let live = true;
-    fetch(`${ROUTE}/feature-switches?cwd=${encodeURIComponent(cwd)}`)
-      .then((r) => readJson<FeatureSwitches>(r))
-      .then((b) => live && setSwitches(b))
-      .catch(() => {});
+
+    if (cwd) {
+      fetch(`${ROUTE}/feature-switches?cwd=${encodeURIComponent(cwd)}`)
+        .then((r) => readJson<FeatureSwitches>(r))
+        .then((b) => live && setSwitches(b))
+        .catch(() => {});
+    }
 
     return () => {
       live = false;
@@ -144,21 +146,26 @@ export function useTranscripts(cwd: string | undefined): Array<SessionData> | un
     cwd ? undefined : [],
   );
 
-  useEffect(() => {
-    // The list is the workspace's: a switch to another workspace (or to a session with no cwd yet)
-    // clears it before the new answer lands, so the Restore tab never shows the last workspace's
-    // transcripts under the new one's name (owner, 2026-10-21, on a new session in IC-Saves).
+  // The list is the workspace's: a switch to another workspace (or to a session with no cwd yet)
+  // clears it before the new answer lands, so the Restore tab never shows the last workspace's
+  // transcripts under the new one's name (owner, 2026-10-21, on a new session in IC-Saves). The
+  // clear happens during the render that switches.
+  const [listedFor, setListedFor] = useState(cwd);
+
+  if (listedFor !== cwd) {
+    setListedFor(cwd);
     setTranscripts(cwd ? undefined : []);
+  }
 
-    if (!cwd) {
-      return;
-    }
-
+  useEffect(() => {
     let live = true;
-    fetch(`${ROUTE}/sessions?cwd=${encodeURIComponent(cwd)}`)
-      .then((r) => readJson<{ sessions?: Array<SessionData> }>(r))
-      .then((body) => live && setTranscripts(body.sessions ?? []))
-      .catch(() => live && setTranscripts([]));
+
+    if (cwd) {
+      fetch(`${ROUTE}/sessions?cwd=${encodeURIComponent(cwd)}`)
+        .then((r) => readJson<{ sessions?: Array<SessionData> }>(r))
+        .then((body) => live && setTranscripts(body.sessions ?? []))
+        .catch(() => live && setTranscripts([]));
+    }
 
     return () => {
       live = false;
@@ -243,7 +250,9 @@ export function SessionRepairsNotice({
 
   useEffect(() => {
     let live = true;
-    void readHints().then((h) => {
+    void (async () => {
+      const h = await readHints();
+
       if (!live) {
         return;
       }
@@ -251,7 +260,7 @@ export function SessionRepairsNotice({
       const v = h?.sessionRepairsSeen;
       // A flag or nothing reads as never dismissed; only a number names a dismissal.
       setSeen(v === undefined || v === true || v === false ? 0 : v);
-    });
+    })();
 
     return () => {
       live = false;

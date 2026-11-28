@@ -262,13 +262,9 @@ export function PluginUpdateBadge({ onOpen }: { onOpen?: () => void }) {
         statusOnce = undefined;
       }
 
-      void loadStatus().then((s) => {
-        // The server sends `latest` only with an offer: a command, the dsh it needs, or, on DSH
-        // Desktop, which has no command, the release alone for the Plugins page to install.
-        if (live) {
-          setUpd(s.latest ? s : null);
-        }
-      });
+      // The server sends `latest` only with an offer: a command, the dsh it needs, or, on DSH
+      // Desktop, which has no command, the release alone for the Plugins page to install.
+      void loadStatus().then((s) => live && setUpd(s.latest ? s : null));
     };
 
     load(false);
@@ -279,7 +275,9 @@ export function PluginUpdateBadge({ onOpen }: { onOpen?: () => void }) {
     // Not on every hint: `/status` runs the box's CLI probes.
     /** Reads the switch and asks for a fresh status only when it differs from the last one seen. */
     const onHints = () =>
-      void loadHints().then((h) => {
+      void (async () => {
+        const h = await loadHints();
+
         const now = h.updateCheckOff === true;
 
         if (switchOff !== undefined && now !== switchOff) {
@@ -287,7 +285,7 @@ export function PluginUpdateBadge({ onOpen }: { onOpen?: () => void }) {
         }
 
         switchOff = now;
-      });
+      })();
 
     onHints();
     window.addEventListener(HINTS_EVENT, onHints);
@@ -311,11 +309,7 @@ export function StarNudge({ onDismiss }: { onDismiss: () => void }) {
   const [count, setCount] = useState<number | undefined>(undefined);
   useEffect(() => {
     let live = true;
-    void loadStatus().then((s) => {
-      if (live) {
-        setCount(s.stars);
-      }
-    });
+    void loadStatus().then((s) => live && setCount(s.stars));
 
     return () => {
       live = false;

@@ -2,6 +2,7 @@
 // sessions with a turn in flight, the resume trace, the aux scratch dir, and the stored OAuth
 // token for the Models API (on macOS, from the Keychain when the file has none). This is an I/O
 // boundary: JSON from disk is decoded here and typed values leave.
+import { isRec } from "./decode.js";
 import { execFile } from "node:child_process";
 import { appendFile, copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
@@ -44,9 +45,25 @@ export function stateDir(providerId: string): string {
 /** Sessions with a turn in flight. Survives a dsh restart so those sessions can be nudged back. */
 const BUSY_FILE = join(STATE_DIR, "busy.json");
 
+/**
+ * A one-at-a-time queue for one file's read-modify-write: each task starts once every earlier one
+ * has settled and answers with its own outcome. The queue itself never stays rejected: a write
+ * that failed would otherwise hold up, or silently drop, the task queued after it.
+ */
+export function serialQueue(): <T>(work: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve();
+
+  return (work) => {
+    const run = tail.then(work);
+    tail = run.catch(() => {});
+
+    return run;
+  };
+}
+
 /** Plugin info logs never reach dsh's web.log; the resume path keeps its own trace file. */
 const RESUME_LOG = join(STATE_DIR, "resume.log");
-let busyChain = Promise.resolve();
+const busyQueue = serialQueue();
 
 /** The trace file is cut back to its newest `TRACE_KEEP` bytes once it passes `TRACE_MAX`: it
  *  had reached 2.7 MB with nothing trimming it (2026-10-22). Checked every 256th append, not
@@ -69,7 +86,9 @@ export async function trace(fileOrLine: string, maybeLine?: string): Promise<voi
       const cut = text.indexOf("\n", text.length - TRACE_KEEP);
       await writeFile(file, text.slice(cut + 1));
     }
-  } catch {}
+  } catch {
+    // The trace is diagnostics only: a failed append or trim loses a line, never a turn.
+  }
 }
 
 /** Set a file aside as `<file>.corrupt-<ms>` when it holds text that is not JSON. Every store here
@@ -126,44 +145,41 @@ export async function writeJson(
 
 /** Record (or clear) that a session's turn is running; serialized read-modify-write. */
 export function markBusy(id: string, on: boolean, path = BUSY_FILE): Promise<void> {
-  busyChain = busyChain.then(
-    async () => {
-      let ids: Array<unknown> = [];
+  return busyQueue(async () => {
+    let listed: ReadonlyArray<unknown> = [];
 
-      try {
-        ids = JSON.parse(await readFile(path, "utf8"));
-      } catch {}
+    try {
+      const ids: unknown = JSON.parse(await readFile(path, "utf8"));
 
-      const set = new Set(Array.isArray(ids) ? ids : []);
-
-      if (on ? set.has(id) : !set.has(id)) {
-        return;
+      if (Array.isArray(ids)) {
+        listed = ids;
       }
+    } catch {
+      // No file yet, or not JSON: no session is marked.
+    }
 
-      if (on) {
-        set.add(id);
-      } else {
-        set.delete(id);
-      }
+    const set = new Set(listed);
 
-      await writeJson(path, [...set]);
-    },
-    () => {},
-  );
-  const run = busyChain;
-  // The chain itself never stays rejected: a write that failed would otherwise send the next
-  // call down the rejection branch above, which does nothing, and that mark would be lost.
-  busyChain = run.catch(() => {});
+    if (on ? set.has(id) : !set.has(id)) {
+      return;
+    }
 
-  return run;
+    if (on) {
+      set.add(id);
+    } else {
+      set.delete(id);
+    }
+
+    await writeJson(path, [...set]);
+  });
 }
 
 /** Sessions whose turn the previous dsh process left unfinished; cleared on read. Queued behind
  *  `markBusy`'s writes: read and cleared on its own, it could empty the file between a mark's read
  *  and its write, or wipe a mark a turn had just made. */
 export function takeInterrupted(path = BUSY_FILE): Promise<Array<string>> {
-  const run = busyChain.then(async () => {
-    let ids: Array<unknown> = [];
+  const run = busyQueue(async () => {
+    let ids: unknown;
 
     try {
       ids = JSON.parse(await readFile(path, "utf8"));
@@ -176,18 +192,13 @@ export function takeInterrupted(path = BUSY_FILE): Promise<Array<string>> {
     return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === "string") : [];
   });
 
-  busyChain = run.then(
-    () => {},
-    () => {},
-  );
-
   return run;
 }
 
 /** The sessions the busy file lists now, left in place for the boot resume to take. Queued behind
  *  `markBusy` like `takeInterrupted`, so it never reads between a mark's read and write. */
 export function peekInterrupted(path = BUSY_FILE): Promise<Array<string>> {
-  const run = busyChain.then(async () => {
+  const run = busyQueue(async () => {
     try {
       const ids: unknown = JSON.parse(await readFile(path, "utf8"));
 
@@ -196,11 +207,6 @@ export function peekInterrupted(path = BUSY_FILE): Promise<Array<string>> {
       return [];
     }
   });
-
-  busyChain = run.then(
-    () => {},
-    () => {},
-  );
 
   return run;
 }
@@ -212,19 +218,24 @@ export function peekInterrupted(path = BUSY_FILE): Promise<Array<string>> {
 export function pendingSelection(
   events: ReadonlyArray<{ type: string; data?: unknown }>,
 ): { provider: string; model: string | undefined } | undefined {
+  // From the tail by index: the log can be long and the answer is usually near its end.
   for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i]!;
+    const e = events[i];
+
+    if (e === undefined) {
+      continue;
+    }
 
     if (e.type === "request/header") {
       return undefined;
     }
 
-    if (e.type !== "model/selection" || typeof e.data !== "object" || e.data === null) {
+    if (e.type !== "model/selection" || !isRec(e.data)) {
       continue;
     }
 
-    // SAFETY: a non-null object; both fields read are checked for string before use
-    const { provider, model } = e.data as { provider?: unknown; model?: unknown };
+    // Both fields read are checked for string before use.
+    const { provider, model } = e.data;
 
     if (typeof provider === "string") {
       return { provider, model: typeof model === "string" ? model : undefined };
@@ -265,7 +276,7 @@ export function saveCommandCatalog(dir: string, names: Array<string>): Promise<v
  * is `hold.ts`'s `HoldRecord`; it is kept loose here so this module does not import the process one.
  */
 const HOLDS_FILE = (dir: string) => join(dir, "holds.json");
-let holdsChain = Promise.resolve();
+const holdsQueue = serialQueue();
 
 /** The saved holds keyed by session id, or an empty record when the file is missing, unreadable
  *  or not an object. Never throws. */
@@ -273,12 +284,12 @@ export async function loadHolds(dir: string): Promise<Record<string, unknown>> {
   try {
     const parsed: unknown = JSON.parse(await readFile(HOLDS_FILE(dir), "utf8"));
 
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    if (!isRec(parsed)) {
       return {};
     }
 
-    // SAFETY: a plain object read from this module's own file; callers validate each value
-    return parsed as Record<string, unknown>;
+    // A plain object read from this module's own file; callers validate each value
+    return parsed;
   } catch {
     return {};
   }
@@ -286,13 +297,11 @@ export async function loadHolds(dir: string): Promise<Record<string, unknown>> {
 
 /** Set one session's hold; serialized read-modify-write. */
 export function saveHold(dir: string, sessionId: string, record: unknown): Promise<void> {
-  const run = holdsChain.then(async () => {
+  const run = holdsQueue(async () => {
     const all = await loadHolds(dir);
     all[sessionId] = record;
     await writeJson(HOLDS_FILE(dir), all);
   });
-
-  holdsChain = run.catch(() => {});
 
   return run;
 }
@@ -302,7 +311,7 @@ export function saveHold(dir: string, sessionId: string, record: unknown): Promi
  * old hold's exit arrives, and that exit must not take the new record with it.
  */
 export function dropHold(dir: string, sessionId: string, name?: string): Promise<void> {
-  const run = holdsChain.then(async () => {
+  const run = holdsQueue(async () => {
     const all = await loadHolds(dir);
     const held = all[sessionId];
 
@@ -311,12 +320,8 @@ export function dropHold(dir: string, sessionId: string, name?: string): Promise
     }
 
     if (name !== undefined) {
-      if (typeof held !== "object" || held === null) {
-        return;
-      }
-
-      // SAFETY: a non-null object from this module's own file; the one field read is checked
-      if ((held as { name?: unknown }).name !== name) {
+      // A plain object from this module's own file; the one field read is checked.
+      if (!isRec(held) || held.name !== name) {
         return;
       }
     }
@@ -325,14 +330,12 @@ export function dropHold(dir: string, sessionId: string, name?: string): Promise
     await writeJson(HOLDS_FILE(dir), all);
   });
 
-  holdsChain = run.catch(() => {});
-
   return run;
 }
 
 /** Sessions waiting for a usage limit to reset: session id to reset instant (ms since epoch). */
 const LIMIT_WAITS_FILE = (dir: string) => join(dir, "limit-waits.json");
-let limitChain: Promise<void> = Promise.resolve();
+const limitQueue = serialQueue();
 
 /** Each waiting session's reset time, keyed by session id. A missing or corrupt file reads as no
  *  waits, and an entry whose value is not a number is dropped. Never throws. */
@@ -349,14 +352,16 @@ export async function loadLimitWaits(dir: string): Promise<Map<string, number>> 
         }
       }
     }
-  } catch {}
+  } catch {
+    // No file, or not JSON: no session is waiting.
+  }
 
   return map;
 }
 
 /** Record (or with `resetAt` undefined, forget) a session's wait; saves serialize. */
 export function saveLimitWait(dir: string, sessionId: string, resetAt: number | undefined) {
-  const run = limitChain.then(async () => {
+  const run = limitQueue(async () => {
     const map = await loadLimitWaits(dir);
 
     if (resetAt === undefined) {
@@ -368,8 +373,6 @@ export function saveLimitWait(dir: string, sessionId: string, resetAt: number | 
     await writeJson(LIMIT_WAITS_FILE(dir), Object.fromEntries(map));
   });
 
-  limitChain = run.catch(() => {});
-
   return run;
 }
 
@@ -380,7 +383,7 @@ let auxReady: Promise<string> | undefined;
 export const auxCwd = (): Promise<string> =>
   (auxReady ??= mkdir(AUX_DIR, { recursive: true }).then(() => AUX_DIR));
 
-let startedChain: Promise<void> = Promise.resolve();
+const startedQueue = serialQueue();
 
 /**
  * The Claude session IDs this plugin has started.
@@ -407,30 +410,25 @@ export async function loadStarted(stateFile = STATE_FILE): Promise<Set<string>> 
  * that was loaded earlier would erase every id another writer added in between.
  */
 export function rememberStarted(id: string, keep = true, stateFile = STATE_FILE): Promise<void> {
-  startedChain = startedChain.then(
-    async () => {
-      const set = await loadStarted(stateFile);
+  return startedQueue(async () => {
+    const set = await loadStarted(stateFile);
 
-      if (keep ? set.has(id) : !set.has(id)) {
-        return;
-      }
+    if (keep ? set.has(id) : !set.has(id)) {
+      return;
+    }
 
-      if (keep) {
-        set.add(id);
-      } else {
-        set.delete(id);
-      }
+    if (keep) {
+      set.add(id);
+    } else {
+      set.delete(id);
+    }
 
-      try {
-        await writeJson(stateFile, [...set]);
-      } catch {
-        /* state is an optimization only */
-      }
-    },
-    () => {},
-  );
-
-  return startedChain;
+    try {
+      await writeJson(stateFile, [...set]);
+    } catch {
+      /* state is an optimization only */
+    }
+  });
 }
 
 /**
@@ -561,11 +559,15 @@ export async function noteBoot(file: string, now = Date.now()): Promise<number |
     ) {
       previous = parsed.at;
     }
-  } catch {}
+  } catch {
+    // No previous boot recorded, or the file is unreadable.
+  }
 
   try {
     await writeJson(file, { at: now });
-  } catch {}
+  } catch {
+    // Best effort: the next boot then reads no previous one.
+  }
 
   return previous === undefined ? undefined : now - previous;
 }
@@ -601,39 +603,39 @@ export function hasPendingNotice(
 
     const d = e.data;
 
-    if (typeof d !== "object" || d === null || !("inserted" in d) || !Array.isArray(d.inserted)) {
+    if (!isRec(d) || !Array.isArray(d.inserted)) {
       continue;
     }
 
-    const target = "target" in d ? d.target : undefined;
-
-    if (target !== "next-turn") {
+    if (d.target !== "next-turn") {
       continue;
     }
 
-    for (const m of d.inserted) {
-      if (typeof m !== "object" || m === null) {
+    const inserted: ReadonlyArray<unknown> = d.inserted;
+
+    for (const m of inserted) {
+      if (!isRec(m)) {
         continue;
       }
 
-      const src = "source" in m ? m.source : undefined;
+      const src = m.source;
 
       // v3 logs wrap the plugin name in `{ kind: "plugin", plugin }`; v4 logs carry it in the kind.
-      if (typeof src === "object" && src !== null) {
-        if ("plugin" in src && src.plugin === plugin) {
+      if (isRec(src)) {
+        if (src.plugin === plugin) {
           pending = true;
         }
 
-        if ("kind" in src && src.kind === `plugin:${plugin}`) {
+        if (src.kind === `plugin:${plugin}`) {
           pending = true;
         }
       }
 
       // Notices sent on the owner's behalf carry the user source; match them by their text.
-      const content = "content" in m && Array.isArray(m.content) ? m.content : [];
+      const content: ReadonlyArray<unknown> = Array.isArray(m.content) ? m.content : [];
 
       for (const block of content) {
-        if (typeof block !== "object" || block === null || !("text" in block)) {
+        if (!isRec(block)) {
           continue;
         }
 
@@ -680,11 +682,11 @@ export const modesUpTo = (ceiling: PermissionMode): Array<PermissionMode> =>
 
 /** Per-session permission mode overrides. Keyed by dsh session id; null means unset. */
 export const PERMISSION_MODES_FILE = (d: string) => join(d, "permission-modes.json");
-let permissionModesChain = Promise.resolve();
+const permissionModesQueue = serialQueue();
 
 /** Per-session turn cost records; keyed by dsh session id; value is a ring buffer of last 50. */
 export const TURNS_FILE = (d: string) => join(d, "turns.json");
-let turnsChain = Promise.resolve();
+const turnsQueue = serialQueue();
 
 /** Load the per-session permission mode overrides from disk. */
 export async function loadPermissionModes(dir: string): Promise<Map<string, string | null>> {
@@ -694,7 +696,7 @@ export async function loadPermissionModes(dir: string): Promise<Map<string, stri
     const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
     const map = new Map<string, string | null>();
 
-    if (typeof parsed === "object" && parsed !== null) {
+    if (isRec(parsed)) {
       for (const [k, v] of Object.entries(parsed)) {
         if (typeof v === "string" || v === null) {
           map.set(k, v);
@@ -714,7 +716,7 @@ export function savePermissionMode(
   sessionId: string,
   mode: string | null,
 ): Promise<void> {
-  const run = permissionModesChain.then(async () => {
+  const run = permissionModesQueue(async () => {
     const file = PERMISSION_MODES_FILE(dir);
     const map = await loadPermissionModes(dir);
 
@@ -734,7 +736,6 @@ export function savePermissionMode(
   });
 
   // The caller sees a failed write; the chain itself carries on for the next save.
-  permissionModesChain = run.catch(() => {});
 
   return run;
 }
@@ -756,12 +757,12 @@ export async function loadTurnRecords(dir: string): Promise<Map<string, Array<Tu
         const records: Array<TurnRecord> = [];
 
         for (const entry of v) {
-          if (typeof entry !== "object" || entry === null) {
+          if (!isRec(entry)) {
             continue;
           }
 
-          // SAFETY: a non-null object; every field is re-checked as a number below
-          const r = entry as Record<string, unknown>;
+          // A non-null object; every field is re-checked as a number below
+          const r = entry;
 
           const num = (key: string): number | undefined =>
             typeof r[key] === "number" ? r[key] : undefined;
@@ -841,32 +842,31 @@ export function saveTurnRecords(
   sessionId: string,
   records: Array<TurnRecord>,
 ): Promise<void> {
-  const run = turnsChain.then(async () => {
+  const run = turnsQueue(async () => {
     const file = TURNS_FILE(dir);
-    let obj: Record<string, Array<unknown>> = {};
+    let obj: Record<string, unknown> = {};
 
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
 
       // An array is an object too, and a key set on one is not written back: every record lost.
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-        // SAFETY: top-level JSON object with string keys maps to a record of arrays.
-        obj = parsed as Record<string, Array<unknown>>;
+      if (isRec(parsed)) {
+        obj = parsed;
       }
-    } catch {}
+    } catch {
+      // No file yet, or not JSON: start from an empty map.
+    }
 
     obj[sessionId] = records;
     await writeJson(file, obj);
   });
-
-  turnsChain = run.catch(() => {});
 
   return run;
 }
 
 /** Per-session `/btw` asides; keyed by dsh session id; value is the session's aside ring. */
 export const ASIDES_FILE = (d: string) => join(d, "asides.json");
-let asidesChain = Promise.resolve();
+const asidesQueue = serialQueue();
 
 /**
  * Load the persisted `/btw` asides. Pending entries are dropped: a pending aside never got its
@@ -889,12 +889,12 @@ export async function loadAsides(dir: string): Promise<Map<string, Array<AsideEn
         const entries: Array<AsideEntry> = [];
 
         for (const raw of v) {
-          if (typeof raw !== "object" || raw === null) {
+          if (!isRec(raw)) {
             continue;
           }
 
-          // SAFETY: a non-null object; each field is checked for its type before use.
-          const r = raw as Record<string, unknown>;
+          // A non-null object; each field is checked for its type before use.
+          const r = raw;
 
           if (typeof r.id !== "string" || typeof r.question !== "string") {
             continue;
@@ -947,24 +947,23 @@ export function saveAsides(
   sessionId: string,
   entries: Array<AsideEntry>,
 ): Promise<void> {
-  const run = asidesChain.then(async () => {
+  const run = asidesQueue(async () => {
     const file = ASIDES_FILE(dir);
-    let obj: Record<string, Array<unknown>> = {};
+    let obj: Record<string, unknown> = {};
 
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
 
-      if (typeof parsed === "object" && parsed !== null) {
-        // SAFETY: top-level JSON object with string keys maps to a record of arrays.
-        obj = parsed as Record<string, Array<unknown>>;
+      if (isRec(parsed)) {
+        obj = parsed;
       }
-    } catch {}
+    } catch {
+      // No file yet, or not JSON: start from an empty map.
+    }
 
     obj[sessionId] = entries;
     await writeJson(file, obj);
   });
-
-  asidesChain = run.catch(() => {});
 
   return run;
 }
@@ -976,6 +975,19 @@ export function saveAsides(
  *  from its transcript (the old log's dsh-only rows, subagents, permissions, title, tool cards,
  *  notices and side questions, are in the .bak only). */
 export type RepairVerdict = "fine" | "healed" | "unknown" | "rolled-back" | "owned" | "reseeded";
+
+/** Every verdict a repair record can carry, for checking one read back from disk. */
+const REPAIR_VERDICTS: ReadonlyArray<RepairVerdict> = [
+  "fine",
+  "healed",
+  "unknown",
+  "rolled-back",
+  "owned",
+  "reseeded",
+];
+
+/** Whether `v` is one of the repair verdicts. */
+const isRepairVerdict = (v: string): v is RepairVerdict => REPAIR_VERDICTS.some((r) => r === v);
 
 /** One log's verdict, as the sweep and the on-open heal record it. */
 export interface SessionRepairRecord {
@@ -1006,7 +1018,7 @@ export interface SessionRepairsFile {
 
 /** The repairs record; its key is the dsh session id, never the path, which can move. */
 export const SESSION_REPAIRS_FILE = (d: string) => join(d, "session-repairs.json");
-let repairsChain = Promise.resolve();
+const repairsQueue = serialQueue();
 
 /** Load the repairs record. An unreadable or unparseable file reads as the empty default, and an
  *  entry missing `path`, `verdict` or `at` is skipped, so a hand-edited file cannot put a notice
@@ -1017,12 +1029,12 @@ export async function loadSessionRepairs(dir: string): Promise<SessionRepairsFil
   try {
     const parsed: unknown = JSON.parse(await readFile(SESSION_REPAIRS_FILE(dir), "utf8"));
 
-    if (typeof parsed !== "object" || parsed === null) {
+    if (!isRec(parsed)) {
       return empty;
     }
 
-    // SAFETY: a non-null object; each field is checked for its type before use.
-    const r = parsed as Record<string, unknown>;
+    // A non-null object; each field is checked for its type before use.
+    const r = parsed;
 
     const out: SessionRepairsFile = {
       version: 1,
@@ -1032,12 +1044,12 @@ export async function loadSessionRepairs(dir: string): Promise<SessionRepairsFil
 
     if (typeof r.logs === "object" && r.logs !== null) {
       for (const [id, raw] of Object.entries(r.logs)) {
-        if (typeof raw !== "object" || raw === null) {
+        if (!isRec(raw)) {
           continue;
         }
 
-        // SAFETY: same check as above, one entry at a time.
-        const e = raw as Record<string, unknown>;
+        // Same check as above, one entry at a time.
+        const e = raw;
 
         if (typeof e.path !== "string" || typeof e.verdict !== "string") {
           continue;
@@ -1047,9 +1059,7 @@ export async function loadSessionRepairs(dir: string): Promise<SessionRepairsFil
           continue;
         }
 
-        if (
-          !["fine", "healed", "unknown", "rolled-back", "owned", "reseeded"].includes(e.verdict)
-        ) {
+        if (!isRepairVerdict(e.verdict)) {
           continue;
         }
 
@@ -1057,8 +1067,7 @@ export async function loadSessionRepairs(dir: string): Promise<SessionRepairsFil
           path: e.path,
           mtimeMs: typeof e.mtimeMs === "number" ? e.mtimeMs : 0,
           size: typeof e.size === "number" ? e.size : 0,
-          // SAFETY: membership in the verdict list was checked two lines up.
-          verdict: e.verdict as RepairVerdict,
+          verdict: e.verdict,
           at: e.at,
         };
 
@@ -1070,9 +1079,9 @@ export async function loadSessionRepairs(dir: string): Promise<SessionRepairsFil
           rec.bak = e.bak;
         }
 
-        if (typeof e.did === "object" && e.did !== null) {
-          // SAFETY: a non-null object; the three counts are read with their own type checks.
-          const d = e.did as Record<string, unknown>;
+        if (isRec(e.did)) {
+          // A non-null object; the three counts are read with their own type checks.
+          const d = e.did;
           rec.did = {
             droppedCalls: typeof d.droppedCalls === "number" ? d.droppedCalls : 0,
             addedHead: d.addedHead === true,
@@ -1092,8 +1101,7 @@ export async function loadSessionRepairs(dir: string): Promise<SessionRepairsFil
 
 /** Write the whole record; serialized behind the same chain as `recordRepair`. */
 export function saveSessionRepairs(dir: string, next: SessionRepairsFile): Promise<void> {
-  const run = repairsChain.then(() => writeJson(SESSION_REPAIRS_FILE(dir), next));
-  repairsChain = run.catch(() => {});
+  const run = repairsQueue(() => writeJson(SESSION_REPAIRS_FILE(dir), next));
 
   return run;
 }
@@ -1101,13 +1109,11 @@ export function saveSessionRepairs(dir: string, next: SessionRepairsFile): Promi
 /** Replace one session's entry: read, set, write, serialized so two heals cannot lose each
  *  other's verdict. */
 export function recordRepair(dir: string, id: string, record: SessionRepairRecord): Promise<void> {
-  const run = repairsChain.then(async () => {
+  const run = repairsQueue(async () => {
     const file = await loadSessionRepairs(dir);
     file.logs[id] = record;
     await writeJson(SESSION_REPAIRS_FILE(dir), file);
   });
-
-  repairsChain = run.catch(() => {});
 
   return run;
 }
@@ -1115,7 +1121,7 @@ export function recordRepair(dir: string, id: string, record: SessionRepairRecor
 /** Per-session opening prompt, keyed by dsh session id, plus the shared `default` key the starter card
  *  offers a session that has none of its own. */
 const STARTERS_FILE = (d: string) => join(d, "starters.json");
-let startersChain = Promise.resolve();
+const startersQueue = serialQueue();
 
 /** Load the saved openers. A non-string or blank value is skipped, so a hand-edited file cannot put a
  *  card on screen with nothing in it. */
@@ -1140,18 +1146,20 @@ export async function loadStarters(dir: string): Promise<Map<string, string>> {
 
 /** Save one opener, or drop it when the text is blank; serialized read-modify-write. */
 export function saveStarter(dir: string, key: string, text: string | undefined): Promise<void> {
-  const run = startersChain.then(async () => {
+  const run = startersQueue(async () => {
     const file = STARTERS_FILE(dir);
     let obj: Record<string, unknown> = {};
 
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
 
-      if (typeof parsed === "object" && parsed !== null) {
-        // SAFETY: a top-level JSON object with string keys.
-        obj = parsed as Record<string, unknown>;
+      if (isRec(parsed)) {
+        // A top-level JSON object with string keys.
+        obj = parsed;
       }
-    } catch {}
+    } catch {
+      // No file yet, or not JSON: start from an empty map.
+    }
 
     if (text === undefined || text.trim() === "") {
       delete obj[key];
@@ -1162,14 +1170,12 @@ export function saveStarter(dir: string, key: string, text: string | undefined):
     await writeJson(file, obj);
   });
 
-  startersChain = run.catch(() => {});
-
   return run;
 }
 
 /** Per-workspace last Claude model, keyed by workspace cwd. Read by the client on a blank session. */
 const WORKSPACE_MODELS_FILE = (d: string) => join(d, "workspace-models.json");
-let workspaceModelsChain = Promise.resolve();
+const workspaceModelsQueue = serialQueue();
 
 export interface WorkspaceModel {
   model: string;
@@ -1191,12 +1197,12 @@ export async function loadWorkspaceModels(dir: string): Promise<Map<string, Work
 
     if (typeof parsed === "object" && parsed !== null) {
       for (const [cwd, v] of Object.entries(parsed)) {
-        if (typeof v !== "object" || v === null) {
+        if (!isRec(v)) {
           continue;
         }
 
-        // SAFETY: workspace-models.json rows have model (string) and at (number) fields.
-        const row = v as Record<string, unknown>;
+        // workspace-models.json rows have model (string) and at (number) fields.
+        const row = v;
 
         if (typeof row.model !== "string" || row.model.trim() === "") {
           continue;
@@ -1250,18 +1256,20 @@ export function saveWorkspaceModel(
   provider?: string,
   effort?: string,
 ): Promise<void> {
-  const run = workspaceModelsChain.then(async () => {
+  const run = workspaceModelsQueue(async () => {
     const file = WORKSPACE_MODELS_FILE(dir);
     let obj: Record<string, unknown> = {};
 
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
 
-      if (typeof parsed === "object" && parsed !== null) {
-        // SAFETY: a top-level JSON object with string keys.
-        obj = parsed as Record<string, unknown>;
+      if (isRec(parsed)) {
+        // A top-level JSON object with string keys.
+        obj = parsed;
       }
-    } catch {}
+    } catch {
+      // No file yet, or not JSON: start from an empty map.
+    }
 
     if (model === undefined || model.trim() === "") {
       delete obj[cwd];
@@ -1281,8 +1289,6 @@ export function saveWorkspaceModel(
 
     await writeJson(file, obj);
   });
-
-  workspaceModelsChain = run.catch(() => {});
 
   return run;
 }
@@ -1306,12 +1312,12 @@ export async function loadNewSessionDefault(dir: string): Promise<NewSessionDefa
   try {
     const parsed: unknown = JSON.parse(await readFile(NEW_SESSION_DEFAULT_FILE(dir), "utf8"));
 
-    if (typeof parsed !== "object" || parsed === null) {
+    if (!isRec(parsed)) {
       return undefined;
     }
 
-    // SAFETY: a JSON object; every field is checked below before it is used.
-    const row = parsed as Record<string, unknown>;
+    // A JSON object; every field is checked below before it is used.
+    const row = parsed;
 
     if (typeof row.provider !== "string" || !row.provider) {
       return undefined;
@@ -1348,7 +1354,7 @@ export const saveNewSessionDefault = (
  *  any row without a non-empty model, and its writer replaces the row whole, so sizes parked next
  *  to a model would be lost on read and again on the next model change. */
 const CONTEXT_SIZES_FILE = (d: string) => join(d, "context-sizes.json");
-let contextSizesChain = Promise.resolve();
+const contextSizesQueue = serialQueue();
 
 export interface WorkspaceContextSizes {
   sizes: Record<string, number>;
@@ -1364,21 +1370,21 @@ export async function loadContextSizes(dir: string): Promise<Map<string, Workspa
 
     if (typeof parsed === "object" && parsed !== null) {
       for (const [cwd, v] of Object.entries(parsed)) {
-        if (typeof v !== "object" || v === null) {
+        if (!isRec(v)) {
           continue;
         }
 
-        // SAFETY: context-sizes.json rows have sizes (object of numbers) and at (number) fields.
-        const row = v as Record<string, unknown>;
+        // context-sizes.json rows have sizes (object of numbers) and at (number) fields.
+        const row = v;
 
-        if (typeof row.sizes !== "object" || row.sizes === null) {
+        if (!isRec(row.sizes)) {
           continue;
         }
 
         const sizes: Record<string, number> = {};
 
         // SAFETY: checked as a non-null object on the line above.
-        for (const [key, n] of Object.entries(row.sizes as Record<string, unknown>)) {
+        for (const [key, n] of Object.entries(row.sizes)) {
           if (typeof n === "number" && Number.isFinite(n)) {
             sizes[key] = n;
           }
@@ -1407,18 +1413,20 @@ export function saveContextSizes(
   sizes: Record<string, number> | undefined,
   at = Date.now(),
 ): Promise<void> {
-  const run = contextSizesChain.then(async () => {
+  const run = contextSizesQueue(async () => {
     const file = CONTEXT_SIZES_FILE(dir);
     let obj: Record<string, unknown> = {};
 
     try {
       const parsed: unknown = JSON.parse(await readFile(file, "utf8"));
 
-      if (typeof parsed === "object" && parsed !== null) {
-        // SAFETY: a top-level JSON object with string keys.
-        obj = parsed as Record<string, unknown>;
+      if (isRec(parsed)) {
+        // A top-level JSON object with string keys.
+        obj = parsed;
       }
-    } catch {}
+    } catch {
+      // No file yet, or not JSON: start from an empty map.
+    }
 
     if (sizes === undefined) {
       delete obj[cwd];
@@ -1429,8 +1437,6 @@ export function saveContextSizes(
 
     await writeJson(file, obj);
   });
-
-  contextSizesChain = run.catch(() => {});
 
   return run;
 }
@@ -1479,11 +1485,8 @@ export async function loadToolMode(dir: string): Promise<ToolMode | undefined> {
   try {
     const parsed: unknown = JSON.parse(await readFile(TOOL_MODE_FILE(dir), "utf8"));
 
-    // SAFETY: a top-level JSON object; the one key read is checked against its two values below.
-    const mode =
-      typeof parsed === "object" && parsed !== null
-        ? (parsed as { mode?: unknown }).mode
-        : undefined;
+    // A top-level JSON object; the one key read is checked against its two values below.
+    const mode = isRec(parsed) ? parsed.mode : undefined;
 
     return mode === "inline" || mode === "rows" ? mode : undefined;
   } catch {
@@ -1534,21 +1537,13 @@ async function readWatches(dir: string): Promise<Map<string, WatchRecord>> {
   try {
     const parsed: unknown = JSON.parse(await readFile(WATCH_FILE(dir), "utf8"));
 
-    if (typeof parsed !== "object" || parsed === null) {
+    if (!isRec(parsed)) {
       return out;
     }
 
-    for (const [id, v] of Object.entries(parsed)) {
-      // SAFETY: each value is checked field by field before it is kept
-      const r = v as {
-        path?: unknown;
-        seen?: unknown;
-        host?: unknown;
-        provider?: unknown;
-        claudeId?: unknown;
-      };
-
-      if (typeof r?.path !== "string" || typeof r.seen !== "number") {
+    // Each value is checked field by field before it is kept.
+    for (const [id, r] of Object.entries(parsed)) {
+      if (!isRec(r) || typeof r.path !== "string" || typeof r.seen !== "number") {
         continue;
       }
 
@@ -1575,6 +1570,13 @@ async function readWatches(dir: string): Promise<Map<string, WatchRecord>> {
   return out;
 }
 
+/** Read the watch file, set one session's record and write the whole file back. */
+async function writeWatch(dir: string, sessionId: string, record: WatchRecord): Promise<void> {
+  const all = await readWatches(dir);
+  all.set(sessionId, record);
+  await writeJson(WATCH_FILE(dir), Object.fromEntries(all));
+}
+
 /** Record where a session's watch has read up to. Queued behind any save already pending for
  *  `dir`, so saves land in the order they were called; the returned promise settles when this one
  *  has been written. */
@@ -1583,11 +1585,9 @@ export async function saveWatch(
   sessionId: string,
   record: WatchRecord,
 ): Promise<void> {
-  const next = (watchWrites.get(dir) ?? Promise.resolve()).then(async () => {
-    const all = await readWatches(dir);
-    all.set(sessionId, record);
-    await writeJson(WATCH_FILE(dir), Object.fromEntries(all));
-  });
+  const next = (watchWrites.get(dir) ?? Promise.resolve()).then(() =>
+    writeWatch(dir, sessionId, record),
+  );
 
   // A failed save must not stall the ones behind it; its caller still sees the rejection.
   watchWrites.set(

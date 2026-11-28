@@ -6,14 +6,14 @@ export interface MirrorEntry {
 }
 /** What a build has to do: link these names, and copy these back home before relinking them. */
 export interface MirrorWork {
-    link: string[];
-    repair: string[];
+    link: Array<string>;
+    repair: Array<string>;
 }
 /**
  * What has to happen for the mirror to hold: which names to link, and which forked back into a real
  * file and have to be copied home first. Split out from the filesystem so it can be asserted.
  */
-export declare function mirrorPlan(real: string[], mirror: MirrorEntry[]): MirrorWork;
+export declare function mirrorPlan(real: Array<string>, mirror: Array<MirrorEntry>): MirrorWork;
 /**
  * Build or repair the mirror and answer its path. Synchronous on purpose: it runs once at boot and
  * before the first spawn, and a half-built config dir handed to the CLI is worse than a blocked

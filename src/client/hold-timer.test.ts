@@ -2,8 +2,9 @@
 // a stop means it never fires.
 import { strict as assert } from "node:assert";
 import { holdTimer } from "./hold-timer.js";
+import { setTimeout as sleep } from "node:timers/promises";
 
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const wait = (ms: number) => sleep(ms);
 
 {
   let fired = 0;

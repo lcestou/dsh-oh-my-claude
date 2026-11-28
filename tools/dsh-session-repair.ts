@@ -74,11 +74,33 @@ async function loadCatalog(prefix: string): Promise<Catalog> {
     );
   }
 
-  // SAFETY: `p` is dsh's own catalog module, checked to exist above. The path is dsh's install
-  // layout, which this dev-only tool reads rather than owns; a dsh that moves it fails the
-  // `existsSync` with the message above, and one that renames the export fails on the
-  // `createRestore` call two lines down. Both are loud, and `--dsh <prefix>` retargets the first.
-  return (await import(p)).sessionFormatCatalog as Catalog;
+  // `p` is dsh's own catalog module, checked to exist above. The path is dsh's install layout,
+  // which this dev-only tool reads rather than owns; a dsh that moves it fails the `existsSync`
+  // with the message above, and one that renames the export fails the check below. Both are
+  // loud, and `--dsh <prefix>` retargets the first.
+  const mod: unknown = await import(p);
+
+  const catalog =
+    typeof mod === "object" && mod !== null && "sessionFormatCatalog" in mod
+      ? mod.sessionFormatCatalog
+      : undefined;
+
+  if (!isCatalog(catalog)) {
+    throw new TypeError(`${p} exports no sessionFormatCatalog with a createRestore function`);
+  }
+
+  return catalog;
+}
+
+/** Whether a module export is dsh's catalog as far as a cheap check goes: an object with a
+ *  `createRestore` function. The rest of its shape is trusted; a mismatch fails on first use. */
+function isCatalog(v: unknown): v is Catalog {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    "createRestore" in v &&
+    typeof v.createRestore === "function"
+  );
 }
 
 /** Every session log dsh would load: the v4 file where one exists, else a v0 file dsh has not

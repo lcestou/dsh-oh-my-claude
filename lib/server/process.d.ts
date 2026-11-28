@@ -1,3 +1,5 @@
+import { Writable } from "node:stream";
+import type { Readable } from "node:stream";
 import type { AskUserQuestionItem, ImageAttachmentRef, JsonValue, SubprocessRuntime } from "./dsh.js";
 import type { ContextSizes, ContextSource } from "./context-sources.js";
 export type { JsonValue } from "./dsh.js";
@@ -39,7 +41,7 @@ export declare const FORWARDED_ENV: readonly ["DISABLE_TELEMETRY", "DISABLE_ERRO
  */
 export declare function credentialEnv(base: NodeJS.ProcessEnv): Record<string, string>;
 /** The FORWARDED_ENV pairs set in `base`, in that order. */
-export declare function forwardedEnv(base?: NodeJS.ProcessEnv): [string, string][];
+export declare function forwardedEnv(base?: NodeJS.ProcessEnv): Array<[string, string]>;
 /** Where the CLI keeps its login when set, apart from CLAUDE_CONFIG_DIR (secureStorageDir). */
 export declare const SECURE_STORAGE_ENV = "CLAUDE_SECURESTORAGE_CONFIG_DIR";
 /** Whether an override removes `key` rather than setting it: an empty value does, except for
@@ -55,7 +57,7 @@ export declare function childEnv(base: NodeJS.ProcessEnv, override?: Record<stri
 /** Where Claude Code's installers put `claude` (the native installer, the old local install, Homebrew,
  *  npm and bun globals, Volta). An app started from the macOS Dock or Finder, DSH Desktop among
  *  them, gets a PATH of `/usr/bin:/bin:/usr/sbin:/sbin`, which holds none of these. */
-export declare function claudeDirs(home?: string): string[];
+export declare function claudeDirs(home?: string): Array<string>;
 /** `path` with every folder from `dirs` it lacks appended, so a name found on the caller's PATH
  *  keeps winning. Appending also lets an npm-installed `claude`, a `#!/usr/bin/env node` script,
  *  find the node that sits beside it. */
@@ -68,9 +70,9 @@ export declare function withClaudeDirs(path: string | undefined, dirs?: string[]
 export declare function resolveCommand(command: string, path?: string | undefined, dirs?: string[], exists?: (p: string) => boolean, platform?: NodeJS.Platform): string;
 /** The child process seam this plugin uses: dsh's own spawner and the node one both answer it. */
 export interface SubprocessHandle {
-    stdin: import("node:stream").Writable;
-    stdout: import("node:stream").Readable;
-    stderr: import("node:stream").Readable;
+    stdin: Writable;
+    stdout: Readable;
+    stderr: Readable;
     done: Promise<{
         exitCode: number | null;
         signal: string | null;
@@ -104,7 +106,7 @@ export type ClaudeEvent = {
     status?: string | null;
     compact_result?: string;
     compact_error?: string;
-    written_paths?: string[];
+    written_paths?: Array<string>;
     verb?: string;
     memories?: Array<{
         path?: string;
@@ -211,7 +213,7 @@ export type ClaudeEvent = {
     /** Blocks for a tool result. A plain string for text the CLI wrote itself: a slash
      *  command's output (`<local-command-stdout>`), the summary that follows a compaction. */
     message?: {
-        content?: string | ClaudeContentBlock[];
+        content?: string | Array<ClaudeContentBlock>;
     };
     parent_tool_use_id?: string | null;
     /** What the CLI records beside a tool result. `handbackReport` holds a subagent's report
@@ -228,9 +230,20 @@ export type ClaudeEvent = {
     is_error?: boolean;
     stop_reason?: string;
     result?: unknown;
-    errors?: unknown[];
+    errors?: Array<unknown>;
     api_error_status?: number;
     subtype?: string;
+    /** The turn's accounting; an older CLI can leave any of these out. */
+    total_cost_usd?: number;
+    duration_ms?: number;
+    duration_api_ms?: number;
+    num_turns?: number;
+    /** The tool calls the turn's permission checks refused; a member can be null. */
+    permission_denials?: Array<{
+        tool_name?: string;
+        tool_use_id?: string;
+        tool_input?: Record<string, JsonValue>;
+    } | null>;
     usage?: {
         input_tokens?: number;
         output_tokens?: number;
@@ -270,7 +283,8 @@ export type ClaudeEvent = {
     request_id: string;
 } | {
     type: "control_response";
-    request_id: string;
+    /** The CLI nests the id in `response`; the top-level one is the older form. */
+    request_id?: string;
     response?: {
         subtype?: string;
         request_id?: string;
@@ -279,6 +293,10 @@ export type ClaudeEvent = {
     };
 } | {
     type: "timeout";
+}
+/** A heartbeat the CLI (2.1.318) can send between turns; it carries nothing to draw. */
+ | {
+    type: "keep_alive";
 }
 /** Queued by the adapter's idle watchdog shortly before it stops a silent process. */
  | {
@@ -298,12 +316,12 @@ export interface RelayResult {
     text: string;
     isError?: boolean;
     /** The images in dsh's result (read_image answers with one), as dsh stored them. */
-    refs?: ImageAttachmentRef[];
+    refs?: Array<ImageAttachmentRef>;
     /** Those images loaded for the MCP reply, which carries them as image content. */
-    images?: {
+    images?: Array<{
         mediaType: string;
         data: string;
-    }[];
+    }>;
 }
 /** A dsh tool Claude called over the bridge, as its tool_use block streamed: the name without the
  *  `mcp__dsh__` prefix and the arguments as JSON text, which stays partial until the block stops. */
@@ -328,7 +346,7 @@ export interface ClaudeAssistantMessage {
     id?: string;
     model?: string;
     role?: string;
-    content?: ClaudeContentBlock[];
+    content?: Array<ClaudeContentBlock>;
     /** "refusal" on the CLI's error frame for a reply the model refused or a classifier stopped. */
     stop_reason?: string | null;
 }
@@ -364,11 +382,24 @@ export interface ClaudeStreamPartial {
         id?: string;
         name?: string;
     };
+    /** `content_block_delta` only; `type` names the kind (`text_delta`, `thinking_delta`,
+     *  `input_json_delta`, `signature_delta`). */
     delta?: {
+        type?: string;
         text?: string;
         thinking?: string;
         partial_json?: string;
         signature?: string;
+    };
+    /** `message_delta` only: running token counts for the message so far. */
+    usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        cache_read_input_tokens?: number;
+        cache_creation_input_tokens?: number;
+        output_tokens_details?: {
+            thinking_tokens?: number;
+        };
     };
 }
 /**
@@ -376,7 +407,7 @@ export interface ClaudeStreamPartial {
  * talk to: `stdin`/`stdout`/`stderr` streams, `done` resolving with the exit code, `terminate()`.
  * `envOverride` is merged last so configured values win over the parent's environment.
  */
-export declare function nodeSpawner(command: string, args: string[], cwd: string, envOverride?: Record<string, string>): SubprocessHandle;
+export declare function nodeSpawner(command: string, args: Array<string>, cwd: string, envOverride?: Record<string, string>): SubprocessHandle;
 /**
  * dsh's subprocess seam (`ctx.subprocess`). Same shape by definition. The seam owns the whole
  * process tree, so Claude and what it started end when dsh exits. It drops credential-shaped names
@@ -429,14 +460,14 @@ export interface FarEnv {
  * CLI listens to, as it does for a local spawn (`localEnvOverride`). The box token is left out on
  * purpose: argv shows in `ps` on both ends, so it travels on stdin instead (`farTokenLine`).
  */
-export declare function farEnvPairs(far?: FarEnv): [string, string][];
+export declare function farEnvPairs(far?: FarEnv): Array<[string, string]>;
 /**
  * A stated context window as the environment pairs the CLI reads, none when no window is stated.
  * The size goes under both names the CLI listens to. A window of 200,000 or less also gets
  * CLAUDE_CODE_DISABLE_1M_CONTEXT: from 2.1.323 the CLI takes a model id it does not know for a
  * 1M model, and a 200K model behind a proxy then never compacts in time and fails its turns.
  */
-export declare function windowEnvPairs(window: number | undefined): [string, string][];
+export declare function windowEnvPairs(window: number | undefined): Array<[string, string]>;
 /** POSIX shell that takes the box token from the first stdin line. `read` on a pipe takes bytes one
  *  at a time up to the newline, so whatever follows (the stream-json wire) is left for the CLI. */
 export declare const FAR_TOKEN_READ = "IFS= read -r CLAUDE_CODE_OAUTH_TOKEN && export CLAUDE_CODE_OAUTH_TOKEN";
@@ -459,7 +490,7 @@ export declare function farTokenLine(far?: FarEnv): string;
  * With a token, a `sh -c` reads it before it execs the CLI, so the read works whatever the far
  * login shell is.
  */
-export declare function sshInvocation(host: string, command: string, args: string[], cwd: string, far?: FarEnv, base?: NodeJS.ProcessEnv): {
+export declare function sshInvocation(host: string, command: string, args: Array<string>, cwd: string, far?: FarEnv, base?: NodeJS.ProcessEnv): {
     command: string;
     args: string[];
     stdinFirst: string;
@@ -481,13 +512,21 @@ export declare function userTurnLine(content: unknown, uuid?: string, composed?:
 export declare function controlResponseLine(requestId: string, response: unknown): string;
 /** stdin line asking the CLI to stop the current turn; it answers with a result and stays alive. */
 export declare function interruptLine(requestId: string): string;
-/** A control response payload as JSON, or undefined when it is not representable. */
+/**
+ * The stdout boundary: an object with a string `type` is taken as a CLI event. Only `type` is
+ * checked here; every consumer branches on it and checks the fields it reads, with a logged
+ * fallback for a type it does not know.
+ */
+export declare const isClaudeEvent: (v: unknown) => v is ClaudeEvent;
+/** A control response payload as JSON, or undefined when it is not representable. The round trip
+ *  drops what JSON cannot hold (undefined members, functions) and applies `toJSON`; a cycle or a
+ *  bare function makes it throw, which answers undefined. */
 export declare function toJsonValue(v: unknown): JsonValue | undefined;
 /** The fields of a `rewind_files` answer this plugin reports. */
 export interface RewindResult {
     canRewind: boolean;
     error?: string;
-    filesChanged?: string[];
+    filesChanged?: Array<string>;
     insertions?: number;
     deletions?: number;
 }
@@ -533,7 +572,7 @@ export interface RunningTotals {
 export declare const costStateOf: (transcript: string) => RunningTotals | undefined;
 /** Every `cost-state` row of a transcript that parses, in file order: the totals each process
  *  that exited left behind. Empty for a transcript with none. */
-export declare const costStatesOf: (transcript: string) => RunningTotals[];
+export declare const costStatesOf: (transcript: string) => Array<RunningTotals>;
 /** What a breakdown row is. The CLI's own words for the field: "'used' content occupies the window;
  *  'free' is the remaining window; 'buffer' is the compaction reserve; 'deferred' rows are
  *  out-of-window tool schemas. Classify on this, never on the English name." Absent from a CLI
@@ -581,7 +620,7 @@ export interface WorkspaceDiff {
         hunks: Array<{
             oldStart: number;
             newStart: number;
-            lines: string[];
+            lines: Array<string>;
         }>;
     }>;
 }
@@ -624,13 +663,13 @@ export interface McpServerStatus {
     error?: string;
     /** Bare tool names this server contributes. Filled from the init frame by the adapter, not by
      *  `mcp_status`, which does not report tools; absent when no init frame has been seen. */
-    tools?: string[];
+    tools?: Array<string>;
     /** This server's tools have been pinned back to asking on the live process. The adapter's own
      *  record, not the CLI's: `mcp_status` reports connection and nothing about permissions. */
     asking?: boolean;
 }
 /** An `mcp_status` answer as one row per server, with its own error kept when it is not connected. */
-export declare function decodeMcpStatus(v: JsonValue | undefined): McpServerStatus[];
+export declare function decodeMcpStatus(v: JsonValue | undefined): Array<McpServerStatus>;
 /** The sign-in page from an `mcp_authenticate` reply: the URL, undefined when the reply carries
  *  none, or null when it carries one that is not an http(s) page. The server picks that link, so a
  *  hostile one (`javascript:`, `data:`) is refused here rather than handed to the browser. Probed
@@ -647,10 +686,10 @@ export interface CliModel {
     displayName: string;
     /** The CLI picker's one-line blurb ("Opus 5 with 1M context · Best for everyday, complex tasks"). */
     description?: string;
-    efforts: string[];
+    efforts: Array<string>;
 }
 /** A `list_models` answer: what `claude --model` accepts for this login, aliases included. */
-export declare function decodeCliModels(v: JsonValue | undefined): CliModel[];
+export declare function decodeCliModels(v: JsonValue | undefined): Array<CliModel>;
 /** The request fields of an `elicitation` control request this plugin reads. */
 export interface ElicitationRequest {
     mcp_server_name?: string;
@@ -665,13 +704,13 @@ export interface ElicitationRequest {
  * properties become choices, strings and numbers a custom answer. Undefined when the schema has
  * no usable properties, or the mode is not a form.
  */
-export declare function elicitationQuestions(request: ElicitationRequest, requestId: string): AskUserQuestionItem[] | undefined;
+export declare function elicitationQuestions(request: ElicitationRequest, requestId: string): Array<AskUserQuestionItem> | undefined;
 /** dsh's answers → the elicitation result the CLI relays: accept with content, or cancel. */
 export declare function elicitationResult(request: ElicitationRequest, response: {
     answers?: Array<{
         id: string;
         custom?: string;
-        selected?: string[];
+        selected?: Array<string>;
     }>;
 }, requestId: string): Record<string, JsonValue>;
 /** True for a `result` frame of any outcome; anything unparsable or of another type is false. */
@@ -705,7 +744,7 @@ export declare const denyResult: (toolUseId: string, message: string) => {
     decisionClassification: "user_reject";
 };
 /** Claude's AskUserQuestion input → dsh question items. Undefined when the shape is not what the tool documents. */
-export declare function parseQuestions(input: Record<string, unknown>, toolUseId: string): AskUserQuestionItem[] | undefined;
+export declare function parseQuestions(input: Record<string, unknown>, toolUseId: string): Array<AskUserQuestionItem> | undefined;
 /** dsh answers → the `answers` map Claude expects back in updatedInput, keyed by question text. */
 export declare function answersFor(questions: Array<{
     id: string;
@@ -715,35 +754,38 @@ export declare function answersFor(questions: Array<{
     answers?: Array<{
         id: string;
         custom?: string;
-        selected?: string[];
+        selected?: Array<string>;
     }>;
 }): Record<string, string>;
 /** One-line human reason for the approval dialog. */
 export declare function permissionReason(toolName: string, input: Record<string, unknown>, request: Record<string, unknown>): string;
 /** Returned by `next(timeoutMs)` when nothing arrived in time; the waiter is withdrawn, no line is lost. */
 export declare const TIMEOUT: unique symbol;
+/** What the line queue holds: a raw stdout line, or an event put there already parsed (the MCP
+ *  bridge's relays, and the partial frames tests inject). */
+type QueuedLine = string | ClaudeEvent | Record<string, unknown>;
 /** Async line queue over a child's stdout: `next()` resolves with the next line, or null once the child is gone. */
 export declare class LineQueue {
-    lines: (string | ClaudeEvent | Record<string, unknown>)[];
-    waiters: Array<(line: string | typeof TIMEOUT | null) => void>;
+    lines: Array<QueuedLine>;
+    waiters: Array<(line: QueuedLine | typeof TIMEOUT | null) => void>;
     closed: boolean;
     /** Start with no queued lines, no waiters and no close flag; every field stays empty until the
      *  first push. */
     constructor();
     /** Hand a line to the earliest waiter if one is waiting, else buffer it, so a line never arrives
      *  before its reader. */
-    push(line: string | ClaudeEvent | Record<string, unknown>): void;
+    push(line: QueuedLine): void;
     /** Mark the queue closed and resolve every pending waiter with null, so a stopped child's
      *  readers see the end. */
     close(): void;
     /** Resolve with the next queued line, a timeout after `timeoutMs` with nothing, or null once the
      *  queue is closed. */
-    next(timeoutMs?: number): Promise<string | typeof TIMEOUT | null>;
+    next(timeoutMs?: number): Promise<QueuedLine | typeof TIMEOUT | null>;
 }
 /** Everything one turn needs, as `prepare()` returns it; the process keeps the last one. */
 export interface TurnPrep {
     cwd: string;
-    args: string[];
+    args: Array<string>;
     session?: {
         id: string;
         resuming: boolean;
@@ -830,6 +872,13 @@ export interface ClaudeProcessSpec {
      *  preset): the spawner hands it isolate's environment, which is fixed at spawn like the rest. */
     isolate?: true;
 }
+/**
+ * A process spec read back from one of the plugin's own files (holds.json), where it was written
+ * from a ClaudeProcessSpec. Any object is taken as one, on purpose: a file an older plugin wrote
+ * may lack a field added since, and refusing it would drop a live hold on upgrade, while a stale
+ * shape only mis-keys a respawn (`specKey` compares the spec whole, so it is kept as written).
+ */
+export declare const isStoredProcessSpec: (v: unknown) => v is ClaudeProcessSpec;
 /** What the caller wants to know when a Claude process ends, live or after a restart. */
 export interface ClaudeProcessOnExit {
     (proc: ClaudeProcess): void;
@@ -888,7 +937,7 @@ export declare function lazyHandle(pending: Promise<SubprocessHandle>): Subproce
 /** The keeper's record of the process it babysits, written at spawn and read after a restart. */
 export interface KeeperSpec {
     command: string;
-    args: string[];
+    args: Array<string>;
     cwd: string;
     env: Record<string, string>;
     sessionId: string;
@@ -906,7 +955,7 @@ export interface KeeperSpec {
 export declare function readKeeperSpec(dir: string): KeeperSpec | undefined;
 /** Launch the keeper in its own systemd user scope when possible (a service restart's cgroup kill
  *  then misses it), else as a detached process with its own group. */
-export declare function launchKeeper(argv: string[], unit: string): void;
+export declare function launchKeeper(argv: Array<string>, unit: string): void;
 /** Whether a `systemd-run --scope` that exited with `code` after `elapsedMs` failed to start the
  *  keeper rather than outliving it. A keeper stays up at least three seconds after its Claude dies,
  *  so a non-zero exit inside two seconds is systemd-run refusing, not the keeper ending. */
@@ -915,9 +964,9 @@ export declare function scopeFailed(code: number | null, elapsedMs: number): boo
  * Start a keeper for one Claude process and attach to it. `launch` runs the keeper command line
  * (plain detached spawn, or a systemd user scope so a service restart's cgroup kill misses it).
  */
-export declare function spawnKeeper(dir: string, spec: KeeperSpec, launch: (argv: string[]) => void): Promise<SubprocessHandle>;
+export declare function spawnKeeper(dir: string, spec: KeeperSpec, launch: (argv: Array<string>) => void): Promise<SubprocessHandle>;
 /** How a child is started: locally, or on a box over ssh. The adapter holds one per provider. */
-export type Spawner = (command: string, args: string[], cwd: string, envOverride?: Record<string, string>) => SubprocessHandle;
+export type Spawner = (command: string, args: Array<string>, cwd: string, envOverride?: Record<string, string>) => SubprocessHandle;
 /** What the steer card shows of a message's file or image: enough to name it, never its bytes. */
 export type SteerAttachment = {
     kind: "file" | "image";
@@ -939,7 +988,7 @@ export type WaitingSteer = {
     /** Epoch ms of the first record, for ordering. */
     at: number;
     /** Present only when the message carries a file or image. */
-    attachments?: SteerAttachment[];
+    attachments?: Array<SteerAttachment>;
 } & ({
     /** The stdin line's uuid, which `cancel_async_message` names. */
     uuid: string;
@@ -978,7 +1027,7 @@ export declare class ClaudeProcess {
      *  last accepted `set_permission_mode` or the CLI's own status frame set. `spec.mode` stays the launch mode on purpose, since
      *  the CLI takes a live switch to bypassPermissions only from a process launched in it. */
     liveMode: string;
-    args: string[];
+    args: Array<string>;
     cwd: string;
     busy: boolean;
     /** A turn has taken this process and has not marked it `busy` yet: the spawn's own waits (the
@@ -995,11 +1044,13 @@ export declare class ClaudeProcess {
     exitCode: number | undefined;
     queue: LineQueue;
     /** The stdout index of each line in `queue`, in order, for `used` once nextEvent takes it. */
-    queuedIndexes: number[];
+    queuedIndexes: Array<number>;
     child: SubprocessHandle;
     key?: string;
     resuming?: boolean;
-    onIdleResult?(): void;
+    /** The adapter's wake for a reply that arrived with no turn reading; its answer (whether a turn
+     *  opened) is not read here. */
+    onIdleResult?(): Promise<boolean> | void;
     /** An interrupt was written and the CLI has not answered it yet. dsh ends the turn's generator
      *  on a user Stop before that answer lands, so the answer reaches an idle process; a stopped
      *  turn answers with an error, which the wake filter drops, but a stopped `/compact` answers
@@ -1098,7 +1149,7 @@ export declare class ClaudeProcess {
     /** Spawn the child Claude and feed its stdout into the line queue, noting idle completion replies
      *  so the adapter can open a dsh turn. */
     constructor({ args, cwd, spec, onExit, command, spawner, }: {
-        args: string[];
+        args: Array<string>;
         cwd: string;
         spec: ClaudeProcessSpec;
         onExit?: ClaudeProcessOnExit;
@@ -1151,7 +1202,7 @@ export declare class ClaudeProcess {
     /** The background tasks whose `task_notification` waits in the queue, oldest first: what Claude
      *  is answering when it replies with no turn reading. Empty when it replied for another reason
      *  (a scheduled wakeup), or when a turn already read the frames. */
-    finishedTasks(): FinishedTask[];
+    finishedTasks(): Array<FinishedTask>;
     /** Tell the child a stdout line was used: a keeper keeps a line until then, so a line a dsh
      *  read but never used (its turn ended as it shut down) reaches the next dsh (automagik#62). */
     used(index: number): void;

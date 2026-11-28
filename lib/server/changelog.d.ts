@@ -6,11 +6,11 @@ export interface ChangelogRelease {
     date: string | null;
     /** The paragraph between the heading and the first `###`, when the release has one. */
     intro: string | null;
-    sections: {
+    sections: Array<{
         kind: string;
-        items: string[];
-    }[];
+        items: Array<string>;
+    }>;
 }
 /** Releases with something to say, newest first as the file lists them. A `## [Unreleased]` with
  *  no items and no paragraph, which is what cutting a release leaves at the top, is dropped. */
-export declare function parseChangelog(text: string): ChangelogRelease[];
+export declare function parseChangelog(text: string): Array<ChangelogRelease>;

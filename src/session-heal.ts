@@ -1,6 +1,7 @@
 // The plugin heals a session log dsh refuses, on its own: the repair core in session-repair.ts
 // run from three places (the sweep at start, the open route, a wake that finds the session
 // refused), each proving the result through dsh's own load before and after it writes.
+import { setImmediate as yieldNow } from "node:timers/promises";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { errorText } from "./process.js";
@@ -209,7 +210,7 @@ export async function sweepRefusedLogs(
     return zeros;
   }
 
-  const locate = host.persistence.locate;
+  const locate = host.persistence.locate?.bind(host.persistence);
 
   if (locate === undefined) {
     host.log("info", "sweep skipped: this dsh does not locate a session's log");
@@ -229,7 +230,7 @@ export async function sweepRefusedLogs(
 
   for (const item of await host.persistence.list()) {
     const header = headerOf(item);
-    const path = locate.call(host.persistence, { id: header.id, cwd: header.cwd }).path;
+    const path = locate({ id: header.id, cwd: header.cwd }).path;
     const pair = await statPair(path);
 
     if (pair.size === 0 && pair.mtimeMs === 0) {
@@ -292,7 +293,8 @@ export async function sweepRefusedLogs(
       });
     }
 
-    await new Promise((r) => setImmediate(r));
+    // Yield to the event loop between logs so a long sweep never starves the server.
+    await yieldNow();
   }
 
   const next = await loadSessionRepairs(host.stateDir);

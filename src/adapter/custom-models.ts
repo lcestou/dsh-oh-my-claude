@@ -3,12 +3,13 @@
 // file under the plugin's state, so every browser and every profile sees the same list. The plugin
 // config's `customModels` is the other source of such rows; `withCustomModels` in catalog.ts turns
 // both into picker rows.
+import { fits } from "../schema-fits.js";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import z from "@deepseek-ai/schemastery";
 import type { JsonValue } from "../dsh.js";
 import { serverText } from "../locale.js";
-import { writeJson } from "../state.js";
+import { serialQueue, writeJson } from "../state.js";
 import { EFFORTS_ALL } from "./catalog.js";
 import type { CustomModel } from "./config.js";
 
@@ -39,12 +40,15 @@ export function parseCustomModels(value: JsonValue | undefined): Array<CustomMod
     throw new TypeError("models is not a list");
   }
 
-  // SAFETY: the schema checks every field at run time; its parameter type describes valid input,
-  // which is exactly what is not known yet about a request body.
-  return CustomModelList(value as Parameters<typeof CustomModelList>[0]);
+  if (!fits(CustomModelList, value)) {
+    throw new TypeError("models has an entry of the wrong shape");
+  }
+
+  return CustomModelList(value);
 }
 
-let chain = Promise.resolve();
+/** The file's writes, one at a time. */
+const saves = serialQueue();
 
 /** An id `claude --model` can take as one argument: no whitespace, no leading dash (the CLI would
  *  read it as a flag), and not `default`, which is the picker's own row. */
@@ -115,7 +119,13 @@ export async function loadCustomModels(dir: string): Promise<Record<string, Arra
   let stored: Record<string, Array<CustomModel>>;
 
   try {
-    stored = StoredLists(JSON.parse(await readFile(CUSTOM_MODELS_FILE(dir), "utf8")));
+    const raw: unknown = JSON.parse(await readFile(CUSTOM_MODELS_FILE(dir), "utf8"));
+
+    if (!fits(StoredLists, raw)) {
+      return {};
+    }
+
+    stored = StoredLists(raw);
   } catch {
     return {};
   }
@@ -141,7 +151,7 @@ export function saveCustomModels(
   provider: string,
   models: Array<CustomModel>,
 ): Promise<void> {
-  const run = chain.then(async () => {
+  return saves(async () => {
     const all = await loadCustomModels(dir);
 
     if (models.length > 0) {
@@ -152,8 +162,4 @@ export function saveCustomModels(
 
     await writeJson(CUSTOM_MODELS_FILE(dir), all, { pretty: true });
   });
-
-  chain = run.catch(() => {});
-
-  return run;
 }

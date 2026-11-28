@@ -1,3 +1,4 @@
+import { isRec, stringOf } from "./decode.js";
 // The few strings the server writes that a person reads: the plan review dialog, the "not logged
 // in" tag on the provider name, the login failure shown in the chat, and the descriptions of the
 // plugin's own slash commands. Everything else the server writes is read by Claude (prompts,
@@ -27,12 +28,12 @@ const preferenceOf = (read: LocaleSettingsReader): string | undefined => {
       continue;
     }
 
-    // SAFETY: the descriptor's value is the entry's live config, which for dsh-client-locale is
-    // `{ preference }`; anything else reads as no preference through the optional chain below.
-    const value = entry.value as { preference?: string } | undefined;
+    // The descriptor's value is the entry's live config, which for dsh-client-locale is
+    // `{ preference }`; anything else reads as no preference.
+    const preference = isRec(entry.value) ? stringOf(entry.value.preference) : undefined;
 
-    if (value?.preference !== undefined) {
-      return value.preference;
+    if (preference !== undefined) {
+      return preference;
     }
   }
 

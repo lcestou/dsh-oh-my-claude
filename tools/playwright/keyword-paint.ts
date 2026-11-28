@@ -61,7 +61,11 @@ const painted = await p.evaluate(() => {
 
         for (const range of hl) {
           if (host.contains(range.startContainer)) {
-            chars.push(`${range}`);
+            // A highlight holds abstract ranges; a live copy of one reads out its text.
+            const live = document.createRange();
+            live.setStart(range.startContainer, range.startOffset);
+            live.setEnd(range.endContainer, range.endOffset);
+            chars.push(live.toString());
           }
         }
 

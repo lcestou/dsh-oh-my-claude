@@ -1,5 +1,5 @@
 import type { LlmModelInfo, LlmResolvedModelInfo } from "@deepseek-ai/dsh-llm";
-import { type FirstPartyProbe } from "../first-party.js";
+import type { FirstPartyProbe } from "../first-party.js";
 import type { RouteFilter } from "./routing.js";
 import type { CliModel } from "../process.js";
 import type { PickerSettings } from "../sessions.js";
@@ -20,7 +20,7 @@ type EffortCaps = {
 /** Levels the Models API marks supported that are not in `EFFORTS_ALL`. They are kept out of the
  *  picker on purpose (a new level is offered only after it has been looked at), and this is how
  *  one gets noticed: the names land on the row and Diagnostics lists them. */
-export declare function unknownEffortsOf(eff: EffortCaps | undefined): string[];
+export declare function unknownEffortsOf(eff: EffortCaps | undefined): Array<string>;
 /** One picker row. `description` is dsh's own optional field, drawn under the name; only the CLI's
  *  rows carry one, and a row without one has no key, since dsh validates the shape it is given. */
 interface CatalogModel {
@@ -28,13 +28,13 @@ interface CatalogModel {
     id: string;
     name: string;
     contextWindow: number;
-    efforts: readonly string[];
+    efforts: ReadonlyArray<string>;
     description?: string;
     /** The Models API's `created_at`, as epoch ms; absent on a known or CLI row. Read by
      *  `mergeCatalog` to tell a model newer than the installed CLI from an old id it dropped. */
     createdAt?: number;
     /** Effort levels the Models API reports for this model that the plugin does not know yet. */
-    unknownEfforts?: string[];
+    unknownEfforts?: Array<string>;
     /** Set on one of the CLI's aliases that a router took over (`mergeCatalog`), to the alias
      *  (`sonnet`, `opus`, `haiku`): the model behind it is the router's, so its window is not
      *  Claude's and can be set in Settings, where the alias is the key it is kept under. */
@@ -45,7 +45,7 @@ interface CatalogModel {
     sized?: true;
 }
 /** Build one KNOWN_MODELS row: the provider is always claude-code, so callers pass only the id, label, context window and efforts, filling description when given. */
-declare const M: (id: string, label: string, contextWindow: number, efforts: readonly string[], description?: string) => CatalogModel;
+declare const M: (id: string, label: string, contextWindow: number, efforts: ReadonlyArray<string>, description?: string) => CatalogModel;
 export declare const KNOWN_MODELS: CatalogModel[];
 /**
  * The Models API dates some ids (`claude-haiku-4-5-20251001`) and leaves others alone
@@ -65,7 +65,7 @@ export declare const LINEUP_PROBE_WAIT_MS = 5000;
  *  its answer read, and no transcript, since no prompt is ever sent to it. */
 export declare const LINEUP_PROBE_ARGS: string[];
 /** Parse a persisted catalog file. Anything malformed reads as empty, so the caller falls back. */
-export declare function parseCatalogCache(text: string): ReturnType<typeof M>[];
+export declare function parseCatalogCache(text: string): Array<ReturnType<typeof M>>;
 /** One entry of the Anthropic Models API list, in the shape the picker uses. */
 export declare function modelFromApi(m: {
     id?: string;
@@ -124,7 +124,7 @@ export declare const nameFromId: (id: string) => string | undefined;
  */
 export declare const withoutHiddenModels: <T extends {
     id: string;
-}>(rows: readonly T[], hidden: readonly string[]) => T[];
+}>(rows: ReadonlyArray<T>, hidden: ReadonlyArray<string>) => Array<T>;
 /** The hints-store key that hides one model from one box's picker: `hideModel:<provider>:<id>`
  *  set to true, the provider being the mount's id (`claude-code`, `claude-code-<box>`). */
 export declare const hideModelHint: (provider: string, id: string) => string;
@@ -135,7 +135,7 @@ export declare const hideModelHint: (provider: string, id: string) => string;
  * matched by `withoutHiddenModels`, so an id the lineup has since renamed hides nothing and harms
  * nothing.
  */
-export declare const hintHiddenModels: (hints: Record<string, boolean | number>, provider: string) => string[];
+export declare const hintHiddenModels: (hints: Record<string, boolean | number>, provider: string) => Array<string>;
 /**
  * The patch that carries hides written before the key named a box (`hideModel:<id>`, until
  * 2026-10-28) over to the default mount's key, and removes the old ones. Nothing reads the bare
@@ -158,7 +158,7 @@ export declare const hintRouterWindows: (hints: Record<string, boolean | number>
  * undefined included, so a box with none configured lists exactly what it listed before.
  * `availableModels` in settings.json still applies to these rows, as it does to the file's own.
  */
-export declare function withCustomModels(picker: PickerSettings | undefined, custom: readonly CustomModel[]): PickerSettings | undefined;
+export declare function withCustomModels(picker: PickerSettings | undefined, custom: ReadonlyArray<CustomModel>): PickerSettings | undefined;
 /** The window a router's alias row gets until someone states the real one: what the CLI assumes
  *  for a model it has never heard of, since the model behind the alias is not one this catalog
  *  can look up. */
@@ -166,13 +166,13 @@ export declare const ROUTED_WINDOW = 200000;
 /** Merges the CLI's model rows into the catalog, giving each known model a single stable id and
  *  name so the picker offers the same lineup whether or not the CLI has yet learned the model's
  *  short spelling. */
-export declare function mergeCatalog(cli: CliModel[], base: ReturnType<typeof M>[], picker?: PickerSettings, route?: RouteFilter): CatalogModel[];
+export declare function mergeCatalog(cli: Array<CliModel>, base: Array<ReturnType<typeof M>>, picker?: PickerSettings, route?: RouteFilter): CatalogModel[];
 /** Each effort level the last Models API read reported that the plugin does not know, with the
  *  models that carry it, for Diagnostics. Empty until a read has happened, and after a read that
  *  found none. */
 export declare function unknownEffortLevels(): Array<{
     level: string;
-    models: string[];
+    models: Array<string>;
 }>;
 /**
  * The catalog as it stands, with no read of the Models API: what a turn about to start uses to
@@ -180,10 +180,10 @@ export declare function unknownEffortLevels(): Array<{
  * API cannot be reached the cache stays stale, so each call there costs the request's timeout.
  * A listing can afford that once; a turn that asked several times before it spawned could not.
  */
-export declare function catalogNow(cli?: CliModel[], picker?: PickerSettings, route?: RouteFilter): Promise<CatalogModel[]>;
+export declare function catalogNow(cli?: Array<CliModel>, picker?: PickerSettings, route?: RouteFilter): Promise<CatalogModel[]>;
 /** Serves the model catalog from cache, fetching Anthropic's API when the cache is stale, and
  *  keeps the last good catalog on any failure so the picker never goes empty. */
-export declare function getCatalog(fetchImpl?: typeof fetch, cli?: CliModel[], picker?: PickerSettings, route?: RouteFilter): Promise<CatalogModel[]>;
+export declare function getCatalog(fetchImpl?: typeof fetch, cli?: Array<CliModel>, picker?: PickerSettings, route?: RouteFilter): Promise<CatalogModel[]>;
 /** The provider-scoped half of a model entry; every Claude model takes text and images. */
 export declare function modelInfo(provider: string, model: {
     id?: string;
@@ -191,5 +191,5 @@ export declare function modelInfo(provider: string, model: {
     description?: string;
 }): LlmModelInfo;
 /** Exact model metadata. `id` must echo the requested id: dsh-llm normalizeModelInfo rejects mismatches. */
-export declare function resolveModelInfo(provider: string, modelId: string, models?: ReturnType<typeof M>[], cap?: (typeof EFFORTS_ALL)[number]): LlmResolvedModelInfo;
+export declare function resolveModelInfo(provider: string, modelId: string, models?: Array<ReturnType<typeof M>>, cap?: (typeof EFFORTS_ALL)[number]): LlmResolvedModelInfo;
 export {};

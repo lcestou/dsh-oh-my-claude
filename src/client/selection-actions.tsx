@@ -7,6 +7,8 @@ import { ROUTE, T, DOCK_ATTR, inputStyle, panelSurface, useActiveClaude } from "
 import type { ClientCtx } from "./shared.js";
 import { askBody, chatSelection, QUOTE_MAX } from "./selection.js";
 import { useHintFlag } from "./hints.js";
+import { isElement, isNode } from "./dom-guards.js";
+import { reportWarning } from "./console-report.js";
 
 /** A phone or tablet: the main pointer is a finger. There the OS draws its own copy and paste
  *  toolbar and drag handles at the selection, over dsh's popover, so the actions dock above the
@@ -66,7 +68,7 @@ const placementArea = (range: Range, surface: Element) => {
 
   const start = range.commonAncestorContainer;
 
-  for (let el = start instanceof Element ? start : start.parentElement; el; el = el.parentElement) {
+  for (let el = isElement(start) ? start : start.parentElement; el; el = el.parentElement) {
     const style = getComputedStyle(el);
     const box = el.getBoundingClientRect();
 
@@ -137,40 +139,42 @@ function usePinnedPanel(
     const surface = panel?.closest<HTMLElement>(SURFACE);
     const passage = anchor.current;
 
-    if (!open || !panel || !surface || !passage) {
+    return open && panel && surface && passage ? pinPanel(panel, surface, passage) : undefined;
+  }, [panelRef, open, anchor]);
+}
+
+/** usePinnedPanel's work on one open panel: follows dsh's re-placing of the surface and returns
+ *  the cleanup that stops following and gives the surface its clicks back. */
+function pinPanel(panel: HTMLDivElement, surface: HTMLElement, passage: PassageAnchor): () => void {
+  let dy = 0;
+
+  const align = () => {
+    const lines = passage.range.getClientRects();
+    const at = lines.item(Math.min(passage.line, lines.length - 1));
+
+    if (at === null || at.height === 0) {
       return;
     }
 
-    let dy = 0;
+    const box = panel.getBoundingClientRect();
+    const target = passage.above ? at.top - PASSAGE_GAP - box.height : at.bottom + PASSAGE_GAP;
+    dy += target - box.top;
+    panel.style.transform = `translate(0px, ${dy}px)`;
+  };
 
-    const align = () => {
-      const lines = passage.range.getClientRects();
-      const at = lines.item(Math.min(passage.line, lines.length - 1));
+  // The surface's own box stays where dsh puts it; it must not catch clicks meant for the chat.
+  surface.style.pointerEvents = "none";
+  const moved = new MutationObserver(align);
+  moved.observe(surface, { attributes: true, attributeFilter: ["style"] });
+  const resized = new ResizeObserver(align);
+  resized.observe(panel);
 
-      if (at === null || at.height === 0) {
-        return;
-      }
-
-      const box = panel.getBoundingClientRect();
-      const target = passage.above ? at.top - PASSAGE_GAP - box.height : at.bottom + PASSAGE_GAP;
-      dy += target - box.top;
-      panel.style.transform = `translate(0px, ${dy}px)`;
-    };
-
-    // The surface's own box stays where dsh puts it; it must not catch clicks meant for the chat.
-    surface.style.pointerEvents = "none";
-    const moved = new MutationObserver(align);
-    moved.observe(surface, { attributes: true, attributeFilter: ["style"] });
-    const resized = new ResizeObserver(align);
-    resized.observe(panel);
-
-    return () => {
-      moved.disconnect();
-      resized.disconnect();
-      panel.style.transform = "";
-      surface.style.pointerEvents = "";
-    };
-  }, [panelRef, open, anchor]);
+  return () => {
+    moved.disconnect();
+    resized.disconnect();
+    panel.style.transform = "";
+    surface.style.pointerEvents = "";
+  };
 }
 
 /**
@@ -184,6 +188,7 @@ export function SelectionActions(props: SelectionActionsProps) {
 
   // dsh's own Quote's condition (message-quotes' QuoteSelectionAction).
   const enabled =
+    // oxlint-disable-next-line react/hooks -- dsh hands its selector hooks in as slot props (SessionStandardProps), and one slot mount always gets the same hook.
     props.useSession?.(
       (s) =>
         !s.removed &&
@@ -445,13 +450,8 @@ export function TouchSelectionDock({
   const dockRef = useRef<HTMLDivElement>(null);
   const pressedInside = useRef(false);
   useEffect(() => {
-    if (!touch) {
-      return;
-    }
-
     const onDown = (e: PointerEvent) => {
-      pressedInside.current =
-        e.target instanceof Node && dockRef.current?.contains(e.target) === true;
+      pressedInside.current = isNode(e.target) && dockRef.current?.contains(e.target) === true;
     };
 
     // Read once the selection holds still for a moment: a phone extends a selection word by word
@@ -484,8 +484,11 @@ export function TouchSelectionDock({
       settle = setTimeout(read, 250);
     };
 
-    window.addEventListener("pointerdown", onDown, true);
-    document.addEventListener("selectionchange", onChange);
+    // Only on a touch screen; removing what was never added is a no-op.
+    if (touch) {
+      window.addEventListener("pointerdown", onDown, true);
+      document.addEventListener("selectionchange", onChange);
+    }
 
     return () => {
       clearTimeout(settle);
@@ -539,7 +542,7 @@ export function mountSelectionActions(ctx: ClientCtx): void {
       );
     } catch (error) {
       // A dsh that refuses the shadow keeps its own Quote; Ask is simply absent.
-      console.warn("[oh-my-claude] selection actions not registered:", error);
+      reportWarning("[oh-my-claude] selection actions not registered:", error);
 
       return () => {};
     }

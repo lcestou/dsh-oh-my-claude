@@ -62,7 +62,9 @@ export async function servePushSw(_req: IncomingMessage, res: ServerResponse): P
 }
 
 /** The `/notify` blocks; state lives under STATE_DIR, the box's, whichever mount answers. */
-export function notifyRoutes(c: RouteCtx): RouteHandler {
+export function notifyRoutes(
+  c: Pick<RouteCtx, "ROUTE_PREFIX" | "json" | "readBody" | "log">,
+): RouteHandler {
   return async (req: IncomingMessage, res: ServerResponse, url: URL) => {
     const { ROUTE_PREFIX, json, readBody, log } = c;
     const base = `${ROUTE_PREFIX}/notify`;

@@ -14,8 +14,10 @@ import {
 import { gateEntryOf, testScriptIn } from "./test-gate-files.js";
 import { buildArgs } from "./adapter/cli.js";
 import { Config } from "./adapter/config.js";
+import type { ClaudeEvent } from "./process.js";
 import { Translator } from "./translator.js";
 import { specKey } from "./adapter/turn.js";
+import { objectOf, parseJson } from "./test-context.js";
 
 const fail = { code: 1, timedOut: false, stopped: false };
 const pass = { code: 0, timedOut: false, stopped: false };
@@ -126,7 +128,7 @@ assert.deepEqual(
 const settingsOf = (args: Array<string>) => {
   const i = args.indexOf("--settings");
 
-  return i === -1 ? undefined : (JSON.parse(args[i + 1] ?? "{}") as Record<string, unknown>);
+  return i === -1 ? undefined : objectOf(parseJson(args[i + 1] ?? "{}"));
 };
 
 const gated = buildArgs({ model: "m", config: new Config({ isolate: true }), testGate: block });
@@ -146,13 +148,13 @@ assert.equal(settingsOf(side), undefined, "a title call runs no gate");
 
 // The CLI's synthetic feedback frame draws one line for this gate's reason, none for another hook's.
 {
-  // SAFETY: the strict event union is bypassed the way translator.test.ts feeds hook frames
-  const t = new Translator({}) as any;
+  const t = new Translator({});
 
-  const frame = (text: string) => ({
+  /** The CLI's synthetic user frame carrying hook feedback `text`. */
+  const frame = (text: string): ClaudeEvent => ({
     type: "user",
     isSynthetic: true,
-    message: { role: "user", content: [{ type: "text", text }] },
+    message: { content: [{ type: "text", text }] },
   });
 
   const ours = JSON.stringify(t.translate(frame(`Stop hook feedback:\n${reason}`)));

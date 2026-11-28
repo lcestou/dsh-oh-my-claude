@@ -1,7 +1,18 @@
 // `builtinTools`: the `--tools` list the CLI starts with, the dsh file tools the bridge offers in
 // place of the Claude Code ones left out, and the guidance that names them.
 import { strict as assert } from "node:assert";
+import type { DshToolsRegistry } from "../dsh.js";
 import { handleRpc, HIDDEN, hiddenFor } from "../mcp.js";
+import type { RpcEnv } from "../mcp.js";
+import {
+  fakeAgent,
+  fieldsOf,
+  rpcFirstText,
+  rpcReadOnly,
+  rpcResult,
+  rpcToolNames,
+  rpcTools,
+} from "../test-context.js";
 import { buildArgs, dshToolsGuidance } from "./cli.js";
 import { Config } from "./config.js";
 
@@ -44,65 +55,55 @@ const schema = (name: string, ...params: Array<string>) => ({
   parameters: { type: "object", properties: Object.fromEntries(params.map((p) => [p, {}])) },
 });
 
-// SAFETY: partial fake registry for tests
-const tools = {
+const tools: DshToolsRegistry = {
   schemas: () => [schema("read"), schema("bash", "run_in_background"), schema("run_code")],
-  get: (name: string) => ({
+  get: (name) => ({
     ...schema(name),
-    execute: () => [{ type: "text", text: `ran ${name}` }],
+    execute: async () => [{ type: "text", text: `ran ${name}` }],
   }),
 };
 
-// SAFETY: test double carries only what handleRpc reads
-const env = (hidden?: ReadonlySet<string>) =>
-  ({
-    tools,
-    agent: {},
-    signal: new AbortController().signal,
-    version: "t",
-    hidden,
-  }) as unknown as Parameters<typeof handleRpc>[1];
+/** The env handleRpc runs under, with `hidden` as the session's hidden tools. */
+const env = (hidden?: ReadonlySet<string>): RpcEnv => ({
+  tools,
+  agent: fakeAgent(),
+  signal: new AbortController().signal,
+  version: "t",
+  hidden,
+});
 
 /** The tool names tools/list answers with under `hidden`. */
 const listed = async (hidden?: ReadonlySet<string>) => {
-  // SAFETY: tools/list always answers a result with tools
-  const reply = (await handleRpc({ jsonrpc: "2.0", id: 1, method: "tools/list" }, env(hidden))) as {
-    result: { tools: Array<{ name: string }> };
-  };
-
-  return reply.result.tools.map((t) => t.name);
+  return rpcToolNames(
+    await handleRpc({ jsonrpc: "2.0", id: 1, method: "tools/list" }, env(hidden)),
+  );
 };
 
 assert.deepEqual(await listed(), ["bash"], "default: read stays Claude Code's");
 
 assert.deepEqual(await listed(hiddenFor(["ToolSearch"])), ["read", "bash"]);
 
-// SAFETY: tools/call always answers a result
-const called = (await handleRpc(
+const called = await handleRpc(
   { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "read", arguments: {} } },
   env(hiddenFor(["ToolSearch"])),
-)) as { result: { content: Array<{ text: string }>; isError?: boolean } };
+);
 
-assert.equal(called.result.isError, undefined);
+assert.equal(rpcResult(called).isError, undefined);
 
-assert.equal(called.result.content[0]?.text, "ran read");
+assert.equal(rpcFirstText(called), "ran read");
 
 // A served dsh writer changes files, so it is listed without the read-only hint and Claude Code
 // runs it one call at a time; a reader keeps the hint and runs in parallel.
 {
-  // SAFETY: test double carries only what handleRpc reads
-  const withWrite = {
+  const withWrite: RpcEnv = {
     ...env(hiddenFor(["ToolSearch"])),
     tools: { ...tools, schemas: () => [schema("read"), schema("write")] },
-  } as unknown as Parameters<typeof handleRpc>[1];
-
-  // SAFETY: tools/list always answers a result with tools
-  const reply = (await handleRpc({ jsonrpc: "2.0", id: 3, method: "tools/list" }, withWrite)) as {
-    result: { tools: Array<{ name: string; annotations: { readOnlyHint: boolean } }> };
   };
 
+  const reply = await handleRpc({ jsonrpc: "2.0", id: 3, method: "tools/list" }, withWrite);
+
   const hint = Object.fromEntries(
-    reply.result.tools.map((t) => [t.name, t.annotations.readOnlyHint]),
+    rpcTools(reply).map((t) => [fieldsOf(t, { name: "string" }).name, rpcReadOnly(t)]),
   );
 
   assert.deepEqual(hint, { read: true, write: false });

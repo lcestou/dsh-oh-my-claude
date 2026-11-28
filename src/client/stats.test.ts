@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { costDetails, isStatsRow } from "./index.js";
 import { priced } from "./cost.js";
+import type { StatsRowCandidate } from "./cost.js";
 
 /** The smallest node the predicate reads: dsh's row, its children and its class. */
 function el(
@@ -14,8 +15,9 @@ function el(
     stat?: boolean;
   }>,
   text = "",
-): HTMLElement {
-  const node = {
+): StatsRowCandidate {
+  // The predicate reads only these five members; a real DOM is not available under bun.
+  return {
     isConnected: true,
     className,
     textContent: text || children.map((c) => c.text ?? "").join(" "),
@@ -48,9 +50,6 @@ function el(
       return match ? { textContent: match.text ?? "" } : null;
     },
   };
-
-  // SAFETY: the predicate reads only these five members; a real DOM is not available under bun
-  return node as unknown as HTMLElement;
 }
 
 const groups = (sepClass: string, sepText: string, text = "") =>
@@ -99,10 +98,8 @@ assert.equal(isStatsRow(el("uV2eYG_dock", [{ text: "" }])), false);
 // dsh 0.2.1 in Compact: no row element and no button, only marked anchors in the dock's slot.
 assert.equal(isStatsRow(el("", [{ text: "109 tok/s", stat: true }])), true);
 
-const detached = groups("-NDN2W_sep", "|");
-
-// SAFETY: same fake node as above; the predicate refuses a row React has already dropped
-(detached as unknown as { isConnected: boolean }).isConnected = false;
+// The same fake node, dropped by React: the predicate refuses it.
+const detached = { ...groups("-NDN2W_sep", "|"), isConnected: false };
 
 assert.equal(isStatsRow(detached), false);
 

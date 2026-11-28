@@ -9,6 +9,12 @@ export declare function resolveClaudeHome(dir: string): string;
 export declare const STATE_DIR: string;
 /** Derive per-instance state dir from a provider id; default id uses the shared top-level path. */
 export declare function stateDir(providerId: string): string;
+/**
+ * A one-at-a-time queue for one file's read-modify-write: each task starts once every earlier one
+ * has settled and answers with its own outcome. The queue itself never stays rejected: a write
+ * that failed would otherwise hold up, or silently drop, the task queued after it.
+ */
+export declare function serialQueue(): <T>(work: () => Promise<T>) => Promise<T>;
 /** Append one line to the resume trace; best effort, never throws. */
 export declare function trace(fileOrLine: string, maybeLine?: string): Promise<void>;
 /**
@@ -30,26 +36,26 @@ export declare function markBusy(id: string, on: boolean, path?: string): Promis
 /** Sessions whose turn the previous dsh process left unfinished; cleared on read. Queued behind
  *  `markBusy`'s writes: read and cleared on its own, it could empty the file between a mark's read
  *  and its write, or wipe a mark a turn had just made. */
-export declare function takeInterrupted(path?: string): Promise<string[]>;
+export declare function takeInterrupted(path?: string): Promise<Array<string>>;
 /** The sessions the busy file lists now, left in place for the boot resume to take. Queued behind
  *  `markBusy` like `takeInterrupted`, so it never reads between a mark's read and write. */
-export declare function peekInterrupted(path?: string): Promise<string[]>;
+export declare function peekInterrupted(path?: string): Promise<Array<string>>;
 /** A `model/selection` no request has run on yet: the newest selection after the last
  *  `request/header`, if any. dsh treats a pick as spent once a request runs (its
  *  modelSelection projection), and a fork child carries its parent's spent picks, so a selection
  *  before the last header says nothing about what the session runs on. Read from the tail. */
-export declare function pendingSelection(events: readonly {
+export declare function pendingSelection(events: ReadonlyArray<{
     type: string;
     data?: unknown;
-}[]): {
+}>): {
     provider: string;
     model: string | undefined;
 } | undefined;
 /** The bridged slash-command names, or an empty list when the file is missing, unreadable or not
  *  an array. Never throws. */
-export declare function loadCommandCatalog(dir: string): Promise<string[]>;
+export declare function loadCommandCatalog(dir: string): Promise<Array<string>>;
 /** Remember the catalog; a write that fails leaves the menu to the next init frame, not an error. */
-export declare function saveCommandCatalog(dir: string, names: string[]): Promise<void>;
+export declare function saveCommandCatalog(dir: string, names: Array<string>): Promise<void>;
 /** The saved holds keyed by session id, or an empty record when the file is missing, unreadable
  *  or not an object. Never throws. */
 export declare function loadHolds(dir: string): Promise<Record<string, unknown>>;
@@ -132,7 +138,7 @@ interface LooseEvent {
  * from the log on resume, so nudging again would queue a duplicate notice (14 of them on
  * 2026-09-05 after a crash loop).
  */
-export declare function hasPendingNotice(events: Iterable<LooseEvent>, plugin: string, texts?: readonly string[]): boolean;
+export declare function hasPendingNotice(events: Iterable<LooseEvent>, plugin: string, texts?: ReadonlyArray<string>): boolean;
 /** Claude Code permission modes the CLI accepts for `--permission-mode` and `set_permission_mode`. */
 export declare const PERMISSION_MODES: readonly ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"];
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
@@ -140,7 +146,7 @@ export type PermissionMode = (typeof PERMISSION_MODES)[number];
  *  The match is exact and case-sensitive. */
 export declare const isPermissionMode: (v: string) => v is PermissionMode;
 /** Modes at or below the given ceiling, in table order. */
-export declare const modesUpTo: (ceiling: PermissionMode) => PermissionMode[];
+export declare const modesUpTo: (ceiling: PermissionMode) => Array<PermissionMode>;
 /** Per-session permission mode overrides. Keyed by dsh session id; null means unset. */
 export declare const PERMISSION_MODES_FILE: (d: string) => string;
 /** Per-session turn cost records; keyed by dsh session id; value is a ring buffer of last 50. */
@@ -150,9 +156,9 @@ export declare function loadPermissionModes(dir: string): Promise<Map<string, st
 /** Save a session's permission mode override (or clear it with null); serialized read-modify-write. */
 export declare function savePermissionMode(dir: string, sessionId: string, mode: string | null): Promise<void>;
 /** Load the per-session turn cost records from disk. Drops entries with missing or non-numeric fields; missing apiMs/turns default to 0 for backward compat. */
-export declare function loadTurnRecords(dir: string): Promise<Map<string, TurnRecord[]>>;
+export declare function loadTurnRecords(dir: string): Promise<Map<string, Array<TurnRecord>>>;
 /** Save a session's turn cost records (already capped at 50); serialized read-modify-write. */
-export declare function saveTurnRecords(dir: string, sessionId: string, records: TurnRecord[]): Promise<void>;
+export declare function saveTurnRecords(dir: string, sessionId: string, records: Array<TurnRecord>): Promise<void>;
 /** Per-session `/btw` asides; keyed by dsh session id; value is the session's aside ring. */
 export declare const ASIDES_FILE: (d: string) => string;
 /**
@@ -160,9 +166,9 @@ export declare const ASIDES_FILE: (d: string) => string;
  * answer, and the process that would have delivered it is gone after a restart, so restoring a
  * forever-spinner would be a lie. Entries missing the required fields are skipped.
  */
-export declare function loadAsides(dir: string): Promise<Map<string, AsideEntry[]>>;
+export declare function loadAsides(dir: string): Promise<Map<string, Array<AsideEntry>>>;
 /** Save one session's aside ring (already capped by the caller); serialized read-modify-write. */
-export declare function saveAsides(dir: string, sessionId: string, entries: AsideEntry[]): Promise<void>;
+export declare function saveAsides(dir: string, sessionId: string, entries: Array<AsideEntry>): Promise<void>;
 /** Why a log was or was not rewritten. `fine` loads; `healed` was rewritten and loads now;
  *  `unknown` is refused for a reason the plugin does not mend; `rolled-back` was rewritten, still
  *  refused, and the .bak was put back; `owned` was skipped because another process holds its

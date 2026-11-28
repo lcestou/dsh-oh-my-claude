@@ -3,7 +3,8 @@
 // the pill, then prints the reading on screen beside the figure `/turns` gives.
 // Usage: bun tools/playwright/speed-reading.ts <token> [/tmp/pw/speed]
 import { tokensPerSecond } from "../../src/client/speed.js";
-import { dshUrl, launch } from "./pw.js";
+import z from "@deepseek-ai/schemastery";
+import { dshUrl, fetchJson, launch } from "./pw.js";
 
 const [token, out = "/tmp/pw/speed"] = process.argv.slice(2);
 const b = await launch();
@@ -62,13 +63,16 @@ for (let i = 1; i < 10 && !seen; i++) {
     );
   });
 
-  const reply = await p.evaluate(
-    async (id) => (await fetch(`/dsh-oh-my-claude/turns?session=${id}`)).json(),
-    session ?? "",
+  // Our own route's JSON; a turn missing a figure is one tokensPerSecond skips.
+  const reply = await fetchJson(
+    p,
+    `/dsh-oh-my-claude/turns?session=${session ?? ""}`,
+    z.object({
+      turns: z.array(z.object({ output: z.number(), apiMs: z.number(), durationMs: z.number() })),
+    }),
   );
 
-  // SAFETY: our own route's JSON; a wrong shape yields undefined from tokensPerSecond
-  const ours = tokensPerSecond((reply as { turns?: Array<never> }).turns ?? []);
+  const ours = tokensPerSecond(reply.turns);
   console.log("session:", session);
   console.log("pill on screen:", JSON.stringify(text));
   console.log("from /turns:", ours === undefined ? "no usable turn" : `${ours.toFixed(1)} tok/s`);

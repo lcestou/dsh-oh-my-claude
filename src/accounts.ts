@@ -47,7 +47,7 @@ export function defaultAccountDir(name: string): string {
 export function normalizeAccountDir(dir: string): string | undefined {
   const trimmed = dir.trim();
 
-  if (trimmed.length > 200 || [...trimmed].some((ch) => ch.charCodeAt(0) < 32)) {
+  if (trimmed.length > 200 || trimmed.split("").some((ch) => ch < " ")) {
     return undefined;
   }
 
