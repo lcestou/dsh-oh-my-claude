@@ -129,7 +129,6 @@ export default defineConfig({
     },
     {
       files: [
-        "src/anthropic-status.ts",
         "src/decode.ts",
         "src/process.ts",
         "src/remote-fs.ts",
@@ -137,7 +136,6 @@ export default defineConfig({
         "src/transcript.ts",
         "src/search.ts",
         "src/mcp.ts",
-        "src/mcp-add-remove.ts",
         "src/plugins.ts",
         "src/report.ts",
         "src/sessions.ts",
@@ -162,9 +160,7 @@ export default defineConfig({
     {
       files: [
         "src/decode.ts",
-        "src/anthropic-status.ts",
         "src/process.ts",
-        "src/hold.ts",
         "src/reach.ts",
         "src/report.ts",
         "src/transcript.ts",
@@ -223,23 +219,21 @@ export default defineConfig({
     {
       files: ["src/test-dsh.ts"],
       rules: {
-        "anti-slop/no-unknown-parameters": "off",
-        "quality/no-chained-type-assertions": "off",
-        "quality/no-unsafe-dictionary-type": "off",
         "anti-slop/no-runtime-typeof": "off",
       },
     },
     // Rule options arrive from the lint config as untyped JSON.
     {
-      files: [
-        "tools/oxlint/anti-slop/rules/require-safety-comment-for-type-assertion.ts",
-        "tools/oxlint/anti-slop/rules/no-runtime-typeof.ts",
-      ],
+      files: ["tools/oxlint/anti-slop/rules/no-runtime-typeof.ts"],
+      rules: {
+        "anti-slop/no-runtime-typeof": "off",
+      },
+    },
+    {
+      files: ["tools/oxlint/anti-slop/rules/require-safety-comment-for-type-assertion.ts"],
       rules: {
         "anti-slop/no-runtime-typeof": "off",
         "anti-slop/no-unknown-parameters": "off",
-        "quality/no-unsafe-dictionary-type": "off",
-        "quality/no-chained-type-assertions": "off",
       },
     },
   ],
