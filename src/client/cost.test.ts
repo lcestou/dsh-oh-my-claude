@@ -21,7 +21,7 @@ Object.assign(globalThis, {
   },
 });
 
-const { newestOnly, subscriptionStatus } = await import("./cost.js");
+const { newestOnly, pillName, subscriptionStatus } = await import("./cost.js");
 const { BOXES_EVENT } = await import("./picker.js");
 
 assert.equal(await subscriptionStatus(), true);
@@ -62,6 +62,18 @@ assert.equal(calls, 2);
   first.settle("claude.ai");
   await sleep(0);
   assert.deepEqual(seen, ["api-key"], "the stale reply is dropped");
+}
+
+// The pill's accessible name leads with what it shows, so voice control that says the figure
+// finds the pill (WCAG 2.5.3, axe's label-content-name-mismatch). With nothing shown, the name is
+// the breakdown alone.
+{
+  const shown = "$1.20 · $0.30 last";
+  const breakdown = "Claude cost, API-rate: $1.20 this session, $0.30 last turn (2 turns)";
+
+  assert.ok(pillName(shown, breakdown).startsWith(shown), "the name starts with the pill's text");
+  assert.ok(pillName(shown, breakdown).includes(breakdown), "and still carries the breakdown");
+  assert.equal(pillName("", breakdown), breakdown, "an empty pill is named by its breakdown");
 }
 
 console.log("cost ok");

@@ -65,6 +65,11 @@ const fmtTtft = (ms?: number): string => {
 const costText = (total: number, last: number) =>
   t("main.cost.pill", { total: fmtCost(total), last: fmtCost(last) });
 
+/** The pill's accessible name: what it shows first, so a voice command that says the figure finds
+ *  it (WCAG 2.5.3), then the breakdown. The hover bubble reads the breakdown alone. */
+export const pillName = (text: string, title: string): string =>
+  text ? `${text} · ${title}` : title;
+
 /** A token count for the dialog: `0` rather than the readout's blank for none. */
 const fmtTokens = (n: number): string => formatCacheRead(n) || "0";
 
@@ -616,8 +621,8 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         if (trigger) {
           const expanded = String(openRef.current);
 
-          if (trigger.getAttribute("aria-label") !== titleRef.current) {
-            trigger.setAttribute("aria-label", titleRef.current);
+          if (trigger.getAttribute("aria-label") !== pillName(textRef.current, titleRef.current)) {
+            trigger.setAttribute("aria-label", pillName(textRef.current, titleRef.current));
             refreshTip(trigger, titleRef.current);
           }
 
@@ -752,7 +757,7 @@ export function CostLine({ sessionId, ctx }: { sessionId: string; ctx: ClientCtx
         trigger.setAttribute("data-omc-cost-pill", "");
         trigger.setAttribute("aria-haspopup", "dialog");
         trigger.setAttribute("aria-expanded", String(openRef.current));
-        trigger.setAttribute("aria-label", titleRef.current);
+        trigger.setAttribute("aria-label", pillName(textRef.current, titleRef.current));
         paintOver();
         trigger.addEventListener("click", () => setOpen((was) => !was));
         // dsh's own stat pills get no hover bubble in 0.2.2, so the cost figure's breakdown would
